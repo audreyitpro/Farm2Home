@@ -1,0 +1,43 @@
+import { useState } from "react";
+import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { db } from "../lib/firebase";
+
+export default function FirebaseTest() {
+  const [status, setStatus] = useState("Not tested");
+
+  async function testFirebase() {
+    try {
+      const docRef = await addDoc(collection(db, "connection_tests"), {
+        app: "Farm2Home",
+        message: "Firebase connected successfully",
+        created_at: serverTimestamp(),
+      });
+
+      setStatus(`Connected: ${docRef.id}`);
+      Alert.alert("Success", "Firebase connected and test record was created.");
+    } catch (error: any) {
+      setStatus("Failed");
+      Alert.alert("Firebase Error", error.message);
+    }
+  }
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Firebase Connection Test</Text>
+      <Text style={styles.status}>{status}</Text>
+
+      <TouchableOpacity style={styles.button} onPress={testFirebase}>
+        <Text style={styles.buttonText}>Test Firebase</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: "center", padding: 24, backgroundColor: "#f5f8f2" },
+  title: { fontSize: 26, fontWeight: "bold", color: "#2f7d32", textAlign: "center", marginBottom: 20 },
+  status: { textAlign: "center", marginBottom: 20, fontSize: 16 },
+  button: { backgroundColor: "#2f7d32", padding: 16, borderRadius: 14 },
+  buttonText: { color: "white", textAlign: "center", fontWeight: "bold" },
+});

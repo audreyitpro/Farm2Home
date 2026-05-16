@@ -1,0 +1,70 @@
+{
+  "expo": {
+    "name": "Farm2Home",
+    "slug": "farm2home",
+    "scheme": "farm2home",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/farm2home-logo.png",
+    "splash": {
+      "image": "./assets/images/farm2home-logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F7F7F2"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-notifications",
+      "expo-location",
+      "expo-image-picker"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.asodevelopments.farm2home",
+      "config": {
+        "googleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+      },
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Farm2Home uses your location for live delivery tracking and driver routing.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Farm2Home uses background location for driver delivery tracking.",
+        "NSPhotoLibraryUsageDescription": "Farm2Home uses photo access for profile images, product photos, and proof of delivery uploads.",
+        "NSCameraUsageDescription": "Farm2Home uses the camera for product photos and proof of delivery."
+      }
+    },
+    "android": {
+      "package": "com.asodevelopments.farm2home",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAXA8ttdUFAIoEJqqRiQAZSRSJ2nDunWQE"
+        }
+      },
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/farm2home-logo.png",
+        "backgroundColor": "#F7F7F2"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "04912a96-3223-40b8-a8ae-fba4424db741"
+      }
+    },
+    "owner": "audreyitpro"
+  }
+}
