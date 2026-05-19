@@ -9,19 +9,73 @@ const ordersRoutes = require("./routes/orders");
 const paymentsRoutes = require("./routes/payments");
 const chatRoutes = require("./routes/chat");
 const freightRoutes = require("./routes/freight");
+const driverRoutes = require("./routes/driver");
+const stripeWebhookRoutes = require("./routes/stripe-webhooks");
 
 const app = express();
 
-if (!process.env.STRIPE_SECRET_KEY) {
+const PORT = process.env.PORT || 4242;
+
+const APP_URL = process.env.APP_URL || "https://farm2home-rho.vercel.app";
+
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.API_BASE_URL ||
+  "https://farm2home-production-e4bd.up.railway.app";
+
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+
+if (!STRIPE_SECRET_KEY) {
   console.warn("WARNING: STRIPE_SECRET_KEY missing in backend .env");
 }
 
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-
+const stripe = STRIPE_SECRET_KEY ? Stripe(STRIPE_SECRET_KEY) : null;
 const pendingStripeSplits = new Map();
+
+/* =====================================================
+   HELPERS
+===================================================== */
+
+function requireStripe(res) {
+  if (!stripe) {
+    res.status(500).json({
+      success: false,
+      error: "STRIPE_SECRET_KEY missing in backend environment.",
+    });
+    return false;
+  }
+
+  return true;
+}
 
 function toCents(value) {
   return Math.round(Number(value || 0) * 100);
+}
+
+function appendQueryParams(baseUrl, params) {
+  const url = new URL(baseUrl);
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  });
+
+  return url.toString();
+}
+
+function getConnectRefreshUrl() {
+  return (
+    process.env.STRIPE_CONNECT_REFRESH_URL ||
+    `${APP_URL}/farmer/compliance-upload`
+  );
+}
+
+function getConnectReturnUrl() {
+  return (
+    process.env.STRIPE_CONNECT_RETURN_URL ||
+    `${APP_URL}/farmer/compliance-upload?stripeReturn=true`
+  );
 }
 
 function groupCartByFarmerStripeAccount(cart) {
@@ -54,148 +108,67 @@ function groupCartByFarmerStripeAccount(cart) {
   return Object.values(grouped);
 }
 
-async function handleStripeWebhook(req, res) {
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+/* =====================================================
+   CORS
+===================================================== */
 
-  let event;
-
-  try {
-    if (webhookSecret) {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        req.headers["stripe-signature"],
-        webhookSecret
-      );
-    } else {
-      event = JSON.parse(req.body.toString());
-    }
-  } catch (error) {
-    console.log("Stripe webhook signature error:", error.message);
-    return res.status(400).send(`Webhook Error: ${error.message}`);
-  }
-
-  try {
-    console.log("Stripe webhook received:", event.type);
-
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-
-      console.log("Checkout completed:", {
-        sessionId: session.id,
-        customerEmail: session.customer_email,
-        mode: session.mode,
-        paymentStatus: session.payment_status,
-        subscriptionId: session.subscription,
-        metadata: session.metadata,
-      });
-
-      const splitData = pendingStripeSplits.get(session.id);
-
-      if (splitData && session.payment_intent) {
-        const paymentIntent = await stripe.paymentIntents.retrieve(
-          session.payment_intent,
-          {
-            expand: ["latest_charge"],
-          }
-        );
-
-        const chargeId =
-          paymentIntent.latest_charge?.id || paymentIntent.latest_charge;
-
-        for (const split of splitData.farmerSplits) {
-          if (split.amountCents <= 0) continue;
-
-          const transfer = await stripe.transfers.create({
-            amount: split.amountCents,
-            currency: "usd",
-            destination: split.farmerStripeAccountId,
-            transfer_group: splitData.orderId,
-            source_transaction: chargeId,
-            metadata: {
-              orderId: splitData.orderId,
-              farmerName: split.farmerName,
-              type: "farm2home_farmer_payout",
-            },
-          });
-
-          console.log("Farmer transfer created:", {
-            farmerName: split.farmerName,
-            farmerStripeAccountId: split.farmerStripeAccountId,
-            amountCents: split.amountCents,
-            transferId: transfer.id,
-          });
-        }
-
-        pendingStripeSplits.delete(session.id);
-      }
-    }
-
-    if (event.type === "customer.subscription.created") {
-      console.log("Subscription created:", event.data.object.id);
-    }
-
-    if (event.type === "customer.subscription.updated") {
-      console.log("Subscription updated:", event.data.object.id);
-    }
-
-    if (event.type === "customer.subscription.deleted") {
-      console.log("Subscription canceled:", event.data.object.id);
-    }
-
-    if (event.type === "invoice.payment_succeeded") {
-      console.log("Invoice payment succeeded:", event.data.object.id);
-    }
-
-    if (event.type === "invoice.payment_failed") {
-      console.log("Invoice payment failed:", event.data.object.id);
-    }
-
-    if (event.type === "charge.refunded") {
-      console.log("Charge refunded:", event.data.object.id);
-    }
-
-    return res.json({ received: true });
-  } catch (error) {
-    console.log("Stripe webhook processing error:", error);
-
-    return res.status(500).json({
-      error: error.message || "Unable to process Stripe webhook.",
-    });
-  }
-}
-
-app.post(
-  "/stripe/webhook",
-  express.raw({ type: "application/json" }),
-  handleStripeWebhook
+app.use(
+  cors({
+    origin: process.env.CORS_ORIGIN || "*",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "stripe-signature"],
+  })
 );
 
-app.post(
-  "/payments/webhook",
-  express.raw({ type: "application/json" }),
-  handleStripeWebhook
-);
+/* =====================================================
+   STRIPE WEBHOOK ROUTE
+   MUST STAY BEFORE express.json()
+===================================================== */
 
-app.use(cors());
-app.use(express.json());
+app.use("/stripe", stripeWebhookRoutes);
+
+/* =====================================================
+   JSON MIDDLEWARE
+===================================================== */
+
+app.use(express.json({ limit: "10mb" }));
+
+/* =====================================================
+   HEALTH
+===================================================== */
 
 app.get("/", (req, res) => {
   res.json({
     success: true,
     message: "Farm2Home Backend Running",
+    environment: process.env.NODE_ENV || "production",
+    appUrl: APP_URL,
+    apiBaseUrl: API_BASE_URL,
   });
 });
 
+app.get("/health", (req, res) => {
+  res.json({
+    success: true,
+    uptime: process.uptime(),
+    stripeConfigured: Boolean(STRIPE_SECRET_KEY),
+    webhookConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
+    appUrl: APP_URL,
+    apiBaseUrl: API_BASE_URL,
+    driverRoutesMounted: true,
+    stripeWebhookMounted: true,
+  });
+});
+
+/* =====================================================
+   FARMER STRIPE CONNECT
+===================================================== */
+
 app.post("/create-farmer-stripe-account", async (req, res) => {
   try {
-    const { farmerId, email, farmName, existingStripeAccountId } = req.body;
+    if (!requireStripe(res)) return;
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "STRIPE_SECRET_KEY missing in backend .env file.",
-      });
-    }
+    const { farmerId, email, farmName, existingStripeAccountId } = req.body;
 
     if (!farmerId || !email) {
       return res.status(400).json({
@@ -204,7 +177,7 @@ app.post("/create-farmer-stripe-account", async (req, res) => {
       });
     }
 
-    let accountId = existingStripeAccountId;
+    let accountId = existingStripeAccountId || "";
 
     if (!accountId) {
       const account = await stripe.accounts.create({
@@ -232,18 +205,22 @@ app.post("/create-farmer-stripe-account", async (req, res) => {
       });
     }
 
-    const refreshUrl =
-      process.env.STRIPE_CONNECT_REFRESH_URL ||
-      "http://localhost:8081/farmer/compliance-upload";
+    const refreshUrl = appendQueryParams(getConnectRefreshUrl(), {
+      stripeReturn: "false",
+      farmerId,
+      accountId,
+    });
 
-    const returnUrl =
-      process.env.STRIPE_CONNECT_RETURN_URL ||
-      "http://localhost:8081/farmer/compliance-upload";
+    const returnUrl = appendQueryParams(getConnectReturnUrl(), {
+      stripeReturn: "true",
+      farmerId,
+      accountId,
+    });
 
     const accountLink = await stripe.accountLinks.create({
       account: accountId,
-      refresh_url: `${refreshUrl}?stripeReturn=false&farmerId=${farmerId}&accountId=${accountId}`,
-      return_url: `${returnUrl}?stripeReturn=true&farmerId=${farmerId}&accountId=${accountId}`,
+      refresh_url: refreshUrl,
+      return_url: returnUrl,
       type: "account_onboarding",
     });
 
@@ -264,14 +241,9 @@ app.post("/create-farmer-stripe-account", async (req, res) => {
 
 app.get("/farmer-stripe-account-status/:accountId", async (req, res) => {
   try {
-    const { accountId } = req.params;
+    if (!requireStripe(res)) return;
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "STRIPE_SECRET_KEY missing in backend .env file.",
-      });
-    }
+    const { accountId } = req.params;
 
     if (!accountId) {
       return res.status(400).json({
@@ -296,7 +268,7 @@ app.get("/farmer-stripe-account-status/:accountId", async (req, res) => {
         ? `${bankName} ending in ${last4}`
         : account.details_submitted
         ? "Stripe onboarding submitted"
-        : "Stripe payout account connected";
+        : "Stripe payout account pending";
 
     return res.json({
       success: true,
@@ -318,8 +290,14 @@ app.get("/farmer-stripe-account-status/:accountId", async (req, res) => {
   }
 });
 
+/* =====================================================
+   MARKETPLACE CHECKOUT
+===================================================== */
+
 app.post("/create-marketplace-checkout", async (req, res) => {
   try {
+    if (!requireStripe(res)) return;
+
     const {
       cart,
       subtotal,
@@ -340,18 +318,12 @@ app.post("/create-marketplace-checkout", async (req, res) => {
 
     if (!Array.isArray(cart) || cart.length === 0) {
       return res.status(400).json({
+        success: false,
         error: "Cart is required.",
       });
     }
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(500).json({
-        error: "STRIPE_SECRET_KEY missing in backend .env file.",
-      });
-    }
-
     const orderId = cloudOrderId || `farm2home_order_${Date.now()}`;
-
     const farmerGroups = groupCartByFarmerStripeAccount(cart);
 
     const farmerSplits = farmerGroups.map((group) => ({
@@ -437,9 +409,8 @@ app.post("/create-marketplace-checkout", async (req, res) => {
       },
       success_url:
         process.env.CHECKOUT_SUCCESS_URL ||
-        "http://localhost:8081/customer/subscription-success",
-      cancel_url:
-        process.env.CHECKOUT_CANCEL_URL || "http://localhost:8081/customer/cart",
+        `${APP_URL}/customer/subscription-success`,
+      cancel_url: process.env.CHECKOUT_CANCEL_URL || `${APP_URL}/customer/cart`,
     });
 
     pendingStripeSplits.set(session.id, {
@@ -463,12 +434,6 @@ app.post("/create-marketplace-checkout", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    console.log("Stripe checkout created with farmer splits:", {
-      orderId,
-      sessionId: session.id,
-      farmerSplits,
-    });
-
     return res.json({
       success: true,
       url: session.url,
@@ -480,10 +445,15 @@ app.post("/create-marketplace-checkout", async (req, res) => {
     console.log("Create marketplace checkout error:", error);
 
     return res.status(500).json({
+      success: false,
       error: error.message || "Unable to create marketplace checkout.",
     });
   }
 });
+
+/* =====================================================
+   GOOGLE DISTANCE MATRIX
+===================================================== */
 
 app.post("/calculate-distance", async (req, res) => {
   try {
@@ -491,6 +461,7 @@ app.post("/calculate-distance", async (req, res) => {
 
     if (!pickupLocation || !dropoffLocation) {
       return res.status(400).json({
+        success: false,
         error: "Pickup and dropoff locations are required.",
       });
     }
@@ -501,6 +472,7 @@ app.post("/calculate-distance", async (req, res) => {
 
     if (!apiKey) {
       return res.status(500).json({
+        success: false,
         error: "GOOGLE_MAPS_API_KEY missing in backend .env file.",
       });
     }
@@ -518,12 +490,11 @@ app.post("/calculate-distance", async (req, res) => {
     const response = await fetch(url);
     const data = await response.json();
 
-    console.log("Google Distance Response:", JSON.stringify(data, null, 2));
-
     const element = data?.rows?.[0]?.elements?.[0];
 
     if (data?.status !== "OK") {
       return res.status(400).json({
+        success: false,
         error:
           data?.error_message ||
           `Google API status: ${data?.status || "Unknown"}`,
@@ -532,6 +503,7 @@ app.post("/calculate-distance", async (req, res) => {
 
     if (element?.status !== "OK") {
       return res.status(400).json({
+        success: false,
         error: `Route status: ${element?.status || "Unknown"}`,
       });
     }
@@ -549,25 +521,39 @@ app.post("/calculate-distance", async (req, res) => {
     console.log("Distance Calculation Error:", error);
 
     return res.status(500).json({
+      success: false,
       error: error?.message || "Unable to calculate distance.",
     });
   }
 });
 
+/* =====================================================
+   ROUTES
+===================================================== */
+
 app.use("/orders", ordersRoutes);
 app.use("/payments", paymentsRoutes);
 app.use("/chat", chatRoutes);
 app.use("/freight", freightRoutes);
+app.use("/driver", driverRoutes);
 
-app.get("/health", (req, res) => {
-  res.json({
-    success: true,
-    uptime: process.uptime(),
+/* =====================================================
+   404 HANDLER
+===================================================== */
+
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: "Route not found.",
+    path: req.originalUrl,
   });
 });
 
-const PORT = process.env.PORT || 4242;
+/* =====================================================
+   SERVER START
+===================================================== */
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Farm2Home backend running on port ${PORT}`);
+  console.log(`Production API URL: ${API_BASE_URL}`);
 });

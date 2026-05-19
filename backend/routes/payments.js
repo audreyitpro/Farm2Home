@@ -7,27 +7,41 @@ const ws = require("ws");
 
 const router = express.Router();
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  console.warn("WARNING: STRIPE_SECRET_KEY is missing from backend .env");
-}
+const APP_URL = process.env.APP_URL || "https://farm2home-rho.vercel.app";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.API_BASE_URL ||
+  "https://farm2home-production-e4bd.up.railway.app";
+
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+  : null;
 
 const supabase =
   process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(
-        process.env.SUPABASE_URL,
-        process.env.SUPABASE_SERVICE_ROLE_KEY,
-        {
-          realtime: {
-            transport: ws,
-          },
-        }
-      )
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+        realtime: { transport: ws },
+      })
     : null;
 
 const pendingMarketplaceSplits = new Map();
 const completedMarketplaceTransfers = new Map();
+
+/* =====================================================
+   HELPERS
+===================================================== */
+
+function requireStripe(res) {
+  if (!stripe) {
+    res.status(500).json({
+      success: false,
+      error: "STRIPE_SECRET_KEY missing in backend environment.",
+    });
+    return false;
+  }
+  return true;
+}
 
 function toCents(value) {
   return Math.round(Number(value || 0) * 100);
@@ -36,6 +50,36 @@ function toCents(value) {
 function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function appendQueryParams(baseUrl, params) {
+  const url = new URL(baseUrl);
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  });
+
+  return url.toString();
+}
+
+function getConnectRefreshUrl() {
+  return (
+    process.env.STRIPE_CONNECT_REFRESH_URL ||
+    `${APP_URL}/farmer/compliance-upload`
+  );
+}
+
+function getConnectReturnUrl() {
+  return (
+    process.env.STRIPE_CONNECT_RETURN_URL ||
+    `${APP_URL}/farmer/compliance-upload?stripeReturn=true`
+  );
 }
 
 function getFarmerStripeAccountId(item) {
@@ -80,239 +124,164 @@ function groupCartByFarmer(cart) {
   return Object.values(grouped);
 }
 
-async function rebuildFarmerSplitsFromStripeSession(sessionId) {
-  const lineItems = await stripe.checkout.sessions.listLineItems(sessionId, {
-    limit: 100,
-    expand: ["data.price.product"],
-  });
+function getMembershipPriceId(planType) {
+  const normalizedPlan = cleanString(planType).toLowerCase();
 
-  const grouped = {};
-
-  for (const line of lineItems.data) {
-    const product = line.price?.product;
-    const metadata = product?.metadata || {};
-
-    const farmerStripeAccountId = metadata.farmerStripeAccountId;
-    const farmName = metadata.farmName || "Farm2Home Farm";
-    const itemType = metadata.itemType || "";
-
-    if (!farmerStripeAccountId || itemType === "farm2home_fee") {
-      continue;
-    }
-
-    if (!grouped[farmerStripeAccountId]) {
-      grouped[farmerStripeAccountId] = {
-        farmerStripeAccountId,
-        farmName,
-        amountCents: 0,
-        itemNames: [],
-      };
-    }
-
-    grouped[farmerStripeAccountId].amountCents += Number(line.amount_total || 0);
-    grouped[farmerStripeAccountId].itemNames.push(line.description || line.id);
-  }
-
-  return Object.values(grouped);
-}
-
-async function saveFarmerPayoutsToSupabase({ orderId, transfers }) {
-  if (!supabase) {
-    console.log("Supabase not configured. Skipping farmer_payouts save.");
-    return;
-  }
-
-  const rows = transfers.map((transfer) => ({
-    order_id: orderId,
-    farmer_name: transfer.farmName,
-    stripe_account_id: transfer.farmerStripeAccountId,
-    stripe_transfer_id: transfer.transferId,
-    gross_amount: transfer.amountDollars,
-    platform_fee: 0,
-    net_amount: transfer.amountDollars,
-    payout_status: "TRANSFER_CREATED",
-  }));
-
-  const { error } = await supabase.from("farmer_payouts").insert(rows);
-
-  if (error) {
-    console.log("Supabase farmer_payouts insert error:", error);
-  } else {
-    console.log("Saved farmer payouts to Supabase:", rows);
-  }
-}
-
-async function saveOrderToSupabase({
-  orderId,
-  sessionId,
-  paymentIntentId,
-  pendingData,
-}) {
-  if (!supabase || !pendingData) {
-    console.log("Supabase/order pending data missing. Skipping orders save.");
-    return;
-  }
-
-  const orderRow = {
-    id: orderId,
-    stripe_session_id: sessionId,
-    stripe_payment_intent_id: paymentIntentId || "",
-    customer_email: pendingData.customerEmail || "",
-    customer_name: pendingData.deliveryInfo?.name || "",
-    subtotal: safeNumber(pendingData.subtotal, 0),
-    service_fee: safeNumber(pendingData.serviceFee, 0),
-    delivery_fee: safeNumber(pendingData.deliveryFee, 0),
-    tip: safeNumber(pendingData.tip, 0),
-    total: safeNumber(pendingData.total, 0),
-    payment_status: "PAID",
-    fulfillment_status: "NEW",
-  };
-
-  const { error: orderError } = await supabase.from("orders").upsert([orderRow]);
-
-  if (orderError) {
-    console.log("Supabase orders insert error:", orderError);
-  } else {
-    console.log("Saved order to Supabase:", orderRow);
-  }
-
-  const orderItems = (pendingData.cart || []).map((item) => ({
-    order_id: orderId,
-    farmer_name: item.farmName || item.farmerName || "",
-    farmer_email: item.farmerEmail || "",
-    farmer_stripe_account_id:
-      item.farmerStripeAccountId || item.stripeAccountId || "",
-    product_id: item.id || "",
-    product_name: item.name || "",
-    quantity: safeNumber(item.quantity, 1),
-    unit_price: safeNumber(item.price, 0),
-    total_price: safeNumber(item.price, 0) * safeNumber(item.quantity, 1),
-  }));
-
-  if (orderItems.length > 0) {
-    const { error: itemError } = await supabase
-      .from("order_items")
-      .insert(orderItems);
-
-    if (itemError) {
-      console.log("Supabase order_items insert error:", itemError);
-    } else {
-      console.log("Saved order items to Supabase:", orderItems);
-    }
-  }
-}
-
-async function createFarmerTransfersForSession(sessionId) {
-  if (completedMarketplaceTransfers.has(sessionId)) {
+  if (normalizedPlan === "farmer") {
     return {
-      alreadyProcessed: true,
-      ...completedMarketplaceTransfers.get(sessionId),
+      role: "farmer",
+      priceId: process.env.STRIPE_FARMER_MEMBERSHIP_PRICE_ID,
+      missingKey: "STRIPE_FARMER_MEMBERSHIP_PRICE_ID",
+      successPath: "/farmer/subscription-success",
+      cancelPath: "/farmer/register",
     };
   }
 
-  const pendingData = pendingMarketplaceSplits.get(sessionId);
-
-  const session = await stripe.checkout.sessions.retrieve(sessionId, {
-    expand: ["payment_intent"],
-  });
-
-  if (session.payment_status !== "paid") {
-    throw new Error(
-      `Session is not paid. Current status: ${session.payment_status}`
-    );
+  if (normalizedPlan === "freight") {
+    return {
+      role: "freight",
+      priceId: process.env.STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID,
+      missingKey: "STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID",
+      successPath: "/freight/subscription-success",
+      cancelPath: "/freight/register",
+    };
   }
 
-  const orderId =
-    session.metadata?.orderId ||
-    session.payment_intent?.metadata?.orderId ||
-    `order_${Date.now()}`;
-
-  let farmerSplits = pendingData?.farmerSplits;
-
-  if (!farmerSplits || farmerSplits.length === 0) {
-    farmerSplits = await rebuildFarmerSplitsFromStripeSession(sessionId);
+  if (normalizedPlan === "driver") {
+    return {
+      role: "driver",
+      priceId:
+        process.env.STRIPE_DRIVER_BOARD_PRICE_ID ||
+        process.env.STRIPE_DRIVER_MEMBERSHIP_PRICE_ID,
+      missingKey:
+        "STRIPE_DRIVER_BOARD_PRICE_ID or STRIPE_DRIVER_MEMBERSHIP_PRICE_ID",
+      successPath: "/driver/subscription-success",
+      cancelPath: "/driver/subscription",
+    };
   }
-
-  if (!farmerSplits || farmerSplits.length === 0) {
-    throw new Error("No farmer splits found for this checkout session.");
-  }
-
-  const paymentIntentId =
-    typeof session.payment_intent === "string"
-      ? session.payment_intent
-      : session.payment_intent?.id;
-
-  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, {
-    expand: ["latest_charge"],
-  });
-
-  const chargeId =
-    paymentIntent.latest_charge?.id || paymentIntent.latest_charge;
-
-  if (!chargeId) {
-    throw new Error("Unable to locate Stripe charge for this payment.");
-  }
-
-  const transfers = [];
-
-  for (const split of farmerSplits) {
-    const amountCents = Number(split.amountCents || 0);
-
-    if (!split.farmerStripeAccountId || amountCents <= 0) {
-      continue;
-    }
-
-    const transfer = await stripe.transfers.create({
-      amount: amountCents,
-      currency: "usd",
-      destination: split.farmerStripeAccountId,
-      transfer_group: orderId,
-      source_transaction: chargeId,
-      metadata: {
-        orderId,
-        farmName: split.farmName || split.farmerName || "Farm2Home Farm",
-        type: "farm2home_farmer_payout",
-        sessionId,
-      },
-    });
-
-    transfers.push({
-      farmName: split.farmName || split.farmerName || "Farm2Home Farm",
-      farmerStripeAccountId: split.farmerStripeAccountId,
-      amountCents,
-      amountDollars: Number((amountCents / 100).toFixed(2)),
-      transferId: transfer.id,
-    });
-  }
-
-  await saveFarmerPayoutsToSupabase({
-    orderId,
-    transfers,
-  });
-
-  await saveOrderToSupabase({
-    orderId,
-    sessionId,
-    paymentIntentId,
-    pendingData,
-  });
-
-  const result = {
-    orderId,
-    transfers,
-  };
-
-  completedMarketplaceTransfers.set(sessionId, result);
-  pendingMarketplaceSplits.delete(sessionId);
 
   return {
-    alreadyProcessed: false,
-    ...result,
+    role: "customer",
+    priceId: process.env.STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID,
+    missingKey: "STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID",
+    successPath: "/customer/subscription-success",
+    cancelPath: "/customer/register",
   };
 }
 
+async function saveSubscriptionToSupabase({
+  role,
+  userId,
+  email,
+  name,
+  username,
+  stripeCustomerId,
+  stripeSubscriptionId,
+  currentPeriodEnd,
+  status,
+}) {
+  if (!supabase || !stripeSubscriptionId) return null;
+
+  const normalizedRole = cleanString(role).toLowerCase();
+
+  if (normalizedRole === "driver") {
+    const { data, error } = await supabase
+      .from("driver_subscriptions")
+      .upsert(
+        [
+          {
+            driver_id: userId || email || stripeCustomerId,
+            driver_email: email || "",
+            stripe_customer_id: stripeCustomerId || "",
+            stripe_subscription_id: stripeSubscriptionId,
+            subscription_status: status || "active",
+            current_period_end: currentPeriodEnd || null,
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        { onConflict: "driver_id" }
+      )
+      .select()
+      .single();
+
+    if (error) {
+      console.log("Save driver subscription error:", error);
+      return null;
+    }
+
+    return data;
+  }
+
+  const table =
+    normalizedRole === "farmer"
+      ? "farmer_subscriptions"
+      : normalizedRole === "freight"
+      ? "freight_subscriptions"
+      : "customer_subscriptions";
+
+  const idColumn =
+    normalizedRole === "farmer"
+      ? "farmer_id"
+      : normalizedRole === "freight"
+      ? "freight_id"
+      : "customer_id";
+
+  const emailColumn =
+    normalizedRole === "farmer"
+      ? "farmer_email"
+      : normalizedRole === "freight"
+      ? "freight_email"
+      : "customer_email";
+
+  const row = {
+    [idColumn]: userId || email || stripeCustomerId,
+    [emailColumn]: email || "",
+    name: name || "",
+    username: username || "",
+    stripe_customer_id: stripeCustomerId || "",
+    stripe_subscription_id: stripeSubscriptionId,
+    subscription_status: status || "active",
+    current_period_end: currentPeriodEnd || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from(table)
+    .upsert([row], { onConflict: idColumn })
+    .select()
+    .single();
+
+  if (error) {
+    console.log(`Save ${normalizedRole} subscription error:`, error);
+    return null;
+  }
+
+  return data;
+}
+
+/* =====================================================
+   HEALTH
+===================================================== */
+
+router.get("/health", (req, res) => {
+  res.json({
+    success: true,
+    message: "Payments routes running",
+    appUrl: APP_URL,
+    apiBaseUrl: API_BASE_URL,
+    stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
+    supabaseConfigured: Boolean(supabase),
+  });
+});
+
+/* =====================================================
+   MARKETPLACE CHECKOUT WITH FARMER SPLITS
+===================================================== */
+
 router.post("/create-marketplace-checkout", async (req, res) => {
   try {
+    if (!requireStripe(res)) return;
+
     const {
       cart,
       customerEmail,
@@ -335,6 +304,7 @@ router.post("/create-marketplace-checkout", async (req, res) => {
 
     if (!Array.isArray(cart) || cart.length === 0) {
       return res.status(400).json({
+        success: false,
         error: "Cart is required.",
       });
     }
@@ -374,9 +344,7 @@ router.post("/create-marketplace-checkout", async (req, res) => {
           currency: "usd",
           product_data: {
             name: "Farm2Home Marketplace Service Fee",
-            metadata: {
-              itemType: "farm2home_fee",
-            },
+            metadata: { itemType: "farm2home_fee" },
           },
           unit_amount: toCents(serviceFee),
         },
@@ -390,9 +358,7 @@ router.post("/create-marketplace-checkout", async (req, res) => {
           currency: "usd",
           product_data: {
             name: "Farm2Home Delivery Fee",
-            metadata: {
-              itemType: "farm2home_fee",
-            },
+            metadata: { itemType: "farm2home_fee" },
           },
           unit_amount: toCents(deliveryFee),
         },
@@ -406,9 +372,7 @@ router.post("/create-marketplace-checkout", async (req, res) => {
           currency: "usd",
           product_data: {
             name: "Farm2Home Tip",
-            metadata: {
-              itemType: "farm2home_fee",
-            },
+            metadata: { itemType: "farm2home_fee" },
           },
           unit_amount: toCents(tip),
         },
@@ -418,7 +382,9 @@ router.post("/create-marketplace-checkout", async (req, res) => {
 
     const checkoutSuccessUrl =
       successUrl ||
-      "http://localhost:8081/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}";
+      `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`;
+
+    const checkoutCancelUrl = cancelUrl || `${APP_URL}/customer/cart`;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -438,7 +404,7 @@ router.post("/create-marketplace-checkout", async (req, res) => {
         farmerSplitCount: String(farmerSplits.length),
       },
       success_url: checkoutSuccessUrl,
-      cancel_url: cancelUrl || "http://localhost:8081/customer/cart",
+      cancel_url: checkoutCancelUrl,
     });
 
     pendingMarketplaceSplits.set(session.id, {
@@ -464,13 +430,6 @@ router.post("/create-marketplace-checkout", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    console.log("Marketplace checkout created:", {
-      orderId,
-      sessionId: session.id,
-      farmerSplits,
-      successUrl: checkoutSuccessUrl,
-    });
-
     return res.json({
       success: true,
       id: session.id,
@@ -483,288 +442,72 @@ router.post("/create-marketplace-checkout", async (req, res) => {
     console.log("Create marketplace checkout error:", error);
 
     return res.status(500).json({
+      success: false,
       error: error.message || "Unable to create marketplace checkout.",
     });
   }
 });
 
-router.post("/confirm-marketplace-payment", async (req, res) => {
-  try {
-    const { sessionId } = req.body;
-
-    if (!sessionId) {
-      return res.status(400).json({
-        error: "sessionId is required.",
-      });
-    }
-
-    const result = await createFarmerTransfersForSession(sessionId);
-
-    return res.json({
-      success: true,
-      sessionId,
-      alreadyProcessed: result.alreadyProcessed,
-      orderId: result.orderId,
-      transfers: result.transfers,
-    });
-  } catch (error) {
-    console.log("Confirm marketplace payment error:", error);
-
-    return res.status(500).json({
-      error: error.message || "Unable to confirm marketplace payment.",
-    });
-  }
-});
-
-router.post("/create-farmer-connect-account", async (req, res) => {
-  try {
-    const { email, farmName, farmerId } = req.body;
-
-    if (!email || !farmName) {
-      return res.status(400).json({
-        error: "email and farmName are required.",
-      });
-    }
-
-    const account = await stripe.accounts.create({
-      type: "express",
-      country: "US",
-      email,
-      business_type: "individual",
-      capabilities: {
-        card_payments: {
-          requested: true,
-        },
-        transfers: {
-          requested: true,
-        },
-      },
-      business_profile: {
-        name: farmName,
-        product_description: "Farm2Home farmer marketplace seller",
-      },
-      metadata: {
-        farmerId: farmerId || "",
-        farmName,
-        source: "farm2home",
-      },
-    });
-
-    const accountLink = await stripe.accountLinks.create({
-      account: account.id,
-      refresh_url:
-        process.env.STRIPE_CONNECT_REFRESH_URL ||
-        "http://localhost:8081/farmer/connect-bank",
-      return_url:
-        process.env.STRIPE_CONNECT_RETURN_URL ||
-        "http://localhost:8081/farmer/connect-bank",
-      type: "account_onboarding",
-    });
-
-    return res.json({
-      success: true,
-      stripeAccountId: account.id,
-      onboardingUrl: accountLink.url,
-    });
-  } catch (error) {
-    console.log("Create farmer connect account error:", error);
-
-    return res.status(500).json({
-      error: error.message || "Unable to create farmer Stripe account.",
-    });
-  }
-});
-
-router.post("/check-farmer-connect-account", async (req, res) => {
-  try {
-    const { stripeAccountId } = req.body;
-
-    if (!stripeAccountId) {
-      return res.status(400).json({
-        error: "stripeAccountId is required.",
-      });
-    }
-
-    const account = await stripe.accounts.retrieve(stripeAccountId);
-
-    return res.json({
-      success: true,
-      stripeAccountId: account.id,
-      chargesEnabled: Boolean(account.charges_enabled),
-      payoutsEnabled: Boolean(account.payouts_enabled),
-      detailsSubmitted: Boolean(account.details_submitted),
-      requirements: account.requirements || {},
-    });
-  } catch (error) {
-    console.log("Check farmer connect account error:", error);
-
-    return res.status(500).json({
-      error: error.message || "Unable to check farmer Stripe account.",
-    });
-  }
-});
-
-router.post("/create-farmer-onboarding-link", async (req, res) => {
-  try {
-    const { stripeAccountId } = req.body;
-
-    if (!stripeAccountId) {
-      return res.status(400).json({
-        error: "stripeAccountId is required.",
-      });
-    }
-
-    await stripe.accounts.retrieve(stripeAccountId);
-
-    const accountLink = await stripe.accountLinks.create({
-      account: stripeAccountId,
-      refresh_url:
-        process.env.STRIPE_CONNECT_REFRESH_URL ||
-        "http://localhost:8081/farmer/connect-bank",
-      return_url:
-        process.env.STRIPE_CONNECT_RETURN_URL ||
-        "http://localhost:8081/farmer/connect-bank",
-      type: "account_onboarding",
-    });
-
-    return res.json({
-      success: true,
-      stripeAccountId,
-      onboardingUrl: accountLink.url,
-    });
-  } catch (error) {
-    console.log("Create farmer onboarding link error:", error);
-
-    return res.status(500).json({
-      error: error.message || "Unable to create onboarding link.",
-    });
-  }
-});
-
-router.post("/create-checkout-session", async (req, res) => {
-  try {
-    const { priceId, customerEmail, mode, successUrl, cancelUrl } = req.body;
-
-    if (!priceId) {
-      return res.status(400).json({
-        error: "priceId is required.",
-      });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
-        },
-      ],
-      mode: mode || "subscription",
-      customer_email: customerEmail || undefined,
-      success_url:
-        successUrl || "http://localhost:8081/customer/payment-success",
-      cancel_url: cancelUrl || "http://localhost:8081/customer/subscription",
-    });
-
-    return res.json({
-      success: true,
-      id: session.id,
-      url: session.url,
-    });
-  } catch (error) {
-    console.log("Create checkout session error:", error);
-
-    return res.status(500).json({
-      error: error.message || "Unable to create checkout session.",
-    });
-  }
-});
+/* =====================================================
+   SUBSCRIPTIONS: CUSTOMER / FARMER / FREIGHT / DRIVER
+===================================================== */
 
 router.post("/create-subscription-checkout", async (req, res) => {
   try {
-    const { customerEmail, planType, successUrl, cancelUrl } = req.body;
+    if (!requireStripe(res)) return;
 
-    const priceId =
-      planType === "farmer"
-        ? process.env.STRIPE_FARMER_MEMBERSHIP_PRICE_ID
-        : process.env.STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID;
+    const {
+      customerEmail,
+      email,
+      planType,
+      successUrl,
+      cancelUrl,
+      name,
+      username,
+      userId,
+      driverId,
+      farmerId,
+      freightId,
+      customerId,
+    } = req.body;
 
-    if (!priceId) {
+    const activeEmail = customerEmail || email || "";
+    const membership = getMembershipPriceId(planType);
+    const activeUserId =
+      userId ||
+      driverId ||
+      farmerId ||
+      freightId ||
+      customerId ||
+      activeEmail ||
+      "";
+
+    if (!membership.priceId) {
       return res.status(500).json({
-        error:
-          planType === "farmer"
-            ? "STRIPE_FARMER_MEMBERSHIP_PRICE_ID missing in .env."
-            : "STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID missing in .env.",
+        success: false,
+        error: `${membership.missingKey} missing in backend environment.`,
       });
     }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "subscription",
-      customer_email: customerEmail || undefined,
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
-        },
-      ],
+      customer_email: activeEmail || undefined,
+      line_items: [{ price: membership.priceId, quantity: 1 }],
       success_url:
-        successUrl || "http://localhost:8081/customer/subscription-success",
-      cancel_url: cancelUrl || "http://localhost:8081/customer/register",
+        successUrl ||
+        `${APP_URL}${membership.successPath}?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: cancelUrl || `${APP_URL}${membership.cancelPath}`,
       metadata: {
         type: "farm2home_membership",
-        planType: planType || "customer",
-      },
-    });
-
-    return res.json({
-      success: true,
-      id: session.id,
-      url: session.url,
-    });
-  } catch (error) {
-    console.log("Create subscription checkout error:", error);
-
-    return res.status(500).json({
-      error: error.message || "Unable to create subscription checkout.",
-    });
-  }
-});
-
-/**
- * FREIGHT SUBSCRIPTION CHECKOUT
- * Route used by Freight Register button:
- * POST http://localhost:4242/payments/create-freight-subscription-checkout
- */
-router.post("/create-freight-subscription-checkout", async (req, res) => {
-  try {
-    const { customerEmail, successUrl, cancelUrl, name, username } = req.body;
-
-    const priceId = process.env.STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID;
-
-    if (!priceId) {
-      return res.status(500).json({
-        error: "STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID missing in backend .env.",
-      });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      mode: "subscription",
-      customer_email: customerEmail || undefined,
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
-        },
-      ],
-      success_url:
-        successUrl || "http://localhost:8081/freight/subscription-success",
-      cancel_url: cancelUrl || "http://localhost:8081/freight/register",
-      metadata: {
-        type: "farm2home_freight_membership",
-        planType: "freight",
-        role: "freight",
+        planType: membership.role,
+        role: membership.role,
+        userId: activeUserId,
+        driverId: membership.role === "driver" ? activeUserId : "",
+        farmerId: membership.role === "farmer" ? activeUserId : "",
+        freightId: membership.role === "freight" ? activeUserId : "",
+        customerId: membership.role === "customer" ? activeUserId : "",
+        email: activeEmail,
         name: name || "",
         username: username || "",
       },
@@ -773,30 +516,306 @@ router.post("/create-freight-subscription-checkout", async (req, res) => {
     return res.json({
       success: true,
       id: session.id,
+      sessionId: session.id,
       url: session.url,
+      planType: membership.role,
     });
   } catch (error) {
-    console.log("Create freight subscription checkout error:", error);
+    console.log("Create subscription checkout error:", error);
 
     return res.status(500).json({
-      error: error.message || "Unable to create freight subscription checkout.",
+      success: false,
+      error: error.message || "Unable to create subscription checkout.",
     });
   }
 });
 
+router.post("/create-freight-subscription-checkout", async (req, res) => {
+  req.body.planType = "freight";
+  return router.handle(
+    { ...req, url: "/create-subscription-checkout", method: "POST" },
+    res
+  );
+});
+
+router.post("/create-driver-board-subscription-checkout", async (req, res) => {
+  req.body.planType = "driver";
+  return router.handle(
+    { ...req, url: "/create-subscription-checkout", method: "POST" },
+    res
+  );
+});
+
+/* =====================================================
+   VERIFY CHECKOUT SESSION
+===================================================== */
+
+router.post("/verify-checkout-session", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionId is required.",
+      });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ["subscription", "customer"],
+    });
+
+    const metadata = session.metadata || {};
+    const role = metadata.role || metadata.planType || "customer";
+
+    let subscriptionId = "";
+    let subscriptionStatus = "";
+    let currentPeriodEnd = null;
+
+    if (session.subscription) {
+      const subscription =
+        typeof session.subscription === "string"
+          ? await stripe.subscriptions.retrieve(session.subscription)
+          : session.subscription;
+
+      subscriptionId = subscription.id;
+      subscriptionStatus = subscription.status;
+      currentPeriodEnd = subscription.current_period_end
+        ? new Date(subscription.current_period_end * 1000).toISOString()
+        : null;
+
+      await saveSubscriptionToSupabase({
+        role,
+        userId: metadata.userId || metadata.driverId || metadata.farmerId || "",
+        email: metadata.email || session.customer_email || "",
+        name: metadata.name || "",
+        username: metadata.username || "",
+        stripeCustomerId:
+          typeof session.customer === "string"
+            ? session.customer
+            : session.customer?.id || "",
+        stripeSubscriptionId: subscriptionId,
+        currentPeriodEnd,
+        status: subscriptionStatus,
+      });
+    }
+
+    return res.json({
+      success: true,
+      sessionId: session.id,
+      paymentStatus: session.payment_status,
+      mode: session.mode,
+      planType: role,
+      subscriptionId,
+      subscriptionStatus,
+      currentPeriodEnd,
+      customerId:
+        typeof session.customer === "string"
+          ? session.customer
+          : session.customer?.id || "",
+      customerEmail: session.customer_email || metadata.email || "",
+      metadata,
+    });
+  } catch (error) {
+    console.log("Verify checkout session error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to verify checkout session.",
+    });
+  }
+});
+
+/* =====================================================
+   FARMER CONNECT ONBOARDING
+===================================================== */
+
+router.post("/create-farmer-connect-account", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const { email, farmName, farmerId, existingStripeAccountId } = req.body;
+
+    if (!email || !farmName) {
+      return res.status(400).json({
+        success: false,
+        error: "email and farmName are required.",
+      });
+    }
+
+    let stripeAccountId = existingStripeAccountId || "";
+
+    if (!stripeAccountId) {
+      const account = await stripe.accounts.create({
+        type: "express",
+        country: "US",
+        email,
+        business_type: "individual",
+        capabilities: {
+          transfers: { requested: true },
+        },
+        business_profile: {
+          name: farmName,
+          product_description: "Farm2Home farmer marketplace seller",
+        },
+        metadata: {
+          farmerId: farmerId || "",
+          farmName,
+          source: "farm2home",
+        },
+      });
+
+      stripeAccountId = account.id;
+    }
+
+    const refreshUrl = appendQueryParams(getConnectRefreshUrl(), {
+      stripeReturn: "false",
+      farmerId,
+      accountId: stripeAccountId,
+    });
+
+    const returnUrl = appendQueryParams(getConnectReturnUrl(), {
+      stripeReturn: "true",
+      farmerId,
+      accountId: stripeAccountId,
+    });
+
+    const accountLink = await stripe.accountLinks.create({
+      account: stripeAccountId,
+      refresh_url: refreshUrl,
+      return_url: returnUrl,
+      type: "account_onboarding",
+    });
+
+    return res.json({
+      success: true,
+      stripeAccountId,
+      accountId: stripeAccountId,
+      onboardingUrl: accountLink.url,
+      url: accountLink.url,
+    });
+  } catch (error) {
+    console.log("Create farmer connect account error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to create farmer Stripe account.",
+    });
+  }
+});
+
+router.post("/check-farmer-connect-account", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const { stripeAccountId, accountId } = req.body;
+    const activeAccountId = stripeAccountId || accountId;
+
+    if (!activeAccountId) {
+      return res.status(400).json({
+        success: false,
+        error: "stripeAccountId is required.",
+      });
+    }
+
+    const account = await stripe.accounts.retrieve(activeAccountId, {
+      expand: ["external_accounts"],
+    });
+
+    return res.json({
+      success: true,
+      stripeAccountId: account.id,
+      accountId: account.id,
+      chargesEnabled: Boolean(account.charges_enabled),
+      payoutsEnabled: Boolean(account.payouts_enabled),
+      detailsSubmitted: Boolean(account.details_submitted),
+      onboardingComplete: Boolean(account.details_submitted),
+      requirements: account.requirements || {},
+    });
+  } catch (error) {
+    console.log("Check farmer connect account error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to check farmer Stripe account.",
+    });
+  }
+});
+
+router.post("/create-farmer-onboarding-link", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const { stripeAccountId, accountId, farmerId } = req.body;
+    const activeAccountId = stripeAccountId || accountId;
+
+    if (!activeAccountId) {
+      return res.status(400).json({
+        success: false,
+        error: "stripeAccountId is required.",
+      });
+    }
+
+    await stripe.accounts.retrieve(activeAccountId);
+
+    const refreshUrl = appendQueryParams(getConnectRefreshUrl(), {
+      stripeReturn: "false",
+      farmerId,
+      accountId: activeAccountId,
+    });
+
+    const returnUrl = appendQueryParams(getConnectReturnUrl(), {
+      stripeReturn: "true",
+      farmerId,
+      accountId: activeAccountId,
+    });
+
+    const accountLink = await stripe.accountLinks.create({
+      account: activeAccountId,
+      refresh_url: refreshUrl,
+      return_url: returnUrl,
+      type: "account_onboarding",
+    });
+
+    return res.json({
+      success: true,
+      stripeAccountId: activeAccountId,
+      accountId: activeAccountId,
+      onboardingUrl: accountLink.url,
+      url: accountLink.url,
+    });
+  } catch (error) {
+    console.log("Create farmer onboarding link error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to create onboarding link.",
+    });
+  }
+});
+
+/* =====================================================
+   CUSTOMER PORTAL
+===================================================== */
+
 router.post("/create-customer-portal", async (req, res) => {
   try {
+    if (!requireStripe(res)) return;
+
     const { customerId } = req.body;
 
     if (!customerId) {
       return res.status(400).json({
+        success: false,
         error: "customerId is required.",
       });
     }
 
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: "http://localhost:8081",
+      return_url: APP_URL,
     });
 
     return res.json({
@@ -807,6 +826,7 @@ router.post("/create-customer-portal", async (req, res) => {
     console.log("Create customer portal error:", error);
 
     return res.status(500).json({
+      success: false,
       error: error.message || "Unable to create customer portal.",
     });
   }
