@@ -14,15 +14,23 @@ const API_BASE_URL =
   process.env.API_BASE_URL ||
   "https://farm2home-production-e4bd.up.railway.app";
 
+const FARM2HOME_SERVICE_FEE_PERCENT = Number(
+  process.env.FARM2HOME_SERVICE_FEE_PERCENT || 4
+);
+
 const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY)
   : null;
 
 const supabase =
   process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-        realtime: { transport: ws },
-      })
+    ? createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY,
+        {
+          realtime: { transport: ws },
+        }
+      )
     : null;
 
 const pendingMarketplaceSplits = new Map();
@@ -130,10 +138,15 @@ function getMembershipPriceId(planType) {
   if (normalizedPlan === "farmer") {
     return {
       role: "farmer",
-      priceId: process.env.STRIPE_FARMER_MEMBERSHIP_PRICE_ID,
-      missingKey: "STRIPE_FARMER_MEMBERSHIP_PRICE_ID",
+      priceId:
+        process.env.STRIPE_FARMER_APPLICATION_FEE_PRICE_ID ||
+        process.env.STRIPE_FARMER_MEMBERSHIP_PRICE_ID,
+      missingKey:
+        "STRIPE_FARMER_APPLICATION_FEE_PRICE_ID or STRIPE_FARMER_MEMBERSHIP_PRICE_ID",
+      mode: "payment",
       successPath: "/farmer/subscription-success",
       cancelPath: "/farmer/register",
+      paymentType: "one_time_application_fee",
     };
   }
 
@@ -142,8 +155,10 @@ function getMembershipPriceId(planType) {
       role: "freight",
       priceId: process.env.STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID,
       missingKey: "STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID",
+      mode: "subscription",
       successPath: "/freight/subscription-success",
       cancelPath: "/freight/register",
+      paymentType: "subscription",
     };
   }
 
@@ -155,8 +170,10 @@ function getMembershipPriceId(planType) {
         process.env.STRIPE_DRIVER_MEMBERSHIP_PRICE_ID,
       missingKey:
         "STRIPE_DRIVER_BOARD_PRICE_ID or STRIPE_DRIVER_MEMBERSHIP_PRICE_ID",
+      mode: "subscription",
       successPath: "/driver/subscription-success",
       cancelPath: "/driver/subscription",
+      paymentType: "subscription",
     };
   }
 
@@ -164,8 +181,10 @@ function getMembershipPriceId(planType) {
     role: "customer",
     priceId: process.env.STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID,
     missingKey: "STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID",
+    mode: "subscription",
     successPath: "/customer/subscription-success",
     cancelPath: "/customer/register",
+    paymentType: "subscription",
   };
 }
 
@@ -271,11 +290,18 @@ router.get("/health", (req, res) => {
     apiBaseUrl: API_BASE_URL,
     stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
     supabaseConfigured: Boolean(supabase),
+    farmerApplicationFeeConfigured: Boolean(
+      process.env.STRIPE_FARMER_APPLICATION_FEE_PRICE_ID ||
+        process.env.STRIPE_FARMER_MEMBERSHIP_PRICE_ID
+    ),
+    serviceFeePercent: FARM2HOME_SERVICE_FEE_PERCENT,
   });
 });
 
 /* =====================================================
    MARKETPLACE CHECKOUT WITH FARMER SPLITS
+   Farm2Home service fee is automatically 4%.
+   Farmers receive product subtotal only.
 ===================================================== */
 
 router.post("/create-marketplace-checkout", async (req, res) => {
@@ -309,6 +335,40 @@ router.post("/create-marketplace-checkout", async (req, res) => {
       });
     }
 
+    const productSubtotal =
+      safeNumber(subtotal, 0) > 0
+        ? safeNumber(subtotal, 0)
+        : cart.reduce((sum, item) => {
+            return (
+              sum + safeNumber(item.price, 0) * safeNumber(item.quantity, 1)
+            );
+          }, 0);
+
+    const calculatedServiceFee =
+      safeNumber(serviceFee, 0) > 0
+        ? safeNumber(serviceFee, 0)
+        : Number(
+            (
+              productSubtotal *
+              (FARM2HOME_SERVICE_FEE_PERCENT / 100)
+            ).toFixed(2)
+          );
+
+    const calculatedDeliveryFee = safeNumber(deliveryFee, 0);
+    const calculatedTip = safeNumber(tip, 0);
+
+    const calculatedTotal =
+      safeNumber(total, 0) > 0
+        ? safeNumber(total, 0)
+        : Number(
+            (
+              productSubtotal +
+              calculatedServiceFee +
+              calculatedDeliveryFee +
+              calculatedTip
+            ).toFixed(2)
+          );
+
     const orderId = cloudOrderId || `order_${Date.now()}`;
     const farmerGroups = groupCartByFarmer(cart);
 
@@ -338,43 +398,53 @@ router.post("/create-marketplace-checkout", async (req, res) => {
 
     const fees = [];
 
-    if (safeNumber(serviceFee, 0) > 0) {
+    if (safeNumber(calculatedServiceFee, 0) > 0) {
       fees.push({
         price_data: {
           currency: "usd",
           product_data: {
             name: "Farm2Home Marketplace Service Fee",
-            metadata: { itemType: "farm2home_fee" },
+            metadata: {
+              itemType: "farm2home_fee",
+              feeType: "marketplace_service_fee",
+              feePercent: String(FARM2HOME_SERVICE_FEE_PERCENT),
+            },
           },
-          unit_amount: toCents(serviceFee),
+          unit_amount: toCents(calculatedServiceFee),
         },
         quantity: 1,
       });
     }
 
-    if (safeNumber(deliveryFee, 0) > 0) {
+    if (calculatedDeliveryFee > 0) {
       fees.push({
         price_data: {
           currency: "usd",
           product_data: {
             name: "Farm2Home Delivery Fee",
-            metadata: { itemType: "farm2home_fee" },
+            metadata: {
+              itemType: "farm2home_fee",
+              feeType: "delivery_fee",
+            },
           },
-          unit_amount: toCents(deliveryFee),
+          unit_amount: toCents(calculatedDeliveryFee),
         },
         quantity: 1,
       });
     }
 
-    if (safeNumber(tip, 0) > 0) {
+    if (calculatedTip > 0) {
       fees.push({
         price_data: {
           currency: "usd",
           product_data: {
             name: "Farm2Home Tip",
-            metadata: { itemType: "farm2home_fee" },
+            metadata: {
+              itemType: "farm2home_fee",
+              feeType: "tip",
+            },
           },
-          unit_amount: toCents(tip),
+          unit_amount: toCents(calculatedTip),
         },
         quantity: 1,
       });
@@ -396,12 +466,16 @@ router.post("/create-marketplace-checkout", async (req, res) => {
         metadata: {
           orderId,
           type: "farm2home_marketplace_payment",
+          serviceFeePercent: String(FARM2HOME_SERVICE_FEE_PERCENT),
+          serviceFeeAmount: String(calculatedServiceFee),
         },
       },
       metadata: {
         orderId,
         type: "farm2home_marketplace_checkout",
         farmerSplitCount: String(farmerSplits.length),
+        serviceFeePercent: String(FARM2HOME_SERVICE_FEE_PERCENT),
+        serviceFeeAmount: String(calculatedServiceFee),
       },
       success_url: checkoutSuccessUrl,
       cancel_url: checkoutCancelUrl,
@@ -413,11 +487,12 @@ router.post("/create-marketplace-checkout", async (req, res) => {
       farmerSplits,
       cart,
       customerEmail: customerEmail || "",
-      subtotal: safeNumber(subtotal, 0),
-      serviceFee: safeNumber(serviceFee, 0),
-      deliveryFee: safeNumber(deliveryFee, 0),
-      tip: safeNumber(tip, 0),
-      total: safeNumber(total, 0),
+      subtotal: productSubtotal,
+      serviceFee: calculatedServiceFee,
+      serviceFeePercent: FARM2HOME_SERVICE_FEE_PERCENT,
+      deliveryFee: calculatedDeliveryFee,
+      tip: calculatedTip,
+      total: calculatedTotal,
       deliveryInfo: {
         deliveryOption,
         deliveryAddress,
@@ -437,6 +512,12 @@ router.post("/create-marketplace-checkout", async (req, res) => {
       url: session.url,
       orderId,
       farmerSplits,
+      subtotal: productSubtotal,
+      serviceFee: calculatedServiceFee,
+      serviceFeePercent: FARM2HOME_SERVICE_FEE_PERCENT,
+      deliveryFee: calculatedDeliveryFee,
+      tip: calculatedTip,
+      total: calculatedTotal,
     });
   } catch (error) {
     console.log("Create marketplace checkout error:", error);
@@ -449,7 +530,7 @@ router.post("/create-marketplace-checkout", async (req, res) => {
 });
 
 /* =====================================================
-   SUBSCRIPTIONS: CUSTOMER / FARMER / FREIGHT / DRIVER
+   SUBSCRIPTIONS / ONE-TIME FARMER APPLICATION FEE
 ===================================================== */
 
 router.post("/create-subscription-checkout", async (req, res) => {
@@ -473,6 +554,7 @@ router.post("/create-subscription-checkout", async (req, res) => {
 
     const activeEmail = customerEmail || email || "";
     const membership = getMembershipPriceId(planType);
+
     const activeUserId =
       userId ||
       driverId ||
@@ -491,7 +573,7 @@ router.post("/create-subscription-checkout", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      mode: "subscription",
+      mode: membership.mode || "subscription",
       customer_email: activeEmail || undefined,
       line_items: [{ price: membership.priceId, quantity: 1 }],
       success_url:
@@ -499,9 +581,13 @@ router.post("/create-subscription-checkout", async (req, res) => {
         `${APP_URL}${membership.successPath}?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: cancelUrl || `${APP_URL}${membership.cancelPath}`,
       metadata: {
-        type: "farm2home_membership",
+        type:
+          membership.role === "farmer"
+            ? "farm2home_farmer_application_fee"
+            : "farm2home_membership",
         planType: membership.role,
         role: membership.role,
+        paymentType: membership.paymentType,
         userId: activeUserId,
         driverId: membership.role === "driver" ? activeUserId : "",
         farmerId: membership.role === "farmer" ? activeUserId : "",
@@ -519,6 +605,8 @@ router.post("/create-subscription-checkout", async (req, res) => {
       sessionId: session.id,
       url: session.url,
       planType: membership.role,
+      mode: membership.mode || "subscription",
+      paymentType: membership.paymentType,
     });
   } catch (error) {
     console.log("Create subscription checkout error:", error);
@@ -540,6 +628,14 @@ router.post("/create-freight-subscription-checkout", async (req, res) => {
 
 router.post("/create-driver-board-subscription-checkout", async (req, res) => {
   req.body.planType = "driver";
+  return router.handle(
+    { ...req, url: "/create-subscription-checkout", method: "POST" },
+    res
+  );
+});
+
+router.post("/create-farmer-application-checkout", async (req, res) => {
+  req.body.planType = "farmer";
   return router.handle(
     { ...req, url: "/create-subscription-checkout", method: "POST" },
     res
@@ -608,6 +704,7 @@ router.post("/verify-checkout-session", async (req, res) => {
       paymentStatus: session.payment_status,
       mode: session.mode,
       planType: role,
+      paymentType: metadata.paymentType || "",
       subscriptionId,
       subscriptionStatus,
       currentPeriodEnd,
