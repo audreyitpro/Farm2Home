@@ -2,17 +2,36 @@
 
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
+const ws = require("ws");
 
 const router = express.Router();
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+/* ====================================================
+   SUPABASE
+==================================================== */
+
+const supabaseUrl =
+  process.env.SUPABASE_URL ||
+  process.env.EXPO_PUBLIC_SUPABASE_URL;
+
+const supabaseServiceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env");
+  console.error(
+    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env"
+  );
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(
+  supabaseUrl,
+  supabaseServiceKey,
+  {
+    realtime: {
+      transport: ws,
+    },
+  }
+);
 
 /* ====================================================
    HELPERS
@@ -28,8 +47,7 @@ function toNumber(value, fallback = 0) {
 }
 
 function requireFields(body, fields) {
-  const missing = fields.filter((field) => !body[field]);
-  return missing;
+  return fields.filter((field) => !body[field]);
 }
 
 async function checkDriverSubscription(driverId) {
@@ -58,6 +76,9 @@ router.get("/health", async (req, res) => {
   return res.json({
     success: true,
     message: "Driver routes running",
+    supabaseConfigured: Boolean(
+      supabaseUrl && supabaseServiceKey
+    ),
   });
 });
 
@@ -76,40 +97,48 @@ router.post("/add-farmer-driver", async (req, res) => {
     if (!farmerId || !driverName || !driverEmail) {
       return res.status(400).json({
         success: false,
-        error: "Farmer ID, driver name, and driver email are required.",
+        error:
+          "Farmer ID, driver name, and driver email are required.",
       });
     }
 
-    const { data: existingDriver, error: existingError } = await supabase
-      .from("farmer_drivers")
-      .select("*")
-      .eq("farmer_id", farmerId)
-      .eq("driver_email", driverEmail)
-      .maybeSingle();
+    const { data: existingDriver, error: existingError } =
+      await supabase
+        .from("farmer_drivers")
+        .select("*")
+        .eq("farmer_id", farmerId)
+        .eq("driver_email", driverEmail)
+        .maybeSingle();
 
     if (existingError) throw existingError;
 
     if (existingDriver) {
-      const { data: updatedDriver, error: updateError } = await supabase
-        .from("farmer_drivers")
-        .update({
-          driver_id: driverId || existingDriver.driver_id || null,
-          driver_name: driverName,
-          driver_phone: driverPhone || existingDriver.driver_phone || "",
-          status: "active",
-          invite_status: "approved",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingDriver.id)
-        .select()
-        .single();
+      const { data: updatedDriver, error: updateError } =
+        await supabase
+          .from("farmer_drivers")
+          .update({
+            driver_id:
+              driverId || existingDriver.driver_id || null,
+            driver_name: driverName,
+            driver_phone:
+              driverPhone ||
+              existingDriver.driver_phone ||
+              "",
+            status: "active",
+            invite_status: "approved",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingDriver.id)
+          .select()
+          .single();
 
       if (updateError) throw updateError;
 
       return res.json({
         success: true,
         driver: updatedDriver,
-        message: "Driver already existed and was updated.",
+        message:
+          "Driver already existed and was updated.",
       });
     }
 
@@ -141,7 +170,8 @@ router.post("/add-farmer-driver", async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to add farmer driver.",
+      error:
+        error.message || "Unable to add farmer driver.",
     });
   }
 });
@@ -179,7 +209,9 @@ router.get("/farmer-drivers/:farmerId", async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to fetch farmer drivers.",
+      error:
+        error.message ||
+        "Unable to fetch farmer drivers.",
     });
   }
 });
@@ -190,13 +222,17 @@ router.get("/farmer-drivers/:farmerId", async (req, res) => {
 
 router.post("/remove-farmer-driver", async (req, res) => {
   try {
-    const farmerDriverId = cleanString(req.body.farmerDriverId);
+    const farmerDriverId = cleanString(
+      req.body.farmerDriverId
+    );
+
     const farmerId = cleanString(req.body.farmerId);
 
     if (!farmerDriverId || !farmerId) {
       return res.status(400).json({
         success: false,
-        error: "Farmer driver ID and farmer ID are required.",
+        error:
+          "Farmer driver ID and farmer ID are required.",
       });
     }
 
@@ -223,14 +259,15 @@ router.post("/remove-farmer-driver", async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to remove farmer driver.",
+      error:
+        error.message ||
+        "Unable to remove farmer driver.",
     });
   }
 });
 
 /* ====================================================
    CREATE DELIVERY JOB
-   Preferred drivers get first visibility for 10 minutes.
 ==================================================== */
 
 router.post("/create-delivery-job", async (req, res) => {
@@ -238,16 +275,36 @@ router.post("/create-delivery-job", async (req, res) => {
     const orderId = cleanString(req.body.orderId);
     const farmerId = cleanString(req.body.farmerId);
     const customerId = cleanString(req.body.customerId);
+
     const farmName = cleanString(req.body.farmName);
     const customerName = cleanString(req.body.customerName);
     const customerPhone = cleanString(req.body.customerPhone);
-    const pickupAddress = cleanString(req.body.pickupAddress);
-    const dropoffAddress = cleanString(req.body.dropoffAddress);
-    const deliveryWindow = cleanString(req.body.deliveryWindow);
-    const pickupNotes = cleanString(req.body.pickupNotes);
-    const deliveryNotes = cleanString(req.body.deliveryNotes);
 
-    const payoutAmount = toNumber(req.body.payoutAmount, 0);
+    const pickupAddress = cleanString(
+      req.body.pickupAddress
+    );
+
+    const dropoffAddress = cleanString(
+      req.body.dropoffAddress
+    );
+
+    const deliveryWindow = cleanString(
+      req.body.deliveryWindow
+    );
+
+    const pickupNotes = cleanString(
+      req.body.pickupNotes
+    );
+
+    const deliveryNotes = cleanString(
+      req.body.deliveryNotes
+    );
+
+    const payoutAmount = toNumber(
+      req.body.payoutAmount,
+      0
+    );
+
     const miles = toNumber(req.body.miles, 0);
 
     const missing = requireFields(
@@ -257,21 +314,29 @@ router.post("/create-delivery-job", async (req, res) => {
         pickupAddress,
         dropoffAddress,
       },
-      ["orderId", "farmerId", "pickupAddress", "dropoffAddress"]
+      [
+        "orderId",
+        "farmerId",
+        "pickupAddress",
+        "dropoffAddress",
+      ]
     );
 
     if (missing.length > 0) {
       return res.status(400).json({
         success: false,
-        error: `Missing required fields: ${missing.join(", ")}`,
+        error: `Missing required fields: ${missing.join(
+          ", "
+        )}`,
       });
     }
 
-    const { data: existingJob, error: existingError } = await supabase
-      .from("delivery_jobs")
-      .select("*")
-      .eq("order_id", orderId)
-      .maybeSingle();
+    const { data: existingJob, error: existingError } =
+      await supabase
+        .from("delivery_jobs")
+        .select("*")
+        .eq("order_id", orderId)
+        .maybeSingle();
 
     if (existingError) throw existingError;
 
@@ -280,11 +345,14 @@ router.post("/create-delivery-job", async (req, res) => {
         success: true,
         deliveryJob: existingJob,
         alreadyExists: true,
-        message: "Delivery job already exists for this order.",
+        message:
+          "Delivery job already exists for this order.",
       });
     }
 
-    const preferredUntil = new Date(Date.now() + 1000 * 60 * 10).toISOString();
+    const preferredUntil = new Date(
+      Date.now() + 1000 * 60 * 10
+    ).toISOString();
 
     const { data, error } = await supabase
       .from("delivery_jobs")
@@ -323,14 +391,15 @@ router.post("/create-delivery-job", async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to create delivery job.",
+      error:
+        error.message ||
+        "Unable to create delivery job.",
     });
   }
 });
 
 /* ====================================================
-   GET DRIVER BOARD JOBS
-   Open board requires active driver subscription.
+   DRIVER BOARD
 ==================================================== */
 
 router.get("/driver-board", async (req, res) => {
@@ -339,13 +408,15 @@ router.get("/driver-board", async (req, res) => {
     const farmerId = cleanString(req.query.farmerId);
 
     if (driverId) {
-      const hasActiveSubscription = await checkDriverSubscription(driverId);
+      const hasActiveSubscription =
+        await checkDriverSubscription(driverId);
 
       if (!hasActiveSubscription) {
         return res.status(403).json({
           success: false,
           subscriptionRequired: true,
-          error: "Active driver subscription is required to use the driver board.",
+          error:
+            "Active driver subscription is required to use the driver board.",
         });
       }
     }
@@ -366,8 +437,13 @@ router.get("/driver-board", async (req, res) => {
     let query = supabase
       .from("delivery_jobs")
       .select("*")
-      .in("status", ["open_board", "preferred_pending"])
-      .order("created_at", { ascending: false });
+      .in("status", [
+        "open_board",
+        "preferred_pending",
+      ])
+      .order("created_at", {
+        ascending: false,
+      });
 
     if (farmerId) {
       query = query.eq("farmer_id", farmerId);
@@ -386,46 +462,9 @@ router.get("/driver-board", async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to fetch driver board.",
-    });
-  }
-});
-
-/* ====================================================
-   GET FARMER PREFERRED JOBS
-==================================================== */
-
-router.get("/preferred-jobs/:farmerId", async (req, res) => {
-  try {
-    const farmerId = cleanString(req.params.farmerId);
-
-    if (!farmerId) {
-      return res.status(400).json({
-        success: false,
-        error: "Farmer ID is required.",
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("delivery_jobs")
-      .select("*")
-      .eq("farmer_id", farmerId)
-      .eq("visibility", "preferred_only")
-      .eq("status", "preferred_pending")
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    return res.json({
-      success: true,
-      jobs: data || [],
-    });
-  } catch (error) {
-    console.error("GET PREFERRED JOBS ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message || "Unable to fetch preferred jobs.",
+      error:
+        error.message ||
+        "Unable to fetch driver board.",
     });
   }
 });
@@ -436,60 +475,41 @@ router.get("/preferred-jobs/:farmerId", async (req, res) => {
 
 router.post("/accept-delivery-job", async (req, res) => {
   try {
-    const deliveryJobId = cleanString(req.body.deliveryJobId);
+    const deliveryJobId = cleanString(
+      req.body.deliveryJobId
+    );
+
     const driverId = cleanString(req.body.driverId);
-    const driverName = cleanString(req.body.driverName);
-    const driverEmail = cleanString(req.body.driverEmail).toLowerCase();
-    const driverPhone = cleanString(req.body.driverPhone);
+
+    const driverName = cleanString(
+      req.body.driverName
+    );
+
+    const driverEmail = cleanString(
+      req.body.driverEmail
+    ).toLowerCase();
+
+    const driverPhone = cleanString(
+      req.body.driverPhone
+    );
 
     if (!deliveryJobId || !driverId) {
       return res.status(400).json({
         success: false,
-        error: "Delivery job ID and driver ID are required.",
+        error:
+          "Delivery job ID and driver ID are required.",
       });
     }
 
-    const hasActiveSubscription = await checkDriverSubscription(driverId);
+    const hasActiveSubscription =
+      await checkDriverSubscription(driverId);
 
     if (!hasActiveSubscription) {
       return res.status(403).json({
         success: false,
         subscriptionRequired: true,
-        error: "Active driver subscription is required to accept delivery jobs.",
-      });
-    }
-
-    const { data: currentJob, error: currentJobError } = await supabase
-      .from("delivery_jobs")
-      .select("*")
-      .eq("id", deliveryJobId)
-      .maybeSingle();
-
-    if (currentJobError) throw currentJobError;
-
-    if (!currentJob) {
-      return res.status(404).json({
-        success: false,
-        error: "Delivery job not found.",
-      });
-    }
-
-    if (
-      currentJob.status !== "open_board" &&
-      currentJob.status !== "preferred_pending"
-    ) {
-      return res.status(409).json({
-        success: false,
-        error: "This delivery job is no longer available.",
-        job: currentJob,
-      });
-    }
-
-    if (currentJob.assigned_driver_id) {
-      return res.status(409).json({
-        success: false,
-        error: "This delivery job has already been accepted.",
-        job: currentJob,
+        error:
+          "Active driver subscription is required to accept delivery jobs.",
       });
     }
 
@@ -507,7 +527,6 @@ router.post("/accept-delivery-job", async (req, res) => {
       })
       .eq("id", deliveryJobId)
       .is("assigned_driver_id", null)
-      .in("status", ["open_board", "preferred_pending"])
       .select()
       .single();
 
@@ -516,58 +535,16 @@ router.post("/accept-delivery-job", async (req, res) => {
     return res.json({
       success: true,
       job: data,
-      message: `${driverName || "Driver"} accepted delivery.`,
+      message: "Delivery job accepted.",
     });
   } catch (error) {
     console.error("ACCEPT DELIVERY JOB ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to accept delivery job.",
-    });
-  }
-});
-
-/* ====================================================
-   GET DRIVER ASSIGNED JOBS
-==================================================== */
-
-router.get("/assigned-jobs/:driverId", async (req, res) => {
-  try {
-    const driverId = cleanString(req.params.driverId);
-
-    if (!driverId) {
-      return res.status(400).json({
-        success: false,
-        error: "Driver ID is required.",
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("delivery_jobs")
-      .select("*")
-      .eq("assigned_driver_id", driverId)
-      .in("status", [
-        "accepted",
-        "arrived_pickup",
-        "picked_up",
-        "arrived_dropoff",
-        "completed",
-      ])
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    return res.json({
-      success: true,
-      jobs: data || [],
-    });
-  } catch (error) {
-    console.error("GET DRIVER ASSIGNED JOBS ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message || "Unable to fetch assigned jobs.",
+      error:
+        error.message ||
+        "Unable to accept delivery job.",
     });
   }
 });
@@ -578,37 +555,19 @@ router.get("/assigned-jobs/:driverId", async (req, res) => {
 
 router.post("/update-delivery-status", async (req, res) => {
   try {
-    const deliveryJobId = cleanString(req.body.deliveryJobId);
-    const driverId = cleanString(req.body.driverId);
-    const status = cleanString(req.body.status);
+    const deliveryJobId = cleanString(
+      req.body.deliveryJobId
+    );
 
-    const proofOfPickupUrl = cleanString(req.body.proofOfPickupUrl);
-    const proofOfDeliveryUrl = cleanString(req.body.proofOfDeliveryUrl);
-    const pickupNotes = cleanString(req.body.pickupNotes);
-    const deliveryNotes = cleanString(req.body.deliveryNotes);
+    const driverId = cleanString(req.body.driverId);
+
+    const status = cleanString(req.body.status);
 
     if (!deliveryJobId || !status) {
       return res.status(400).json({
         success: false,
-        error: "Delivery job ID and status are required.",
-      });
-    }
-
-    const allowedStatuses = [
-      "accepted",
-      "arrived_pickup",
-      "picked_up",
-      "arrived_dropoff",
-      "completed",
-      "cancelled",
-    ];
-
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        error: `Invalid delivery status. Allowed statuses: ${allowedStatuses.join(
-          ", "
-        )}`,
+        error:
+          "Delivery job ID and status are required.",
       });
     }
 
@@ -618,41 +577,32 @@ router.post("/update-delivery-status", async (req, res) => {
     };
 
     if (status === "arrived_pickup") {
-      updatePayload.arrived_pickup_at = new Date().toISOString();
+      updatePayload.arrived_pickup_at =
+        new Date().toISOString();
     }
 
     if (status === "picked_up") {
-      updatePayload.picked_up_at = new Date().toISOString();
+      updatePayload.picked_up_at =
+        new Date().toISOString();
     }
 
     if (status === "arrived_dropoff") {
-      updatePayload.arrived_dropoff_at = new Date().toISOString();
+      updatePayload.arrived_dropoff_at =
+        new Date().toISOString();
     }
 
     if (status === "completed") {
-      updatePayload.delivered_at = new Date().toISOString();
+      updatePayload.delivered_at =
+        new Date().toISOString();
+
       updatePayload.visibility = "completed";
     }
 
     if (status === "cancelled") {
-      updatePayload.cancelled_at = new Date().toISOString();
+      updatePayload.cancelled_at =
+        new Date().toISOString();
+
       updatePayload.visibility = "cancelled";
-    }
-
-    if (proofOfPickupUrl) {
-      updatePayload.proof_of_pickup_url = proofOfPickupUrl;
-    }
-
-    if (proofOfDeliveryUrl) {
-      updatePayload.proof_of_delivery_url = proofOfDeliveryUrl;
-    }
-
-    if (pickupNotes) {
-      updatePayload.pickup_notes = pickupNotes;
-    }
-
-    if (deliveryNotes) {
-      updatePayload.delivery_notes = deliveryNotes;
     }
 
     let query = supabase
@@ -661,10 +611,14 @@ router.post("/update-delivery-status", async (req, res) => {
       .eq("id", deliveryJobId);
 
     if (driverId) {
-      query = query.eq("assigned_driver_id", driverId);
+      query = query.eq(
+        "assigned_driver_id",
+        driverId
+      );
     }
 
-    const { data, error } = await query.select().single();
+    const { data, error } =
+      await query.select().single();
 
     if (error) throw error;
 
@@ -674,11 +628,16 @@ router.post("/update-delivery-status", async (req, res) => {
       message: "Delivery status updated.",
     });
   } catch (error) {
-    console.error("UPDATE DELIVERY STATUS ERROR:", error);
+    console.error(
+      "UPDATE DELIVERY STATUS ERROR:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to update delivery status.",
+      error:
+        error.message ||
+        "Unable to update delivery status.",
     });
   }
 });
@@ -690,15 +649,27 @@ router.post("/update-delivery-status", async (req, res) => {
 router.post("/save-driver-subscription", async (req, res) => {
   try {
     const driverId = cleanString(req.body.driverId);
-    const driverEmail = cleanString(req.body.driverEmail).toLowerCase();
-    const stripeCustomerId = cleanString(req.body.stripeCustomerId);
-    const stripeSubscriptionId = cleanString(req.body.stripeSubscriptionId);
-    const currentPeriodEnd = req.body.currentPeriodEnd || null;
+
+    const driverEmail = cleanString(
+      req.body.driverEmail
+    ).toLowerCase();
+
+    const stripeCustomerId = cleanString(
+      req.body.stripeCustomerId
+    );
+
+    const stripeSubscriptionId = cleanString(
+      req.body.stripeSubscriptionId
+    );
+
+    const currentPeriodEnd =
+      req.body.currentPeriodEnd || null;
 
     if (!driverId || !stripeSubscriptionId) {
       return res.status(400).json({
         success: false,
-        error: "Driver ID and Stripe subscription ID are required.",
+        error:
+          "Driver ID and Stripe subscription ID are required.",
       });
     }
 
@@ -710,10 +681,13 @@ router.post("/save-driver-subscription", async (req, res) => {
             driver_id: driverId,
             driver_email: driverEmail,
             stripe_customer_id: stripeCustomerId,
-            stripe_subscription_id: stripeSubscriptionId,
+            stripe_subscription_id:
+              stripeSubscriptionId,
             subscription_status: "active",
-            current_period_end: currentPeriodEnd,
-            updated_at: new Date().toISOString(),
+            current_period_end:
+              currentPeriodEnd,
+            updated_at:
+              new Date().toISOString(),
           },
         ],
         {
@@ -731,11 +705,16 @@ router.post("/save-driver-subscription", async (req, res) => {
       message: "Driver subscription saved.",
     });
   } catch (error) {
-    console.error("SAVE DRIVER SUBSCRIPTION ERROR:", error);
+    console.error(
+      "SAVE DRIVER SUBSCRIPTION ERROR:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to save driver subscription.",
+      error:
+        error.message ||
+        "Unable to save driver subscription.",
     });
   }
 });
@@ -744,38 +723,50 @@ router.post("/save-driver-subscription", async (req, res) => {
    CHECK DRIVER SUBSCRIPTION
 ==================================================== */
 
-router.get("/subscription-status/:driverId", async (req, res) => {
-  try {
-    const driverId = cleanString(req.params.driverId);
+router.get(
+  "/subscription-status/:driverId",
+  async (req, res) => {
+    try {
+      const driverId = cleanString(
+        req.params.driverId
+      );
 
-    if (!driverId) {
-      return res.status(400).json({
+      if (!driverId) {
+        return res.status(400).json({
+          success: false,
+          error: "Driver ID is required.",
+        });
+      }
+
+      const { data, error } = await supabase
+        .from("driver_subscriptions")
+        .select("*")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return res.json({
+        success: true,
+        hasActiveSubscription:
+          data?.subscription_status ===
+          "active",
+        subscription: data || null,
+      });
+    } catch (error) {
+      console.error(
+        "CHECK DRIVER SUBSCRIPTION ERROR:",
+        error
+      );
+
+      return res.status(500).json({
         success: false,
-        error: "Driver ID is required.",
+        error:
+          error.message ||
+          "Unable to check driver subscription.",
       });
     }
-
-    const { data, error } = await supabase
-      .from("driver_subscriptions")
-      .select("*")
-      .eq("driver_id", driverId)
-      .maybeSingle();
-
-    if (error) throw error;
-
-    return res.json({
-      success: true,
-      hasActiveSubscription: data?.subscription_status === "active",
-      subscription: data || null,
-    });
-  } catch (error) {
-    console.error("CHECK DRIVER SUBSCRIPTION ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message || "Unable to check driver subscription.",
-    });
   }
-});
+);
 
 module.exports = router;
