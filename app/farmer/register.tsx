@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useState } from "react";
 import {
   Alert,
@@ -10,13 +11,13 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
+
 import { addFarmer, Farmer } from "../data/farmerStore";
 import {
   createVerificationRecordFromFarmer,
   upsertVerificationRecord,
 } from "../data/adminStore";
-
-const API_BASE_URL = "http://localhost:4242";
 
 const productOptions = [
   "Produce",
@@ -31,6 +32,8 @@ const productOptions = [
   "Herbs",
   "Baked Goods",
   "Jams",
+  "Bale of Hay",
+  "Live Stock",
 ];
 
 export default function FarmerRegister() {
@@ -78,13 +81,16 @@ export default function FarmerRegister() {
     selectedProducts: string[];
   }) {
     try {
-      const response = await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(farmer),
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/notify/farmer-verification`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(farmer),
+        }
+      );
 
       const data = await response.json();
 
@@ -104,17 +110,26 @@ export default function FarmerRegister() {
       !email.trim() ||
       !phone.trim()
     ) {
-      Alert.alert("Missing Info", "Please complete all farmer account fields.");
+      Alert.alert(
+        "Missing Info",
+        "Please complete all farmer account fields."
+      );
       return;
     }
 
     if (!email.includes("@")) {
-      Alert.alert("Invalid Email", "Please enter a valid email address.");
+      Alert.alert(
+        "Invalid Email",
+        "Please enter a valid email address."
+      );
       return;
     }
 
     if (selectedProducts.length === 0) {
-      Alert.alert("Missing Products", "Select at least one product type.");
+      Alert.alert(
+        "Missing Products",
+        "Select at least one product type."
+      );
       return;
     }
 
@@ -136,6 +151,7 @@ export default function FarmerRegister() {
       const cleanBusinessName = businessName.trim();
       const cleanEmail = email.trim().toLowerCase();
       const cleanPhone = phone.trim();
+
       const cleanAddress = businessAddress.trim();
       const cleanCity = city.trim();
       const cleanState = stateValue.trim();
@@ -150,18 +166,42 @@ export default function FarmerRegister() {
         businessName: cleanBusinessName,
         email: cleanEmail,
         phone: cleanPhone,
+
         businessAddress: cleanAddress,
         city: cleanCity,
         state: cleanState,
         zipCode: cleanZip,
+
         selectedProducts,
+
         approved: false,
+        accountActive: true,
+        complianceStatus: "in_progress",
+
+        stripeAccountId: "",
+        stripeOnboardingComplete: false,
+        payoutsEnabled: false,
+        chargesEnabled: false,
+
         products: [],
+
         createdAt: now,
         updatedAt: now,
       } as Farmer;
 
       await addFarmer(newFarmer);
+
+      await AsyncStorage.setItem(
+        "currentFarmer",
+        JSON.stringify(newFarmer)
+      );
+
+      await AsyncStorage.setItem(
+        "currentUser",
+        JSON.stringify(newFarmer)
+      );
+
+      await AsyncStorage.setItem("currentUserRole", "farmer");
 
       const verificationRecord = createVerificationRecordFromFarmer({
         farmerId,
@@ -172,7 +212,7 @@ export default function FarmerRegister() {
         documents: [],
       });
 
-      const updatedVerificationRecord = {
+      await upsertVerificationRecord({
         ...verificationRecord,
         businessAddress: cleanAddress,
         city: cleanCity,
@@ -181,9 +221,7 @@ export default function FarmerRegister() {
         businessName: cleanBusinessName,
         selectedProducts,
         updatedAt: now,
-      };
-
-      await upsertVerificationRecord(updatedVerificationRecord);
+      } as any);
 
       await notifyAdminFarmerVerification({
         farmerId,
@@ -200,19 +238,23 @@ export default function FarmerRegister() {
       });
 
       Alert.alert(
-        "Documents Required",
-        "Next, upload your business and farm verification documents. Farm2Home admin will review your account before approval."
+        "Farmer Account Created",
+        "Continue to compliance verification and Stripe payout setup."
       );
 
       router.push({
-        pathname: "/farmer/documents",
+        pathname: "/farmer/compliance-upload",
         params: {
           farmerId,
         },
       } as never);
     } catch (error) {
       console.log("Farmer registration error:", error);
-      Alert.alert("Registration Error", "Unable to create farmer application.");
+
+      Alert.alert(
+        "Registration Error",
+        "Unable to create farmer application."
+      );
     } finally {
       setLoading(false);
     }
@@ -225,27 +267,42 @@ export default function FarmerRegister() {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.header}>🚜 Farmer Account Setup</Text>
+      <Text style={styles.header}>
+        🚜 Farmer Account Setup
+      </Text>
 
       <Text style={styles.subheader}>
-        Create your farm profile, accept the Farmer Onboarding Agreement, and
-        begin Farm2Home verification review.
+        Create your farm profile, accept the Farmer Onboarding Agreement,
+        and begin Farm2Home verification review.
       </Text>
 
       <View style={styles.notice}>
-        <Text style={styles.noticeTitle}>Required For Approval</Text>
+        <Text style={styles.noticeTitle}>
+          Required For Approval
+        </Text>
 
         <Text style={styles.noticeText}>
-          Business Registration • Sales Tax/Exemption • Food Safety Registration
-          • W-9 • Liability Insurance
+          Business Registration • Sales Tax/Exemption • Food Safety
+          Registration • W-9 • Liability Insurance
         </Text>
       </View>
 
       <View style={styles.priceBox}>
-        <Text style={styles.priceTitle}>Farmer Pricing</Text>
-        <Text style={styles.priceText}>One-Time Setup Fee: $29.99</Text>
-        <Text style={styles.priceText}>Monthly Membership: $14.99</Text>
-        <Text style={styles.priceText}>Marketplace Service Fee: 4%</Text>
+        <Text style={styles.priceTitle}>
+          Farmer Pricing
+        </Text>
+
+        <Text style={styles.priceText}>
+          One-Time Setup Fee: $29.99
+        </Text>
+
+        <Text style={styles.priceText}>
+          Monthly Membership: $14.99
+        </Text>
+
+        <Text style={styles.priceText}>
+          Marketplace Service Fee: 4%
+        </Text>
       </View>
 
       <TextInput
@@ -324,7 +381,9 @@ export default function FarmerRegister() {
         onChangeText={setZipCode}
       />
 
-      <Text style={styles.sectionTitle}>Select Certified Products On Your Farm</Text>
+      <Text style={styles.sectionTitle}>
+        Select Certified Products On Your Farm
+      </Text>
 
       <View style={styles.grid}>
         {productOptions.map((product) => {
@@ -333,12 +392,18 @@ export default function FarmerRegister() {
           return (
             <TouchableOpacity
               key={product}
-              style={[styles.productChip, active && styles.productChipActive]}
+              style={[
+                styles.productChip,
+                active && styles.productChipActive,
+              ]}
               onPress={() => toggleProduct(product)}
               activeOpacity={0.85}
             >
               <Text
-                style={[styles.productText, active && styles.productTextActive]}
+                style={[
+                  styles.productText,
+                  active && styles.productTextActive,
+                ]}
               >
                 {product}
               </Text>
@@ -348,7 +413,9 @@ export default function FarmerRegister() {
       </View>
 
       <View style={styles.legalBox}>
-        <Text style={styles.legalTitle}>Farmer Onboarding Agreement</Text>
+        <Text style={styles.legalTitle}>
+          Farmer Onboarding Agreement
+        </Text>
 
         <Agreement
           label="I understand I am an independent seller and not an employee, agent, or partner of Farm2Home."
@@ -388,13 +455,18 @@ export default function FarmerRegister() {
       </View>
 
       <TouchableOpacity
-        style={[styles.button, loading && styles.disabledButton]}
+        style={[
+          styles.button,
+          loading && styles.disabledButton,
+        ]}
         onPress={registerFarmer}
         disabled={loading}
         activeOpacity={0.85}
       >
         <Text style={styles.buttonText}>
-          {loading ? "Creating Verification..." : "Start Document Verification"}
+          {loading
+            ? "Creating Verification..."
+            : "Start Document Verification"}
         </Text>
       </TouchableOpacity>
 
@@ -403,7 +475,9 @@ export default function FarmerRegister() {
         onPress={() => router.push("/farmer/login" as never)}
         activeOpacity={0.85}
       >
-        <Text style={styles.secondaryText}>Already have account? Farmer Login</Text>
+        <Text style={styles.secondaryText}>
+          Already have account? Farmer Login
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -419,12 +493,25 @@ function Agreement({
   onPress: () => void;
 }) {
   return (
-    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.85}>
-      <View style={[styles.fakeCheckbox, value && styles.fakeCheckboxActive]}>
-        <Text style={styles.fakeCheckboxText}>{value ? "✓" : ""}</Text>
+    <TouchableOpacity
+      style={styles.row}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
+      <View
+        style={[
+          styles.fakeCheckbox,
+          value && styles.fakeCheckboxActive,
+        ]}
+      >
+        <Text style={styles.fakeCheckboxText}>
+          {value ? "✓" : ""}
+        </Text>
       </View>
 
-      <Text style={styles.agreementText}>{label}</Text>
+      <Text style={styles.agreementText}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }

@@ -12,21 +12,9 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
 import freightTheme from "../styles/freightTheme";
 import { supabase } from "../data/supabaseClient";
-
-const SECURITY_QUESTIONS = [
-  "What was the name of your first pet?",
-  "What city were you born in?",
-  "What is your mother’s maiden name?",
-  "What was the name of your elementary school?",
-  "What was your first car?",
-  "What is your favorite food?",
-  "What is your favorite truck brand?",
-  "What was the name of your childhood best friend?",
-  "What street did you grow up on?",
-  "What is your favorite teacher’s name?",
-];
 
 type FreightUser = {
   id: string;
@@ -34,20 +22,16 @@ type FreightUser = {
   email: string;
   username?: string;
   password?: string;
-
   securityQuestion1?: string;
   securityAnswer1?: string;
-
   securityQuestion2?: string;
   securityAnswer2?: string;
-
   securityQuestion3?: string;
   securityAnswer3?: string;
-
   accountActive?: boolean;
-
   role: "freight";
   membershipStatus: string;
+  token?: string;
 };
 
 function safelyParseArray(rawValue: string | null): FreightUser[] {
@@ -56,14 +40,37 @@ function safelyParseArray(rawValue: string | null): FreightUser[] {
   try {
     const parsed = JSON.parse(rawValue);
     return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.log("Freight parse error:", error);
+  } catch {
     return [];
   }
 }
 
 function normalizeAnswer(value: string) {
-  return value.trim().toLowerCase();
+  return String(value || "").trim().toLowerCase();
+}
+
+function mapCarrierToFreightUser(item: any): FreightUser {
+  return {
+    id: item.id,
+    companyName: item.companyName || item.company_name || "Freight Carrier",
+    email: item.email || "",
+    username: item.username || "",
+    password: item.password || "",
+    securityQuestion1: item.securityQuestion1 || item.security_question_1 || "",
+    securityAnswer1: item.securityAnswer1 || item.security_answer_1 || "",
+    securityQuestion2: item.securityQuestion2 || item.security_question_2 || "",
+    securityAnswer2: item.securityAnswer2 || item.security_answer_2 || "",
+    securityQuestion3: item.securityQuestion3 || item.security_question_3 || "",
+    securityAnswer3: item.securityAnswer3 || item.security_answer_3 || "",
+    accountActive:
+      item.accountActive === undefined
+        ? item.account_active !== false
+        : item.accountActive !== false,
+    role: "freight",
+    membershipStatus:
+      item.membershipStatus || item.membership_status || "Active",
+    token: item.token,
+  };
 }
 
 export default function FreightLoginScreen() {
@@ -71,18 +78,115 @@ export default function FreightLoginScreen() {
   const [password, setPassword] = useState("");
 
   const [forgotVisible, setForgotVisible] = useState(false);
-
   const [recoveryValue, setRecoveryValue] = useState("");
-
   const [securityAnswer1, setSecurityAnswer1] = useState("");
   const [securityAnswer2, setSecurityAnswer2] = useState("");
   const [securityAnswer3, setSecurityAnswer3] = useState("");
-
   const [recoveryUser, setRecoveryUser] = useState<FreightUser | null>(null);
 
+  async function saveFreightSession(user: FreightUser, token?: string) {
+    const sessionUser = {
+      ...user,
+      role: "freight" as const,
+      accountActive: user.accountActive !== false,
+      membershipStatus: user.membershipStatus || "Active",
+      token,
+    };
+
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(sessionUser));
+
+    await AsyncStorage.setItem(
+      "currentFreightCarrier",
+      JSON.stringify(sessionUser)
+    );
+
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(sessionUser));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(sessionUser));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
+
+    if (token) {
+      await AsyncStorage.setItem("authToken", token);
+    }
+  }
+
+  async function tryBackendLogin(cleanLogin: string, cleanPassword: string) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          login: cleanLogin,
+          password: cleanPassword,
+          role: "freight",
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.success) {
+        return null;
+      }
+
+      const backendUser = mapCarrierToFreightUser({
+        ...data.user,
+        companyName:
+          data.user?.companyName || data.user?.name || "Freight Carrier",
+        accountActive: true,
+        membershipStatus: data.user?.membershipStatus || "Active",
+        token: data.token,
+      });
+
+      return {
+        user: backendUser,
+        token: data.token,
+      };
+    } catch (error) {
+      console.log("Backend freight login skipped:", error);
+      return null;
+    }
+  }
+
   async function loadFreightUsers(): Promise<FreightUser[]> {
-    const raw = await AsyncStorage.getItem("farm2homeFreightUsers");
-    return safelyParseArray(raw);
+    const carriersRaw = await AsyncStorage.getItem("farm2homeFreightCarriers");
+    const usersRaw = await AsyncStorage.getItem("farm2homeFreightUsers");
+
+    const carriers = safelyParseArray(carriersRaw).map(mapCarrierToFreightUser);
+    const users = safelyParseArray(usersRaw).map(mapCarrierToFreightUser);
+
+    return [...carriers, ...users];
+  }
+
+  async function findFreightUser(cleanLogin: string) {
+    const freightUsers = await loadFreightUsers();
+
+    let foundUser =
+      freightUsers.find(
+        (item) =>
+          item.email.toLowerCase() === cleanLogin ||
+          String(item.username || "").toLowerCase() === cleanLogin
+      ) || null;
+
+    if (!foundUser) {
+      try {
+        const { data, error } = await supabase
+          .from("freight_users")
+          .select("*")
+          .or(`email.eq.${cleanLogin},username.eq.${cleanLogin}`)
+          .limit(1)
+          .single();
+
+        if (!error && data) {
+          foundUser = mapCarrierToFreightUser(data);
+        }
+      } catch (error) {
+        console.log("Supabase freight lookup skipped:", error);
+      }
+    }
+
+    return foundUser;
   }
 
   async function handleLogin() {
@@ -90,126 +194,42 @@ export default function FreightLoginScreen() {
     const cleanPassword = password.trim();
 
     if (!cleanLogin || !cleanPassword) {
-      Alert.alert(
-        "Missing Information",
-        "Enter username/email and password."
-      );
-      return;
-    }
-
-    if (
-      (cleanLogin === "freight@test.com" ||
-        cleanLogin === "freighttest") &&
-      cleanPassword === "freight123"
-    ) {
-      const freightUser: FreightUser = {
-        id: "freight_test_001",
-        companyName: "ASO Freight LLC",
-        email: "freight@test.com",
-        username: "freighttest",
-        password: "freight123",
-        accountActive: true,
-        role: "freight",
-        membershipStatus: "Active",
-      };
-
-      await AsyncStorage.setItem(
-        "currentFreight",
-        JSON.stringify(freightUser)
-      );
-
-      router.replace("/freight/dashboard");
-
+      Alert.alert("Missing Information", "Enter username/email and password.");
       return;
     }
 
     try {
-      const freightUsers = await loadFreightUsers();
+      const backendLogin = await tryBackendLogin(cleanLogin, cleanPassword);
 
-      let foundUser =
-        freightUsers.find(
-          (item) =>
-            item.email.toLowerCase() === cleanLogin ||
-            String(item.username || "").toLowerCase() === cleanLogin
-        ) || null;
-
-      if (!foundUser) {
-        try {
-          const { data, error } = await supabase
-            .from("freight_users")
-            .select("*")
-            .or(
-              `email.eq.${cleanLogin},username.eq.${cleanLogin}`
-            )
-            .limit(1)
-            .single();
-
-          if (!error && data) {
-            foundUser = {
-              id: data.id,
-              companyName: data.company_name,
-              email: data.email,
-              username: data.username,
-              password: data.password,
-              securityQuestion1: data.security_question_1,
-              securityAnswer1: data.security_answer_1,
-              securityQuestion2: data.security_question_2,
-              securityAnswer2: data.security_answer_2,
-              securityQuestion3: data.security_question_3,
-              securityAnswer3: data.security_answer_3,
-              accountActive: data.account_active,
-              role: "freight",
-              membershipStatus:
-                data.membership_status || "Active",
-            };
-          }
-        } catch (error) {
-          console.log("Supabase freight login skipped:", error);
-        }
+      if (backendLogin?.user) {
+        await saveFreightSession(backendLogin.user, backendLogin.token);
+        router.replace("/freight/dashboard" as any);
+        return;
       }
 
+      const foundUser = await findFreightUser(cleanLogin);
+
       if (!foundUser) {
-        Alert.alert(
-          "Account Not Found",
-          "No freight account found."
-        );
+        Alert.alert("Account Not Found", "No freight account found.");
         return;
       }
 
       if (!foundUser.accountActive) {
-        Alert.alert(
-          "Account Not Active",
-          "Your freight account is not active."
-        );
+        Alert.alert("Account Not Active", "Your freight account is not active.");
         return;
       }
 
       if (String(foundUser.password || "") !== cleanPassword) {
-        Alert.alert(
-          "Login Failed",
-          "Invalid freight login credentials."
-        );
+        Alert.alert("Login Failed", "Invalid freight login credentials.");
         return;
       }
 
-      await AsyncStorage.setItem(
-        "currentFreight",
-        JSON.stringify(foundUser)
-      );
+      await saveFreightSession(foundUser);
 
-      Alert.alert(
-        "Login Successful",
-        `Welcome ${foundUser.companyName}`
-      );
-
-      router.replace("/freight/dashboard");
+      router.replace("/freight/dashboard" as any);
     } catch (error) {
       console.log("Freight login error:", error);
-
-      Alert.alert(
-        "Login Error",
-        "Unable to login to freight account."
-      );
+      Alert.alert("Login Error", "Unable to login to freight account.");
     }
   }
 
@@ -217,82 +237,27 @@ export default function FreightLoginScreen() {
     const cleanValue = recoveryValue.trim().toLowerCase();
 
     if (!cleanValue) {
-      Alert.alert(
-        "Missing Information",
-        "Enter username or email."
-      );
+      Alert.alert("Missing Information", "Enter username or email.");
       return;
     }
 
     try {
-      const freightUsers = await loadFreightUsers();
-
-      let foundUser =
-        freightUsers.find(
-          (item) =>
-            item.email.toLowerCase() === cleanValue ||
-            String(item.username || "").toLowerCase() === cleanValue
-        ) || null;
+      const foundUser = await findFreightUser(cleanValue);
 
       if (!foundUser) {
-        try {
-          const { data, error } = await supabase
-            .from("freight_users")
-            .select("*")
-            .or(
-              `email.eq.${cleanValue},username.eq.${cleanValue}`
-            )
-            .limit(1)
-            .single();
-
-          if (!error && data) {
-            foundUser = {
-              id: data.id,
-              companyName: data.company_name,
-              email: data.email,
-              username: data.username,
-              password: data.password,
-              securityQuestion1: data.security_question_1,
-              securityAnswer1: data.security_answer_1,
-              securityQuestion2: data.security_question_2,
-              securityAnswer2: data.security_answer_2,
-              securityQuestion3: data.security_question_3,
-              securityAnswer3: data.security_answer_3,
-              accountActive: data.account_active,
-              role: "freight",
-              membershipStatus:
-                data.membership_status || "Active",
-            };
-          }
-        } catch (error) {
-          console.log("Supabase freight recovery skipped:", error);
-        }
-      }
-
-      if (!foundUser) {
-        Alert.alert(
-          "Account Not Found",
-          "No freight account found."
-        );
+        Alert.alert("Account Not Found", "No freight account found.");
         return;
       }
 
       if (!foundUser.accountActive) {
-        Alert.alert(
-          "Account Not Active",
-          "Your freight account is not active."
-        );
+        Alert.alert("Account Not Active", "Your freight account is not active.");
         return;
       }
 
       setRecoveryUser(foundUser);
     } catch (error) {
       console.log("Recovery lookup error:", error);
-
-      Alert.alert(
-        "Recovery Error",
-        "Unable to load recovery information."
-      );
+      Alert.alert("Recovery Error", "Unable to load recovery information.");
     }
   }
 
@@ -312,30 +277,23 @@ export default function FreightLoginScreen() {
       normalizeAnswer(recoveryUser.securityAnswer3 || "");
 
     if (!valid1 || !valid2 || !valid3) {
-      Alert.alert(
-        "Verification Failed",
-        "Security answers do not match."
-      );
+      Alert.alert("Verification Failed", "Security answers do not match.");
       return;
     }
 
     Alert.alert(
-      "Freight Account Recovery",
-      `Username: ${recoveryUser.username}\nPassword: ${recoveryUser.password}\n\nProduction version should send reset email instead of displaying password.`
+      "Account Verified",
+      `Username: ${recoveryUser.username || recoveryUser.email}\nPassword: ${
+        recoveryUser.password || "Password not available"
+      }`
     );
 
     setForgotVisible(false);
-
     setRecoveryUser(null);
-
     setRecoveryValue("");
     setSecurityAnswer1("");
     setSecurityAnswer2("");
     setSecurityAnswer3("");
-  }
-
-  function openRegister() {
-    router.push("/freight/register");
   }
 
   return (
@@ -344,7 +302,7 @@ export default function FreightLoginScreen() {
         <Text style={styles.title}>Freight Connect Login</Text>
 
         <Text style={styles.subtitle}>
-          Access livestock and refrigerated fresh food loads.
+          Access livestock and refrigerated fresh food freight loads.
         </Text>
 
         <TextInput
@@ -365,10 +323,7 @@ export default function FreightLoginScreen() {
           onChangeText={setPassword}
         />
 
-        <TouchableOpacity
-          style={styles.loginButton}
-          onPress={handleLogin}
-        >
+        <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
           <Text style={styles.loginButtonText}>Login</Text>
         </TouchableOpacity>
 
@@ -376,59 +331,29 @@ export default function FreightLoginScreen() {
           style={styles.forgotButton}
           onPress={() => setForgotVisible(true)}
         >
-          <Text style={styles.forgotText}>
-            Forgot Username or Password?
-          </Text>
+          <Text style={styles.forgotText}>Forgot Username or Password?</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.registerButton}
-          onPress={openRegister}
+          onPress={() => router.push("/freight/register" as any)}
         >
-          <Text style={styles.registerText}>
-            Register for Freight Connect
-          </Text>
+          <Text style={styles.registerText}>Register for Freight Connect</Text>
         </TouchableOpacity>
-
-        <View style={styles.testCard}>
-          <Text style={styles.testTitle}>
-            Development Test Login
-          </Text>
-
-          <Text style={styles.testText}>
-            Username: freighttest
-          </Text>
-
-          <Text style={styles.testText}>
-            Email: freight@test.com
-          </Text>
-
-          <Text style={styles.testText}>
-            Password: freight123
-          </Text>
-        </View>
       </View>
 
-      <Modal
-        visible={forgotVisible}
-        transparent
-        animationType="slide"
-      >
+      <Modal visible={forgotVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView>
-              <Text style={styles.modalTitle}>
-                Freight Account Recovery
-              </Text>
+              <Text style={styles.modalTitle}>Freight Account Recovery</Text>
 
               {!recoveryUser ? (
                 <>
                   <TextInput
                     style={styles.input}
                     placeholder="Username or Email"
-                    placeholderTextColor={
-                      freightTheme.colors.mutedText
-                    }
+                    placeholderTextColor={freightTheme.colors.mutedText}
                     autoCapitalize="none"
                     value={recoveryValue}
                     onChangeText={setRecoveryValue}
@@ -438,9 +363,7 @@ export default function FreightLoginScreen() {
                     style={styles.loginButton}
                     onPress={startRecovery}
                   >
-                    <Text style={styles.loginButtonText}>
-                      Continue
-                    </Text>
+                    <Text style={styles.loginButtonText}>Continue</Text>
                   </TouchableOpacity>
                 </>
               ) : (
@@ -485,9 +408,7 @@ export default function FreightLoginScreen() {
                     style={styles.loginButton}
                     onPress={verifyRecovery}
                   >
-                    <Text style={styles.loginButtonText}>
-                      Recover Account
-                    </Text>
+                    <Text style={styles.loginButtonText}>Verify Account</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -497,6 +418,10 @@ export default function FreightLoginScreen() {
                 onPress={() => {
                   setForgotVisible(false);
                   setRecoveryUser(null);
+                  setRecoveryValue("");
+                  setSecurityAnswer1("");
+                  setSecurityAnswer2("");
+                  setSecurityAnswer3("");
                 }}
               >
                 <Text style={styles.closeText}>Close</Text>
@@ -589,29 +514,6 @@ const styles = StyleSheet.create({
   registerText: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
-  },
-
-  testCard: {
-    marginTop: 28,
-    backgroundColor: freightTheme.colors.rowDark,
-    borderRadius: 18,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-  },
-
-  testTitle: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-    marginBottom: 10,
-    textTransform: "uppercase",
-    fontSize: 12,
-  },
-
-  testText: {
-    color: freightTheme.colors.text,
-    fontWeight: "700",
-    marginBottom: 4,
   },
 
   modalOverlay: {

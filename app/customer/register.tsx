@@ -14,11 +14,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 
+import { API_BASE_URL, APP_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 import farmTheme from "../styles/farmTheme";
-
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:4242";
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -84,7 +82,9 @@ async function saveCustomer(customerAccount: CustomerAccount) {
 
   await AsyncStorage.setItem("pendingCustomer", JSON.stringify(customerAccount));
   await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerAccount));
+  await AsyncStorage.setItem("currentUser", JSON.stringify(customerAccount));
   await AsyncStorage.setItem("userRole", "customer");
+  await AsyncStorage.setItem("currentUserRole", "customer");
 }
 
 export default function CustomerRegister() {
@@ -261,10 +261,14 @@ export default function CustomerRegister() {
           },
           body: JSON.stringify({
             customerEmail: cleanEmail,
+            email: cleanEmail,
             name: cleanFullName,
+            username: cleanUsername,
+            userId: customerAccount.id,
+            customerId: customerAccount.id,
             planType: "customer",
-            successUrl: "http://localhost:8081/customer/subscription-success",
-            cancelUrl: "http://localhost:8081/customer/register",
+            successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+            cancelUrl: `${APP_URL}/customer/register`,
           }),
         }
       );
@@ -274,7 +278,7 @@ export default function CustomerRegister() {
       console.log("STRIPE STATUS:", response.status);
       console.log("STRIPE RESPONSE:", text);
 
-      let data: { url?: string; error?: string } = {};
+      let data: { success?: boolean; url?: string; error?: string } = {};
 
       try {
         data = text ? JSON.parse(text) : {};
@@ -286,7 +290,7 @@ export default function CustomerRegister() {
         Alert.alert(
           "Account Saved",
           data.error ||
-            "Your account was saved, but Stripe checkout did not open. Check backend .env and Stripe price ID."
+            "Your account was saved, but Stripe checkout did not open. Check backend Stripe price ID."
         );
         return;
       }

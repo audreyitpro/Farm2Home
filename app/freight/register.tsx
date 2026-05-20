@@ -15,13 +15,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
 
+import { API_BASE_URL, APP_URL } from "../config/api";
 import {
   createVerificationRecordFromFreightCarrier,
   upsertVerificationRecord,
 } from "../data/adminStore";
-
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:4242";
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -108,7 +106,11 @@ async function saveFreightCarrier(carrier: FreightCarrierRegistration) {
 
   await AsyncStorage.setItem("pendingFreightCarrier", JSON.stringify(carrier));
   await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentFreight", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentFreightUser", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentUser", JSON.stringify(carrier));
   await AsyncStorage.setItem("userRole", "freight");
+  await AsyncStorage.setItem("currentUserRole", "freight");
 }
 
 export default function FreightRegister() {
@@ -450,7 +452,7 @@ export default function FreightRegister() {
         documents: [],
       });
 
-      const verificationPayload = {
+      await upsertVerificationRecord({
         ...verificationRecord,
         username: cleanUsername,
         accountActive: true,
@@ -468,9 +470,8 @@ export default function FreightRegister() {
         licensedRefrigeratedFood,
         status: "PENDING_VERIFICATION",
         updatedAt: now,
-      };
+      } as any);
 
-      await upsertVerificationRecord(verificationPayload as any);
       await saveFreightCarrier(freightCarrier);
       await notifyAdminFreightVerification(freightCarrier);
 
@@ -483,12 +484,15 @@ export default function FreightRegister() {
           },
           body: JSON.stringify({
             customerEmail: cleanEmail,
+            email: cleanEmail,
             name: cleanContactName,
             username: cleanUsername,
+            userId: carrierId,
+            freightId: carrierId,
             companyName: cleanCompanyName,
             planType: "freight",
-            successUrl: "http://localhost:8081/freight/subscription-success",
-            cancelUrl: "http://localhost:8081/freight/register",
+            successUrl: `${APP_URL}/freight/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+            cancelUrl: `${APP_URL}/freight/register`,
           }),
         }
       );
@@ -498,8 +502,14 @@ export default function FreightRegister() {
       console.log("FREIGHT STRIPE STATUS:", response.status);
       console.log("FREIGHT STRIPE RESPONSE:", text);
 
-      let data: { success?: boolean; url?: string; id?: string; error?: string; message?: string } =
-        {};
+      let data: {
+        success?: boolean;
+        url?: string;
+        id?: string;
+        sessionId?: string;
+        error?: string;
+        message?: string;
+      } = {};
 
       try {
         data = text ? JSON.parse(text) : {};
@@ -521,7 +531,7 @@ export default function FreightRegister() {
         "pendingFreightCarrier",
         JSON.stringify({
           ...freightCarrier,
-          stripeCheckoutSessionId: data.id || null,
+          stripeCheckoutSessionId: data.id || data.sessionId || null,
           membershipStatus: "Checkout Started",
           updatedAt: new Date().toISOString(),
         })
@@ -767,9 +777,7 @@ export default function FreightRegister() {
       </View>
 
       <View style={styles.switchRow}>
-        <Text style={styles.switchText}>
-          Licensed for Refrigerated Fresh Food
-        </Text>
+        <Text style={styles.switchText}>Licensed for Refrigerated Fresh Food</Text>
         <Switch
           value={licensedRefrigeratedFood}
           onValueChange={setLicensedRefrigeratedFood}
@@ -806,33 +814,28 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F7F7F2",
   },
-
   content: {
     padding: 20,
     paddingBottom: 50,
   },
-
   heroCard: {
     backgroundColor: "#2F7D32",
     borderRadius: 28,
     padding: 22,
     marginBottom: 16,
   },
-
   title: {
     fontSize: 32,
     fontWeight: "900",
     marginBottom: 8,
     color: "#FFFFFF",
   },
-
   subtitle: {
     color: "#E8F5E9",
     fontSize: 15,
     lineHeight: 23,
     fontWeight: "700",
   },
-
   noticeBox: {
     backgroundColor: "#FFF7ED",
     borderColor: "#FED7AA",
@@ -841,20 +844,17 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 16,
   },
-
   noticeTitle: {
     color: "#9A3412",
     fontWeight: "900",
     fontSize: 17,
     marginBottom: 6,
   },
-
   noticeText: {
     color: "#7C2D12",
     fontWeight: "700",
     lineHeight: 22,
   },
-
   priceBox: {
     backgroundColor: "#EAF6EC",
     padding: 16,
@@ -863,19 +863,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#CDE8D2",
   },
-
   price: {
     fontSize: 25,
     fontWeight: "900",
     color: "#1f7a3f",
   },
-
   priceSub: {
     color: "#555555",
     marginTop: 4,
     fontWeight: "700",
   },
-
   section: {
     fontSize: 18,
     fontWeight: "900",
@@ -883,7 +880,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: "#111827",
   },
-
   input: {
     backgroundColor: "#FFFFFF",
     padding: 14,
@@ -894,7 +890,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#111827",
   },
-
   securityCard: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -903,31 +898,26 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
   },
-
   securityTitle: {
     color: "#2F7D32",
     fontSize: 20,
     fontWeight: "900",
     marginBottom: 6,
   },
-
   securityHelp: {
     color: "#555555",
     lineHeight: 20,
     fontWeight: "700",
     marginBottom: 12,
   },
-
   securityBox: {
     marginBottom: 12,
   },
-
   securityLabel: {
     color: "#111827",
     fontWeight: "900",
     marginBottom: 8,
   },
-
   questionChip: {
     backgroundColor: "#E5E7EB",
     paddingHorizontal: 14,
@@ -937,20 +927,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     maxWidth: 260,
   },
-
   questionChipActive: {
     backgroundColor: "#2F7D32",
   },
-
   questionChipText: {
     color: "#2F7D32",
     fontWeight: "900",
   },
-
   questionChipTextActive: {
     color: "#FFFFFF",
   },
-
   switchRow: {
     backgroundColor: "#FFFFFF",
     padding: 14,
@@ -962,14 +948,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-
   switchText: {
     flex: 1,
     fontWeight: "800",
     paddingRight: 12,
     color: "#111827",
   },
-
   button: {
     backgroundColor: "#2F7D32",
     padding: 16,
@@ -979,18 +963,15 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     elevation: 20,
   },
-
   disabledButton: {
     opacity: 0.6,
   },
-
   buttonText: {
     color: "#FFFFFF",
     textAlign: "center",
     fontWeight: "900",
     fontSize: 16,
   },
-
   link: {
     color: "#2F7D32",
     textAlign: "center",

@@ -1,23 +1,130 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
+  ActivityIndicator,
   Alert,
   Platform,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
+import { router } from "expo-router";
 
-const API_BASE_URL = "http://localhost:4242";
+import { API_BASE_URL } from "../config/api";
+import { getFarmerById, updateFarmerStore } from "../data/farmerStore";
 
 export default function FarmerStripeBankingScreen() {
+  const [farmerId, setFarmerId] = useState("");
   const [email, setEmail] = useState("");
   const [farmerName, setFarmerName] = useState("");
   const [accountId, setAccountId] = useState("");
+
+  const [chargesEnabled, setChargesEnabled] = useState(false);
+  const [payoutsEnabled, setPayoutsEnabled] = useState(false);
+  const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [payoutAccount, setPayoutAccount] = useState("");
+
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadFarmer();
+  }, []);
+
+  async function loadFarmer() {
+    try {
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      if (!saved) {
+        Alert.alert(
+          "Farmer Login Required",
+          "Please login or register as a farmer first."
+        );
+        router.replace("/farmer/login" as any);
+        return;
+      }
+
+      const currentFarmer = JSON.parse(saved);
+      const farmer = await getFarmerById(currentFarmer.id);
+
+      const activeFarmer = farmer || currentFarmer;
+
+      setFarmerId(activeFarmer.id || "");
+
+      setFarmerName(
+        activeFarmer.farmName ||
+          activeFarmer.businessName ||
+          activeFarmer.ownerName ||
+          ""
+      );
+
+      setEmail(activeFarmer.email || "");
+
+      setAccountId(
+        activeFarmer.stripeAccountId ||
+          activeFarmer.farmerStripeAccountId ||
+          ""
+      );
+
+      setChargesEnabled(
+        Boolean(activeFarmer.stripeChargesEnabled || activeFarmer.chargesEnabled)
+      );
+
+      setPayoutsEnabled(
+        Boolean(activeFarmer.stripePayoutsEnabled || activeFarmer.payoutsEnabled)
+      );
+
+      setOnboardingComplete(
+        Boolean(
+          activeFarmer.stripeOnboardingComplete ||
+            activeFarmer.detailsSubmitted
+        )
+      );
+
+      setPayoutAccount(activeFarmer.stripePayoutAccount || "");
+    } catch (error: any) {
+      console.log("Load farmer banking error:", error);
+
+      Alert.alert(
+        "Load Error",
+        error?.message || "Unable to load farmer banking profile."
+      );
+    }
+  }
+
+  async function syncFarmerStripeStatus(update: any) {
+    if (!farmerId) return;
+
+    await updateFarmerStore(farmerId, update as any);
+
+    const latestFarmer = await getFarmerById(farmerId);
+
+    if (latestFarmer) {
+      await AsyncStorage.setItem("currentFarmer", JSON.stringify(latestFarmer));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(latestFarmer));
+      await AsyncStorage.setItem("currentUserRole", "farmer");
+      await AsyncStorage.setItem("userRole", "farmer");
+    }
+  }
+
+  async function openStripeUrl(url: string) {
+    if (!url || !url.startsWith("http")) {
+      Alert.alert("Stripe Error", "No valid Stripe onboarding URL returned.");
+      return;
+    }
+
+    if (Platform.OS === "web") {
+      window.location.href = url;
+      return;
+    }
+
+    await WebBrowser.openBrowserAsync(url);
+  }
 
   async function createAccountAndOnboard() {
     if (loading) return;
@@ -31,93 +138,71 @@ export default function FarmerStripeBankingScreen() {
         return;
       }
 
-      if (!email.trim()) {
-        Alert.alert("Missing Email", "Please enter farmer email.");
+      if (!email.trim() || !email.includes("@")) {
+        Alert.alert("Valid Email Required", "Please enter a valid farmer email.");
         return;
       }
 
       setLoading(true);
 
-      console.log("Creating farmer Stripe account...");
+      const activeFarmerId = farmerId || `farmer_${Date.now()}`;
 
-      const accountRes = await fetch(
-        `${API_BASE_URL}/create-farmer-connect-account`,
+      const response = await fetch(
+        `${API_BASE_URL}/payments/create-farmer-connect-account`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            email: email.trim(),
-            farmerName: farmerName.trim(),
+            farmerId: activeFarmerId,
+            email: email.trim().toLowerCase(),
+            farmName: farmerName.trim(),
+            existingStripeAccountId: accountId || "",
           }),
         }
       );
 
-      const accountText = await accountRes.text();
+      const text = await response.text();
 
-      console.log("Account status:", accountRes.status);
-      console.log("Account raw response:", accountText);
+      let data: any = {};
 
-      const accountData = accountText
-        ? JSON.parse(accountText)
-        : {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`Backend returned invalid response: ${text}`);
+      }
 
-      if (!accountRes.ok || !accountData.accountId) {
-        Alert.alert(
-          "Stripe Error",
-          accountData.error || "Unable to create account."
+      const onboardingUrl = data.onboardingUrl || data.url;
+      const returnedAccountId = data.accountId || data.stripeAccountId;
+
+      if (!response.ok || !data.success || !onboardingUrl || !returnedAccountId) {
+        throw new Error(
+          data.error || data.message || "Unable to create Stripe onboarding."
         );
-        return;
       }
 
-      setAccountId(accountData.accountId);
+      setFarmerId(activeFarmerId);
+      setAccountId(returnedAccountId);
 
-      console.log("Created account:", accountData.accountId);
-      console.log("Creating onboarding link...");
+      await syncFarmerStripeStatus({
+        id: activeFarmerId,
+        stripeAccountId: returnedAccountId,
+        farmerStripeAccountId: returnedAccountId,
+        email: email.trim().toLowerCase(),
+        farmName: farmerName.trim(),
+        complianceStatus: "stripe_pending",
+        stripeOnboardingComplete: false,
+        stripeChargesEnabled: false,
+        stripePayoutsEnabled: false,
+      });
 
-      const linkRes = await fetch(
-        `${API_BASE_URL}/create-farmer-onboarding-link`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            accountId: accountData.accountId,
-          }),
-        }
-      );
-
-      const linkText = await linkRes.text();
-
-      console.log("Link status:", linkRes.status);
-      console.log("Link raw response:", linkText);
-
-      const linkData = linkText
-        ? JSON.parse(linkText)
-        : {};
-
-      if (!linkRes.ok || !linkData.url) {
-        Alert.alert(
-          "Stripe Error",
-          linkData.error || "Unable to create onboarding link."
-        );
-        return;
-      }
-
-      console.log("Opening Stripe URL:", linkData.url);
-
-      if (Platform.OS === "web") {
-        window.open(linkData.url, "_self");
-      } else {
-        await WebBrowser.openBrowserAsync(linkData.url);
-      }
+      await openStripeUrl(onboardingUrl);
     } catch (error: any) {
-      console.error("Stripe onboarding error:", error);
+      console.log("Stripe onboarding error:", error);
 
       Alert.alert(
-        "Error",
+        "Stripe Error",
         error?.message || "Unable to start Stripe onboarding."
       );
     } finally {
@@ -129,7 +214,7 @@ export default function FarmerStripeBankingScreen() {
     if (!accountId.trim()) {
       Alert.alert(
         "Missing Account ID",
-        "Enter or create a Stripe account ID first."
+        "Complete Stripe setup first or enter a Stripe account ID."
       );
       return;
     }
@@ -137,53 +222,85 @@ export default function FarmerStripeBankingScreen() {
     try {
       setLoading(true);
 
-      const res = await fetch(
-        `${API_BASE_URL}/check-farmer-account-status`,
+      const response = await fetch(
+        `${API_BASE_URL}/payments/check-farmer-connect-account`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            stripeAccountId: accountId.trim(),
             accountId: accountId.trim(),
           }),
         }
       );
 
-      const text = await res.text();
+      const text = await response.text();
 
-      console.log("Status raw response:", text);
+      let data: any = {};
 
-      const statusData = text
-        ? JSON.parse(text)
-        : {};
-
-      if (!res.ok) {
-        Alert.alert(
-          "Stripe Error",
-          statusData.error || "Unable to check account status."
-        );
-        return;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`Backend returned invalid response: ${text}`);
       }
 
-      Alert.alert(
-        "Farmer Stripe Status",
-        `Account ID: ${statusData.accountId}\n` +
-          `Charges Enabled: ${
-            statusData.chargesEnabled ? "YES" : "NO"
-          }\n` +
-          `Payouts Enabled: ${
-            statusData.payoutsEnabled ? "YES" : "NO"
-          }\n` +
-          `Details Submitted: ${
-            statusData.detailsSubmitted ? "YES" : "NO"
-          }`
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error || data.message || "Unable to check account status."
+        );
+      }
+
+      const returnedAccountId =
+        data.accountId || data.stripeAccountId || accountId.trim();
+
+      const statusChargesEnabled = Boolean(data.chargesEnabled);
+      const statusPayoutsEnabled = Boolean(data.payoutsEnabled);
+      const statusOnboardingComplete = Boolean(
+        data.onboardingComplete || data.detailsSubmitted
       );
-    } catch (error: any) {
-      console.error("Check account status error:", error);
+
+      const payoutLabel = statusPayoutsEnabled
+        ? "Stripe Express payout account connected"
+        : "Stripe Express setup pending";
+
+      setAccountId(returnedAccountId);
+      setChargesEnabled(statusChargesEnabled);
+      setPayoutsEnabled(statusPayoutsEnabled);
+      setOnboardingComplete(statusOnboardingComplete);
+      setPayoutAccount(payoutLabel);
+
+      await syncFarmerStripeStatus({
+        stripeAccountId: returnedAccountId,
+        farmerStripeAccountId: returnedAccountId,
+        stripePayoutAccount: payoutLabel,
+        stripeOnboardingComplete: statusOnboardingComplete,
+        stripeChargesEnabled: statusChargesEnabled,
+        stripePayoutsEnabled: statusPayoutsEnabled,
+        payoutsEnabled: statusPayoutsEnabled,
+        chargesEnabled: statusChargesEnabled,
+        detailsSubmitted: statusOnboardingComplete,
+        complianceStatus: statusPayoutsEnabled
+          ? "stripe_complete"
+          : "stripe_pending",
+      });
 
       Alert.alert(
-        "Error",
+        statusPayoutsEnabled ? "Stripe Ready" : "Stripe Pending",
+        `Account ID: ${returnedAccountId}\n` +
+          `Onboarding Complete: ${
+            statusOnboardingComplete ? "YES" : "NO"
+          }\n` +
+          `Charges Enabled: ${statusChargesEnabled ? "YES" : "NO"}\n` +
+          `Payouts Enabled: ${statusPayoutsEnabled ? "YES" : "NO"}\n` +
+          `Payout Account: ${payoutLabel}`
+      );
+    } catch (error: any) {
+      console.log("Check account status error:", error);
+
+      Alert.alert(
+        "Stripe Error",
         error?.message || "Unable to check Stripe account status."
       );
     } finally {
@@ -196,10 +313,33 @@ export default function FarmerStripeBankingScreen() {
       <Text style={styles.title}>Farmer Banking Setup</Text>
 
       <Text style={styles.note}>
-        Farmers will securely enter their banking and identity
-        information through Stripe Express. Farm2Home does not store
-        bank account numbers.
+        Farmers securely enter banking and identity information through Stripe
+        Express. Farm2Home does not store bank account numbers.
       </Text>
+
+      <View style={styles.statusCard}>
+        <Text style={styles.sectionTitle}>Production Stripe Status</Text>
+
+        <Text style={styles.statusLine}>
+          Account: {accountId ? accountId : "Not connected"}
+        </Text>
+
+        <Text style={styles.statusLine}>
+          Onboarding: {onboardingComplete ? "Complete" : "Pending"}
+        </Text>
+
+        <Text style={styles.statusLine}>
+          Charges: {chargesEnabled ? "Enabled" : "Pending"}
+        </Text>
+
+        <Text style={styles.statusLine}>
+          Payouts: {payoutsEnabled ? "Enabled" : "Pending"}
+        </Text>
+
+        <Text style={styles.statusLine}>
+          Payout Account: {payoutAccount || "Not available"}
+        </Text>
+      </View>
 
       <View style={styles.card}>
         <Text style={styles.label}>Farmer / Business Name</Text>
@@ -207,6 +347,7 @@ export default function FarmerStripeBankingScreen() {
         <TextInput
           style={styles.input}
           placeholder="Example: Green Valley Farms"
+          placeholderTextColor="#8A8F98"
           value={farmerName}
           onChangeText={setFarmerName}
         />
@@ -216,6 +357,7 @@ export default function FarmerStripeBankingScreen() {
         <TextInput
           style={styles.input}
           placeholder="farmer@email.com"
+          placeholderTextColor="#8A8F98"
           keyboardType="email-address"
           autoCapitalize="none"
           value={email}
@@ -227,46 +369,53 @@ export default function FarmerStripeBankingScreen() {
           onPress={createAccountAndOnboard}
           disabled={loading}
         >
-          <Text style={styles.buttonText}>
-            {loading
-              ? "Opening Stripe..."
-              : "Set Up Farmer Banking"}
-          </Text>
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.buttonText}>Set Up Farmer Banking</Text>
+          )}
         </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Stripe Account ID
-        </Text>
+        <Text style={styles.sectionTitle}>Stripe Account ID</Text>
 
         <TextInput
           style={styles.input}
           placeholder="acct_..."
+          placeholderTextColor="#8A8F98"
           autoCapitalize="none"
           value={accountId}
           onChangeText={setAccountId}
         />
 
         <TouchableOpacity
-          style={[
-            styles.secondaryButton,
-            loading && styles.buttonDisabled,
-          ]}
+          style={[styles.secondaryButton, loading && styles.buttonDisabled]}
           onPress={checkAccountStatus}
           disabled={loading}
         >
-          <Text style={styles.secondaryButtonText}>
-            Check Account Status
-          </Text>
+          {loading ? (
+            <ActivityIndicator color="#1f7a3f" />
+          ) : (
+            <Text style={styles.secondaryButtonText}>Check Account Status</Text>
+          )}
         </TouchableOpacity>
 
         {accountId ? (
           <Text style={styles.accountText}>
-            Save this farmer Stripe Account ID: {accountId}
+            Farmer Stripe Account ID: {accountId}
           </Text>
         ) : null}
       </View>
+
+      <TouchableOpacity
+        style={styles.complianceButton}
+        onPress={() => router.push("/farmer/compliance-upload" as any)}
+      >
+        <Text style={styles.complianceButtonText}>
+          Return to Compliance Verification
+        </Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -290,6 +439,22 @@ const styles = StyleSheet.create({
     color: "#555",
     marginBottom: 20,
     lineHeight: 22,
+  },
+
+  statusCard: {
+    backgroundColor: "#EAF6EC",
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "#B7DDBE",
+  },
+
+  statusLine: {
+    color: "#14532D",
+    fontWeight: "800",
+    marginBottom: 6,
+    lineHeight: 20,
   },
 
   card: {
@@ -360,5 +525,18 @@ const styles = StyleSheet.create({
     color: "#333",
     fontWeight: "700",
     lineHeight: 22,
+  },
+
+  complianceButton: {
+    backgroundColor: "#14532D",
+    padding: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    marginBottom: 30,
+  },
+
+  complianceButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
 });
