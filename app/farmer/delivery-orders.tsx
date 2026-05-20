@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   StyleSheet,
@@ -17,11 +18,19 @@ import {
   OrderStatus,
 } from "../data/orderStore";
 
+import { supabase } from "../data/supabaseClient";
+import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 import farmTheme from "../styles/farmTheme";
 
 export default function FarmerDeliveryOrders() {
   const [orders, setOrders] = useState<Farm2HomeOrder[]>([]);
   const [farmName, setFarmName] = useState("");
+  const [farmerId, setFarmerId] = useState("");
+  const [farmerEmail, setFarmerEmail] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [accessAllowed, setAccessAllowed] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -29,8 +38,29 @@ export default function FarmerDeliveryOrders() {
     }, [])
   );
 
+  async function checkFarmerAccess(farmer?: any) {
+    const saved = farmer
+      ? null
+      : await AsyncStorage.getItem("currentFarmer");
+
+    const currentFarmer = farmer || (saved ? JSON.parse(saved) : null);
+
+    const access = await enforceSubscriptionAccess({
+      role: "farmer",
+      userId: currentFarmer?.id || "",
+      email: currentFarmer?.email || "",
+      redirectTo: "/subscription/subscription-locked",
+    });
+
+    setAccessAllowed(access.allowed);
+
+    return access.allowed;
+  }
+
   async function loadOrders() {
     try {
+      setCheckingAccess(true);
+
       const saved = await AsyncStorage.getItem("currentFarmer");
 
       if (!saved) {
@@ -39,9 +69,28 @@ export default function FarmerDeliveryOrders() {
       }
 
       const farmer = JSON.parse(saved);
+
+      const allowed = await checkFarmerAccess(farmer);
+
+      if (!allowed) return;
+
       const currentFarmName = farmer.farmName || "";
 
       setFarmName(currentFarmName);
+      setFarmerId(farmer.id || "");
+      setFarmerEmail(farmer.email || "");
+
+      setLoading(true);
+
+      const cloudOrders = await loadSupabaseOrders(
+        currentFarmName,
+        farmer.id || ""
+      );
+
+      if (cloudOrders.length > 0) {
+        setOrders(cloudOrders);
+        return;
+      }
 
       const farmerOrders = await getOrdersForFarmer(currentFarmName);
 
@@ -54,12 +103,100 @@ export default function FarmerDeliveryOrders() {
       setOrders(activeOrders);
     } catch (error) {
       console.log("Load farmer delivery orders error:", error);
+
       Alert.alert("Load Error", "Unable to load delivery orders.");
+    } finally {
+      setLoading(false);
+      setCheckingAccess(false);
     }
+  }
+
+  async function loadSupabaseOrders(
+    currentFarmName: string,
+    currentFarmerId: string
+  ) {
+    const { data, error } = await supabase
+      .from("orders")
+      .select(
+        `
+        *,
+        customers (
+          full_name,
+          email,
+          phone
+        ),
+        order_items (
+          id,
+          product_id,
+          product_name,
+          farm_name,
+          quantity,
+          price
+        )
+      `
+      )
+      .eq("farmer_id", currentFarmerId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log("Delivery order load error:", error.message);
+      return [];
+    }
+
+    const mappedOrders = (data || []).map((order: any) => ({
+      id: order.id,
+      customerEmail: order.customers?.email || "",
+      customerName: order.customers?.full_name || "",
+      items: (order.order_items || []).map((item: any) => ({
+        id: item.product_id || item.id,
+        name: item.product_name,
+        price: Number(item.price || 0),
+        quantity: Number(item.quantity || 0),
+        farmName: item.farm_name || currentFarmName,
+      })),
+      subtotal: Number(order.subtotal || 0),
+      deliveryFee: Number(order.delivery_fee || 0),
+      tip: Number(order.tip || 0),
+      total: Number(order.total || 0),
+      deliveryInfo: {
+        deliveryAddress: order.delivery_address || "",
+        city: order.city || "",
+        state: order.state || "",
+        zipCode: order.zip_code || "",
+        phone: order.customers?.phone || "",
+        deliveryInstructions: order.delivery_instructions || "",
+        deliveryOption: order.delivery_option || "Delivery",
+      },
+      status: order.status || "PAID",
+      createdAt: order.created_at,
+      updatedAt: order.updated_at || order.created_at,
+    })) as Farm2HomeOrder[];
+
+    return mappedOrders.filter(
+      (order) =>
+        order.deliveryInfo?.deliveryOption === "Delivery" ||
+        order.deliveryInfo?.deliveryOption === "Pickup"
+    );
   }
 
   async function changeStatus(orderId: string, status: OrderStatus) {
     try {
+      const allowed = await checkFarmerAccess();
+
+      if (!allowed) return;
+
+      const { error } = await supabase
+        .from("orders")
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", orderId);
+
+      if (error) {
+        console.log("Supabase update error:", error.message);
+      }
+
       await updateOrderStatus(orderId, status);
 
       Alert.alert("Order Updated", `Order marked as ${status}`);
@@ -80,22 +217,30 @@ export default function FarmerDeliveryOrders() {
     switch (status) {
       case "PAID":
         return "#1565C0";
+
       case "ACCEPTED":
         return "#2F7D32";
+
       case "PREPARING":
         return "#EF6C00";
+
       case "READY_FOR_PICKUP":
         return "#6A1B9A";
+
       case "DRIVER_ASSIGNED":
         return "#0284C7";
+
       case "PICKED_UP":
       case "IN_TRANSIT":
         return "#0F766E";
+
       case "DELIVERED":
         return "#00897B";
+
       case "CANCELLED":
       case "REFUNDED":
         return "#C62828";
+
       default:
         return "#666666";
     }
@@ -105,8 +250,13 @@ export default function FarmerDeliveryOrders() {
     switch (status) {
       case "READY_FOR_PICKUP":
         return "READY";
+
       case "IN_TRANSIT":
         return "OUT FOR DELIVERY";
+
+      case "DRIVER_ASSIGNED":
+        return "DRIVER ASSIGNED";
+
       default:
         return status;
     }
@@ -138,6 +288,13 @@ export default function FarmerDeliveryOrders() {
 
         {order.deliveryInfo?.deliveryOption === "Delivery" ? (
           <>
+            <TouchableOpacity
+              style={styles.assignButton}
+              onPress={() => changeStatus(order.id, "DRIVER_ASSIGNED")}
+            >
+              <Text style={styles.buttonText}>Assign Driver</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.deliveryButton}
               onPress={() => changeStatus(order.id, "IN_TRANSIT")}
@@ -171,6 +328,30 @@ export default function FarmerDeliveryOrders() {
     );
   }
 
+  if (checkingAccess) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={farmTheme.colors.primary} />
+
+        <Text style={styles.loadingText}>
+          Checking farmer subscription access...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.lockedTitle}>Subscription Required</Text>
+
+        <Text style={styles.loadingText}>
+          Redirecting to subscription page...
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Delivery Management</Text>
@@ -179,145 +360,224 @@ export default function FarmerDeliveryOrders() {
         {farmName || "Your Farm"} · Manage customer pickup and delivery orders.
       </Text>
 
-      <FlatList
-        data={orders}
-        keyExtractor={(item) => item.id}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingBottom: 120,
-        }}
-        ListEmptyComponent={
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyIcon}>🚚</Text>
+      {loading ? (
+        <View style={styles.emptyCard}>
+          <ActivityIndicator
+            size="large"
+            color={farmTheme.colors.primary}
+          />
 
-            <Text style={styles.emptyTitle}>No active orders found.</Text>
+          <Text style={styles.emptyText}>
+            Loading delivery orders...
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={orders}
+          keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{
+            paddingBottom: 120,
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyIcon}>🚚</Text>
 
-            <Text style={styles.emptyText}>
-              Pickup and delivery orders for {farmName || "your farm"} will
-              appear here.
-            </Text>
-          </View>
-        }
-        renderItem={({ item }) => {
-          const farmerItems = getFarmerItems(item);
-
-          const farmerSubtotal = farmerItems.reduce(
-            (sum, product) =>
-              sum + Number(product.price) * Number(product.quantity),
-            0
-          );
-
-          return (
-            <View style={styles.card}>
-              <View style={styles.headerRow}>
-                <View>
-                  <Text style={styles.orderId}>Order #{item.id.slice(-6)}</Text>
-
-                  <Text style={styles.dateText}>
-                    {item.createdAt
-                      ? new Date(item.createdAt).toLocaleString()
-                      : "Date unavailable"}
-                  </Text>
-                </View>
-
-                <View
-                  style={[
-                    styles.statusBadge,
-                    {
-                      backgroundColor: getStatusColor(item.status),
-                    },
-                  ]}
-                >
-                  <Text style={styles.statusText}>
-                    {getFriendlyStatus(item.status)}
-                  </Text>
-                </View>
-              </View>
-
-              <Text style={styles.customer}>
-                Customer: {item.customerName || item.customerEmail}
+              <Text style={styles.emptyTitle}>
+                No active orders found.
               </Text>
 
-              <Text style={styles.meta}>Phone: {item.deliveryInfo?.phone}</Text>
+              <Text style={styles.emptyText}>
+                Pickup and delivery orders for{" "}
+                {farmName || "your farm"} will appear here.
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const farmerItems = getFarmerItems(item);
 
-              <View style={styles.infoBox}>
-                <Text style={styles.infoTitle}>
-                  {item.deliveryInfo?.deliveryOption === "Delivery"
-                    ? "Delivery Order"
-                    : "Pickup Order"}
-                </Text>
+            const farmerSubtotal = farmerItems.reduce(
+              (sum, product) =>
+                sum +
+                Number(product.price) *
+                  Number(product.quantity),
+              0
+            );
 
-                <Text style={styles.infoText}>
-                  Method: {item.deliveryInfo?.deliveryOption}
-                </Text>
-
-                {item.deliveryInfo?.deliveryOption === "Delivery" ? (
-                  <>
-                    <Text style={styles.infoText}>
-                      Address: {item.deliveryInfo?.deliveryAddress}
+            return (
+              <View style={styles.card}>
+                <View style={styles.headerRow}>
+                  <View>
+                    <Text style={styles.orderId}>
+                      Order #{item.id.slice(-6)}
                     </Text>
 
-                    <Text style={styles.infoText}>
-                      {item.deliveryInfo?.city}, {item.deliveryInfo?.state}{" "}
-                      {item.deliveryInfo?.zipCode}
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={styles.infoText}>Customer pickup order</Text>
-                )}
-
-                {!!item.deliveryInfo?.deliveryInstructions && (
-                  <Text style={styles.infoText}>
-                    Instructions: {item.deliveryInfo.deliveryInstructions}
-                  </Text>
-                )}
-              </View>
-
-              <Text style={styles.sectionTitle}>Your Farm Items</Text>
-
-              {farmerItems.map((product, index) => (
-                <View key={`${product.id}-${index}`} style={styles.productRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.productName}>{product.name}</Text>
-
-                    <Text style={styles.productMeta}>
-                      Qty {product.quantity} · $
-                      {Number(product.price).toFixed(2)} each
+                    <Text style={styles.dateText}>
+                      {item.createdAt
+                        ? new Date(
+                            item.createdAt
+                          ).toLocaleString()
+                        : "Date unavailable"}
                     </Text>
                   </View>
 
-                  <Text style={styles.productTotal}>
-                    $
-                    {(
-                      Number(product.price) * Number(product.quantity)
-                    ).toFixed(2)}
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      {
+                        backgroundColor: getStatusColor(
+                          item.status
+                        ),
+                      },
+                    ]}
+                  >
+                    <Text style={styles.statusText}>
+                      {getFriendlyStatus(item.status)}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.customer}>
+                  Customer:{" "}
+                  {item.customerName || item.customerEmail}
+                </Text>
+
+                <Text style={styles.meta}>
+                  Phone: {item.deliveryInfo?.phone}
+                </Text>
+
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoTitle}>
+                    {item.deliveryInfo?.deliveryOption ===
+                    "Delivery"
+                      ? "Delivery Order"
+                      : "Pickup Order"}
+                  </Text>
+
+                  <Text style={styles.infoText}>
+                    Method:{" "}
+                    {item.deliveryInfo?.deliveryOption}
+                  </Text>
+
+                  {item.deliveryInfo?.deliveryOption ===
+                  "Delivery" ? (
+                    <>
+                      <Text style={styles.infoText}>
+                        Address:{" "}
+                        {item.deliveryInfo?.deliveryAddress}
+                      </Text>
+
+                      <Text style={styles.infoText}>
+                        {item.deliveryInfo?.city},{" "}
+                        {item.deliveryInfo?.state}{" "}
+                        {item.deliveryInfo?.zipCode}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.infoText}>
+                      Customer pickup order
+                    </Text>
+                  )}
+
+                  {!!item.deliveryInfo
+                    ?.deliveryInstructions && (
+                    <Text style={styles.infoText}>
+                      Instructions:{" "}
+                      {
+                        item.deliveryInfo
+                          .deliveryInstructions
+                      }
+                    </Text>
+                  )}
+                </View>
+
+                <Text style={styles.sectionTitle}>
+                  Your Farm Items
+                </Text>
+
+                {farmerItems.map((product, index) => (
+                  <View
+                    key={`${product.id}-${index}`}
+                    style={styles.productRow}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.productName}>
+                        {product.name}
+                      </Text>
+
+                      <Text style={styles.productMeta}>
+                        Qty {product.quantity} · $
+                        {Number(product.price).toFixed(
+                          2
+                        )}{" "}
+                        each
+                      </Text>
+                    </View>
+
+                    <Text style={styles.productTotal}>
+                      $
+                      {(
+                        Number(product.price) *
+                        Number(product.quantity)
+                      ).toFixed(2)}
+                    </Text>
+                  </View>
+                ))}
+
+                <View style={styles.totalBox}>
+                  <Text style={styles.totalLabel}>
+                    Your Farm Subtotal
+                  </Text>
+
+                  <Text style={styles.total}>
+                    ${farmerSubtotal.toFixed(2)}
                   </Text>
                 </View>
-              ))}
 
-              <View style={styles.totalBox}>
-                <Text style={styles.totalLabel}>Your Farm Subtotal</Text>
-
-                <Text style={styles.total}>${farmerSubtotal.toFixed(2)}</Text>
+                {renderButtons(item)}
               </View>
-
-              {renderButtons(item)}
-            </View>
-          );
-        }}
-      />
+            );
+          }}
+        />
+      )}
 
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => router.replace("/farmer/dashboard")}
+        onPress={() =>
+          router.replace("/farmer/dashboard")
+        }
       >
-        <Text style={styles.backText}>Back to Farmer Dashboard</Text>
+        <Text style={styles.backText}>
+          Back to Farmer Dashboard
+        </Text>
       </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  centered: {
+    flex: 1,
+    backgroundColor: farmTheme.colors.background,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+
+  lockedTitle: {
+    fontSize: 28,
+    fontWeight: "900",
+    color: "#991B1B",
+    marginBottom: 12,
+  },
+
+  loadingText: {
+    color: farmTheme.colors.mutedText,
+    fontWeight: "800",
+    marginTop: 12,
+    textAlign: "center",
+  },
+
   container: {
     flex: 1,
     backgroundColor: farmTheme.colors.background,
@@ -512,6 +772,12 @@ const styles = StyleSheet.create({
 
   readyButton: {
     backgroundColor: "#6A1B9A",
+    padding: 10,
+    borderRadius: 12,
+  },
+
+  assignButton: {
+    backgroundColor: "#0284C7",
     padding: 10,
     borderRadius: 12,
   },

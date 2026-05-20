@@ -19,13 +19,17 @@ import {
 } from "../data/orderStore";
 
 import { supabase } from "../data/supabaseClient";
+import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 import farmTheme from "../styles/farmTheme";
 
 export default function FarmerOrders() {
   const [orders, setOrders] = useState<Farm2HomeOrder[]>([]);
   const [farmName, setFarmName] = useState("");
   const [farmerId, setFarmerId] = useState("");
+  const [farmerEmail, setFarmerEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [accessChecking, setAccessChecking] = useState(true);
+  const [accessAllowed, setAccessAllowed] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -33,8 +37,25 @@ export default function FarmerOrders() {
     }, [])
   );
 
+  async function checkFarmerAccess(farmer?: any) {
+    const saved = farmer ? null : await AsyncStorage.getItem("currentFarmer");
+    const currentFarmer = farmer || (saved ? JSON.parse(saved) : null);
+
+    const access = await enforceSubscriptionAccess({
+      role: "farmer",
+      userId: currentFarmer?.id || farmerId || "",
+      email: currentFarmer?.email || farmerEmail || "",
+      redirectTo: "/subscription/subscription-locked",
+    });
+
+    setAccessAllowed(access.allowed);
+    return access.allowed;
+  }
+
   async function loadOrders() {
     try {
+      setAccessChecking(true);
+
       const saved = await AsyncStorage.getItem("currentFarmer");
 
       if (!saved) {
@@ -43,14 +64,26 @@ export default function FarmerOrders() {
       }
 
       const farmer = JSON.parse(saved);
+
+      const allowed = await checkFarmerAccess(farmer);
+
+      if (!allowed) {
+        setLoading(false);
+        return;
+      }
+
       const currentFarmName = farmer.farmName || "";
 
       setFarmName(currentFarmName);
       setFarmerId(farmer.id || "");
+      setFarmerEmail(farmer.email || "");
 
       setLoading(true);
 
-      const cloudOrders = await loadSupabaseOrders(currentFarmName, farmer.id || "");
+      const cloudOrders = await loadSupabaseOrders(
+        currentFarmName,
+        farmer.id || ""
+      );
 
       if (cloudOrders.length > 0) {
         setOrders(cloudOrders);
@@ -74,10 +107,14 @@ export default function FarmerOrders() {
       }
     } finally {
       setLoading(false);
+      setAccessChecking(false);
     }
   }
 
-  async function loadSupabaseOrders(currentFarmName: string, currentFarmerId: string) {
+  async function loadSupabaseOrders(
+    currentFarmName: string,
+    currentFarmerId: string
+  ) {
     let resolvedFarmerId = currentFarmerId;
 
     if (!resolvedFarmerId && currentFarmName) {
@@ -173,6 +210,10 @@ export default function FarmerOrders() {
 
   async function changeStatus(orderId: string, status: OrderStatus) {
     try {
+      const allowed = await checkFarmerAccess();
+
+      if (!allowed) return;
+
       const { error } = await supabase
         .from("orders")
         .update({
@@ -309,6 +350,24 @@ export default function FarmerOrders() {
         >
           <Text style={styles.actionText}>Cancel</Text>
         </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (accessChecking) {
+    return (
+      <View style={styles.lockContainer}>
+        <ActivityIndicator size="large" color={farmTheme.colors.primary} />
+        <Text style={styles.lockText}>Checking farmer subscription access...</Text>
+      </View>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <View style={styles.lockContainer}>
+        <Text style={styles.lockTitle}>Subscription Required</Text>
+        <Text style={styles.lockText}>Redirecting to subscription page...</Text>
       </View>
     );
   }
@@ -462,6 +521,25 @@ export default function FarmerOrders() {
 }
 
 const styles = StyleSheet.create({
+  lockContainer: {
+    flex: 1,
+    backgroundColor: farmTheme.colors.background,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  lockTitle: {
+    color: "#991B1B",
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  lockText: {
+    marginTop: 14,
+    color: farmTheme.colors.mutedText,
+    fontWeight: "800",
+    textAlign: "center",
+  },
   container: {
     flex: 1,
     backgroundColor: farmTheme.colors.background,
