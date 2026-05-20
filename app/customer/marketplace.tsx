@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -15,6 +16,8 @@ import { router } from "expo-router";
 
 import { addToCart, getCartItemCount } from "../data/cartStore";
 import { getApprovedFarmers } from "../data/farmerStore";
+import { useAuth } from "../providers/AuthProvider";
+import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 
 const GREEN_VALLEY_STRIPE_ACCOUNT_ID = "acct_1TWeOKCqJp7Z8L15";
 const SUNNYBROOK_STRIPE_ACCOUNT_ID = "acct_1TWjGSE1SmOAMwkt";
@@ -116,41 +119,11 @@ function getFallbackFarmers(): Farmer[] {
       distanceMiles: 5,
       stripeAccountId: GREEN_VALLEY_STRIPE_ACCOUNT_ID,
       products: [
-        {
-          id: "apple_1",
-          name: "Fresh Apples",
-          category: "Fruits",
-          price: 4.99,
-          unit: "bag",
-        },
-        {
-          id: "honey_1",
-          name: "Raw Honey",
-          category: "Honey",
-          price: 9.99,
-          unit: "jar",
-        },
-        {
-          id: "corn_1",
-          name: "Sweet Corn",
-          category: "Vegetables",
-          price: 3.5,
-          unit: "dozen",
-        },
-        {
-          id: "hay_1",
-          name: "Bale of Hay",
-          category: "Bale of Hay",
-          price: 12,
-          unit: "bale",
-        },
-        {
-          id: "flowers_1",
-          name: "Fresh Cut Flowers",
-          category: "Flowers",
-          price: 14.99,
-          unit: "bouquet",
-        },
+        { id: "apple_1", name: "Fresh Apples", category: "Fruits", price: 4.99, unit: "bag" },
+        { id: "honey_1", name: "Raw Honey", category: "Honey", price: 9.99, unit: "jar" },
+        { id: "corn_1", name: "Sweet Corn", category: "Vegetables", price: 3.5, unit: "dozen" },
+        { id: "hay_1", name: "Bale of Hay", category: "Bale of Hay", price: 12, unit: "bale" },
+        { id: "flowers_1", name: "Fresh Cut Flowers", category: "Flowers", price: 14.99, unit: "bouquet" },
       ],
     },
     {
@@ -161,27 +134,9 @@ function getFallbackFarmers(): Farmer[] {
       distanceMiles: 9,
       stripeAccountId: SUNNYBROOK_STRIPE_ACCOUNT_ID,
       products: [
-        {
-          id: "egg_1",
-          name: "Farm Eggs",
-          category: "Eggs",
-          price: 5.99,
-          unit: "dozen",
-        },
-        {
-          id: "milk_1",
-          name: "Fresh Milk",
-          category: "Dairy",
-          price: 6.5,
-          unit: "gallon",
-        },
-        {
-          id: "feed_1",
-          name: "Animal Feed Mix",
-          category: "Animal Feed",
-          price: 18,
-          unit: "bag",
-        },
+        { id: "egg_1", name: "Farm Eggs", category: "Eggs", price: 5.99, unit: "dozen" },
+        { id: "milk_1", name: "Fresh Milk", category: "Dairy", price: 6.5, unit: "gallon" },
+        { id: "feed_1", name: "Animal Feed Mix", category: "Animal Feed", price: 18, unit: "bag" },
       ],
     },
   ];
@@ -219,8 +174,12 @@ function normalizeFarmers(inputFarmers: Farmer[]): Farmer[] {
 }
 
 export default function MarketplaceScreen() {
+  const { user, profile } = useAuth();
+
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [loading, setLoading] = useState(false);
+  const [accessChecking, setAccessChecking] = useState(true);
+  const [accessAllowed, setAccessAllowed] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [cartCount, setCartCount] = useState(0);
@@ -234,6 +193,26 @@ export default function MarketplaceScreen() {
       setCartCount(0);
     }
   }, []);
+
+  const verifyAccess = useCallback(async () => {
+    try {
+      setAccessChecking(true);
+
+      const result = await enforceSubscriptionAccess({
+        role: "customer",
+        userId: user?.id || "",
+        email: profile?.email || user?.email || "",
+        redirectTo: "/subscription/subscription-locked",
+      });
+
+      setAccessAllowed(result.allowed);
+    } catch (error) {
+      console.log("Marketplace access check error:", error);
+      setAccessAllowed(false);
+    } finally {
+      setAccessChecking(false);
+    }
+  }, [user?.id, user?.email, profile?.email]);
 
   const loadMarketplace = useCallback(async () => {
     try {
@@ -270,9 +249,15 @@ export default function MarketplaceScreen() {
   }, []);
 
   useEffect(() => {
-    loadMarketplace();
-    refreshCartCount();
-  }, [loadMarketplace, refreshCartCount]);
+    verifyAccess();
+  }, [verifyAccess]);
+
+  useEffect(() => {
+    if (accessAllowed) {
+      loadMarketplace();
+      refreshCartCount();
+    }
+  }, [accessAllowed, loadMarketplace, refreshCartCount]);
 
   const categories = useMemo(() => {
     const categorySet = new Set<string>();
@@ -283,11 +268,7 @@ export default function MarketplaceScreen() {
       });
     });
 
-    const dynamicCategories = Array.from(categorySet);
-
-    return Array.from(
-      new Set([...DEFAULT_CATEGORIES, ...dynamicCategories])
-    );
+    return Array.from(new Set([...DEFAULT_CATEGORIES, ...Array.from(categorySet)]));
   }, [farmers]);
 
   const filteredFarmers = useMemo(() => {
@@ -317,6 +298,15 @@ export default function MarketplaceScreen() {
 
   async function handleAddToCart(farmer: Farmer, product: Product) {
     try {
+      const access = await enforceSubscriptionAccess({
+        role: "customer",
+        userId: user?.id || "",
+        email: profile?.email || user?.email || "",
+        redirectTo: "/subscription/subscription-locked",
+      });
+
+      if (!access.allowed) return;
+
       const farmerStripeAccountId = getFarmerStripeAccountId(farmer, product);
 
       if (!farmerStripeAccountId) {
@@ -341,9 +331,9 @@ export default function MarketplaceScreen() {
 
       Alert.alert(
         "Added to Cart",
-        `${product.name} added to cart at $${Number(product.price || 0).toFixed(
-          2
-        )}${product.unit ? ` / ${product.unit}` : ""}.`
+        `${product.name} added to cart at $${Number(product.price || 0).toFixed(2)}${
+          product.unit ? ` / ${product.unit}` : ""
+        }.`
       );
     } catch (error) {
       console.log("Add cart error:", error);
@@ -354,9 +344,7 @@ export default function MarketplaceScreen() {
   function openFarmerShop(farmer: Farmer) {
     router.push({
       pathname: "/customer/farmer-shop",
-      params: {
-        farmerId: farmer.id,
-      },
+      params: { farmerId: farmer.id },
     } as any);
   }
 
@@ -448,6 +436,24 @@ export default function MarketplaceScreen() {
         >
           {(item.products || []).map((product) => renderProduct(item, product))}
         </ScrollView>
+      </View>
+    );
+  }
+
+  if (accessChecking) {
+    return (
+      <View style={styles.loadingPage}>
+        <ActivityIndicator size="large" color="#047857" />
+        <Text style={styles.loadingText}>Checking subscription access...</Text>
+      </View>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <View style={styles.loadingPage}>
+        <Text style={styles.lockedTitle}>Subscription Required</Text>
+        <Text style={styles.loadingText}>Redirecting to subscription page...</Text>
       </View>
     );
   }
@@ -555,6 +561,25 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
     backgroundColor: "#F7F7F2",
+  },
+  loadingPage: {
+    flex: 1,
+    backgroundColor: "#F7F7F2",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 14,
+    color: "#334155",
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  lockedTitle: {
+    color: "#991B1B",
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
   },
   listContent: {
     paddingBottom: 120,

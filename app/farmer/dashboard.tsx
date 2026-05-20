@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   ScrollView,
@@ -18,12 +19,18 @@ import {
   updateFarmerProductStock,
 } from "../data/farmerStore";
 
+import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 import farmTheme from "../styles/farmTheme";
 
 const reviews = [
   { id: 1, customer: "Angela", rating: 5, text: "Fresh eggs and fast pickup!" },
   { id: 2, customer: "Marcus", rating: 5, text: "Great greens. Very fresh." },
-  { id: 3, customer: "Tanya", rating: 4, text: "Good quality and friendly farmer." },
+  {
+    id: 3,
+    customer: "Tanya",
+    rating: 4,
+    text: "Good quality and friendly farmer.",
+  },
 ];
 
 function getStock(product: Product) {
@@ -45,7 +52,12 @@ export default function FarmerDashboard() {
   const [farmName, setFarmName] = useState("My Farm");
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
-  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>({});
+  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>(
+    {}
+  );
+
+  const [accessChecking, setAccessChecking] = useState(true);
+  const [accessAllowed, setAccessAllowed] = useState(false);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -55,6 +67,8 @@ export default function FarmerDashboard() {
 
   async function loadFarmerProducts() {
     try {
+      setAccessChecking(true);
+
       const saved = await AsyncStorage.getItem("currentFarmer");
 
       if (!saved) {
@@ -64,6 +78,19 @@ export default function FarmerDashboard() {
       }
 
       const currentFarmer = JSON.parse(saved);
+
+      const access = await enforceSubscriptionAccess({
+        role: "farmer",
+        userId: currentFarmer.id || "",
+        email: currentFarmer.email || "",
+        redirectTo: "/subscription/subscription-locked",
+      });
+
+      setAccessAllowed(access.allowed);
+
+      if (!access.allowed) {
+        return;
+      }
 
       setFarmerId(currentFarmer.id);
       setFarmerEmail(currentFarmer.email || "");
@@ -80,6 +107,8 @@ export default function FarmerDashboard() {
     } catch (error) {
       console.log("Dashboard load error:", error);
       Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
+    } finally {
+      setAccessChecking(false);
     }
   }
 
@@ -88,7 +117,24 @@ export default function FarmerDashboard() {
     router.replace("/farmer/login" as any);
   }
 
+  async function checkFarmerAccessBeforeAction() {
+    const saved = await AsyncStorage.getItem("currentFarmer");
+    const currentFarmer = saved ? JSON.parse(saved) : null;
+
+    const access = await enforceSubscriptionAccess({
+      role: "farmer",
+      userId: currentFarmer?.id || farmerId || "",
+      email: currentFarmer?.email || farmerEmail || "",
+      redirectTo: "/subscription/subscription-locked",
+    });
+
+    return access.allowed;
+  }
+
   async function restockProduct(productId: string) {
+    const allowed = await checkFarmerAccessBeforeAction();
+    if (!allowed) return;
+
     const amount = Number(restockAmounts[productId] || 0);
 
     if (!farmerId) {
@@ -119,6 +165,13 @@ export default function FarmerDashboard() {
     Alert.alert("Inventory Updated", "Your product inventory was updated.");
   }
 
+  async function protectedPush(pathname: string) {
+    const allowed = await checkFarmerAccessBeforeAction();
+    if (!allowed) return;
+
+    router.push(pathname as any);
+  }
+
   const totalSold = products.reduce(
     (sum, item) => sum + Number(item.sold || 0),
     0
@@ -138,6 +191,24 @@ export default function FarmerDashboard() {
   });
 
   const soldOutProducts = products.filter((item) => getStock(item) <= 0);
+
+  if (accessChecking) {
+    return (
+      <View style={styles.lockContainer}>
+        <ActivityIndicator size="large" color={farmTheme.colors.primary} />
+        <Text style={styles.lockText}>Checking farmer subscription access...</Text>
+      </View>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <View style={styles.lockContainer}>
+        <Text style={styles.lockTitle}>Subscription Required</Text>
+        <Text style={styles.lockText}>Redirecting to subscription page...</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
@@ -159,7 +230,7 @@ export default function FarmerDashboard() {
 
         <TouchableOpacity
           style={styles.setupStoreButton}
-          onPress={() => router.push("/farmer/setup-store" as any)}
+          onPress={() => protectedPush("/farmer/setup-store")}
         >
           <Text style={styles.setupStoreText}>🏪 Edit Store Setup</Text>
         </TouchableOpacity>
@@ -172,49 +243,49 @@ export default function FarmerDashboard() {
       <View style={styles.actionGrid}>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => router.push("/farmer/post-produce" as any)}
+          onPress={() => protectedPush("/farmer/post-produce")}
         >
           <Text style={styles.actionText}>➕ Add Product</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.storeButton}
-          onPress={() => router.push("/farmer/setup-store" as any)}
+          onPress={() => protectedPush("/farmer/setup-store")}
         >
           <Text style={styles.actionText}>🏪 Customize Store</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.complianceButton}
-          onPress={() => router.push("/farmer/compliance-upload" as any)}
+          onPress={() => protectedPush("/farmer/compliance-upload")}
         >
           <Text style={styles.actionText}>🛡️ Compliance Record</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.ordersButton}
-          onPress={() => router.push("/farmer/orders" as any)}
+          onPress={() => protectedPush("/farmer/orders")}
         >
           <Text style={styles.actionText}>📦 Orders</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.deliveryButton}
-          onPress={() => router.push("/farmer/delivery-orders" as any)}
+          onPress={() => protectedPush("/farmer/delivery-orders")}
         >
           <Text style={styles.actionText}>🚚 Delivery</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.stripeButton}
-          onPress={() => router.push("/farmer/compliance-upload" as any)}
+          onPress={() => protectedPush("/farmer/compliance-upload")}
         >
           <Text style={styles.actionText}>💳 Payout Status</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.marketplaceButton}
-          onPress={() => router.push("/customer/marketplace" as any)}
+          onPress={() => protectedPush("/customer/marketplace")}
         >
           <Text style={styles.actionText}>🛒 Preview Marketplace</Text>
         </TouchableOpacity>
@@ -230,7 +301,7 @@ export default function FarmerDashboard() {
 
         <TouchableOpacity
           style={styles.previewButton}
-          onPress={() => router.push("/farmer/post-produce" as any)}
+          onPress={() => protectedPush("/farmer/post-produce")}
         >
           <Text style={styles.previewButtonText}>Add / Manage Produce</Text>
         </TouchableOpacity>
@@ -301,7 +372,7 @@ export default function FarmerDashboard() {
 
           <TouchableOpacity
             style={styles.emptyActionButton}
-            onPress={() => router.push("/farmer/post-produce" as any)}
+            onPress={() => protectedPush("/farmer/post-produce")}
           >
             <Text style={styles.emptyActionText}>Add Your First Product</Text>
           </TouchableOpacity>
@@ -406,6 +477,25 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
     backgroundColor: farmTheme.colors.background,
+  },
+  lockContainer: {
+    flex: 1,
+    backgroundColor: farmTheme.colors.background,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  lockTitle: {
+    color: "#991B1B",
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  lockText: {
+    marginTop: 14,
+    color: farmTheme.colors.mutedText,
+    fontWeight: "800",
+    textAlign: "center",
   },
   content: {
     padding: 18,

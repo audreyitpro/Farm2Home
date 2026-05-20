@@ -11,13 +11,17 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+
 import { supabase } from "../services/supabaseClient";
+import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 import {
   notifyDriverAcceptedLoad,
   notifyDriverArrivedPickup,
   notifyDriverArrivedDropoff,
 } from "../services/notificationService";
+
 type LoadStatus =
   | "available"
   | "accepted"
@@ -82,13 +86,53 @@ export default function FreightBoardScreen() {
 
   const [loads, setLoads] = useState<FreightLoad[]>([]);
   const [loading, setLoading] = useState(true);
+  const [accessChecking, setAccessChecking] = useState(true);
+  const [accessAllowed, setAccessAllowed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
 
   const createdLoadId = String(params.createdLoadId || "");
 
+  async function getCurrentFreightUser() {
+    const raw =
+      (await AsyncStorage.getItem("currentFreight")) ||
+      (await AsyncStorage.getItem("currentFreightUser")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!raw) return null;
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  const checkFreightAccess = useCallback(async () => {
+    const currentFreight = await getCurrentFreightUser();
+
+    const access = await enforceSubscriptionAccess({
+      role: "freight",
+      userId: currentFreight?.id || currentFreight?.freightId || "",
+      email: currentFreight?.email || "",
+      redirectTo: "/subscription/subscription-locked",
+    });
+
+    setAccessAllowed(access.allowed);
+    return access.allowed;
+  }, []);
+
   const loadBoard = useCallback(async () => {
     try {
+      const allowed = await checkFreightAccess();
+
+      if (!allowed) {
+        setLoading(false);
+        setRefreshing(false);
+        setAccessChecking(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from(TABLE_NAME)
         .select("*")
@@ -110,11 +154,13 @@ export default function FreightBoardScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setAccessChecking(false);
     }
-  }, []);
+  }, [checkFreightAccess]);
 
   useFocusEffect(
     useCallback(() => {
+      setAccessChecking(true);
       loadBoard();
     }, [loadBoard])
   );
@@ -147,7 +193,10 @@ export default function FreightBoardScreen() {
     });
   }, [loads, query]);
 
-  async function saveLoadUpdates(load: FreightLoad, updates: Partial<FreightLoad>) {
+  async function saveLoadUpdates(
+    load: FreightLoad,
+    updates: Partial<FreightLoad>
+  ) {
     setLoads((prev) =>
       prev.map((item) => (item.id === load.id ? { ...item, ...updates } : item))
     );
@@ -164,72 +213,84 @@ export default function FreightBoardScreen() {
     }
   }
 
-async function handleLoadAction(load: FreightLoad) {
-  try {
-    if (load.status === "available") {
-      await saveLoadUpdates(load, {
-        status: "accepted",
-        accepted_at: new Date().toISOString(),
-      });
+  async function handleLoadAction(load: FreightLoad) {
+    try {
+      const allowed = await checkFreightAccess();
+      if (!allowed) return;
 
-      await notifyDriverAcceptedLoad(load.id);
+      if (load.status === "available") {
+        await saveLoadUpdates(load, {
+          status: "accepted",
+          accepted_at: new Date().toISOString(),
+        });
 
-      router.push({
-        pathname: "/driver/live-location-provider" as any,
-        params: { loadId: load.id },
-      });
+        await notifyDriverAcceptedLoad(load.id);
 
-      return;
+        router.push({
+          pathname: "/driver/live-location-provider" as any,
+          params: { loadId: load.id },
+        });
+
+        return;
+      }
+
+      if (load.status === "accepted") {
+        await saveLoadUpdates(load, {
+          status: "arrived_pickup",
+          arrived_pickup_at: new Date().toISOString(),
+        });
+
+        await notifyDriverArrivedPickup(load.id);
+
+        return;
+      }
+
+      if (load.status === "arrived_pickup") {
+        router.push({
+          pathname: "/driver/proof-of-pickup" as any,
+          params: { loadId: load.id },
+        });
+
+        return;
+      }
+
+      if (load.status === "picked_up" || load.status === "in_transit") {
+        await saveLoadUpdates(load, {
+          status: "arrived_dropoff",
+          arrived_dropoff_at: new Date().toISOString(),
+        });
+
+        await notifyDriverArrivedDropoff(load.id);
+
+        return;
+      }
+
+      if (load.status === "arrived_dropoff") {
+        router.push({
+          pathname: "/driver/proof-of-delivery" as any,
+          params: { loadId: load.id },
+        });
+
+        return;
+      }
+
+      if (load.status === "delivered") {
+        Alert.alert("Delivered", "This freight load has already been completed.");
+      }
+    } catch (err) {
+      console.log("Load action error:", err);
+      Alert.alert("Error", "Unable to update freight load.");
     }
-
-    if (load.status === "accepted") {
-      await saveLoadUpdates(load, {
-        status: "arrived_pickup",
-        arrived_pickup_at: new Date().toISOString(),
-      });
-
-      await notifyDriverArrivedPickup(load.id);
-
-      return;
-    }
-
-    if (load.status === "arrived_pickup") {
-      router.push({
-        pathname: "/driver/proof-of-pickup" as any,
-        params: { loadId: load.id },
-      });
-
-      return;
-    }
-
-    if (load.status === "picked_up" || load.status === "in_transit") {
-      await saveLoadUpdates(load, {
-        status: "arrived_dropoff",
-        arrived_dropoff_at: new Date().toISOString(),
-      });
-
-      await notifyDriverArrivedDropoff(load.id);
-
-      return;
-    }
-
-    if (load.status === "arrived_dropoff") {
-      router.push({
-        pathname: "/driver/proof-of-delivery" as any,
-        params: { loadId: load.id },
-      });
-
-      return;
-    }
-
-    if (load.status === "delivered") {
-      Alert.alert("Delivered", "This freight load has already been completed.");
-    }
-  } catch (err) {
-    console.log("Load action error:", err);
-    Alert.alert("Error", "Unable to update freight load.");
   }
-}
+
+  async function goToPostFreight() {
+    const allowed = await checkFreightAccess();
+    if (!allowed) return;
+
+    router.push({
+      pathname: "/farmer/post-load" as any,
+    });
+  }
 
   function getButtonLabel(status: LoadStatus) {
     switch (status) {
@@ -251,11 +312,20 @@ async function handleLoadAction(load: FreightLoad) {
     }
   }
 
-  if (loading) {
+  if (loading || accessChecking) {
     return (
       <SafeAreaView style={styles.centered}>
         <ActivityIndicator size="large" color="#1f6f43" />
-        <Text style={styles.loadingText}>Loading Freight Board...</Text>
+        <Text style={styles.loadingText}>Checking Freight Access...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <SafeAreaView style={styles.centered}>
+        <Text style={styles.lockTitle}>Subscription Required</Text>
+        <Text style={styles.loadingText}>Redirecting to subscription page...</Text>
       </SafeAreaView>
     );
   }
@@ -266,17 +336,12 @@ async function handleLoadAction(load: FreightLoad) {
         <View style={{ flex: 1 }}>
           <Text style={styles.kicker}>Farm2Home Freight</Text>
           <Text style={styles.title}>Live Load Board</Text>
-          <Text style={styles.subtitle}>Accept, track, and complete deliveries.</Text>
+          <Text style={styles.subtitle}>
+            Accept, track, and complete deliveries.
+          </Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.postButton}
-          onPress={() =>
-            router.push({
-              pathname: "/farmer/post-load" as any,
-            })
-          }
-        >
+        <TouchableOpacity style={styles.postButton} onPress={goToPostFreight}>
           <Text style={styles.postButtonText}>Post Freight</Text>
         </TouchableOpacity>
       </View>
@@ -294,7 +359,9 @@ async function handleLoadAction(load: FreightLoad) {
       <FlatList
         data={filteredLoads}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => (
           <View style={styles.card}>
@@ -328,7 +395,8 @@ async function handleLoadAction(load: FreightLoad) {
               <Text style={styles.routeLabel}>Dropoff</Text>
               <Text style={styles.routeText}>{item.dropoff_location}</Text>
               <Text style={styles.routeSub}>
-                {item.dropoff_date || "Scheduled"} • {item.dropoff_time || "TBD"}
+                {item.dropoff_date || "Scheduled"} •{" "}
+                {item.dropoff_time || "TBD"}
               </Text>
             </View>
 
@@ -362,7 +430,9 @@ async function handleLoadAction(load: FreightLoad) {
               onPress={() => handleLoadAction(item)}
               disabled={item.status === "delivered"}
             >
-              <Text style={styles.actionButtonText}>{getButtonLabel(item.status)}</Text>
+              <Text style={styles.actionButtonText}>
+                {getButtonLabel(item.status)}
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -373,7 +443,19 @@ async function handleLoadAction(load: FreightLoad) {
 
 const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
-  loadingText: { marginTop: 12, fontSize: 16, fontWeight: "700" },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#334155",
+    textAlign: "center",
+  },
+  lockTitle: {
+    color: "#991B1B",
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   container: { flex: 1, backgroundColor: "#f5f7f5" },
   header: {
     backgroundColor: "#163b2b",
@@ -452,7 +534,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  routeText: { fontSize: 14, color: "#23352b", marginTop: 3, fontWeight: "800" },
+  routeText: {
+    fontSize: 14,
+    color: "#23352b",
+    marginTop: 3,
+    fontWeight: "800",
+  },
   routeSub: { fontSize: 12, color: "#52625a", marginTop: 3, fontWeight: "600" },
   divider: { height: 1, backgroundColor: "#dce3df", marginVertical: 10 },
   infoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },

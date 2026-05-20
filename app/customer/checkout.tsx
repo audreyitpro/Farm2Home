@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -21,12 +22,23 @@ import {
   saveDeliveryInfo,
   savePendingOrder,
 } from "../data/orderStore";
+import { useAuth } from "../providers/AuthProvider";
+import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 import farmTheme from "../styles/farmTheme";
 
-const API_BASE_URL = "http://localhost:4242";
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  "https://farm2home-production-e4bd.up.railway.app";
+
+const APP_URL =
+  process.env.EXPO_PUBLIC_APP_URL ||
+  "https://farm2home-rho.vercel.app";
+
 const SERVICE_FEE_RATE = 0.04;
 
 type CurrentCustomer = {
+  id?: string;
   email?: string;
   fullName?: string;
   name?: string;
@@ -51,13 +63,10 @@ function safelyParseCustomer(rawValue: string | null): CurrentCustomer | null {
 function groupCartByFarm(cart: CartItem[]): CartGroup[] {
   const grouped: Record<string, CartItem[]> = {};
 
-  cart.forEach((item) => {
-    const farmName = item.farmName || "Farm2Home Farm";
+  cart.forEach((item: any) => {
+    const farmName = item.farmName || item.farmerName || "Farm2Home Farm";
 
-    if (!grouped[farmName]) {
-      grouped[farmName] = [];
-    }
-
+    if (!grouped[farmName]) grouped[farmName] = [];
     grouped[farmName].push(item);
   });
 
@@ -67,27 +76,62 @@ function groupCartByFarm(cart: CartItem[]): CartGroup[] {
   }));
 }
 
+function calculateDriverPayout(miles: number) {
+  if (miles > 20) return 25;
+  if (miles > 10) return 18;
+  if (miles > 5) return 12;
+  return 8;
+}
+
 export default function CustomerCheckout() {
+  const { user, profile } = useAuth();
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [accessChecking, setAccessChecking] = useState(true);
+  const [accessAllowed, setAccessAllowed] = useState(false);
 
   const [deliveryOption, setDeliveryOption] = useState<"Delivery" | "Pickup">(
     "Delivery"
   );
 
-  const [deliveryAddress, setDeliveryAddress] = useState("123 Test Farm Lane");
-  const [city, setCity] = useState("Sterling Heights");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [city, setCity] = useState("");
   const [stateValue, setStateValue] = useState("MI");
-  const [zipCode, setZipCode] = useState("48310");
-  const [phone, setPhone] = useState("555-555-5555");
+  const [zipCode, setZipCode] = useState("");
+  const [phone, setPhone] = useState("");
   const [deliveryInstructions, setDeliveryInstructions] = useState("");
   const [tip, setTip] = useState("0");
 
   useFocusEffect(
     useCallback(() => {
-      loadCart();
-    }, [])
+      checkAccessAndLoadCart();
+    }, [user?.id, user?.email, profile?.email])
   );
+
+  async function checkAccessAndLoadCart() {
+    try {
+      setAccessChecking(true);
+
+      const access = await enforceSubscriptionAccess({
+        role: "customer",
+        userId: user?.id || "",
+        email: profile?.email || user?.email || "",
+        redirectTo: "/subscription/subscription-locked",
+      });
+
+      setAccessAllowed(access.allowed);
+
+      if (access.allowed) {
+        await loadCart();
+      }
+    } catch (error) {
+      console.log("Checkout access error:", error);
+      setAccessAllowed(false);
+    } finally {
+      setAccessChecking(false);
+    }
+  }
 
   async function loadCart() {
     try {
@@ -108,18 +152,113 @@ export default function CustomerCheckout() {
 
   const subtotal = useMemo(() => {
     return cart.reduce(
-      (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0),
+      (sum, item: any) =>
+        sum + Number(item.price || 0) * Number(item.quantity || 0),
       0
     );
   }, [cart]);
 
   const serviceFee = subtotal * SERVICE_FEE_RATE;
-  const deliveryFee = deliveryOption === "Delivery" && cart.length > 0 ? 5.99 : 0;
+  const deliveryFee =
+    deliveryOption === "Delivery" && cart.length > 0 ? 5.99 : 0;
   const tipAmount = Number(tip) || 0;
   const total = subtotal + serviceFee + deliveryFee + tipAmount;
 
+  async function createDeliveryJobsForOrder(params: {
+    orderId: string;
+    currentCustomer: CurrentCustomer | null;
+    customerName: string;
+    deliveryInfo: DeliveryInfo;
+  }) {
+    if (deliveryOption !== "Delivery") return;
+
+    try {
+      const farmerGroups: Record<string, any[]> = {};
+
+      cart.forEach((item: any) => {
+        const farmerId =
+          item.farmerId ||
+          item.farmId ||
+          item.farmer_id ||
+          item.farmerStripeAccountId ||
+          "unknown_farmer";
+
+        if (!farmerGroups[farmerId]) farmerGroups[farmerId] = [];
+        farmerGroups[farmerId].push(item);
+      });
+
+      const dropoffAddress =
+        `${params.deliveryInfo.deliveryAddress}, ` +
+        `${params.deliveryInfo.city}, ` +
+        `${params.deliveryInfo.state} ` +
+        `${params.deliveryInfo.zipCode}`;
+
+      for (const farmerId of Object.keys(farmerGroups)) {
+        const farmerItems = farmerGroups[farmerId];
+        const firstItem: any = farmerItems[0];
+
+        const farmName =
+          firstItem?.farmName ||
+          firstItem?.farmerName ||
+          "Farm2Home Farm";
+
+        const miles = Number(firstItem?.distanceMiles || firstItem?.miles || 0);
+        const payoutAmount = calculateDriverPayout(miles);
+
+        const pickupAddress =
+          firstItem?.farmAddress ||
+          firstItem?.pickupAddress ||
+          firstItem?.farmLocation ||
+          "Farm pickup location";
+
+        const deliveryJobPayload = {
+          orderId: params.orderId,
+          farmerId,
+          customerId: params.currentCustomer?.id || "",
+          farmName,
+          customerName: params.customerName,
+          customerPhone: params.deliveryInfo.phone,
+          pickupAddress,
+          dropoffAddress,
+          deliveryWindow: "Same Day Delivery",
+          payoutAmount,
+          miles,
+          pickupNotes: "Pickup customer grocery order from farm.",
+          deliveryNotes: params.deliveryInfo.deliveryInstructions || "",
+        };
+
+        const response = await fetch(`${API_BASE_URL}/driver/create-delivery-job`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(deliveryJobPayload),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          console.log("DELIVERY JOB CREATE FAILED:", data);
+        } else {
+          console.log("DELIVERY JOB CREATED:", data.deliveryJob);
+        }
+      }
+    } catch (error) {
+      console.log("Delivery job creation error:", error);
+    }
+  }
+
   async function handleStripeCheckout() {
     if (loading) return;
+
+    const access = await enforceSubscriptionAccess({
+      role: "customer",
+      userId: user?.id || "",
+      email: profile?.email || user?.email || "",
+      redirectTo: "/subscription/subscription-locked",
+    });
+
+    if (!access.allowed) return;
 
     if (cart.length === 0) {
       Alert.alert("Empty Cart", "Please add items before checkout.");
@@ -145,11 +284,11 @@ export default function CustomerCheckout() {
       return;
     }
 
-    const invalidItems = cart.filter((item) => !item.farmerStripeAccountId);
+    const invalidItems = cart.filter(
+      (item: any) => !item.farmerStripeAccountId && !item.stripeAccountId
+    );
 
     if (invalidItems.length > 0) {
-      console.log("ITEMS MISSING FARMER STRIPE ACCOUNT:", invalidItems);
-
       Alert.alert(
         "Marketplace Setup Error",
         "Some cart items are missing farmer Stripe account IDs. Go back to Marketplace, clear the cart, and add the items again."
@@ -160,8 +299,16 @@ export default function CustomerCheckout() {
     try {
       setLoading(true);
 
-      const currentCustomerRaw = await AsyncStorage.getItem("currentCustomer");
+      const currentCustomerRaw =
+        (await AsyncStorage.getItem("currentCustomer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
       const currentCustomer = safelyParseCustomer(currentCustomerRaw);
+
+      const customerName =
+        currentCustomer?.fullName ||
+        currentCustomer?.name ||
+        "Farm2Home Customer";
 
       const deliveryInfo: DeliveryInfo = {
         deliveryAddress:
@@ -181,11 +328,12 @@ export default function CustomerCheckout() {
 
       const pendingOrder: Farm2HomeOrder = {
         id: orderId,
-        customerEmail: currentCustomer?.email || "customer@test.com",
-        customerName:
-          currentCustomer?.fullName ||
-          currentCustomer?.name ||
-          "Farm2Home Customer",
+        customerEmail:
+          currentCustomer?.email ||
+          profile?.email ||
+          user?.email ||
+          "customer@test.com",
+        customerName,
         items: cart,
         subtotal,
         deliveryFee,
@@ -216,11 +364,9 @@ export default function CustomerCheckout() {
         zipCode: deliveryInfo.zipCode,
         phone: deliveryInfo.phone,
         deliveryInstructions: deliveryInfo.deliveryInstructions,
-        successUrl: "http://localhost:8081/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}",
-        cancelUrl: "http://localhost:8081/customer/cart",
+        successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${APP_URL}/customer/cart`,
       };
-
-      console.log("MARKETPLACE CHECKOUT PAYLOAD:", payload);
 
       const response = await fetch(
         `${API_BASE_URL}/payments/create-marketplace-checkout`,
@@ -235,10 +381,17 @@ export default function CustomerCheckout() {
 
       const data = await response.json();
 
-      console.log("MARKETPLACE CHECKOUT RESPONSE:", data);
-
       if (!response.ok || !data.success || !data.url) {
         throw new Error(data.error || "Unable to create Stripe checkout.");
+      }
+
+      if (deliveryOption === "Delivery") {
+        await createDeliveryJobsForOrder({
+          orderId,
+          currentCustomer,
+          customerName,
+          deliveryInfo,
+        });
       }
 
       if (Platform.OS === "web") {
@@ -258,17 +411,39 @@ export default function CustomerCheckout() {
     }
   }
 
+  if (accessChecking) {
+    return (
+      <View style={styles.lockContainer}>
+        <ActivityIndicator size="large" color={farmTheme.colors.primary} />
+        <Text style={styles.lockText}>Checking subscription access...</Text>
+      </View>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <View style={styles.lockContainer}>
+        <Text style={styles.lockTitle}>Subscription Required</Text>
+        <Text style={styles.lockText}>Redirecting to subscription page...</Text>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         <Text style={styles.title}>Marketplace Checkout</Text>
 
         <Text style={styles.subtitle}>
           Pay once. Farm2Home keeps a 4% service fee and Stripe splits farmer
-          payouts by each farmer account.
+          payouts by each farmer account. Delivery orders can route to preferred
+          farmer drivers or the open driver board.
         </Text>
 
         <View style={styles.optionRow}>
@@ -321,7 +496,7 @@ export default function CustomerCheckout() {
         ) : (
           cartGroups.map((group) => {
             const farmSubtotal = group.items.reduce(
-              (sum, item) =>
+              (sum, item: any) =>
                 sum + Number(item.price || 0) * Number(item.quantity || 0),
               0
             );
@@ -335,17 +510,21 @@ export default function CustomerCheckout() {
                   </Text>
                 </View>
 
-                {group.items.map((item) => (
+                {group.items.map((item: any) => (
                   <View key={item.id} style={styles.itemRow}>
                     <View style={styles.itemInfo}>
                       <Text style={styles.itemName}>{item.name}</Text>
 
                       <Text style={styles.itemMeta}>
-                        Qty {item.quantity} · ${Number(item.price || 0).toFixed(2)} each
+                        Qty {item.quantity} · $
+                        {Number(item.price || 0).toFixed(2)} each
                       </Text>
 
                       <Text style={styles.accountMeta} numberOfLines={1}>
-                        Farmer Stripe: {item.farmerStripeAccountId || "Missing"}
+                        Farmer Stripe:{" "}
+                        {item.farmerStripeAccountId ||
+                          item.stripeAccountId ||
+                          "Missing"}
                       </Text>
                     </View>
 
@@ -508,7 +687,7 @@ export default function CustomerCheckout() {
         </Pressable>
 
         <Text style={styles.cardNote}>
-          Test card: 4242 4242 4242 4242 · any future date · any CVC.
+          Production mode: use a real card in Stripe Live Mode.
         </Text>
 
         <View style={styles.bottomSpace} />
@@ -522,6 +701,25 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 18,
     backgroundColor: farmTheme.colors.background,
+  },
+  lockContainer: {
+    flex: 1,
+    backgroundColor: farmTheme.colors.background,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  lockTitle: {
+    color: "#991B1B",
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  lockText: {
+    marginTop: 14,
+    color: farmTheme.colors.mutedText,
+    fontWeight: "800",
+    textAlign: "center",
   },
   title: {
     fontSize: 32,

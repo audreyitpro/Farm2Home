@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,17 +16,79 @@ import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../providers/AuthProvider";
 import { updateUserProfile } from "../services/profileService";
 import { uploadAvatarImage } from "../services/storageService";
+import {
+  cancelSubscription,
+  checkSubscriptionStatus,
+  getStripeCustomerId,
+  getSubscriptionId,
+  type UserRole,
+} from "../services/subscriptionService";
 
 export default function EditProfileScreen() {
   const { user, profile, refreshProfile } = useAuth();
 
   const [loading, setLoading] = useState(false);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [canceling, setCanceling] = useState(false);
+
+  const [subscriptionStatus, setSubscriptionStatus] = useState<any>(null);
 
   const [fullName, setFullName] = useState(profile?.full_name || "");
   const [phone, setPhone] = useState(profile?.phone || "");
   const [city, setCity] = useState(profile?.city || "");
   const [state, setState] = useState(profile?.state || "");
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url || "");
+
+  const role: UserRole = useMemo(() => {
+  const rawRole =
+    (profile as any)?.role ||
+    (profile as any)?.account_type ||
+    (profile as any)?.user_type ||
+    (profile as any)?.profile_type ||
+    "customer";
+
+    const normalized = String(rawRole).toLowerCase();
+
+    if (
+      normalized === "farmer" ||
+      normalized === "freight" ||
+      normalized === "driver" ||
+      normalized === "customer"
+    ) {
+      return normalized;
+    }
+
+    return "customer";
+  }, [profile]);
+
+  const activeSubscription = subscriptionStatus?.subscription || null;
+  const lockedOut = subscriptionStatus?.lockedOut === true;
+  const hasActiveSubscription =
+    subscriptionStatus?.hasActiveSubscription === true;
+
+  useEffect(() => {
+    loadSubscriptionStatus();
+  }, [user?.id, profile?.email, role]);
+
+  async function loadSubscriptionStatus() {
+    try {
+      if (!user?.id && !profile?.email) return;
+
+      setSubscriptionLoading(true);
+
+      const data = await checkSubscriptionStatus({
+        role,
+        userId: user?.id || "",
+        email: profile?.email || user?.email || "",
+      });
+
+      setSubscriptionStatus(data);
+    } catch (error: any) {
+      console.log("Subscription status error:", error?.message);
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  }
 
   async function chooseImage() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -43,9 +105,7 @@ export default function EditProfileScreen() {
       aspect: [1, 1],
     });
 
-    if (result.canceled) {
-      return;
-    }
+    if (result.canceled) return;
 
     const image = result.assets[0];
 
@@ -92,6 +152,136 @@ export default function EditProfileScreen() {
     }
   }
 
+  async function handleCancelSubscription() {
+    const subscriptionId = getSubscriptionId(activeSubscription);
+    const stripeCustomerId = getStripeCustomerId(activeSubscription);
+
+    if (!subscriptionId && !stripeCustomerId && !user?.id) {
+      Alert.alert(
+        "No Subscription Found",
+        "We could not find an active subscription to cancel."
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Cancel Subscription",
+      "Are you sure you want to cancel? Your account access will be locked after cancellation.",
+      [
+        {
+          text: "Keep Subscription",
+          style: "cancel",
+        },
+        {
+          text: "Cancel Subscription",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setCanceling(true);
+
+              await cancelSubscription({
+                role,
+                userId: user?.id || "",
+                subscriptionId,
+                stripeCustomerId,
+                cancelAtPeriodEnd: false,
+              });
+
+              await loadSubscriptionStatus();
+
+              Alert.alert(
+                "Subscription Canceled",
+                "Your subscription was canceled. Access to paid features is now locked."
+              );
+            } catch (error: any) {
+              Alert.alert(
+                "Cancellation Error",
+                error.message || "Unable to cancel subscription."
+              );
+            } finally {
+              setCanceling(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  function renderSubscriptionCard() {
+    const statusText =
+      activeSubscription?.subscription_status ||
+      (hasActiveSubscription ? "active" : "not active");
+
+    return (
+      <View style={styles.subscriptionCard}>
+        <View style={styles.subscriptionHeader}>
+          <Text style={styles.subscriptionTitle}>Subscription</Text>
+
+          <View
+            style={[
+              styles.statusBadge,
+              hasActiveSubscription ? styles.activeBadge : styles.lockedBadge,
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                hasActiveSubscription
+                  ? styles.activeBadgeText
+                  : styles.lockedBadgeText,
+              ]}
+            >
+              {hasActiveSubscription ? "ACTIVE" : "LOCKED"}
+            </Text>
+          </View>
+        </View>
+
+        <Text style={styles.subscriptionLine}>Account Type: {role}</Text>
+        <Text style={styles.subscriptionLine}>Status: {statusText}</Text>
+
+        {lockedOut ? (
+          <View style={styles.lockoutBox}>
+            <Text style={styles.lockoutTitle}>Account Access Locked</Text>
+            <Text style={styles.lockoutText}>
+              {subscriptionStatus?.lockoutReason ||
+                "Your subscription is not active. Please renew to continue using paid Farm2Home features."}
+            </Text>
+          </View>
+        ) : (
+          <Text style={styles.subscriptionGood}>
+            Your subscription is active. Paid features are unlocked.
+          </Text>
+        )}
+
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={loadSubscriptionStatus}
+          disabled={subscriptionLoading}
+        >
+          {subscriptionLoading ? (
+            <ActivityIndicator color="#064E3B" />
+          ) : (
+            <Text style={styles.refreshText}>Refresh Subscription Status</Text>
+          )}
+        </TouchableOpacity>
+
+        {hasActiveSubscription ? (
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={handleCancelSubscription}
+            disabled={canceling}
+          >
+            {canceling ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.cancelText}>Cancel Subscription</Text>
+            )}
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.container}
@@ -132,7 +322,7 @@ export default function EditProfileScreen() {
         <Text style={styles.label}>Email</Text>
 
         <TextInput
-          value={profile?.email || ""}
+          value={profile?.email || user?.email || ""}
           editable={false}
           style={[styles.input, styles.disabledInput]}
         />
@@ -179,6 +369,8 @@ export default function EditProfileScreen() {
           )}
         </TouchableOpacity>
       </View>
+
+      {renderSubscriptionCard()}
 
       <View style={{ height: 80 }} />
     </ScrollView>
@@ -287,5 +479,120 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
+  },
+
+  subscriptionCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 28,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginTop: 20,
+  },
+
+  subscriptionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+
+  subscriptionTitle: {
+    color: "#064E3B",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+
+  activeBadge: {
+    backgroundColor: "#D1FAE5",
+  },
+
+  lockedBadge: {
+    backgroundColor: "#FEE2E2",
+  },
+
+  statusBadgeText: {
+    fontWeight: "900",
+    fontSize: 12,
+  },
+
+  activeBadgeText: {
+    color: "#065F46",
+  },
+
+  lockedBadgeText: {
+    color: "#991B1B",
+  },
+
+  subscriptionLine: {
+    color: "#334155",
+    fontWeight: "800",
+    marginTop: 6,
+  },
+
+  subscriptionGood: {
+    backgroundColor: "#ECFDF5",
+    color: "#047857",
+    fontWeight: "800",
+    padding: 14,
+    borderRadius: 16,
+    marginTop: 14,
+    lineHeight: 20,
+  },
+
+  lockoutBox: {
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 18,
+    padding: 14,
+    marginTop: 14,
+  },
+
+  lockoutTitle: {
+    color: "#991B1B",
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+
+  lockoutText: {
+    color: "#7F1D1D",
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+
+  refreshButton: {
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    padding: 15,
+    borderRadius: 18,
+    alignItems: "center",
+    marginTop: 16,
+  },
+
+  refreshText: {
+    color: "#064E3B",
+    fontWeight: "900",
+  },
+
+  cancelButton: {
+    backgroundColor: "#DC2626",
+    padding: 16,
+    borderRadius: 18,
+    alignItems: "center",
+    marginTop: 14,
+  },
+
+  cancelText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 15,
   },
 });
