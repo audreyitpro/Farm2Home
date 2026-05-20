@@ -11,6 +11,7 @@ const chatRoutes = require("./routes/chat");
 const freightRoutes = require("./routes/freight");
 const driverRoutes = require("./routes/driver");
 const stripeWebhookRoutes = require("./routes/stripe-webhooks");
+const deliveryPayoutRoutes = require("./routes/delivery-payouts");
 
 const app = express();
 
@@ -31,6 +32,9 @@ if (!STRIPE_SECRET_KEY) {
 
 const stripe = STRIPE_SECRET_KEY ? Stripe(STRIPE_SECRET_KEY) : null;
 const pendingStripeSplits = new Map();
+
+global.pendingMarketplaceSplits = pendingStripeSplits;
+global.completedMarketplaceTransfers = new Map();
 
 /* =====================================================
    HELPERS
@@ -157,6 +161,7 @@ app.get("/health", (req, res) => {
     apiBaseUrl: API_BASE_URL,
     driverRoutesMounted: true,
     stripeWebhookMounted: true,
+    deliveryPayoutRoutesMounted: true,
   });
 });
 
@@ -536,6 +541,7 @@ app.use("/payments", paymentsRoutes);
 app.use("/chat", chatRoutes);
 app.use("/freight", freightRoutes);
 app.use("/driver", driverRoutes);
+app.use("/delivery-payouts", deliveryPayoutRoutes);
 
 /* =====================================================
    404 HANDLER
