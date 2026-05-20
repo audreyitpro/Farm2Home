@@ -12,6 +12,7 @@ const freightRoutes = require("./routes/freight");
 const driverRoutes = require("./routes/driver");
 const stripeWebhookRoutes = require("./routes/stripe-webhooks");
 const deliveryPayoutRoutes = require("./routes/delivery-payouts");
+const payoutRetryRoutes = require("./routes/payout-retry");
 
 const app = express();
 
@@ -162,6 +163,7 @@ app.get("/health", (req, res) => {
     driverRoutesMounted: true,
     stripeWebhookMounted: true,
     deliveryPayoutRoutesMounted: true,
+    payoutRetryRoutesMounted: true,
   });
 });
 
@@ -542,6 +544,7 @@ app.use("/chat", chatRoutes);
 app.use("/freight", freightRoutes);
 app.use("/driver", driverRoutes);
 app.use("/delivery-payouts", deliveryPayoutRoutes);
+app.use("/payouts", payoutRetryRoutes);
 
 /* =====================================================
    404 HANDLER
