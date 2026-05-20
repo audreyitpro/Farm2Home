@@ -24,17 +24,12 @@ const stripe = process.env.STRIPE_SECRET_KEY
 
 const supabase =
   process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(
-        process.env.SUPABASE_URL,
-        process.env.SUPABASE_SERVICE_ROLE_KEY,
-        {
-          realtime: { transport: ws },
-        }
-      )
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+        realtime: { transport: ws },
+      })
     : null;
 
 const pendingMarketplaceSplits = new Map();
-const completedMarketplaceTransfers = new Map();
 
 /* =====================================================
    HELPERS
@@ -45,6 +40,17 @@ function requireStripe(res) {
     res.status(500).json({
       success: false,
       error: "STRIPE_SECRET_KEY missing in backend environment.",
+    });
+    return false;
+  }
+  return true;
+}
+
+function requireSupabase(res) {
+  if (!supabase) {
+    res.status(500).json({
+      success: false,
+      error: "Supabase is not configured.",
     });
     return false;
   }
@@ -62,6 +68,73 @@ function safeNumber(value, fallback = 0) {
 
 function cleanString(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeRole(role) {
+  const normalized = cleanString(role).toLowerCase();
+
+  if (["customer", "farmer", "freight", "driver"].includes(normalized)) {
+    return normalized;
+  }
+
+  return "customer";
+}
+
+function getSubscriptionConfig(role) {
+  const normalizedRole = normalizeRole(role);
+
+  if (normalizedRole === "driver") {
+    return {
+      role: "driver",
+      table: "driver_subscriptions",
+      idColumn: "driver_id",
+      emailColumn: "driver_email",
+    };
+  }
+
+  if (normalizedRole === "farmer") {
+    return {
+      role: "farmer",
+      table: "farmer_subscriptions",
+      idColumn: "farmer_id",
+      emailColumn: "farmer_email",
+    };
+  }
+
+  if (normalizedRole === "freight") {
+    return {
+      role: "freight",
+      table: "freight_subscriptions",
+      idColumn: "freight_id",
+      emailColumn: "freight_email",
+    };
+  }
+
+  return {
+    role: "customer",
+    table: "customer_subscriptions",
+    idColumn: "customer_id",
+    emailColumn: "customer_email",
+  };
+}
+
+function isSubscriptionActive(status) {
+  return String(status || "").toLowerCase() === "active";
+}
+
+function getLockoutReason(status) {
+  const normalized = String(status || "").toLowerCase();
+
+  if (!normalized) return "No subscription found.";
+  if (normalized === "active") return "";
+  if (normalized === "canceled") return "Subscription canceled.";
+  if (normalized === "past_due") return "Subscription payment is past due.";
+  if (normalized === "unpaid") return "Subscription is unpaid.";
+  if (normalized === "incomplete") return "Subscription is incomplete.";
+  if (normalized === "incomplete_expired") return "Subscription expired before completion.";
+  if (normalized === "paused") return "Subscription is paused.";
+
+  return `Subscription is ${normalized}.`;
 }
 
 function appendQueryParams(baseUrl, params) {
@@ -201,62 +274,11 @@ async function saveSubscriptionToSupabase({
 }) {
   if (!supabase || !stripeSubscriptionId) return null;
 
-  const normalizedRole = cleanString(role).toLowerCase();
-
-  if (normalizedRole === "driver") {
-    const { data, error } = await supabase
-      .from("driver_subscriptions")
-      .upsert(
-        [
-          {
-            driver_id: userId || email || stripeCustomerId,
-            driver_email: email || "",
-            stripe_customer_id: stripeCustomerId || "",
-            stripe_subscription_id: stripeSubscriptionId,
-            subscription_status: status || "active",
-            current_period_end: currentPeriodEnd || null,
-            updated_at: new Date().toISOString(),
-          },
-        ],
-        { onConflict: "driver_id" }
-      )
-      .select()
-      .single();
-
-    if (error) {
-      console.log("Save driver subscription error:", error);
-      return null;
-    }
-
-    return data;
-  }
-
-  const table =
-    normalizedRole === "farmer"
-      ? "farmer_subscriptions"
-      : normalizedRole === "freight"
-      ? "freight_subscriptions"
-      : "customer_subscriptions";
-
-  const idColumn =
-    normalizedRole === "farmer"
-      ? "farmer_id"
-      : normalizedRole === "freight"
-      ? "freight_id"
-      : "customer_id";
-
-  const emailColumn =
-    normalizedRole === "farmer"
-      ? "farmer_email"
-      : normalizedRole === "freight"
-      ? "freight_email"
-      : "customer_email";
+  const config = getSubscriptionConfig(role);
 
   const row = {
-    [idColumn]: userId || email || stripeCustomerId,
-    [emailColumn]: email || "",
-    name: name || "",
-    username: username || "",
+    [config.idColumn]: userId || email || stripeCustomerId,
+    [config.emailColumn]: email || "",
     stripe_customer_id: stripeCustomerId || "",
     stripe_subscription_id: stripeSubscriptionId,
     subscription_status: status || "active",
@@ -264,14 +286,86 @@ async function saveSubscriptionToSupabase({
     updated_at: new Date().toISOString(),
   };
 
+  if (config.role !== "driver") {
+    row.name = name || "";
+    row.username = username || "";
+  }
+
   const { data, error } = await supabase
-    .from(table)
-    .upsert([row], { onConflict: idColumn })
+    .from(config.table)
+    .upsert([row], { onConflict: config.idColumn })
     .select()
     .single();
 
   if (error) {
-    console.log(`Save ${normalizedRole} subscription error:`, error);
+    console.log(`Save ${config.role} subscription error:`, error);
+    return null;
+  }
+
+  return data;
+}
+
+async function updateSubscriptionStatusByRole({
+  role,
+  userId,
+  subscriptionId,
+  stripeCustomerId,
+  status,
+}) {
+  if (!supabase) return null;
+
+  const config = getSubscriptionConfig(role);
+
+  const updatePayload = {
+    subscription_status: status,
+    updated_at: new Date().toISOString(),
+  };
+
+  let query = supabase.from(config.table).update(updatePayload);
+
+  if (userId) {
+    query = query.eq(config.idColumn, userId);
+  } else if (subscriptionId) {
+    query = query.eq("stripe_subscription_id", subscriptionId);
+  } else if (stripeCustomerId) {
+    query = query.eq("stripe_customer_id", stripeCustomerId);
+  } else {
+    return null;
+  }
+
+  const { data, error } = await query.select();
+
+  if (error) {
+    console.log(`Update ${config.role} subscription status error:`, error);
+    return null;
+  }
+
+  return data;
+}
+
+async function getSubscriptionByRole({ role, userId, email }) {
+  if (!supabase) return null;
+
+  const config = getSubscriptionConfig(role);
+
+  let query = supabase
+    .from(config.table)
+    .select("*")
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (userId) {
+    query = query.eq(config.idColumn, userId);
+  } else if (email) {
+    query = query.eq(config.emailColumn, email);
+  } else {
+    return null;
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    console.log(`Get ${config.role} subscription error:`, error);
     return null;
   }
 
@@ -295,13 +389,205 @@ router.get("/health", (req, res) => {
         process.env.STRIPE_FARMER_MEMBERSHIP_PRICE_ID
     ),
     serviceFeePercent: FARM2HOME_SERVICE_FEE_PERCENT,
+    cancellationEnabled: true,
+    lockoutEnabled: true,
   });
 });
 
 /* =====================================================
+   SUBSCRIPTION STATUS / LOCKOUT CHECKS
+===================================================== */
+
+router.get("/subscription-status/:role/:userId", async (req, res) => {
+  try {
+    if (!requireSupabase(res)) return;
+
+    const role = normalizeRole(req.params.role);
+    const userId = cleanString(req.params.userId);
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "userId is required.",
+      });
+    }
+
+    const subscription = await getSubscriptionByRole({ role, userId });
+
+    const active = isSubscriptionActive(subscription?.subscription_status);
+
+    return res.json({
+      success: true,
+      role,
+      userId,
+      hasActiveSubscription: active,
+      lockedOut: !active,
+      lockoutReason: active
+        ? ""
+        : getLockoutReason(subscription?.subscription_status),
+      subscription: subscription || null,
+    });
+  } catch (error) {
+    console.log("Subscription status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to check subscription status.",
+    });
+  }
+});
+
+router.post("/subscription-status", async (req, res) => {
+  try {
+    if (!requireSupabase(res)) return;
+
+    const role = normalizeRole(req.body.role);
+    const userId = cleanString(req.body.userId);
+    const email = cleanString(req.body.email).toLowerCase();
+
+    if (!userId && !email) {
+      return res.status(400).json({
+        success: false,
+        error: "userId or email is required.",
+      });
+    }
+
+    const subscription = await getSubscriptionByRole({ role, userId, email });
+
+    const active = isSubscriptionActive(subscription?.subscription_status);
+
+    return res.json({
+      success: true,
+      role,
+      userId,
+      email,
+      hasActiveSubscription: active,
+      lockedOut: !active,
+      lockoutReason: active
+        ? ""
+        : getLockoutReason(subscription?.subscription_status),
+      subscription: subscription || null,
+    });
+  } catch (error) {
+    console.log("Subscription status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to check subscription status.",
+    });
+  }
+});
+
+/* =====================================================
+   CANCEL SUBSCRIPTION
+===================================================== */
+
+router.post("/cancel-subscription", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+    if (!requireSupabase(res)) return;
+
+    const role = normalizeRole(req.body.role);
+    const userId = cleanString(req.body.userId);
+    const subscriptionId = cleanString(req.body.subscriptionId);
+    const stripeCustomerId = cleanString(req.body.stripeCustomerId);
+    const cancelAtPeriodEnd = req.body.cancelAtPeriodEnd === true;
+
+    if (!subscriptionId && !userId && !stripeCustomerId) {
+      return res.status(400).json({
+        success: false,
+        error: "subscriptionId, userId, or stripeCustomerId is required.",
+      });
+    }
+
+    let activeSubscriptionId = subscriptionId;
+
+    if (!activeSubscriptionId) {
+      const existing = await getSubscriptionByRole({ role, userId });
+
+      activeSubscriptionId = existing?.stripe_subscription_id || "";
+
+      if (!activeSubscriptionId && stripeCustomerId) {
+        const subscriptions = await stripe.subscriptions.list({
+          customer: stripeCustomerId,
+          status: "all",
+          limit: 10,
+        });
+
+        const activeSub = subscriptions.data.find((sub) =>
+          ["active", "trialing", "past_due", "unpaid"].includes(sub.status)
+        );
+
+        activeSubscriptionId = activeSub?.id || "";
+      }
+    }
+
+    if (!activeSubscriptionId) {
+      await updateSubscriptionStatusByRole({
+        role,
+        userId,
+        stripeCustomerId,
+        status: "canceled",
+      });
+
+      return res.json({
+        success: true,
+        message:
+          "No Stripe subscription found, but local subscription status was canceled.",
+        role,
+        userId,
+        subscriptionId: "",
+        status: "canceled",
+        lockedOut: true,
+      });
+    }
+
+    let subscription;
+
+    if (cancelAtPeriodEnd) {
+      subscription = await stripe.subscriptions.update(activeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+    } else {
+      subscription = await stripe.subscriptions.cancel(activeSubscriptionId);
+    }
+
+    const newStatus = cancelAtPeriodEnd
+      ? "cancel_at_period_end"
+      : subscription.status || "canceled";
+
+    await updateSubscriptionStatusByRole({
+      role,
+      userId,
+      subscriptionId: activeSubscriptionId,
+      stripeCustomerId,
+      status: newStatus,
+    });
+
+    return res.json({
+      success: true,
+      message: cancelAtPeriodEnd
+        ? "Subscription will cancel at the end of the billing period."
+        : "Subscription canceled.",
+      role,
+      userId,
+      subscriptionId: activeSubscriptionId,
+      status: newStatus,
+      cancelAtPeriodEnd,
+      lockedOut: !cancelAtPeriodEnd,
+    });
+  } catch (error) {
+    console.log("Cancel subscription error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to cancel subscription.",
+    });
+  }
+});
+
+/* =====================================================
    MARKETPLACE CHECKOUT WITH FARMER SPLITS
-   Farm2Home service fee is automatically 4%.
-   Farmers receive product subtotal only.
 ===================================================== */
 
 router.post("/create-marketplace-checkout", async (req, res) => {
