@@ -8,19 +8,26 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
 import farmTheme from "../styles/farmTheme";
 
 type StoredCustomer = {
   id?: string;
   fullName?: string;
+  name?: string;
   email?: string;
   phone?: string;
   username?: string;
   password?: string;
   accountActive?: boolean;
   membershipStatus?: "Pending" | "Active";
+  subscriptionStatus?: string;
+  subscriptionActive?: boolean;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  currentPeriodEnd?: string | null;
   createdAt?: string;
   updatedAt?: string;
   subscriptionActivatedAt?: string;
@@ -47,72 +54,204 @@ function safelyParseArray(rawValue: string | null): StoredCustomer[] {
   }
 }
 
+function isActiveStripeStatus(status?: string) {
+  const clean = String(status || "").toLowerCase();
+
+  return clean === "active" || clean === "trialing";
+}
+
 export default function CustomerSubscriptionSuccess() {
+  const params = useLocalSearchParams();
+
+  const sessionId =
+    String(params.session_id || params.sessionId || "").trim();
+
   const [loading, setLoading] = useState(true);
   const [activated, setActivated] = useState(false);
+  const [message, setMessage] = useState(
+    "Activating your Farm2Home membership..."
+  );
 
   useEffect(() => {
     activateMembership();
   }, []);
 
+  async function verifyStripeSession() {
+    if (!sessionId) {
+      return null;
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/payments/verify-checkout-session`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionId,
+        }),
+      }
+    );
+
+    const text = await response.text();
+
+    let data: any = {};
+
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`Invalid backend response: ${text}`);
+    }
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || "Unable to verify Stripe subscription.");
+    }
+
+    return data;
+  }
+
+  async function saveActiveCustomer(
+    customer: StoredCustomer,
+    stripeData: any | null
+  ) {
+    const stripeStatus =
+      stripeData?.subscriptionStatus ||
+      stripeData?.metadata?.subscriptionStatus ||
+      "active";
+
+    const activeCustomer: StoredCustomer = {
+      ...customer,
+      id:
+        customer.id ||
+        stripeData?.metadata?.customerId ||
+        stripeData?.metadata?.userId ||
+        customer.email ||
+        "",
+      email:
+        customer.email ||
+        stripeData?.customerEmail ||
+        stripeData?.metadata?.email ||
+        "",
+      fullName:
+        customer.fullName ||
+        customer.name ||
+        stripeData?.metadata?.name ||
+        "Farm2Home Customer",
+      accountActive: true,
+      membershipStatus: "Active",
+      subscriptionStatus: stripeStatus,
+      subscriptionActive: true,
+      stripeCustomerId: stripeData?.customerId || customer.stripeCustomerId || "",
+      stripeSubscriptionId:
+        stripeData?.subscriptionId || customer.stripeSubscriptionId || "",
+      currentPeriodEnd:
+        stripeData?.currentPeriodEnd || customer.currentPeriodEnd || null,
+      subscriptionActivatedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const customersRaw = await AsyncStorage.getItem("farm2homeCustomers");
+    const customers = safelyParseArray(customersRaw);
+
+    const updatedCustomers = [
+      ...customers.filter((item) => {
+        const sameId =
+          item.id && activeCustomer.id && item.id === activeCustomer.id;
+
+        const sameEmail =
+          item.email &&
+          activeCustomer.email &&
+          item.email.toLowerCase() === activeCustomer.email.toLowerCase();
+
+        const sameUsername =
+          item.username &&
+          activeCustomer.username &&
+          item.username.toLowerCase() ===
+            activeCustomer.username.toLowerCase();
+
+        return !sameId && !sameEmail && !sameUsername;
+      }),
+      activeCustomer,
+    ];
+
+    await AsyncStorage.setItem(
+      "farm2homeCustomers",
+      JSON.stringify(updatedCustomers)
+    );
+
+    await AsyncStorage.setItem(
+      "currentCustomer",
+      JSON.stringify(activeCustomer)
+    );
+
+    await AsyncStorage.setItem("currentUser", JSON.stringify(activeCustomer));
+    await AsyncStorage.setItem("userRole", "customer");
+    await AsyncStorage.setItem("currentUserRole", "customer");
+    await AsyncStorage.removeItem("pendingCustomer");
+
+    return activeCustomer;
+  }
+
   async function activateMembership() {
     try {
+      setLoading(true);
+
       const pendingRaw = await AsyncStorage.getItem("pendingCustomer");
       const currentRaw = await AsyncStorage.getItem("currentCustomer");
+      const currentUserRaw = await AsyncStorage.getItem("currentUser");
 
       const pendingCustomer = safelyParseCustomer(pendingRaw);
       const currentCustomer = safelyParseCustomer(currentRaw);
+      const currentUser = safelyParseCustomer(currentUserRaw);
 
-      const customer = pendingCustomer || currentCustomer;
+      const storedCustomer = pendingCustomer || currentCustomer || currentUser;
 
-      if (!customer) {
+      const stripeData = await verifyStripeSession();
+
+      const stripeIsActive =
+        stripeData?.mode === "payment"
+          ? stripeData?.paymentStatus === "paid"
+          : isActiveStripeStatus(stripeData?.subscriptionStatus);
+
+      if (sessionId && !stripeIsActive) {
         setActivated(false);
-        setLoading(false);
+        setMessage(
+          "Stripe payment was found, but the subscription is not active yet."
+        );
         return;
       }
 
-      const activeCustomer: StoredCustomer = {
-        ...customer,
-        accountActive: true,
-        membershipStatus: "Active",
-        subscriptionActivatedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+      const customer: StoredCustomer =
+        storedCustomer || {
+          id:
+            stripeData?.metadata?.customerId ||
+            stripeData?.metadata?.userId ||
+            stripeData?.customerEmail ||
+            "",
+          email:
+            stripeData?.customerEmail ||
+            stripeData?.metadata?.email ||
+            "",
+          fullName:
+            stripeData?.metadata?.name ||
+            "Farm2Home Customer",
+        };
 
-      const customersRaw = await AsyncStorage.getItem("farm2homeCustomers");
-      const customers = safelyParseArray(customersRaw);
+      if (!customer.email && !customer.id) {
+        setActivated(false);
+        setMessage(
+          "Payment completed, but Farm2Home could not match the customer account."
+        );
+        return;
+      }
 
-      const updatedCustomers = [
-        ...customers.filter((item) => {
-          const sameId = item.id && activeCustomer.id && item.id === activeCustomer.id;
-          const sameEmail =
-            item.email &&
-            activeCustomer.email &&
-            item.email.toLowerCase() === activeCustomer.email.toLowerCase();
-          const sameUsername =
-            item.username &&
-            activeCustomer.username &&
-            item.username.toLowerCase() === activeCustomer.username.toLowerCase();
-
-          return !sameId && !sameEmail && !sameUsername;
-        }),
-        activeCustomer,
-      ];
-
-      await AsyncStorage.setItem(
-        "farm2homeCustomers",
-        JSON.stringify(updatedCustomers)
-      );
-
-      await AsyncStorage.setItem(
-        "currentCustomer",
-        JSON.stringify(activeCustomer)
-      );
-
-      await AsyncStorage.removeItem("pendingCustomer");
-      await AsyncStorage.setItem("userRole", "customer");
+      await saveActiveCustomer(customer, stripeData);
 
       setActivated(true);
+      setMessage(
+        "Your customer membership is now active. You can access the Farm2Home marketplace."
+      );
     } catch (error: any) {
       console.log("Subscription activation error:", error);
 
@@ -122,6 +261,10 @@ export default function CustomerSubscriptionSuccess() {
       );
 
       setActivated(false);
+      setMessage(
+        error?.message ||
+          "Payment may have completed, but Farm2Home could not verify the subscription."
+      );
     } finally {
       setLoading(false);
     }
@@ -133,6 +276,10 @@ export default function CustomerSubscriptionSuccess() {
 
   function goToLogin() {
     router.replace("/customer/login" as any);
+  }
+
+  function retryActivation() {
+    activateMembership();
   }
 
   if (loading) {
@@ -150,14 +297,10 @@ export default function CustomerSubscriptionSuccess() {
       <Text style={styles.icon}>{activated ? "✅" : "⚠️"}</Text>
 
       <Text style={styles.title}>
-        {activated ? "Membership Active!" : "Membership Needs Review"}
+        {activated ? "Membership Active!" : "Membership Needs Verification"}
       </Text>
 
-      <Text style={styles.message}>
-        {activated
-          ? "Your customer membership is now active. You can access the Farm2Home marketplace."
-          : "Payment may have completed, but we could not find your saved customer record on this device. Please login or register again."}
-      </Text>
+      <Text style={styles.message}>{message}</Text>
 
       {activated ? (
         <TouchableOpacity
@@ -168,13 +311,23 @@ export default function CustomerSubscriptionSuccess() {
           <Text style={styles.buttonText}>Start Shopping</Text>
         </TouchableOpacity>
       ) : (
-        <TouchableOpacity
-          style={styles.button}
-          onPress={goToLogin}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.buttonText}>Go To Login</Text>
-        </TouchableOpacity>
+        <>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={retryActivation}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.buttonText}>Retry Activation</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={goToLogin}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.secondaryButtonText}>Go To Login</Text>
+          </TouchableOpacity>
+        </>
       )}
     </View>
   );
@@ -222,6 +375,21 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  secondaryButton: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: farmTheme.colors.primary,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 18,
+    marginTop: 12,
+    alignItems: "center",
+  },
+  secondaryButtonText: {
+    color: farmTheme.colors.primary,
     fontWeight: "900",
     fontSize: 16,
   },
