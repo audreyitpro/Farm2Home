@@ -18,6 +18,7 @@ import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
+import { PAYMENT_LINKS } from "../config/paymentLinks";
 
 import {
   REQUIRED_DOCUMENTS,
@@ -96,6 +97,9 @@ export default function FarmerComplianceUploadScreen() {
   const [securityQuestion3, setSecurityQuestion3] = useState("");
   const [securityAnswer3, setSecurityAnswer3] = useState("");
 
+  const [farmerMembershipPaid, setFarmerMembershipPaid] = useState(false);
+  const [applicationFeePaid, setApplicationFeePaid] = useState(false);
+
   const [stripeAccountId, setStripeAccountId] = useState("");
   const [stripePayoutAccount, setStripePayoutAccount] = useState("");
   const [stripePayoutsEnabled, setStripePayoutsEnabled] = useState(false);
@@ -121,6 +125,7 @@ export default function FarmerComplianceUploadScreen() {
     () =>
       REQUIRED_DOCUMENTS.filter((doc) => {
         const type = String(doc.type);
+
         return (
           doc.required &&
           type !== "stripe_payout" &&
@@ -165,6 +170,8 @@ export default function FarmerComplianceUploadScreen() {
       securityAnswer2,
       securityQuestion3,
       securityAnswer3,
+      farmerMembershipPaid,
+      applicationFeePaid,
       stripeAccountId,
       farmerStripeAccountId: stripeAccountId,
       stripePayoutAccount,
@@ -221,6 +228,8 @@ export default function FarmerComplianceUploadScreen() {
       state,
       status,
       complianceStatus: status,
+      farmerMembershipPaid,
+      applicationFeePaid,
       stripeAccountId,
       farmerStripeAccountId: stripeAccountId,
       stripePayoutsEnabled,
@@ -242,6 +251,7 @@ export default function FarmerComplianceUploadScreen() {
     if (saved) {
       try {
         const savedFarmer = JSON.parse(saved);
+
         if (savedFarmer?.id) {
           setFarmerId(savedFarmer.id);
           return savedFarmer.id;
@@ -270,6 +280,7 @@ export default function FarmerComplianceUploadScreen() {
     await AsyncStorage.setItem("currentUserRole", "farmer");
 
     setFarmerId(newId);
+
     return newId;
   }
 
@@ -290,6 +301,20 @@ export default function FarmerComplianceUploadScreen() {
   async function openStripeUrl(url: string) {
     if (!url || !url.startsWith("http")) {
       Alert.alert("Stripe Error", "No valid Stripe onboarding URL returned.");
+      return;
+    }
+
+    if (Platform.OS === "web") {
+      window.location.href = url;
+      return;
+    }
+
+    await WebBrowser.openBrowserAsync(url);
+  }
+
+  async function openPaymentLink(url: string) {
+    if (!url || !url.startsWith("http")) {
+      Alert.alert("Stripe Error", "Payment link is missing.");
       return;
     }
 
@@ -328,6 +353,7 @@ export default function FarmerComplianceUploadScreen() {
 
       if (!farmer) {
         const newId = `farmer_${Date.now()}`;
+
         farmer = {
           id: newId,
           farmName: "",
@@ -336,6 +362,8 @@ export default function FarmerComplianceUploadScreen() {
           email: "",
           state: "MI",
           complianceStatus: "in_progress",
+          farmerMembershipPaid: false,
+          applicationFeePaid: false,
         };
 
         await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
@@ -366,6 +394,9 @@ export default function FarmerComplianceUploadScreen() {
       setSecurityAnswer2(farmer.securityAnswer2 || "");
       setSecurityQuestion3(farmer.securityQuestion3 || "");
       setSecurityAnswer3(farmer.securityAnswer3 || "");
+
+      setFarmerMembershipPaid(Boolean(farmer.farmerMembershipPaid));
+      setApplicationFeePaid(Boolean(farmer.applicationFeePaid));
 
       setStripeAccountId(
         farmer.stripeAccountId || farmer.farmerStripeAccountId || ""
@@ -416,9 +447,11 @@ export default function FarmerComplianceUploadScreen() {
 
         if (legalAccepted) {
           const checked: Record<number, boolean> = {};
+
           LEGAL_CHECKLIST.forEach((_, index) => {
             checked[index] = true;
           });
+
           setLegalChecks(checked);
         }
       }
@@ -449,6 +482,8 @@ export default function FarmerComplianceUploadScreen() {
         setSecurityAnswer2(pendingFarmer.securityAnswer2 || "");
         setSecurityQuestion3(pendingFarmer.securityQuestion3 || "");
         setSecurityAnswer3(pendingFarmer.securityAnswer3 || "");
+        setFarmerMembershipPaid(Boolean(pendingFarmer.farmerMembershipPaid));
+        setApplicationFeePaid(Boolean(pendingFarmer.applicationFeePaid));
         setPickupDeliveryOption(
           pendingFarmer.pickupDeliveryOption || "Pickup and Delivery"
         );
@@ -481,6 +516,52 @@ export default function FarmerComplianceUploadScreen() {
     } catch (error) {
       console.log("Handle Stripe return error:", error);
     }
+  }
+
+  async function startFarmerMembershipPayment() {
+    const activeFarmerId = await getOrCreateFarmerId();
+
+    const saved = await saveBusinessInfo(true);
+    if (!saved) return;
+
+    await savePendingFarmerSnapshot(activeFarmerId);
+    await createOrUpdateAdminVerificationRecord(activeFarmerId, "STARTED");
+
+    await openPaymentLink(PAYMENT_LINKS.farmerMembership);
+  }
+
+  async function startApplicationFeePayment() {
+    const activeFarmerId = await getOrCreateFarmerId();
+
+    const saved = await saveBusinessInfo(true);
+    if (!saved) return;
+
+    await savePendingFarmerSnapshot(activeFarmerId);
+    await createOrUpdateAdminVerificationRecord(activeFarmerId, "STARTED");
+
+    await openPaymentLink(PAYMENT_LINKS.farmerApplicationProcessFee);
+  }
+
+  async function markFarmerFeesComplete() {
+    const activeFarmerId = await getOrCreateFarmerId();
+
+    setFarmerMembershipPaid(true);
+    setApplicationFeePaid(true);
+
+    await updateFarmerStore(activeFarmerId, {
+      farmerMembershipPaid: true,
+      applicationFeePaid: true,
+      complianceStatus: "fees_paid",
+    } as any);
+
+    await savePendingFarmerSnapshot(activeFarmerId);
+    await syncCurrentFarmer(activeFarmerId);
+    await createOrUpdateAdminVerificationRecord(activeFarmerId, "PENDING_VERIFICATION");
+
+    Alert.alert(
+      "Fees Marked Complete",
+      "Farmer membership and application process fee were marked complete. Now continue to Stripe payout setup."
+    );
   }
 
   function validateSecurityQuestions() {
@@ -525,6 +606,7 @@ export default function FarmerComplianceUploadScreen() {
             "Please enter Farm / Business Name, Owner Name, and Farmer Email first."
           );
         }
+
         return false;
       }
 
@@ -532,6 +614,7 @@ export default function FarmerComplianceUploadScreen() {
         if (showErrors) {
           Alert.alert("Valid Email Required", "Please enter a valid email.");
         }
+
         return false;
       }
 
@@ -553,9 +636,11 @@ export default function FarmerComplianceUploadScreen() {
       return true;
     } catch (error: any) {
       console.log("Save business info error:", error);
+
       if (showErrors) {
         Alert.alert("Save Failed", error?.message || "Unable to save business information.");
       }
+
       return false;
     }
   }
@@ -605,6 +690,7 @@ export default function FarmerComplianceUploadScreen() {
     } catch (error: any) {
       console.log("Save login credentials error:", error);
       Alert.alert("Save Failed", error?.message || "Unable to save login credentials.");
+
       return false;
     }
   }
@@ -643,6 +729,7 @@ export default function FarmerComplianceUploadScreen() {
       };
 
       setUploadedDocs(nextDocs);
+
       await savePendingFarmerSnapshot(activeFarmerId);
       await createOrUpdateAdminVerificationRecord(activeFarmerId, "DOCUMENTS_IN_PROGRESS");
 
@@ -660,6 +747,15 @@ export default function FarmerComplianceUploadScreen() {
       const valid = await saveBusinessInfo(true);
       if (!valid) return;
 
+      if (!farmerMembershipPaid || !applicationFeePaid) {
+        Alert.alert(
+          "Fees Required",
+          "Please complete the farmer membership and application process fee before setting up Stripe payouts."
+        );
+
+        return;
+      }
+
       await savePendingFarmerSnapshot(activeFarmerId);
       await createOrUpdateAdminVerificationRecord(activeFarmerId, "STRIPE_STARTED");
 
@@ -674,7 +770,7 @@ export default function FarmerComplianceUploadScreen() {
             farmerId: activeFarmerId,
             email: farmerEmail.trim(),
             farmName: businessName.trim(),
-            existingStripeAccountId: stripeAccountId || "",
+            existingStripeAccountId: "",
           }),
         }
       );
@@ -682,6 +778,7 @@ export default function FarmerComplianceUploadScreen() {
       const text = await response.text();
 
       let data: any = {};
+
       try {
         data = text ? JSON.parse(text) : {};
       } catch {
@@ -746,6 +843,7 @@ export default function FarmerComplianceUploadScreen() {
       const text = await response.text();
 
       let data: any = {};
+
       try {
         data = text ? JSON.parse(text) : {};
       } catch {
@@ -830,6 +928,7 @@ export default function FarmerComplianceUploadScreen() {
     } catch (error: any) {
       console.log("Stripe verify error:", error);
       Alert.alert("Stripe Verification Error", error?.message || "Unable to verify Stripe payout account.");
+
       return false;
     } finally {
       setStripeChecking(false);
@@ -924,6 +1023,7 @@ export default function FarmerComplianceUploadScreen() {
     } catch (error: any) {
       console.log("Save legal checklist error:", error);
       Alert.alert("Save Failed", error?.message || "Unable to save legal checklist.");
+
       return false;
     }
   }
@@ -939,6 +1039,14 @@ export default function FarmerComplianceUploadScreen() {
 
       const credentialsSaved = await saveLoginCredentials(false);
       if (!credentialsSaved) return;
+
+      if (!farmerMembershipPaid || !applicationFeePaid) {
+        Alert.alert(
+          "Fees Required",
+          "Please complete both farmer fee payments before submitting compliance."
+        );
+        return;
+      }
 
       const legalSaved = await saveLegalChecklist(false);
       if (!legalSaved) return;
@@ -1264,6 +1372,14 @@ export default function FarmerComplianceUploadScreen() {
       ),
     },
     {
+      label: "Farmer membership paid",
+      done: farmerMembershipPaid,
+    },
+    {
+      label: "Application fee paid",
+      done: applicationFeePaid,
+    },
+    {
       label: "Pickup / delivery selected",
       done: Boolean(uploadedDocs.pickup_delivery_agreement),
     },
@@ -1285,8 +1401,8 @@ export default function FarmerComplianceUploadScreen() {
       <Text style={styles.header}>Farmer Compliance Verification</Text>
 
       <Text style={styles.subheader}>
-        Upload documents, create login credentials, connect Stripe, select
-        pickup/delivery, and accept legal seller terms.
+        Upload documents, pay farmer fees, create login credentials, connect
+        Stripe payouts, select pickup/delivery, and accept seller terms.
       </Text>
 
       <View style={styles.card}>
@@ -1357,6 +1473,50 @@ export default function FarmerComplianceUploadScreen() {
           onPress={() => saveBusinessInfo(true)}
         >
           <Text style={styles.saveLoginButtonText}>Save Business Info</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Farmer Fees</Text>
+
+        <Text
+          style={[
+            styles.docStatus,
+            farmerMembershipPaid ? styles.uploaded : styles.missing,
+          ]}
+        >
+          Farmer Membership: {farmerMembershipPaid ? "Completed" : "Required"}
+        </Text>
+
+        <Pressable
+          style={styles.stripeButton}
+          onPress={startFarmerMembershipPayment}
+        >
+          <Text style={styles.stripeButtonText}>Pay Farmer Membership</Text>
+        </Pressable>
+
+        <Text
+          style={[
+            styles.docStatus,
+            applicationFeePaid ? styles.uploaded : styles.missing,
+            { marginTop: 14 },
+          ]}
+        >
+          Application Process Fee: {applicationFeePaid ? "Completed" : "Required"}
+        </Text>
+
+        <Pressable
+          style={styles.saveButton}
+          onPress={startApplicationFeePayment}
+        >
+          <Text style={styles.saveButtonText}>Pay Application Process Fee</Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.testButton, { marginTop: 14 }]}
+          onPress={markFarmerFeesComplete}
+        >
+          <Text style={styles.testButtonText}>I Completed Both Fee Payments</Text>
         </Pressable>
       </View>
 
@@ -1595,6 +1755,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 14,
     alignItems: "center",
+    marginTop: 10,
   },
   stripeButtonText: { color: "#FFFFFF", fontWeight: "900" },
   saveButton: {
@@ -1604,6 +1765,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 14,
     alignItems: "center",
+    marginTop: 10,
   },
   saveButtonText: { color: "#FFFFFF", fontWeight: "900" },
   saveLoginButton: {

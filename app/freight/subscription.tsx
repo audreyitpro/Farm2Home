@@ -11,99 +11,82 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
 
 import { PAYMENT_LINKS } from "../config/paymentLinks";
 
-export default function CustomerSubscriptionScreen() {
+export default function FreightSubscriptionScreen() {
   const [email, setEmail] = useState("");
-  const [fullName, setFullName] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function startSubscription() {
     if (loading) return;
 
     const cleanEmail = email.trim().toLowerCase();
-    const cleanName = fullName.trim();
+    const cleanCompany = companyName.trim();
 
-    if (!cleanName) {
-      Alert.alert(
-        "Missing Name",
-        "Please enter your full name."
-      );
+    if (!cleanCompany) {
+      Alert.alert("Missing Company Name", "Please enter your company name.");
       return;
     }
 
     if (!cleanEmail || !cleanEmail.includes("@")) {
-      Alert.alert(
-        "Missing Email",
-        "Please enter a valid customer email."
-      );
+      Alert.alert("Missing Email", "Please enter a valid freight email.");
       return;
     }
 
     try {
       setLoading(true);
 
-      const customerId = `customer_${Date.now()}`;
+      const freightId = `freight_${Date.now()}`;
 
-      const customer = {
-        id: customerId,
+      const freightUser = {
+        id: freightId,
         email: cleanEmail,
-        fullName: cleanName,
-        name: cleanName,
-
-        role: "customer",
+        companyName: cleanCompany,
+        name: cleanCompany,
+        role: "freight",
 
         membershipStatus: "pending_payment",
         subscriptionStatus: "pending_payment",
+        membershipType: "freight_membership",
+        planType: "freight",
 
-        membershipType: "customer_membership",
-        planType: "customer",
-
-        marketplaceAccess: false,
+        freightBoardAccess: false,
+        accountActive: false,
 
         createdAt: new Date().toISOString(),
       };
 
+      await AsyncStorage.setItem("currentUser", JSON.stringify(freightUser));
+      await AsyncStorage.setItem("currentFreight", JSON.stringify(freightUser));
       await AsyncStorage.setItem(
-        "currentUser",
-        JSON.stringify(customer)
+        "currentFreightUser",
+        JSON.stringify(freightUser)
+      );
+      await AsyncStorage.setItem(
+        "currentFreightCarrier",
+        JSON.stringify(freightUser)
+      );
+      await AsyncStorage.setItem("currentUserRole", "freight");
+      await AsyncStorage.setItem(
+        "pendingFreightSubscription",
+        JSON.stringify(freightUser)
       );
 
-      await AsyncStorage.setItem(
-        "currentCustomer",
-        JSON.stringify(customer)
-      );
-
-      await AsyncStorage.setItem(
-        "currentUserRole",
-        "customer"
-      );
-
-      await AsyncStorage.setItem(
-        "pendingCustomerSubscription",
-        JSON.stringify(customer)
-      );
-
-      const stripeUrl =
-        PAYMENT_LINKS.customerMembership;
+      const stripeUrl = PAYMENT_LINKS.freightMembership;
 
       if (!stripeUrl) {
-        throw new Error(
-          "Customer membership payment link missing."
-        );
+        throw new Error("Freight membership payment link missing.");
       }
 
       if (Platform.OS === "web") {
         window.location.href = stripeUrl;
       } else {
-        await WebBrowser.openBrowserAsync(
-          stripeUrl
-        );
+        await WebBrowser.openBrowserAsync(stripeUrl);
       }
 
       Alert.alert(
@@ -111,15 +94,11 @@ export default function CustomerSubscriptionScreen() {
         "After payment is complete, return to Farm2Home and tap 'I Completed Payment'."
       );
     } catch (error: any) {
-      console.log(
-        "CUSTOMER_SUBSCRIPTION_ERROR:",
-        error
-      );
+      console.log("FREIGHT_SUBSCRIPTION_ERROR:", error);
 
       Alert.alert(
         "Subscription Error",
-        error?.message ||
-          "Unable to start customer membership."
+        error?.message || "Unable to start freight membership."
       );
     } finally {
       setLoading(false);
@@ -128,65 +107,51 @@ export default function CustomerSubscriptionScreen() {
 
   async function continueAfterPayment() {
     try {
-      const pending = await AsyncStorage.getItem(
-        "pendingCustomerSubscription"
-      );
+      const pending = await AsyncStorage.getItem("pendingFreightSubscription");
 
       if (!pending) {
         Alert.alert(
           "No Pending Membership",
-          "Please complete customer membership payment first."
+          "Please complete freight membership payment first."
         );
-
         return;
       }
 
-      const customer = JSON.parse(pending);
+      const freightUser = JSON.parse(pending);
 
-      const activatedCustomer = {
-        ...customer,
-
+      const activatedFreight = {
+        ...freightUser,
         membershipStatus: "active",
         subscriptionStatus: "active",
-
         hasActiveSubscription: true,
-        marketplaceAccess: true,
-
+        freightBoardAccess: true,
+        accountActive: true,
         activatedAt: new Date().toISOString(),
       };
 
+      await AsyncStorage.setItem("currentUser", JSON.stringify(activatedFreight));
       await AsyncStorage.setItem(
-        "currentUser",
-        JSON.stringify(activatedCustomer)
+        "currentFreight",
+        JSON.stringify(activatedFreight)
       );
-
       await AsyncStorage.setItem(
-        "currentCustomer",
-        JSON.stringify(activatedCustomer)
+        "currentFreightUser",
+        JSON.stringify(activatedFreight)
       );
-
       await AsyncStorage.setItem(
-        "customerSubscriptionStatus",
-        "active"
+        "currentFreightCarrier",
+        JSON.stringify(activatedFreight)
       );
+      await AsyncStorage.setItem("freightSubscriptionStatus", "active");
+      await AsyncStorage.removeItem("pendingFreightSubscription");
 
-      await AsyncStorage.removeItem(
-        "pendingCustomerSubscription"
-      );
-
-      router.replace(
-        "/customer/subscription-success" as any
-      );
+      router.replace("/freight/subscription-success" as any);
     } catch (error: any) {
-      console.log(
-        "CONTINUE_AFTER_PAYMENT_ERROR:",
-        error
-      );
+      console.log("FREIGHT_CONTINUE_AFTER_PAYMENT_ERROR:", error);
 
       Alert.alert(
         "Activation Error",
-        error?.message ||
-          "Unable to activate customer membership."
+        error?.message || "Unable to activate freight membership."
       );
     }
   }
@@ -194,48 +159,33 @@ export default function CustomerSubscriptionScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.page}
-      behavior={
-        Platform.OS === "ios"
-          ? "padding"
-          : undefined
-      }
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.title}>
-          Farm2Home Membership
-        </Text>
+        <Text style={styles.title}>Farm2Home Freight Membership</Text>
 
-        <Text style={styles.price}>
-          $4.99 Monthly Customer Membership
-        </Text>
+        <Text style={styles.price}>Monthly Freight Membership</Text>
 
         <Text style={styles.note}>
-          Subscribe to unlock the Farm2Home
-          marketplace, shop local farms, order
-          fresh produce, and access secure
-          nationwide delivery services.
+          Subscribe to access Farm2Home freight posting, load board tools,
+          delivery tracking, route management, and logistics dispatch features.
         </Text>
 
         <View style={styles.featureBox}>
-          <Text style={styles.featureTitle}>
-            Membership Includes:
-          </Text>
+          <Text style={styles.featureTitle}>Membership Includes:</Text>
 
           {[
-            "Access to Farm2Home marketplace",
-            "Fresh farm produce ordering",
-            "Nationwide farm access",
-            "Real-time order tracking",
-            "Secure Stripe checkout",
-            "Local and regional delivery access",
+            "Freight board access",
+            "Load posting tools",
+            "Delivery tracking",
+            "Route and dispatch support",
+            "Carrier verification workflow",
+            "Farm-to-market logistics opportunities",
           ].map((item) => (
-            <Text
-              key={item}
-              style={styles.featureItem}
-            >
+            <Text key={item} style={styles.featureItem}>
               {`\u2022 ${item}`}
             </Text>
           ))}
@@ -243,16 +193,16 @@ export default function CustomerSubscriptionScreen() {
 
         <TextInput
           style={styles.input}
-          placeholder="Full Name"
-          placeholderTextColor="#888888"
-          value={fullName}
-          onChangeText={setFullName}
+          placeholder="Company Name"
+          placeholderTextColor="#94A3B8"
+          value={companyName}
+          onChangeText={setCompanyName}
         />
 
         <TextInput
           style={styles.input}
-          placeholder="Customer Email"
-          placeholderTextColor="#888888"
+          placeholder="Freight Email"
+          placeholderTextColor="#94A3B8"
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
@@ -261,20 +211,15 @@ export default function CustomerSubscriptionScreen() {
         />
 
         <TouchableOpacity
-          style={[
-            styles.button,
-            loading && styles.disabledButton,
-          ]}
+          style={[styles.button, loading && styles.disabledButton]}
           onPress={startSubscription}
           disabled={loading}
           activeOpacity={0.85}
         >
           {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
+            <ActivityIndicator color="#052E16" />
           ) : (
-            <Text style={styles.buttonText}>
-              Pay Membership with Stripe
-            </Text>
+            <Text style={styles.buttonText}>Pay Membership with Stripe</Text>
           )}
         </TouchableOpacity>
 
@@ -283,27 +228,18 @@ export default function CustomerSubscriptionScreen() {
           onPress={continueAfterPayment}
           activeOpacity={0.85}
         >
-          <Text style={styles.successButtonText}>
-            I Completed Payment
-          </Text>
+          <Text style={styles.successButtonText}>I Completed Payment</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.secondaryButton}
-          onPress={() =>
-            router.replace(
-              "/customer/register" as any
-            )
-          }
+          onPress={() => router.replace("/freight/login" as any)}
         >
-          <Text style={styles.secondaryText}>
-            Back to Customer Register
-          </Text>
+          <Text style={styles.secondaryText}>Back to Freight Login</Text>
         </TouchableOpacity>
 
         <Text style={styles.productionNote}>
-          Production Mode Enabled · Stripe Live
-          Payment Links Active
+          Production Mode Enabled · Stripe Live Payment Links Active
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -313,7 +249,7 @@ export default function CustomerSubscriptionScreen() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: "#F7F7F2",
+    backgroundColor: "#0F172A",
   },
 
   container: {
@@ -323,44 +259,44 @@ const styles = StyleSheet.create({
   },
 
   title: {
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: "900",
-    color: "#14532D",
+    color: "#FFFFFF",
     marginBottom: 12,
   },
 
   price: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: "900",
-    color: "#111827",
-    marginBottom: 14,
+    color: "#22C55E",
+    marginBottom: 12,
   },
 
   note: {
-    color: "#555555",
-    marginBottom: 22,
-    lineHeight: 24,
+    color: "#CBD5E1",
+    marginBottom: 20,
+    lineHeight: 22,
     fontWeight: "700",
   },
 
   featureBox: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#1E293B",
     borderRadius: 20,
     padding: 18,
     marginBottom: 22,
     borderWidth: 1,
-    borderColor: "#DDE7DB",
+    borderColor: "#334155",
   },
 
   featureTitle: {
-    color: "#14532D",
+    color: "#22C55E",
     fontWeight: "900",
     fontSize: 18,
     marginBottom: 10,
   },
 
   featureItem: {
-    color: "#374151",
+    color: "#E5E7EB",
     fontWeight: "700",
     marginBottom: 7,
     lineHeight: 20,
@@ -371,23 +307,19 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
     marginBottom: 14,
-
     borderWidth: 1,
-    borderColor: "#DDDDDD",
-
+    borderColor: "#334155",
     color: "#111827",
     fontWeight: "700",
   },
 
   button: {
-    backgroundColor: "#2F7D32",
+    backgroundColor: "#22C55E",
     padding: 18,
     borderRadius: 16,
-
     alignItems: "center",
-    justifyContent: "center",
-
     minHeight: 58,
+    justifyContent: "center",
   },
 
   disabledButton: {
@@ -395,24 +327,22 @@ const styles = StyleSheet.create({
   },
 
   buttonText: {
-    color: "#FFFFFF",
+    color: "#052E16",
     fontWeight: "900",
     fontSize: 16,
   },
 
   successButton: {
-    backgroundColor: "#111827",
+    backgroundColor: "#FFFFFF",
     padding: 18,
     borderRadius: 16,
-
     alignItems: "center",
     justifyContent: "center",
-
     marginTop: 14,
   },
 
   successButtonText: {
-    color: "#FFFFFF",
+    color: "#0F172A",
     fontWeight: "900",
     fontSize: 15,
   },
@@ -423,13 +353,13 @@ const styles = StyleSheet.create({
   },
 
   secondaryText: {
-    color: "#2F7D32",
+    color: "#22C55E",
     fontWeight: "900",
   },
 
   productionNote: {
     marginTop: 26,
-    color: "#6B7280",
+    color: "#94A3B8",
     textAlign: "center",
     fontWeight: "700",
     lineHeight: 20,
