@@ -15,6 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
 
+import { API_BASE_URL, APP_URL } from "../config/api";
 import { CartItem, getCart } from "../data/cartStore";
 import {
   DeliveryInfo,
@@ -25,15 +26,6 @@ import {
 import { useAuth } from "../providers/AuthProvider";
 import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 import farmTheme from "../styles/farmTheme";
-
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  "https://farm2home-production-e4bd.up.railway.app";
-
-const APP_URL =
-  process.env.EXPO_PUBLIC_APP_URL ||
-  "https://farm2home-rho.vercel.app";
 
 const SERVICE_FEE_RATE = 0.04;
 
@@ -65,7 +57,6 @@ function groupCartByFarm(cart: CartItem[]): CartGroup[] {
 
   cart.forEach((item: any) => {
     const farmName = item.farmName || item.farmerName || "Farm2Home Farm";
-
     if (!grouped[farmName]) grouped[farmName] = [];
     grouped[farmName].push(item);
   });
@@ -136,7 +127,6 @@ export default function CustomerCheckout() {
   async function loadCart() {
     try {
       const cartData = await getCart();
-      console.log("CHECKOUT CART LOADED:", cartData);
       setCart(cartData);
     } catch (error) {
       console.log("Load cart error:", error);
@@ -198,9 +188,7 @@ export default function CustomerCheckout() {
         const firstItem: any = farmerItems[0];
 
         const farmName =
-          firstItem?.farmName ||
-          firstItem?.farmerName ||
-          "Farm2Home Farm";
+          firstItem?.farmName || firstItem?.farmerName || "Farm2Home Farm";
 
         const miles = Number(firstItem?.distanceMiles || firstItem?.miles || 0);
         const payoutAmount = calculateDriverPayout(miles);
@@ -239,8 +227,6 @@ export default function CustomerCheckout() {
 
         if (!response.ok || !data.success) {
           console.log("DELIVERY JOB CREATE FAILED:", data);
-        } else {
-          console.log("DELIVERY JOB CREATED:", data.deliveryJob);
         }
       }
     } catch (error) {

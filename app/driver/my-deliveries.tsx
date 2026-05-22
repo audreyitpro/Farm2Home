@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,12 +12,8 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
 import { enforceSubscriptionAccess } from "../services/lockoutGuard";
-
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  "https://farm2home-production-e4bd.up.railway.app";
 
 type DeliveryStatus =
   | "accepted"
@@ -77,6 +73,24 @@ export default function DriverMyDeliveriesScreen() {
       initialize();
     }, [])
   );
+
+  const payoutTotals = useMemo(() => {
+    const active = jobs.filter((job) => job.status !== "cancelled");
+    const completed = jobs.filter((job) => job.status === "completed");
+
+    return {
+      activeCount: active.length,
+      completedCount: completed.length,
+      totalPayout: active.reduce(
+        (sum, job) => sum + Number(job.payout_amount || 0),
+        0
+      ),
+      completedPayout: completed.reduce(
+        (sum, job) => sum + Number(job.payout_amount || 0),
+        0
+      ),
+    };
+  }, [jobs]);
 
   async function getCurrentDriver() {
     const rawDriver =
@@ -195,17 +209,20 @@ export default function DriverMyDeliveriesScreen() {
 
       setUpdatingId(job.id);
 
-      const response = await fetch(`${API_BASE_URL}/driver/update-delivery-status`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          deliveryJobId: job.id,
-          driverId: driver.id,
-          status,
-        }),
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/driver/update-delivery-status`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            deliveryJobId: job.id,
+            driverId: driver.id,
+            status,
+          }),
+        }
+      );
 
       const data = await response.json();
 
@@ -213,7 +230,10 @@ export default function DriverMyDeliveriesScreen() {
         throw new Error(data.error || "Unable to update delivery status.");
       }
 
-      Alert.alert("Delivery Updated", data.message || "Delivery status updated.");
+      Alert.alert(
+        "Delivery Updated",
+        data.message || "Delivery status updated."
+      );
 
       await loadAssignedJobs(driver.id);
     } catch (error: any) {
@@ -230,14 +250,30 @@ export default function DriverMyDeliveriesScreen() {
   function openProofOfPickup(job: DeliveryJob) {
     router.push({
       pathname: "/driver/proof-of-pickup" as any,
-      params: { loadId: job.id, deliveryJobId: job.id },
+      params: {
+        loadId: job.id,
+        deliveryJobId: job.id,
+      },
     });
   }
 
   function openProofOfDelivery(job: DeliveryJob) {
     router.push({
       pathname: "/driver/proof-of-delivery" as any,
-      params: { loadId: job.id, deliveryJobId: job.id },
+      params: {
+        loadId: job.id,
+        deliveryJobId: job.id,
+      },
+    });
+  }
+
+  function openLiveNavigation(job: DeliveryJob) {
+    router.push({
+      pathname: "/driver/live-location-provider" as any,
+      params: {
+        loadId: job.id,
+        deliveryJobId: job.id,
+      },
     });
   }
 
@@ -267,21 +303,25 @@ export default function DriverMyDeliveriesScreen() {
           label: "Arrived Pickup",
           status: "arrived_pickup" as DeliveryStatus,
         };
+
       case "arrived_pickup":
         return {
           label: "Proof of Pickup",
           proof: "pickup",
         };
+
       case "picked_up":
         return {
           label: "Arrived Dropoff",
           status: "arrived_dropoff" as DeliveryStatus,
         };
+
       case "arrived_dropoff":
         return {
           label: "Proof of Delivery",
           proof: "delivery",
         };
+
       default:
         return null;
     }
@@ -291,6 +331,7 @@ export default function DriverMyDeliveriesScreen() {
     const nextAction = getNextAction(item);
     const isUpdating = updatingId === item.id;
     const completed = item.status === "completed";
+    const cancelled = item.status === "cancelled";
 
     return (
       <View style={styles.card}>
@@ -309,7 +350,7 @@ export default function DriverMyDeliveriesScreen() {
             style={[
               styles.statusBadge,
               completed && styles.completedBadge,
-              item.status === "cancelled" && styles.cancelledBadge,
+              cancelled && styles.cancelledBadge,
             ]}
           >
             <Text style={styles.statusText}>{getStatusLabel(item.status)}</Text>
@@ -369,6 +410,13 @@ export default function DriverMyDeliveriesScreen() {
           </Text>
         )}
 
+        <TouchableOpacity
+          style={styles.navigationButton}
+          onPress={() => openLiveNavigation(item)}
+        >
+          <Text style={styles.navigationButtonText}>Open Live Navigation</Text>
+        </TouchableOpacity>
+
         {nextAction ? (
           <TouchableOpacity
             style={[styles.primaryButton, isUpdating && styles.disabled]}
@@ -397,7 +445,7 @@ export default function DriverMyDeliveriesScreen() {
           </TouchableOpacity>
         ) : null}
 
-        {!completed && item.status !== "cancelled" ? (
+        {!completed && !cancelled ? (
           <TouchableOpacity
             style={styles.cancelButton}
             onPress={() => updateDeliveryStatus(item, "cancelled")}
@@ -414,7 +462,9 @@ export default function DriverMyDeliveriesScreen() {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#22C55E" />
-        <Text style={styles.centeredText}>Checking driver delivery access...</Text>
+        <Text style={styles.centeredText}>
+          Checking driver delivery access...
+        </Text>
       </View>
     );
   }
@@ -423,7 +473,10 @@ export default function DriverMyDeliveriesScreen() {
     return (
       <View style={styles.centered}>
         <Text style={styles.lockTitle}>Driver Membership Required</Text>
-        <Text style={styles.centeredText}>Redirecting to subscription page...</Text>
+
+        <Text style={styles.centeredText}>
+          Redirecting to subscription page...
+        </Text>
 
         <TouchableOpacity
           style={styles.manageButton}
@@ -442,7 +495,10 @@ export default function DriverMyDeliveriesScreen() {
         keyExtractor={(item) => item.id}
         renderItem={renderJob}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={refreshDeliveries} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refreshDeliveries}
+          />
         }
         contentContainerStyle={styles.content}
         ListHeaderComponent={
@@ -453,6 +509,29 @@ export default function DriverMyDeliveriesScreen() {
               Track assigned Farm2Home delivery jobs, complete pickup, and
               submit proof of delivery.
             </Text>
+
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryValue}>
+                  {payoutTotals.activeCount}
+                </Text>
+                <Text style={styles.summaryLabel}>Active Jobs</Text>
+              </View>
+
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryValue}>
+                  {payoutTotals.completedCount}
+                </Text>
+                <Text style={styles.summaryLabel}>Completed</Text>
+              </View>
+
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryValue}>
+                  ${payoutTotals.completedPayout.toFixed(2)}
+                </Text>
+                <Text style={styles.summaryLabel}>Paid/Done</Text>
+              </View>
+            </View>
 
             <TouchableOpacity
               style={styles.boardButton}
@@ -479,6 +558,7 @@ export default function DriverMyDeliveriesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0F172A" },
+
   centered: {
     flex: 1,
     backgroundColor: "#0F172A",
@@ -486,6 +566,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 24,
   },
+
   centeredText: {
     color: "#CBD5E1",
     marginTop: 12,
@@ -493,31 +574,65 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 22,
   },
+
   lockTitle: {
     color: "#FCA5A5",
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
+
   content: {
     padding: 18,
     paddingBottom: 120,
   },
+
   header: {
     marginBottom: 18,
   },
+
   title: {
     color: "#FFFFFF",
     fontSize: 32,
     fontWeight: "900",
     marginTop: 18,
   },
+
   subtitle: {
     color: "#CBD5E1",
     marginTop: 8,
     lineHeight: 22,
     fontWeight: "700",
   },
+
+  summaryRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+
+  summaryCard: {
+    flex: 1,
+    backgroundColor: "#1E293B",
+    borderRadius: 18,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+
+  summaryValue: {
+    color: "#86EFAC",
+    fontSize: 19,
+    fontWeight: "900",
+  },
+
+  summaryLabel: {
+    color: "#CBD5E1",
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 5,
+  },
+
   boardButton: {
     backgroundColor: "#22C55E",
     paddingVertical: 14,
@@ -525,10 +640,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 16,
   },
+
   boardButtonText: {
     color: "#052E16",
     fontWeight: "900",
   },
+
   manageButton: {
     backgroundColor: "#22C55E",
     paddingVertical: 14,
@@ -537,16 +654,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 16,
   },
+
   manageButtonText: {
     color: "#052E16",
     fontWeight: "900",
   },
+
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
     padding: 18,
     marginBottom: 16,
   },
+
   cardHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -554,83 +674,112 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 12,
   },
+
   farmName: {
     color: "#111827",
     fontSize: 20,
     fontWeight: "900",
   },
+
   orderText: {
     color: "#64748B",
     fontWeight: "800",
     marginTop: 4,
   },
+
   statusBadge: {
     backgroundColor: "#DBEAFE",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
   },
+
   completedBadge: {
     backgroundColor: "#DCFCE7",
   },
+
   cancelledBadge: {
     backgroundColor: "#FEE2E2",
   },
+
   statusText: {
     color: "#1D4ED8",
     fontWeight: "900",
     fontSize: 12,
   },
+
   sectionLabel: {
     color: "#64748B",
     fontWeight: "900",
     marginTop: 12,
     marginBottom: 4,
   },
+
   addressText: {
     color: "#111827",
     fontWeight: "800",
     lineHeight: 20,
   },
+
   notesText: {
     color: "#334155",
     fontWeight: "700",
     marginTop: 12,
     lineHeight: 20,
   },
+
   metaRow: {
     flexDirection: "row",
     gap: 12,
     marginTop: 16,
   },
+
   metaBox: {
     flex: 1,
     backgroundColor: "#F1F5F9",
     borderRadius: 16,
     padding: 14,
   },
+
   metaLabel: {
     color: "#64748B",
     fontWeight: "900",
   },
+
   metaValue: {
     color: "#111827",
     fontWeight: "900",
     fontSize: 18,
     marginTop: 4,
   },
+
+  navigationButton: {
+    backgroundColor: "#2563EB",
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: "center",
+    marginTop: 18,
+  },
+
+  navigationButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+
   primaryButton: {
     backgroundColor: "#15803D",
     paddingVertical: 15,
     borderRadius: 16,
     alignItems: "center",
-    marginTop: 18,
+    marginTop: 10,
   },
+
   primaryButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
+
   cancelButton: {
     backgroundColor: "#FEE2E2",
     paddingVertical: 14,
@@ -638,13 +787,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 10,
   },
+
   cancelButtonText: {
     color: "#991B1B",
     fontWeight: "900",
   },
+
   disabled: {
     opacity: 0.6,
   },
+
   emptyBox: {
     backgroundColor: "#1E293B",
     borderRadius: 22,
@@ -652,15 +804,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 30,
   },
+
   emptyIcon: {
     fontSize: 42,
     marginBottom: 8,
   },
+
   emptyTitle: {
     color: "#FFFFFF",
     fontSize: 20,
     fontWeight: "900",
   },
+
   emptyText: {
     color: "#CBD5E1",
     textAlign: "center",

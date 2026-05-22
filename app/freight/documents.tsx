@@ -10,6 +10,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 
+import { API_BASE_URL } from "../config/api";
 import {
   BusinessDocument,
   getVerificationRecordById,
@@ -17,8 +18,6 @@ import {
 } from "../data/adminStore";
 
 type DocStatus = "Not Uploaded" | "Uploaded" | "Under Review";
-
-const API_BASE_URL = "http://localhost:4242";
 
 const REQUIRED_DOCS = [
   "Business Registration / LLC Documents",
@@ -50,13 +49,16 @@ export default function FreightDocuments() {
 
   async function notifyAdminDocumentsSubmitted(record: any) {
     try {
-      const response = await fetch(`${API_BASE_URL}/notify/documents-submitted`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(record),
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/notify/documents-submitted`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(record),
+        }
+      );
 
       const data = await response.json();
 
@@ -75,7 +77,7 @@ export default function FreightDocuments() {
       multiple: false,
     });
 
-    if (result.canceled) return;
+    if (result.canceled || !result.assets?.[0]) return;
 
     const file = result.assets[0];
 
@@ -233,7 +235,9 @@ export default function FreightDocuments() {
             {uploadedDoc && (
               <View style={styles.fileBox}>
                 <Text style={styles.fileName}>{uploadedDoc.name}</Text>
+
                 <Text style={styles.fileMeta}>Type: {uploadedDoc.type}</Text>
+
                 <Text style={styles.fileMeta}>
                   Uploaded: {formatUploadedDate(uploadedDoc.uploadedAt)}
                 </Text>

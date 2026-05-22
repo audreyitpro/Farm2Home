@@ -119,6 +119,7 @@ export default function FreightBoardScreen() {
     });
 
     setAccessAllowed(access.allowed);
+
     return access.allowed;
   }, []);
 
@@ -167,7 +168,10 @@ export default function FreightBoardScreen() {
 
   useEffect(() => {
     if (createdLoadId) {
-      Alert.alert("Freight Posted", "Your freight load is now live on the board.");
+      Alert.alert(
+        "Freight Posted",
+        "Your freight load is now live on the board."
+      );
     }
   }, [createdLoadId]);
 
@@ -198,7 +202,14 @@ export default function FreightBoardScreen() {
     updates: Partial<FreightLoad>
   ) {
     setLoads((prev) =>
-      prev.map((item) => (item.id === load.id ? { ...item, ...updates } : item))
+      prev.map((item) =>
+        item.id === load.id
+          ? {
+              ...item,
+              ...updates,
+            }
+          : item
+      )
     );
 
     if (!load.id.startsWith("demo")) {
@@ -216,6 +227,7 @@ export default function FreightBoardScreen() {
   async function handleLoadAction(load: FreightLoad) {
     try {
       const allowed = await checkFreightAccess();
+
       if (!allowed) return;
 
       if (load.status === "available") {
@@ -254,7 +266,10 @@ export default function FreightBoardScreen() {
         return;
       }
 
-      if (load.status === "picked_up" || load.status === "in_transit") {
+      if (
+        load.status === "picked_up" ||
+        load.status === "in_transit"
+      ) {
         await saveLoadUpdates(load, {
           status: "arrived_dropoff",
           arrived_dropoff_at: new Date().toISOString(),
@@ -275,16 +290,24 @@ export default function FreightBoardScreen() {
       }
 
       if (load.status === "delivered") {
-        Alert.alert("Delivered", "This freight load has already been completed.");
+        Alert.alert(
+          "Delivered",
+          "This freight load has already been completed."
+        );
       }
     } catch (err) {
       console.log("Load action error:", err);
-      Alert.alert("Error", "Unable to update freight load.");
+
+      Alert.alert(
+        "Error",
+        "Unable to update freight load."
+      );
     }
   }
 
   async function goToPostFreight() {
     const allowed = await checkFreightAccess();
+
     if (!allowed) return;
 
     router.push({
@@ -296,17 +319,23 @@ export default function FreightBoardScreen() {
     switch (status) {
       case "available":
         return "Accept Load";
+
       case "accepted":
         return "Arrived Pickup";
+
       case "arrived_pickup":
         return "Proof Of Pickup";
+
       case "picked_up":
       case "in_transit":
         return "Arrived Dropoff";
+
       case "arrived_dropoff":
         return "Proof Of Delivery";
+
       case "delivered":
         return "Delivered";
+
       default:
         return "View";
     }
@@ -316,7 +345,10 @@ export default function FreightBoardScreen() {
     return (
       <SafeAreaView style={styles.centered}>
         <ActivityIndicator size="large" color="#1f6f43" />
-        <Text style={styles.loadingText}>Checking Freight Access...</Text>
+
+        <Text style={styles.loadingText}>
+          Checking Freight Access...
+        </Text>
       </SafeAreaView>
     );
   }
@@ -324,8 +356,13 @@ export default function FreightBoardScreen() {
   if (!accessAllowed) {
     return (
       <SafeAreaView style={styles.centered}>
-        <Text style={styles.lockTitle}>Subscription Required</Text>
-        <Text style={styles.loadingText}>Redirecting to subscription page...</Text>
+        <Text style={styles.lockTitle}>
+          Subscription Required
+        </Text>
+
+        <Text style={styles.loadingText}>
+          Redirecting to subscription page...
+        </Text>
       </SafeAreaView>
     );
   }
@@ -334,15 +371,26 @@ export default function FreightBoardScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.kicker}>Farm2Home Freight</Text>
-          <Text style={styles.title}>Live Load Board</Text>
+          <Text style={styles.kicker}>
+            Farm2Home Freight
+          </Text>
+
+          <Text style={styles.title}>
+            Live Load Board
+          </Text>
+
           <Text style={styles.subtitle}>
             Accept, track, and complete deliveries.
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.postButton} onPress={goToPostFreight}>
-          <Text style={styles.postButtonText}>Post Freight</Text>
+        <TouchableOpacity
+          style={styles.postButton}
+          onPress={goToPostFreight}
+        >
+          <Text style={styles.postButtonText}>
+            Post Freight
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -360,20 +408,33 @@ export default function FreightBoardScreen() {
         data={filteredLoads}
         keyExtractor={(item) => item.id}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+          />
         }
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => (
           <View style={styles.card}>
             <View style={styles.cardTop}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.loadTitle}>{item.title}</Text>
-                <Text style={styles.farmName}>{item.farmer_name}</Text>
+                <Text style={styles.loadTitle}>
+                  {item.title}
+                </Text>
+
+                <Text style={styles.farmName}>
+                  {item.farmer_name}
+                </Text>
               </View>
 
               <View style={styles.rateBox}>
-                <Text style={styles.rate}>${item.rate}</Text>
-                <Text style={styles.rateLabel}>Rate</Text>
+                <Text style={styles.rate}>
+                  ${item.rate}
+                </Text>
+
+                <Text style={styles.rateLabel}>
+                  Rate
+                </Text>
               </View>
             </View>
 
@@ -384,16 +445,28 @@ export default function FreightBoardScreen() {
             </View>
 
             <View style={styles.routeContainer}>
-              <Text style={styles.routeLabel}>Pickup</Text>
-              <Text style={styles.routeText}>{item.pickup_location}</Text>
+              <Text style={styles.routeLabel}>
+                Pickup
+              </Text>
+
+              <Text style={styles.routeText}>
+                {item.pickup_location}
+              </Text>
+
               <Text style={styles.routeSub}>
                 {item.pickup_date} • {item.pickup_time}
               </Text>
 
               <View style={styles.divider} />
 
-              <Text style={styles.routeLabel}>Dropoff</Text>
-              <Text style={styles.routeText}>{item.dropoff_location}</Text>
+              <Text style={styles.routeLabel}>
+                Dropoff
+              </Text>
+
+              <Text style={styles.routeText}>
+                {item.dropoff_location}
+              </Text>
+
               <Text style={styles.routeSub}>
                 {item.dropoff_date || "Scheduled"} •{" "}
                 {item.dropoff_time || "TBD"}
@@ -402,30 +475,51 @@ export default function FreightBoardScreen() {
 
             <View style={styles.infoGrid}>
               <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>Commodity</Text>
-                <Text style={styles.infoText}>{item.commodity}</Text>
+                <Text style={styles.infoLabel}>
+                  Commodity
+                </Text>
+
+                <Text style={styles.infoText}>
+                  {item.commodity}
+                </Text>
               </View>
 
               <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>Equipment</Text>
-                <Text style={styles.infoText}>{item.equipment_type}</Text>
+                <Text style={styles.infoLabel}>
+                  Equipment
+                </Text>
+
+                <Text style={styles.infoText}>
+                  {item.equipment_type}
+                </Text>
               </View>
 
               <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>Weight</Text>
-                <Text style={styles.infoText}>{item.weight_lbs || 0} lbs</Text>
+                <Text style={styles.infoLabel}>
+                  Weight
+                </Text>
+
+                <Text style={styles.infoText}>
+                  {item.weight_lbs || 0} lbs
+                </Text>
               </View>
 
               <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>Miles</Text>
-                <Text style={styles.infoText}>{item.distance_miles || 0}</Text>
+                <Text style={styles.infoLabel}>
+                  Miles
+                </Text>
+
+                <Text style={styles.infoText}>
+                  {item.distance_miles || 0}
+                </Text>
               </View>
             </View>
 
             <TouchableOpacity
               style={[
                 styles.actionButton,
-                item.status === "delivered" && styles.disabledButton,
+                item.status === "delivered" &&
+                  styles.disabledButton,
               ]}
               onPress={() => handleLoadAction(item)}
               disabled={item.status === "delivered"}
@@ -442,7 +536,12 @@ export default function FreightBoardScreen() {
 }
 
 const styles = StyleSheet.create({
-  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   loadingText: {
     marginTop: 12,
     fontSize: 16,
@@ -450,13 +549,19 @@ const styles = StyleSheet.create({
     color: "#334155",
     textAlign: "center",
   },
+
   lockTitle: {
     color: "#991B1B",
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
-  container: { flex: 1, backgroundColor: "#f5f7f5" },
+
+  container: {
+    flex: 1,
+    backgroundColor: "#f5f7f5",
+  },
+
   header: {
     backgroundColor: "#163b2b",
     paddingHorizontal: 20,
@@ -466,17 +571,42 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 12,
   },
-  kicker: { color: "#9fe6b8", fontSize: 12, fontWeight: "900" },
-  title: { color: "#ffffff", fontSize: 26, fontWeight: "900", marginTop: 4 },
-  subtitle: { color: "#d7f5df", fontSize: 13, marginTop: 4 },
+
+  kicker: {
+    color: "#9fe6b8",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  title: {
+    color: "#ffffff",
+    fontSize: 26,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  subtitle: {
+    color: "#d7f5df",
+    fontSize: 13,
+    marginTop: 4,
+  },
+
   postButton: {
     backgroundColor: "#f8c537",
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
   },
-  postButtonText: { fontWeight: "900", color: "#000000" },
-  searchContainer: { padding: 14 },
+
+  postButtonText: {
+    fontWeight: "900",
+    color: "#000000",
+  },
+
+  searchContainer: {
+    padding: 14,
+  },
+
   searchInput: {
     backgroundColor: "#ffffff",
     borderRadius: 12,
@@ -485,7 +615,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#dce3df",
   },
-  listContent: { paddingHorizontal: 14, paddingBottom: 50 },
+
+  listContent: {
+    paddingHorizontal: 14,
+    paddingBottom: 50,
+  },
+
   card: {
     backgroundColor: "#ffffff",
     borderRadius: 16,
@@ -494,9 +629,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#dde5e0",
   },
-  cardTop: { flexDirection: "row", marginBottom: 12, gap: 12 },
-  loadTitle: { fontSize: 18, fontWeight: "900", color: "#102417" },
-  farmName: { marginTop: 4, color: "#5a6c62", fontWeight: "700" },
+
+  cardTop: {
+    flexDirection: "row",
+    marginBottom: 12,
+    gap: 12,
+  },
+
+  loadTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#102417",
+  },
+
+  farmName: {
+    marginTop: 4,
+    color: "#5a6c62",
+    fontWeight: "700",
+  },
+
   rateBox: {
     backgroundColor: "#e7f7ec",
     paddingHorizontal: 14,
@@ -504,8 +655,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
   },
-  rate: { color: "#14703b", fontWeight: "900", fontSize: 20 },
-  rateLabel: { color: "#557062", fontSize: 11, fontWeight: "800" },
+
+  rate: {
+    color: "#14703b",
+    fontWeight: "900",
+    fontSize: 20,
+  },
+
+  rateLabel: {
+    color: "#557062",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
   statusPill: {
     alignSelf: "flex-start",
     backgroundColor: "#1f6f43",
@@ -514,12 +676,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     marginBottom: 12,
   },
+
   statusPillText: {
     color: "#ffffff",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "capitalize",
   },
+
   routeContainer: {
     backgroundColor: "#f8faf8",
     borderRadius: 14,
@@ -528,21 +692,40 @@ const styles = StyleSheet.create({
     borderColor: "#e0e8e3",
     marginBottom: 12,
   },
+
   routeLabel: {
     fontSize: 11,
     color: "#64748b",
     fontWeight: "900",
     textTransform: "uppercase",
   },
+
   routeText: {
     fontSize: 14,
     color: "#23352b",
     marginTop: 3,
     fontWeight: "800",
   },
-  routeSub: { fontSize: 12, color: "#52625a", marginTop: 3, fontWeight: "600" },
-  divider: { height: 1, backgroundColor: "#dce3df", marginVertical: 10 },
-  infoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+
+  routeSub: {
+    fontSize: 12,
+    color: "#52625a",
+    marginTop: 3,
+    fontWeight: "600",
+  },
+
+  divider: {
+    height: 1,
+    backgroundColor: "#dce3df",
+    marginVertical: 10,
+  },
+
+  infoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
   infoBox: {
     flexBasis: "48%",
     flexGrow: 1,
@@ -552,13 +735,21 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 10,
   },
+
   infoLabel: {
     fontSize: 11,
     color: "#64748b",
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  infoText: { fontSize: 13, color: "#102417", fontWeight: "800", marginTop: 4 },
+
+  infoText: {
+    fontSize: 13,
+    color: "#102417",
+    fontWeight: "800",
+    marginTop: 4,
+  },
+
   actionButton: {
     backgroundColor: "#1f6f43",
     paddingVertical: 14,
@@ -566,6 +757,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 14,
   },
-  disabledButton: { backgroundColor: "#94a3b8" },
-  actionButtonText: { color: "#ffffff", fontWeight: "900", fontSize: 14 },
+
+  disabledButton: {
+    backgroundColor: "#94a3b8",
+  },
+
+  actionButtonText: {
+    color: "#ffffff",
+    fontWeight: "900",
+    fontSize: 14,
+  },
 });

@@ -19,23 +19,28 @@
       "expo-sqlite",
       "expo-notifications",
       "expo-location",
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-web-browser"
     ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.asodevelopments.farm2home",
+      "buildNumber": "1",
       "config": {
-        "googleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+        "googleMapsApiKey": "${GOOGLE_MAPS_API_KEY}"
       },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Farm2Home uses your location for live delivery tracking and driver routing.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Farm2Home uses background location for driver delivery tracking.",
         "NSPhotoLibraryUsageDescription": "Farm2Home uses photo access for profile images, product photos, and proof of delivery uploads.",
-        "NSCameraUsageDescription": "Farm2Home uses the camera for product photos and proof of delivery."
+        "NSCameraUsageDescription": "Farm2Home uses the camera for product photos and proof of delivery.",
+        "NSUserNotificationsUsageDescription": "Farm2Home sends order, delivery, freight, and account notifications.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.asodevelopments.farm2home",
+      "versionCode": 1,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
@@ -43,13 +48,11 @@
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.RECORD_AUDIO"
       ],
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyAXA8ttdUFAIoEJqqRiQAZSRSJ2nDunWQE"
+          "apiKey": "${GOOGLE_MAPS_API_KEY}"
         }
       },
       "adaptiveIcon": {
@@ -58,13 +61,20 @@
       }
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./assets/images/farm2home-logo.png"
     },
     "extra": {
       "eas": {
         "projectId": "04912a96-3223-40b8-a8ae-fba4424db741"
       }
     },
-    "owner": "audreyitpro"
+    "owner": "audreyitpro",
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
   }
 }

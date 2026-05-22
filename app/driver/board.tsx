@@ -12,12 +12,8 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
 import { enforceSubscriptionAccess } from "../services/lockoutGuard";
-
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  "https://farm2home-production-e4bd.up.railway.app";
 
 type DeliveryJob = {
   id: string;
@@ -148,9 +144,7 @@ export default function DriverBoardScreen() {
 
       const allowed = await checkDriverAccess(currentDriver);
 
-      if (!allowed) {
-        return;
-      }
+      if (!allowed) return;
 
       setLoading(true);
 

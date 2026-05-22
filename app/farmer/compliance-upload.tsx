@@ -274,7 +274,10 @@ export default function FarmerComplianceUploadScreen() {
     };
 
     await AsyncStorage.setItem("currentFarmer", JSON.stringify(fallbackFarmer));
-    await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(fallbackFarmer));
+    await AsyncStorage.setItem(
+      PENDING_FARMER_KEY,
+      JSON.stringify(fallbackFarmer)
+    );
     await AsyncStorage.setItem("currentUser", JSON.stringify(fallbackFarmer));
     await AsyncStorage.setItem("userRole", "farmer");
     await AsyncStorage.setItem("currentUserRole", "farmer");
@@ -291,7 +294,10 @@ export default function FarmerComplianceUploadScreen() {
 
     if (latestFarmer) {
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(latestFarmer));
-      await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(latestFarmer));
+      await AsyncStorage.setItem(
+        PENDING_FARMER_KEY,
+        JSON.stringify(latestFarmer)
+      );
       await AsyncStorage.setItem("currentUser", JSON.stringify(latestFarmer));
       await AsyncStorage.setItem("userRole", "farmer");
       await AsyncStorage.setItem("currentUserRole", "farmer");
@@ -469,7 +475,9 @@ export default function FarmerComplianceUploadScreen() {
         const pendingFarmer = JSON.parse(pendingSaved);
 
         setFarmerId(pendingFarmer.id || "");
-        setBusinessName(pendingFarmer.businessName || pendingFarmer.farmName || "");
+        setBusinessName(
+          pendingFarmer.businessName || pendingFarmer.farmName || ""
+        );
         setOwnerName(pendingFarmer.ownerName || "");
         setFarmerEmail(pendingFarmer.email || "");
         setState(pendingFarmer.state || "MI");
@@ -556,7 +564,10 @@ export default function FarmerComplianceUploadScreen() {
 
     await savePendingFarmerSnapshot(activeFarmerId);
     await syncCurrentFarmer(activeFarmerId);
-    await createOrUpdateAdminVerificationRecord(activeFarmerId, "PENDING_VERIFICATION");
+    await createOrUpdateAdminVerificationRecord(
+      activeFarmerId,
+      "PENDING_VERIFICATION"
+    );
 
     Alert.alert(
       "Fees Marked Complete",
@@ -574,12 +585,18 @@ export default function FarmerComplianceUploadScreen() {
     const uniqueQuestions = new Set(selectedQuestions);
 
     if (selectedQuestions.length !== 3) {
-      Alert.alert("Security Questions Required", "Please choose 3 security questions.");
+      Alert.alert(
+        "Security Questions Required",
+        "Please choose 3 security questions."
+      );
       return false;
     }
 
     if (uniqueQuestions.size !== 3) {
-      Alert.alert("Duplicate Questions", "Please choose 3 different security questions.");
+      Alert.alert(
+        "Duplicate Questions",
+        "Please choose 3 different security questions."
+      );
       return false;
     }
 
@@ -588,7 +605,10 @@ export default function FarmerComplianceUploadScreen() {
       !securityAnswer2.trim() ||
       !securityAnswer3.trim()
     ) {
-      Alert.alert("Security Answers Required", "Please answer all 3 security questions.");
+      Alert.alert(
+        "Security Answers Required",
+        "Please answer all 3 security questions."
+      );
       return false;
     }
 
@@ -638,7 +658,10 @@ export default function FarmerComplianceUploadScreen() {
       console.log("Save business info error:", error);
 
       if (showErrors) {
-        Alert.alert("Save Failed", error?.message || "Unable to save business information.");
+        Alert.alert(
+          "Save Failed",
+          error?.message || "Unable to save business information."
+        );
       }
 
       return false;
@@ -683,13 +706,19 @@ export default function FarmerComplianceUploadScreen() {
       await createOrUpdateAdminVerificationRecord(activeFarmerId);
 
       if (showSuccess) {
-        Alert.alert("Login Saved", "Username, password, email, and security questions saved.");
+        Alert.alert(
+          "Login Saved",
+          "Username, password, email, and security questions saved."
+        );
       }
 
       return true;
     } catch (error: any) {
       console.log("Save login credentials error:", error);
-      Alert.alert("Save Failed", error?.message || "Unable to save login credentials.");
+      Alert.alert(
+        "Save Failed",
+        error?.message || "Unable to save login credentials."
+      );
 
       return false;
     }
@@ -731,12 +760,18 @@ export default function FarmerComplianceUploadScreen() {
       setUploadedDocs(nextDocs);
 
       await savePendingFarmerSnapshot(activeFarmerId);
-      await createOrUpdateAdminVerificationRecord(activeFarmerId, "DOCUMENTS_IN_PROGRESS");
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "DOCUMENTS_IN_PROGRESS"
+      );
 
       Alert.alert("Uploaded", `${label} uploaded successfully.`);
     } catch (error: any) {
       console.log("Upload document error:", error);
-      Alert.alert("Upload Failed", error?.message || "There was a problem uploading your document.");
+      Alert.alert(
+        "Upload Failed",
+        error?.message || "There was a problem uploading your document."
+      );
     }
   }
 
@@ -757,7 +792,10 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       await savePendingFarmerSnapshot(activeFarmerId);
-      await createOrUpdateAdminVerificationRecord(activeFarmerId, "STRIPE_STARTED");
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "STRIPE_STARTED"
+      );
 
       setStripeLoading(true);
 
@@ -788,7 +826,9 @@ export default function FarmerComplianceUploadScreen() {
       const stripeUrl = data.url || data.onboardingUrl;
 
       if (!response.ok || !data.success || !stripeUrl) {
-        throw new Error(data.error || data.message || "Stripe onboarding failed.");
+        throw new Error(
+          data.error || data.message || "Stripe onboarding failed."
+        );
       }
 
       const accountId = data.accountId || data.stripeAccountId;
@@ -805,18 +845,26 @@ export default function FarmerComplianceUploadScreen() {
 
       await savePendingFarmerSnapshot(activeFarmerId);
       await syncCurrentFarmer(activeFarmerId);
-      await createOrUpdateAdminVerificationRecord(activeFarmerId, "STRIPE_PENDING");
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "STRIPE_PENDING"
+      );
 
       await openStripeUrl(stripeUrl);
     } catch (error: any) {
       console.log("STRIPE SETUP ERROR:", error);
-      Alert.alert("Stripe Setup Error", error?.message || "Unable to start Stripe payout setup.");
+      Alert.alert(
+        "Stripe Setup Error",
+        error?.message || "Unable to start Stripe payout setup."
+      );
     } finally {
       setStripeLoading(false);
     }
   }
 
-  async function verifyStripePayoutAccount(accountIdOverride?: string): Promise<boolean> {
+  async function verifyStripePayoutAccount(
+    accountIdOverride?: string
+  ): Promise<boolean> {
     try {
       const activeFarmerId = await getOrCreateFarmerId();
       const accountId = accountIdOverride || stripeAccountId;
@@ -851,7 +899,9 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || "Unable to verify Stripe payout account.");
+        throw new Error(
+          data.error || "Unable to verify Stripe payout account."
+        );
       }
 
       const returnedAccountId =
@@ -927,7 +977,10 @@ export default function FarmerComplianceUploadScreen() {
       return payoutsEnabled;
     } catch (error: any) {
       console.log("Stripe verify error:", error);
-      Alert.alert("Stripe Verification Error", error?.message || "Unable to verify Stripe payout account.");
+      Alert.alert(
+        "Stripe Verification Error",
+        error?.message || "Unable to verify Stripe payout account."
+      );
 
       return false;
     } finally {
@@ -976,12 +1029,18 @@ export default function FarmerComplianceUploadScreen() {
 
       await savePendingFarmerSnapshot(activeFarmerId);
       await syncCurrentFarmer(activeFarmerId);
-      await createOrUpdateAdminVerificationRecord(activeFarmerId, "DELIVERY_OPTION_SAVED");
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "DELIVERY_OPTION_SAVED"
+      );
 
       Alert.alert("Option Saved", `${option} was saved.`);
     } catch (error: any) {
       console.log("Save pickup delivery option error:", error);
-      Alert.alert("Save Failed", error?.message || "Unable to save pickup/delivery option.");
+      Alert.alert(
+        "Save Failed",
+        error?.message || "Unable to save pickup/delivery option."
+      );
     }
   }
 
@@ -994,7 +1053,10 @@ export default function FarmerComplianceUploadScreen() {
       );
 
       if (missingChecks.length > 0) {
-        Alert.alert("Legal Checklist Required", "Please check all legal confirmations before continuing.");
+        Alert.alert(
+          "Legal Checklist Required",
+          "Please check all legal confirmations before continuing."
+        );
         return false;
       }
 
@@ -1013,7 +1075,10 @@ export default function FarmerComplianceUploadScreen() {
       setUploadedDocs(nextDocs);
 
       await savePendingFarmerSnapshot(activeFarmerId);
-      await createOrUpdateAdminVerificationRecord(activeFarmerId, "LEGAL_ACCEPTED");
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "LEGAL_ACCEPTED"
+      );
 
       if (showSuccess) {
         Alert.alert("Saved", "Legal checklist saved successfully.");
@@ -1022,7 +1087,10 @@ export default function FarmerComplianceUploadScreen() {
       return true;
     } catch (error: any) {
       console.log("Save legal checklist error:", error);
-      Alert.alert("Save Failed", error?.message || "Unable to save legal checklist.");
+      Alert.alert(
+        "Save Failed",
+        error?.message || "Unable to save legal checklist."
+      );
 
       return false;
     }
@@ -1052,12 +1120,18 @@ export default function FarmerComplianceUploadScreen() {
       if (!legalSaved) return;
 
       if (!uploadedDocs.pickup_delivery_agreement) {
-        Alert.alert("Pickup / Delivery Required", "Please select your pickup or delivery option before verification.");
+        Alert.alert(
+          "Pickup / Delivery Required",
+          "Please select your pickup or delivery option before verification."
+        );
         return;
       }
 
       if (!stripeAccountId) {
-        Alert.alert("Stripe Required", "Please complete Stripe payout setup before final approval.");
+        Alert.alert(
+          "Stripe Required",
+          "Please complete Stripe payout setup before final approval."
+        );
         return;
       }
 
@@ -1065,24 +1139,36 @@ export default function FarmerComplianceUploadScreen() {
         const stripeVerified = await verifyStripePayoutAccount(stripeAccountId);
 
         if (!stripeVerified) {
-          Alert.alert("Stripe Required", "Stripe must be fully enabled before final approval.");
+          Alert.alert(
+            "Stripe Required",
+            "Stripe must be fully enabled before final approval."
+          );
           return;
         }
       }
 
       if (missingRequiredDocs.length > 0) {
-        Alert.alert("Required Documents Missing", `Missing:\n\n${missingRequiredDocs.join("\n")}`);
+        Alert.alert(
+          "Required Documents Missing",
+          `Missing:\n\n${missingRequiredDocs.join("\n")}`
+        );
         return;
       }
 
       const record = await getComplianceRecord(activeFarmerId);
 
       if (!record) {
-        Alert.alert("Missing Compliance Record", "No compliance record was found. Please upload at least one document again.");
+        Alert.alert(
+          "Missing Compliance Record",
+          "No compliance record was found. Please upload at least one document again."
+        );
         return;
       }
 
-      await createOrUpdateAdminVerificationRecord(activeFarmerId, "PENDING_ADMIN_REVIEW");
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "PENDING_ADMIN_REVIEW"
+      );
 
       const latestFarmerBeforeAI = await getFarmerById(activeFarmerId);
 
@@ -1112,10 +1198,28 @@ export default function FarmerComplianceUploadScreen() {
       if (complianceApproved) {
         await updateFarmerStore(activeFarmerId, {
           approved: true,
+          rejected: false,
+          needsMoreInfo: false,
+          reviewed: true,
           accountActive: true,
+          complianceSubmitted: true,
           complianceStatus: "approved",
+          adminReviewStatus: "approved",
+          reviewDecision: "approved",
           complianceScore: result.score || 100,
           complianceReviewedAt: result.reviewedAt || new Date().toISOString(),
+          submittedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          uploadedDocs,
+          legalChecks,
+          stripeAccountId,
+          farmerStripeAccountId: stripeAccountId,
+          stripePayoutsEnabled,
+          stripeChargesEnabled,
+          stripeOnboardingComplete,
+          farmerMembershipPaid,
+          applicationFeePaid,
+          pickupDeliveryOption,
         } as any);
 
         await createOrUpdateAdminVerificationRecord(activeFarmerId, "APPROVED");
@@ -1133,22 +1237,57 @@ export default function FarmerComplianceUploadScreen() {
 
       await updateFarmerStore(activeFarmerId, {
         approved: false,
+        rejected: false,
+        needsMoreInfo: false,
+        reviewed: false,
         accountActive: false,
+        complianceSubmitted: true,
         complianceStatus: "pending_admin_review",
-        complianceScore: result.score,
-        complianceReviewedAt: result.reviewedAt,
+        adminReviewStatus: "pending",
+        reviewDecision: "pending",
+        complianceScore: result.score || 0,
+        complianceReviewedAt: result.reviewedAt || new Date().toISOString(),
+        submittedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        uploadedDocs,
+        legalChecks,
+        stripeAccountId,
+        farmerStripeAccountId: stripeAccountId,
+        stripePayoutsEnabled,
+        stripeChargesEnabled,
+        stripeOnboardingComplete,
+        farmerMembershipPaid,
+        applicationFeePaid,
+        pickupDeliveryOption,
       } as any);
 
-      await createOrUpdateAdminVerificationRecord(activeFarmerId, "PENDING_ADMIN_REVIEW");
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "PENDING_ADMIN_REVIEW"
+      );
+
+      await savePendingFarmerSnapshot(activeFarmerId);
       await syncCurrentFarmer(activeFarmerId);
 
       Alert.alert(
         "Submitted for Admin Review",
-        "Your farmer application is now in the Admin AI Compliance queue for approval."
+        "Your farmer application is now in the Admin AI Compliance review queue for approval, rejection, or request for more information.",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              router.replace("/farmer/dashboard" as any);
+            },
+          },
+        ]
       );
     } catch (error: any) {
       console.log("Verification error:", error);
-      Alert.alert("Verification Error", error?.message || "Unable to complete compliance verification.");
+
+      Alert.alert(
+        "Verification Error",
+        error?.message || "Unable to complete compliance verification."
+      );
     } finally {
       setLoading(false);
     }
@@ -1157,11 +1296,11 @@ export default function FarmerComplianceUploadScreen() {
   function showButtonTest() {
     Alert.alert(
       "Button Test",
-      `Buttons are clickable.\n\nFarmer ID: ${farmerId || "MISSING"}\nBusiness: ${
-        businessName || "MISSING"
-      }\nOwner: ${ownerName || "MISSING"}\nEmail: ${
-        farmerEmail || "MISSING"
-      }\nAPI: ${API_BASE_URL}`
+      `Buttons are clickable.\n\nFarmer ID: ${
+        farmerId || "MISSING"
+      }\nBusiness: ${businessName || "MISSING"}\nOwner: ${
+        ownerName || "MISSING"
+      }\nEmail: ${farmerEmail || "MISSING"}\nAPI: ${API_BASE_URL}`
     );
   }
 
@@ -1502,7 +1641,8 @@ export default function FarmerComplianceUploadScreen() {
             { marginTop: 14 },
           ]}
         >
-          Application Process Fee: {applicationFeePaid ? "Completed" : "Required"}
+          Application Process Fee:{" "}
+          {applicationFeePaid ? "Completed" : "Required"}
         </Text>
 
         <Pressable

@@ -2,13 +2,15 @@ import React, { useState } from "react";
 import {
   Alert,
   ScrollView,
-  StyleSheet,
+ StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
+
+import { API_BASE_URL } from "../config/api";
 
 import {
   BusinessDocument,
@@ -17,8 +19,6 @@ import {
 } from "../data/adminStore";
 
 type DocStatus = "Not Uploaded" | "Uploaded" | "Under Review";
-
-const API_BASE_URL = "http://localhost:4242";
 
 const REQUIRED_DOCS = [
   "Business Registration / LLC Documents",
@@ -45,13 +45,16 @@ export default function Documents() {
 
   async function notifyAdminDocumentsSubmitted(record: any) {
     try {
-      const response = await fetch(`${API_BASE_URL}/notify/documents-submitted`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(record),
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/notify/documents-submitted`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(record),
+        }
+      );
 
       const data = await response.json();
 
@@ -160,7 +163,11 @@ export default function Documents() {
       router.replace("/farmer/login");
     } catch (error) {
       console.log("Submit documents error", error);
-      Alert.alert("Submission Error", "Unable to submit documents for review.");
+
+      Alert.alert(
+        "Submission Error",
+        "Unable to submit documents for review."
+      );
     } finally {
       setLoading(false);
     }
@@ -214,7 +221,11 @@ export default function Documents() {
             {uploadedDoc && (
               <View style={styles.fileBox}>
                 <Text style={styles.fileName}>{uploadedDoc.name}</Text>
-                <Text style={styles.fileMeta}>Type: {uploadedDoc.type}</Text>
+
+                <Text style={styles.fileMeta}>
+                  Type: {uploadedDoc.type}
+                </Text>
+
                 <Text style={styles.fileMeta}>
                   Uploaded:{" "}
                   {uploadedDoc.uploadedAt
@@ -229,7 +240,9 @@ export default function Documents() {
                 style={styles.uploadButton}
                 onPress={() => uploadDocument(doc)}
               >
-                <Text style={styles.uploadText}>Upload / Replace Document</Text>
+                <Text style={styles.uploadText}>
+                  Upload / Replace Document
+                </Text>
               </TouchableOpacity>
             )}
           </View>
@@ -242,7 +255,9 @@ export default function Documents() {
         disabled={loading}
       >
         <Text style={styles.reviewText}>
-          {loading ? "Submitting..." : "Submit Documents for Admin Review"}
+          {loading
+            ? "Submitting..."
+            : "Submit Documents for Admin Review"}
         </Text>
       </TouchableOpacity>
 
