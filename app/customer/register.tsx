@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,12 +21,21 @@ import farmTheme from "../styles/farmTheme";
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
   "What city were you born in?",
-  "What is the name of your elementary school?",
+  "What is your mother’s maiden name?",
+  "What was the name of your elementary school?",
+  "What was your first car?",
+  "What is your favorite food?",
+  "What was the name of your childhood best friend?",
+  "What street did you grow up on?",
+  "What is your favorite teacher’s name?",
+  "What is your favorite color?",
 ];
 
 type CustomerAccount = {
   id: string;
+  role: "customer";
   fullName: string;
+  name: string;
   email: string;
   phone: string;
   username: string;
@@ -38,6 +47,8 @@ type CustomerAccount = {
   securityAnswer2: string;
   securityQuestion3: string;
   securityAnswer3: string;
+  customerMembershipPaid: boolean;
+  subscriptionStatus: "pending" | "active";
   membershipStatus: "Pending" | "Active";
   createdAt: string;
   updatedAt?: string;
@@ -67,12 +78,12 @@ async function saveCustomer(customerAccount: CustomerAccount) {
   const customers = await getCustomers();
 
   const updatedCustomers = [
+    customerAccount,
     ...customers.filter(
       (item) =>
         item.email.toLowerCase() !== customerAccount.email.toLowerCase() &&
         item.username.toLowerCase() !== customerAccount.username.toLowerCase()
     ),
-    customerAccount,
   ];
 
   await AsyncStorage.setItem(
@@ -88,28 +99,33 @@ async function saveCustomer(customerAccount: CustomerAccount) {
 }
 
 export default function CustomerRegister() {
-  const [fullName, setFullName] = useState("Test Customer");
-  const [email, setEmail] = useState(`test${Date.now()}@farm2home.com`);
-  const [phone, setPhone] = useState("555-555-5555");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
 
-  const [username, setUsername] = useState(`customer${Date.now()}`);
-  const [password, setPassword] = useState("Password123");
-  const [confirmPassword, setConfirmPassword] = useState("Password123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [securityQuestion1, setSecurityQuestion1] =
-    useState(SECURITY_QUESTIONS[0]);
-  const [securityAnswer1, setSecurityAnswer1] = useState("dog");
+  const [securityQuestion1, setSecurityQuestion1] = useState("");
+  const [securityAnswer1, setSecurityAnswer1] = useState("");
 
-  const [securityQuestion2, setSecurityQuestion2] =
-    useState(SECURITY_QUESTIONS[1]);
-  const [securityAnswer2, setSecurityAnswer2] = useState("detroit");
+  const [securityQuestion2, setSecurityQuestion2] = useState("");
+  const [securityAnswer2, setSecurityAnswer2] = useState("");
 
-  const [securityQuestion3, setSecurityQuestion3] =
-    useState(SECURITY_QUESTIONS[2]);
-  const [securityAnswer3, setSecurityAnswer3] = useState("school");
+  const [securityQuestion3, setSecurityQuestion3] = useState("");
+  const [securityAnswer3, setSecurityAnswer3] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
+
+  const selectedQuestions = useMemo(
+    () =>
+      [securityQuestion1, securityQuestion2, securityQuestion3].filter(
+        Boolean
+      ),
+    [securityQuestion1, securityQuestion2, securityQuestion3]
+  );
 
   function validateForm() {
     if (
@@ -144,17 +160,30 @@ export default function CustomerRegister() {
       return false;
     }
 
+    if (selectedQuestions.length !== 3) {
+      Alert.alert(
+        "Security Required",
+        "Please select 3 security questions."
+      );
+      return false;
+    }
+
+    if (new Set(selectedQuestions).size !== 3) {
+      Alert.alert(
+        "Duplicate Questions",
+        "Please select 3 different security questions."
+      );
+      return false;
+    }
+
     if (
-      !securityQuestion1 ||
-      !securityQuestion2 ||
-      !securityQuestion3 ||
       !securityAnswer1.trim() ||
       !securityAnswer2.trim() ||
       !securityAnswer3.trim()
     ) {
       Alert.alert(
         "Security Required",
-        "Please complete all 3 security questions and answers."
+        "Please answer all 3 security questions."
       );
       return false;
     }
@@ -206,7 +235,9 @@ export default function CustomerRegister() {
 
       const customerAccount: CustomerAccount = {
         id: `customer_${Date.now()}`,
+        role: "customer",
         fullName: cleanFullName,
+        name: cleanFullName,
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
@@ -218,6 +249,8 @@ export default function CustomerRegister() {
         securityAnswer2: normalizeAnswer(securityAnswer2),
         securityQuestion3,
         securityAnswer3: normalizeAnswer(securityAnswer3),
+        customerMembershipPaid: false,
+        subscriptionStatus: "pending",
         membershipStatus: "Pending",
         createdAt: now,
         updatedAt: now,
@@ -229,11 +262,14 @@ export default function CustomerRegister() {
         const { error } = await supabase.from("customers").upsert({
           id: customerAccount.id,
           full_name: customerAccount.fullName,
+          name: customerAccount.name,
           email: customerAccount.email,
           username: customerAccount.username,
           password: customerAccount.password,
           phone: customerAccount.phone,
           account_active: true,
+          customer_membership_paid: false,
+          subscription_status: customerAccount.subscriptionStatus,
           membership_status: customerAccount.membershipStatus,
           security_question_1: customerAccount.securityQuestion1,
           security_answer_1: customerAccount.securityAnswer1,
@@ -321,7 +357,9 @@ export default function CustomerRegister() {
 
       const testCustomer: CustomerAccount = {
         id: `test_customer_${timestamp}`,
+        role: "customer",
         fullName: "Test Customer",
+        name: "Test Customer",
         email: `testcustomer${timestamp}@farm2home.com`,
         phone: "555-555-5555",
         username: `testcustomer${timestamp}`,
@@ -333,6 +371,8 @@ export default function CustomerRegister() {
         securityAnswer2: "detroit",
         securityQuestion3: SECURITY_QUESTIONS[2],
         securityAnswer3: "school",
+        customerMembershipPaid: true,
+        subscriptionStatus: "active",
         membershipStatus: "Active",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -355,6 +395,56 @@ export default function CustomerRegister() {
     } finally {
       setTestLoading(false);
     }
+  }
+
+  function renderQuestionPicker(
+    label: string,
+    selectedQuestion: string,
+    setSelectedQuestion: (value: string) => void,
+    answer: string,
+    setAnswer: (value: string) => void
+  ) {
+    return (
+      <View style={styles.questionBox}>
+        <Text style={styles.questionLabel}>{label}</Text>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {SECURITY_QUESTIONS.map((question) => {
+            const active = selectedQuestion === question;
+
+            return (
+              <TouchableOpacity
+                key={question}
+                style={[
+                  styles.questionChip,
+                  active && styles.questionChipActive,
+                ]}
+                activeOpacity={0.8}
+                onPress={() => setSelectedQuestion(question)}
+              >
+                <Text
+                  style={[
+                    styles.questionChipText,
+                    active && styles.questionChipTextActive,
+                  ]}
+                >
+                  {question}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        <TextInput
+          style={styles.input}
+          value={answer}
+          onChangeText={setAnswer}
+          placeholder="Hidden answer"
+          placeholderTextColor="#8A8F98"
+          secureTextEntry
+        />
+      </View>
+    );
   }
 
   return (
@@ -429,47 +519,29 @@ export default function CustomerRegister() {
         <View style={styles.securityCard}>
           <Text style={styles.securityTitle}>Security Questions</Text>
 
-          <TextInput
-            style={styles.input}
-            value={securityQuestion1}
-            onChangeText={setSecurityQuestion1}
-            placeholder="Security Question 1"
-          />
+          {renderQuestionPicker(
+            "Security Question 1",
+            securityQuestion1,
+            setSecurityQuestion1,
+            securityAnswer1,
+            setSecurityAnswer1
+          )}
 
-          <TextInput
-            style={styles.input}
-            value={securityAnswer1}
-            onChangeText={setSecurityAnswer1}
-            placeholder="Answer 1"
-          />
+          {renderQuestionPicker(
+            "Security Question 2",
+            securityQuestion2,
+            setSecurityQuestion2,
+            securityAnswer2,
+            setSecurityAnswer2
+          )}
 
-          <TextInput
-            style={styles.input}
-            value={securityQuestion2}
-            onChangeText={setSecurityQuestion2}
-            placeholder="Security Question 2"
-          />
-
-          <TextInput
-            style={styles.input}
-            value={securityAnswer2}
-            onChangeText={setSecurityAnswer2}
-            placeholder="Answer 2"
-          />
-
-          <TextInput
-            style={styles.input}
-            value={securityQuestion3}
-            onChangeText={setSecurityQuestion3}
-            placeholder="Security Question 3"
-          />
-
-          <TextInput
-            style={styles.input}
-            value={securityAnswer3}
-            onChangeText={setSecurityAnswer3}
-            placeholder="Answer 3"
-          />
+          {renderQuestionPicker(
+            "Security Question 3",
+            securityQuestion3,
+            setSecurityQuestion3,
+            securityAnswer3,
+            setSecurityAnswer3
+          )}
         </View>
 
         <TouchableOpacity
@@ -565,6 +637,33 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "900",
     marginBottom: 10,
+  },
+  questionBox: {
+    marginBottom: 14,
+  },
+  questionLabel: {
+    color: farmTheme.colors.text,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  questionChip: {
+    backgroundColor: "#E5E7EB",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    marginRight: 8,
+    marginBottom: 10,
+    maxWidth: 280,
+  },
+  questionChipActive: {
+    backgroundColor: farmTheme.colors.primary,
+  },
+  questionChipText: {
+    color: farmTheme.colors.primary,
+    fontWeight: "900",
+  },
+  questionChipTextActive: {
+    color: "#FFFFFF",
   },
   createButton: {
     backgroundColor: farmTheme.colors.primary,
