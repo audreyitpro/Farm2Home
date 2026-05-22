@@ -38,8 +38,6 @@ import {
   upsertVerificationRecord,
 } from "../data/adminStore";
 
-import { runAIComplianceVerification } from "../ai/compliance-verification";
-
 const PICKUP_DELIVERY_OPTIONS = [
   "Pickup Only",
   "Delivery Only",
@@ -154,7 +152,12 @@ export default function FarmerComplianceUploadScreen() {
     }, [stripeReturn, returnedStripeAccountId])
   );
 
-  async function savePendingFarmerSnapshot(activeFarmerId = farmerId) {
+  async function savePendingFarmerSnapshot(
+    activeFarmerId = farmerId,
+    statusOverride?: string
+  ) {
+    const status = statusOverride || "in_progress";
+
     const snapshot = {
       id: activeFarmerId,
       farmName: businessName,
@@ -188,8 +191,15 @@ export default function FarmerComplianceUploadScreen() {
       uploadedDocs,
       legalChecks,
       approved: false,
+      rejected: false,
+      needsMoreInfo: false,
+      reviewed: false,
       accountActive: false,
-      complianceStatus: "in_progress",
+      complianceSubmitted: status === "pending_admin_review",
+      complianceStatus: status,
+      adminReviewStatus:
+        status === "pending_admin_review" ? "pending" : undefined,
+      reviewDecision: status === "pending_admin_review" ? "pending" : undefined,
       updatedAt: new Date().toISOString(),
     };
 
@@ -208,26 +218,43 @@ export default function FarmerComplianceUploadScreen() {
   ) {
     if (!activeFarmerId) return;
 
+    const documents = Object.entries(uploadedDocs || {}).map(([type, uri]) => ({
+      id: `${activeFarmerId}_${type}`,
+      name: String(type).replace(/_/g, " "),
+      type,
+      uri,
+      uploadedAt: new Date().toISOString(),
+      status: "PENDING",
+    }));
+
     const record = createVerificationRecordFromFarmer({
       farmerId: activeFarmerId,
       farmName: businessName || "Farm2Home Farm",
       ownerName: ownerName || "",
       email: farmerEmail || "",
       phone: "",
-      documents: [],
-    });
+      documents,
+    } as any);
 
     await upsertVerificationRecord({
       ...record,
       farmerId: activeFarmerId,
       id: activeFarmerId,
+      accountType: "FARMER",
       farmName: businessName || "Farm2Home Farm",
       businessName: businessName || "Farm2Home Farm",
       ownerName: ownerName || "",
       email: farmerEmail || "",
+      phone: "",
       state,
       status,
       complianceStatus: status,
+      adminReviewStatus: status === "PENDING_ADMIN_REVIEW" ? "pending" : status,
+      reviewDecision: status === "PENDING_ADMIN_REVIEW" ? "pending" : undefined,
+      approved: false,
+      rejected: false,
+      needsMoreInfo: false,
+      reviewed: false,
       farmerMembershipPaid,
       applicationFeePaid,
       stripeAccountId,
@@ -237,6 +264,8 @@ export default function FarmerComplianceUploadScreen() {
       stripeOnboardingComplete,
       pickupDeliveryOption,
       uploadedDocs,
+      documents,
+      submittedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     } as any);
   }
@@ -270,6 +299,9 @@ export default function FarmerComplianceUploadScreen() {
       state: state || "MI",
       complianceStatus: "in_progress",
       approved: false,
+      rejected: false,
+      needsMoreInfo: false,
+      reviewed: false,
       accountActive: false,
     };
 
@@ -1108,133 +1140,6 @@ export default function FarmerComplianceUploadScreen() {
       const credentialsSaved = await saveLoginCredentials(false);
       if (!credentialsSaved) return;
 
-      if (!farmerMembershipPaid || !applicationFeePaid) {
-        Alert.alert(
-          "Fees Required",
-          "Please complete both farmer fee payments before submitting compliance."
-        );
-        return;
-      }
-
-      const legalSaved = await saveLegalChecklist(false);
-      if (!legalSaved) return;
-
-      if (!uploadedDocs.pickup_delivery_agreement) {
-        Alert.alert(
-          "Pickup / Delivery Required",
-          "Please select your pickup or delivery option before verification."
-        );
-        return;
-      }
-
-      if (!stripeAccountId) {
-        Alert.alert(
-          "Stripe Required",
-          "Please complete Stripe payout setup before final approval."
-        );
-        return;
-      }
-
-      if (!stripePayoutsEnabled || !uploadedDocs.stripe_payout) {
-        const stripeVerified = await verifyStripePayoutAccount(stripeAccountId);
-
-        if (!stripeVerified) {
-          Alert.alert(
-            "Stripe Required",
-            "Stripe must be fully enabled before final approval."
-          );
-          return;
-        }
-      }
-
-      if (missingRequiredDocs.length > 0) {
-        Alert.alert(
-          "Required Documents Missing",
-          `Missing:\n\n${missingRequiredDocs.join("\n")}`
-        );
-        return;
-      }
-
-      const record = await getComplianceRecord(activeFarmerId);
-
-      if (!record) {
-        Alert.alert(
-          "Missing Compliance Record",
-          "No compliance record was found. Please upload at least one document again."
-        );
-        return;
-      }
-
-      await createOrUpdateAdminVerificationRecord(
-        activeFarmerId,
-        "PENDING_ADMIN_REVIEW"
-      );
-
-      const latestFarmerBeforeAI = await getFarmerById(activeFarmerId);
-
-      const adminAlreadyApproved =
-        latestFarmerBeforeAI?.approved === true ||
-        latestFarmerBeforeAI?.complianceStatus === "approved";
-
-      let result: any = {
-        autoApproved: false,
-        score: adminAlreadyApproved ? 100 : 0,
-        reviewedAt: new Date().toISOString(),
-        missingItems: [],
-      };
-
-      if (!adminAlreadyApproved) {
-        result = await runAIComplianceVerification(record);
-      }
-
-      const latestFarmer = await getFarmerById(activeFarmerId);
-
-      const complianceApproved =
-        result.autoApproved === true ||
-        adminAlreadyApproved ||
-        latestFarmer?.approved === true ||
-        latestFarmer?.complianceStatus === "approved";
-
-      if (complianceApproved) {
-        await updateFarmerStore(activeFarmerId, {
-          approved: true,
-          rejected: false,
-          needsMoreInfo: false,
-          reviewed: true,
-          accountActive: true,
-          complianceSubmitted: true,
-          complianceStatus: "approved",
-          adminReviewStatus: "approved",
-          reviewDecision: "approved",
-          complianceScore: result.score || 100,
-          complianceReviewedAt: result.reviewedAt || new Date().toISOString(),
-          submittedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          uploadedDocs,
-          legalChecks,
-          stripeAccountId,
-          farmerStripeAccountId: stripeAccountId,
-          stripePayoutsEnabled,
-          stripeChargesEnabled,
-          stripeOnboardingComplete,
-          farmerMembershipPaid,
-          applicationFeePaid,
-          pickupDeliveryOption,
-        } as any);
-
-        await createOrUpdateAdminVerificationRecord(activeFarmerId, "APPROVED");
-        await syncCurrentFarmer(activeFarmerId);
-        await AsyncStorage.removeItem(PENDING_FARMER_KEY);
-
-        Alert.alert(
-          "Approved",
-          "Your compliance review is approved. You can now complete your farmer store setup."
-        );
-
-        router.replace("/farmer/setup-store" as any);
-        return;
-      }
-
       await updateFarmerStore(activeFarmerId, {
         approved: false,
         rejected: false,
@@ -1245,20 +1150,18 @@ export default function FarmerComplianceUploadScreen() {
         complianceStatus: "pending_admin_review",
         adminReviewStatus: "pending",
         reviewDecision: "pending",
-        complianceScore: result.score || 0,
-        complianceReviewedAt: result.reviewedAt || new Date().toISOString(),
         submittedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        uploadedDocs,
-        legalChecks,
+        farmerMembershipPaid,
+        applicationFeePaid,
         stripeAccountId,
         farmerStripeAccountId: stripeAccountId,
         stripePayoutsEnabled,
         stripeChargesEnabled,
         stripeOnboardingComplete,
-        farmerMembershipPaid,
-        applicationFeePaid,
         pickupDeliveryOption,
+        uploadedDocs,
+        legalChecks,
       } as any);
 
       await createOrUpdateAdminVerificationRecord(
@@ -1266,27 +1169,24 @@ export default function FarmerComplianceUploadScreen() {
         "PENDING_ADMIN_REVIEW"
       );
 
-      await savePendingFarmerSnapshot(activeFarmerId);
+      await savePendingFarmerSnapshot(activeFarmerId, "pending_admin_review");
       await syncCurrentFarmer(activeFarmerId);
 
       Alert.alert(
         "Submitted for Admin Review",
-        "Your farmer application is now in the Admin AI Compliance review queue for approval, rejection, or request for more information.",
+        "Your farmer application has been sent to compliance review.",
         [
           {
             text: "OK",
-            onPress: () => {
-              router.replace("/farmer/dashboard" as any);
-            },
+            onPress: () => router.replace("/farmer/dashboard" as any),
           },
         ]
       );
     } catch (error: any) {
       console.log("Verification error:", error);
-
       Alert.alert(
         "Verification Error",
-        error?.message || "Unable to complete compliance verification."
+        error?.message || "Unable to submit for compliance review."
       );
     } finally {
       setLoading(false);
@@ -1444,8 +1344,7 @@ export default function FarmerComplianceUploadScreen() {
                 key={option}
                 style={[
                   styles.optionButton,
-                  pickupDeliveryOption === option &&
-                    styles.optionButtonActive,
+                  pickupDeliveryOption === option && styles.optionButtonActive,
                 ]}
                 onPress={() => savePickupDeliveryOption(option)}
               >
