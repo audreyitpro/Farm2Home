@@ -1,5 +1,5 @@
 // app/farmer/compliance-upload.tsx
-import { supabase } from "../data/supabaseClient";
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,6 +19,7 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
 import { PAYMENT_LINKS } from "../config/paymentLinks";
+import { supabase } from "../data/supabaseClient";
 
 import {
   REQUIRED_DOCUMENTS,
@@ -79,7 +80,6 @@ export default function FarmerComplianceUploadScreen() {
     : "";
 
   const [stripeReturnHandled, setStripeReturnHandled] = useState(false);
-  const [activationPromptHandled, setActivationPromptHandled] = useState(false);
 
   const [farmerId, setFarmerId] = useState("");
   const [businessName, setBusinessName] = useState("");
@@ -156,52 +156,108 @@ export default function FarmerComplianceUploadScreen() {
     }, [stripeReturn, returnedStripeAccountId, stripeReturnHandled])
   );
 
-  function isApprovedFarmer(farmer: any) {
-    return (
-      farmer?.approved === true ||
-      farmer?.reviewDecision === "approved" ||
-      farmer?.adminReviewStatus === "approved" ||
-      farmer?.complianceStatus === "approved"
-    );
-  }
+  async function saveFarmerSubmissionToSupabase(
+    activeFarmerId: string,
+    reviewPayload: Record<string, any>
+  ) {
+    const now = new Date().toISOString();
+    const docsToUse = reviewPayload.uploadedDocs || uploadedDocs || {};
 
-  function hasPaidActivationFee(farmer: any) {
-    return (
-      farmer?.farmerActivationPaid === true ||
-      farmer?.activationFeePaid === true ||
-      farmer?.farmerSetupFeePaid === true ||
-      farmer?.setupFeePaid === true
-    );
-  }
+    const documents = Object.entries(docsToUse).map(([type, uri]) => ({
+      id: `${activeFarmerId}_${type}`,
+      farmerId: activeFarmerId,
+      type,
+      name: String(type).replace(/_/g, " "),
+      uri: String(uri),
+      status: "PENDING",
+      uploadedAt: now,
+    }));
 
-  function promptForActivationFee(farmer: any) {
-    const activeFarmerId = farmer?.id || farmerId || farmerIdFromParams;
+    const adminRecord = {
+      id: activeFarmerId,
+      farmer_id: activeFarmerId,
+      account_type: "FARMER",
+      role: "farmer",
 
-    if (!activeFarmerId || activationPromptHandled) return;
+      business_name: reviewPayload.businessName || businessName,
+      farm_name: reviewPayload.farmName || businessName,
+      owner_name: reviewPayload.ownerName || ownerName,
+      email: reviewPayload.email || farmerEmail,
+      state: reviewPayload.state || state,
 
-    setActivationPromptHandled(true);
+      status: "PENDING_ADMIN_REVIEW",
+      compliance_status: "pending_admin_review",
+      admin_review_status: "pending",
+      review_decision: "pending",
 
-    Alert.alert(
-      "Compliance Approved",
-      "Your application is approved. Please pay the $29.99 farmer activation fee, then start the $14.99 monthly subscription to unlock store setup.",
-      [
-        {
-          text: "Pay $29.99",
-          onPress: () =>
-            router.replace({
-              pathname: "/subscription/subscription-locked",
-              params: {
-                role: "farmer",
-                step: "activation",
-                farmerId: activeFarmerId,
-                email: farmer?.email || farmerEmail,
-                businessName:
-                  farmer?.businessName || farmer?.farmName || businessName,
-              },
-            } as any),
-        },
-      ]
-    );
+      approved: false,
+      rejected: false,
+      needs_more_info: false,
+      reviewed: false,
+      account_active: false,
+      compliance_submitted: true,
+
+      farmer_membership_paid: Boolean(reviewPayload.farmerMembershipPaid),
+      application_fee_paid: Boolean(reviewPayload.applicationFeePaid),
+      farmer_activation_paid: Boolean(reviewPayload.farmerActivationPaid),
+      farmer_monthly_subscription_paid: Boolean(
+        reviewPayload.farmerMonthlySubscriptionPaid
+      ),
+
+      stripe_account_id: reviewPayload.stripeAccountId || "",
+      farmer_stripe_account_id: reviewPayload.farmerStripeAccountId || "",
+      stripe_payouts_enabled: Boolean(reviewPayload.stripePayoutsEnabled),
+      stripe_charges_enabled: Boolean(reviewPayload.stripeChargesEnabled),
+      stripe_onboarding_complete: Boolean(
+        reviewPayload.stripeOnboardingComplete
+      ),
+
+      pickup_delivery_option: reviewPayload.pickupDeliveryOption || "",
+      uploaded_docs: docsToUse,
+      legal_checks: reviewPayload.legalChecks || {},
+      documents,
+
+      submitted_at: now,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data, error } = await supabase
+      .from("admin_verifications")
+      .upsert(adminRecord)
+      .select();
+
+    console.log("ADMIN SUPABASE SAVE DATA:", data);
+    console.log("ADMIN SUPABASE SAVE ERROR:", error);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (documents.length > 0) {
+      const documentRows = documents.map((doc) => ({
+        id: doc.id,
+        farmer_id: activeFarmerId,
+        verification_id: activeFarmerId,
+        document_type: doc.type,
+        document_name: doc.name,
+        document_uri: doc.uri,
+        status: "PENDING",
+        uploaded_at: now,
+        created_at: now,
+        updated_at: now,
+      }));
+
+      const { error: docsError } = await supabase
+        .from("admin_verification_documents")
+        .upsert(documentRows);
+
+      console.log("ADMIN SUPABASE DOCS ERROR:", docsError);
+
+      if (docsError) {
+        throw new Error(docsError.message);
+      }
+    }
   }
 
   function buildFarmerSnapshot(
@@ -223,6 +279,7 @@ export default function FarmerComplianceUploadScreen() {
 
     return {
       id: activeFarmerId,
+      farmerId: activeFarmerId,
       farmName: nextBusinessName,
       businessName: nextBusinessName,
       ownerName: nextOwnerName,
@@ -241,7 +298,6 @@ export default function FarmerComplianceUploadScreen() {
       farmerMembershipPaid:
         overrides.farmerMembershipPaid ?? farmerMembershipPaid,
       applicationFeePaid: overrides.applicationFeePaid ?? applicationFeePaid,
-
       farmerActivationPaid: overrides.farmerActivationPaid ?? false,
       activationFeePaid: overrides.activationFeePaid ?? false,
       farmerMonthlySubscriptionPaid:
@@ -281,9 +337,15 @@ export default function FarmerComplianceUploadScreen() {
 
       complianceSubmitted:
         overrides.complianceSubmitted ?? nextStatus === "pending_admin_review",
+      status:
+        nextStatus === "pending_admin_review"
+          ? "PENDING_ADMIN_REVIEW"
+          : nextStatus,
       complianceStatus: nextStatus,
-      adminReviewStatus: overrides.adminReviewStatus,
-      reviewDecision: overrides.reviewDecision,
+      adminReviewStatus:
+        nextStatus === "pending_admin_review" ? "pending" : undefined,
+      reviewDecision:
+        nextStatus === "pending_admin_review" ? "pending" : undefined,
 
       submittedAt: overrides.submittedAt,
       updatedAt: new Date().toISOString(),
@@ -323,7 +385,7 @@ export default function FarmerComplianceUploadScreen() {
       id: `${activeFarmerId}_${type}`,
       name: String(type).replace(/_/g, " "),
       type,
-      uri,
+      uri: String(uri),
       uploadedAt: new Date().toISOString(),
       status: "PENDING",
     }));
@@ -349,62 +411,16 @@ export default function FarmerComplianceUploadScreen() {
       phone: "",
       state: overrides.state || state,
       status,
-      complianceStatus: status,
+      complianceStatus:
+        status === "PENDING_ADMIN_REVIEW" ? "pending_admin_review" : status,
       adminReviewStatus: status === "PENDING_ADMIN_REVIEW" ? "pending" : status,
       reviewDecision: status === "PENDING_ADMIN_REVIEW" ? "pending" : undefined,
       approved: false,
       rejected: false,
       needsMoreInfo: false,
       reviewed: false,
-      farmerMembershipPaid:
-        overrides.farmerMembershipPaid ?? farmerMembershipPaid,
-      applicationFeePaid: overrides.applicationFeePaid ?? applicationFeePaid,
-      farmerActivationPaid: overrides.farmerActivationPaid ?? false,
-      activationFeePaid: overrides.activationFeePaid ?? false,
-      farmerMonthlySubscriptionPaid:
-        overrides.farmerMonthlySubscriptionPaid ?? false,
-      stripeAccountId: overrides.stripeAccountId ?? stripeAccountId,
-      farmerStripeAccountId: overrides.stripeAccountId ?? stripeAccountId,
-      stripePayoutsEnabled:
-        overrides.stripePayoutsEnabled ?? stripePayoutsEnabled,
-      stripeChargesEnabled:
-        overrides.stripeChargesEnabled ?? stripeChargesEnabled,
-      stripeOnboardingComplete:
-        overrides.stripeOnboardingComplete ?? stripeOnboardingComplete,
-      pickupDeliveryOption:
-        overrides.pickupDeliveryOption ?? pickupDeliveryOption,
-      uploadedDocs: docsToUse,
-      documents,
-      submittedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as any);
-  }
-
-  async function saveAdminVerificationQueueFallback(
-    activeFarmerId: string,
-    status = "PENDING_ADMIN_REVIEW",
-    overrides: Record<string, any> = {}
-  ) {
-    const docsToUse = overrides.uploadedDocs ?? uploadedDocs;
-
-    const queueRecord: any = {
-      id: activeFarmerId,
-      farmerId: activeFarmerId,
-      accountType: "FARMER",
-      businessName: overrides.businessName || businessName || "Farm2Home Farm",
-      farmName: overrides.businessName || businessName || "Farm2Home Farm",
-      ownerName: overrides.ownerName || ownerName || "",
-      email: overrides.email || farmerEmail || "",
-      phone: "",
-      state: overrides.state || state,
-      status,
-      complianceStatus: status,
-      adminReviewStatus: "pending",
-      reviewDecision: "pending",
-      approved: false,
-      rejected: false,
-      needsMoreInfo: false,
-      reviewed: false,
+      accountActive: false,
+      complianceSubmitted: status === "PENDING_ADMIN_REVIEW",
       farmerMembershipPaid:
         overrides.farmerMembershipPaid ?? farmerMembershipPaid,
       applicationFeePaid: overrides.applicationFeePaid ?? applicationFeePaid,
@@ -424,20 +440,100 @@ export default function FarmerComplianceUploadScreen() {
         overrides.pickupDeliveryOption ?? pickupDeliveryOption,
       uploadedDocs: docsToUse,
       legalChecks: overrides.legalChecks ?? legalChecks,
+      documents,
+      submittedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as any);
+  }
+
+  async function saveAdminVerificationQueueFallback(
+    activeFarmerId: string,
+    status = "PENDING_ADMIN_REVIEW",
+    overrides: Record<string, any> = {}
+  ) {
+    const now = new Date().toISOString();
+    const docsToUse = overrides.uploadedDocs ?? uploadedDocs;
+
+    const queueRecord: any = {
+      id: activeFarmerId,
+      farmerId: activeFarmerId,
+      accountType: "FARMER",
+      type: "FARMER",
+      role: "farmer",
+
+      businessName: overrides.businessName || businessName || "Farm2Home Farm",
+      farmName: overrides.businessName || businessName || "Farm2Home Farm",
+      ownerName: overrides.ownerName || ownerName || "",
+      email: overrides.email || farmerEmail || "",
+      phone: "",
+      state: overrides.state || state,
+
+      status,
+      complianceStatus: "pending_admin_review",
+      adminReviewStatus: "pending",
+      reviewDecision: "pending",
+
+      approved: false,
+      rejected: false,
+      needsMoreInfo: false,
+      reviewed: false,
+      accountActive: false,
+      complianceSubmitted: true,
+
+      farmerMembershipPaid:
+        overrides.farmerMembershipPaid ?? farmerMembershipPaid,
+      applicationFeePaid: overrides.applicationFeePaid ?? applicationFeePaid,
+      farmerActivationPaid: overrides.farmerActivationPaid ?? false,
+      activationFeePaid: overrides.activationFeePaid ?? false,
+      farmerMonthlySubscriptionPaid:
+        overrides.farmerMonthlySubscriptionPaid ?? false,
+
+      stripeAccountId: overrides.stripeAccountId ?? stripeAccountId,
+      farmerStripeAccountId: overrides.stripeAccountId ?? stripeAccountId,
+      stripePayoutsEnabled:
+        overrides.stripePayoutsEnabled ?? stripePayoutsEnabled,
+      stripeChargesEnabled:
+        overrides.stripeChargesEnabled ?? stripeChargesEnabled,
+      stripeOnboardingComplete:
+        overrides.stripeOnboardingComplete ?? stripeOnboardingComplete,
+
+      pickupDeliveryOption:
+        overrides.pickupDeliveryOption ?? pickupDeliveryOption,
+
+      username: overrides.username ?? username,
+      password: overrides.password ?? password,
+      securityQuestion1: overrides.securityQuestion1 ?? securityQuestion1,
+      securityAnswer1: overrides.securityAnswer1 ?? securityAnswer1,
+      securityQuestion2: overrides.securityQuestion2 ?? securityQuestion2,
+      securityAnswer2: overrides.securityAnswer2 ?? securityAnswer2,
+      securityQuestion3: overrides.securityQuestion3 ?? securityQuestion3,
+      securityAnswer3: overrides.securityAnswer3 ?? securityAnswer3,
+
+      uploadedDocs: docsToUse,
+      legalChecks: overrides.legalChecks ?? legalChecks,
+
       documents: Object.entries(docsToUse || {}).map(([type, uri]) => ({
         id: `${activeFarmerId}_${type}`,
         name: String(type).replace(/_/g, " "),
         type,
-        uri,
-        uploadedAt: new Date().toISOString(),
+        uri: String(uri),
+        uploadedAt: now,
         status: "PENDING",
       })),
+
       adminNotes: [],
-      submittedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      submittedAt: now,
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const queueKeys = ["farm2homeVerificationQueue", "adminVerificationQueue"];
+    const queueKeys = [
+      "farm2homeVerificationQueue",
+      "adminVerificationQueue",
+      "verificationQueue",
+      "complianceReviewQueue",
+      "farmerComplianceQueue",
+    ];
 
     for (const key of queueKeys) {
       const rawQueue = await AsyncStorage.getItem(key);
@@ -460,6 +556,18 @@ export default function FarmerComplianceUploadScreen() {
 
       await AsyncStorage.setItem(key, JSON.stringify(nextQueue));
     }
+
+    await AsyncStorage.setItem(
+      `verification_${activeFarmerId}`,
+      JSON.stringify(queueRecord)
+    );
+
+    await AsyncStorage.setItem(
+      `farmer_verification_${activeFarmerId}`,
+      JSON.stringify(queueRecord)
+    );
+
+    return queueRecord;
   }
 
   async function getOrCreateFarmerId() {
@@ -484,6 +592,7 @@ export default function FarmerComplianceUploadScreen() {
 
     const fallbackFarmer = {
       id: newId,
+      farmerId: newId,
       farmName: businessName || "Farm2Home Farmer",
       businessName: businessName || "Farm2Home Farmer",
       ownerName: ownerName || "",
@@ -583,6 +692,7 @@ export default function FarmerComplianceUploadScreen() {
 
         farmer = {
           id: newId,
+          farmerId: newId,
           farmName: "",
           businessName: "",
           ownerName: "",
@@ -600,10 +710,11 @@ export default function FarmerComplianceUploadScreen() {
         await AsyncStorage.setItem("currentUserRole", "farmer");
       }
 
-      setFarmerId(farmer.id || "");
+      setFarmerId(farmer.id || farmer.farmerId || "");
       setBusinessName(farmer.farmName || farmer.businessName || "");
       setOwnerName(farmer.ownerName || "");
       setFarmerEmail(farmer.email || "");
+
       setState(
         String(farmer.state || farmer.location || "MI")
           .slice(0, 2)
@@ -681,10 +792,6 @@ export default function FarmerComplianceUploadScreen() {
           setLegalChecks(checked);
         }
       }
-
-      if (isApprovedFarmer(farmer) && !hasPaidActivationFee(farmer)) {
-        promptForActivationFee(farmer);
-      }
     } catch (error) {
       console.log("Load farmer compliance error:", error);
       Alert.alert("Error", "Unable to load farmer compliance profile.");
@@ -704,6 +811,7 @@ export default function FarmerComplianceUploadScreen() {
 
       const activeFarmerId =
         pendingFarmer?.id ||
+        pendingFarmer?.farmerId ||
         farmerId ||
         farmerIdFromParams ||
         (await getOrCreateFarmerId());
@@ -711,6 +819,7 @@ export default function FarmerComplianceUploadScreen() {
       const nextFarmer = {
         ...(pendingFarmer || {}),
         id: activeFarmerId,
+        farmerId: activeFarmerId,
         stripeAccountId: accountId,
         farmerStripeAccountId: accountId,
         stripePayoutAccount: "Stripe Express setup pending",
@@ -1035,6 +1144,7 @@ export default function FarmerComplianceUploadScreen() {
         "documents_in_progress",
         overrides
       );
+
       await createOrUpdateAdminVerificationRecord(
         activeFarmerId,
         "DOCUMENTS_IN_PROGRESS",
@@ -1121,6 +1231,7 @@ export default function FarmerComplianceUploadScreen() {
         "stripe_pending",
         overrides
       );
+
       await syncCurrentFarmer(activeFarmerId);
       await createOrUpdateAdminVerificationRecord(
         activeFarmerId,
@@ -1252,6 +1363,7 @@ export default function FarmerComplianceUploadScreen() {
         payoutsEnabled ? "stripe_complete" : "stripe_pending",
         overrides
       );
+
       await syncCurrentFarmer(activeFarmerId);
       await createOrUpdateAdminVerificationRecord(
         activeFarmerId,
@@ -1405,102 +1517,7 @@ export default function FarmerComplianceUploadScreen() {
       return false;
     }
   }
-async function saveFarmerSubmissionToSupabase(
-  activeFarmerId: string,
-  reviewPayload: Record<string, any>
-) {
-  const now = new Date().toISOString();
 
-  const docsToUse = reviewPayload.uploadedDocs || uploadedDocs || {};
-
-  const documents = Object.entries(docsToUse).map(([type, uri]) => ({
-    id: `${activeFarmerId}_${type}`,
-    farmerId: activeFarmerId,
-    type,
-    name: String(type).replace(/_/g, " "),
-    uri,
-    status: "PENDING",
-    uploadedAt: now,
-  }));
-
-  const adminRecord = {
-    id: activeFarmerId,
-    farmer_id: activeFarmerId,
-    account_type: "FARMER",
-    role: "farmer",
-
-    business_name: reviewPayload.businessName || businessName,
-    farm_name: reviewPayload.farmName || businessName,
-    owner_name: reviewPayload.ownerName || ownerName,
-    email: reviewPayload.email || farmerEmail,
-    state: reviewPayload.state || state,
-
-    status: "PENDING_ADMIN_REVIEW",
-    compliance_status: "pending_admin_review",
-    admin_review_status: "pending",
-    review_decision: "pending",
-
-    approved: false,
-    rejected: false,
-    needs_more_info: false,
-    reviewed: false,
-    account_active: false,
-    compliance_submitted: true,
-
-    farmer_membership_paid: Boolean(reviewPayload.farmerMembershipPaid),
-    application_fee_paid: Boolean(reviewPayload.applicationFeePaid),
-    farmer_activation_paid: false,
-    farmer_monthly_subscription_paid: false,
-
-    stripe_account_id: reviewPayload.stripeAccountId || "",
-    farmer_stripe_account_id: reviewPayload.farmerStripeAccountId || "",
-    stripe_payouts_enabled: Boolean(reviewPayload.stripePayoutsEnabled),
-    stripe_charges_enabled: Boolean(reviewPayload.stripeChargesEnabled),
-    stripe_onboarding_complete: Boolean(reviewPayload.stripeOnboardingComplete),
-
-    pickup_delivery_option: reviewPayload.pickupDeliveryOption || "",
-    uploaded_docs: docsToUse,
-    legal_checks: reviewPayload.legalChecks || {},
-    documents,
-
-    submitted_at: now,
-    created_at: now,
-    updated_at: now,
-  };
-
-  const { error: verificationError } = await supabase
-    .from("admin_verifications")
-    .upsert(adminRecord);
-
-  if (verificationError) {
-    console.log("ADMIN VERIFICATION SUPABASE SAVE ERROR:", verificationError);
-    throw new Error(verificationError.message);
-  }
-
-  if (documents.length > 0) {
-    const documentRows = documents.map((doc) => ({
-      id: doc.id,
-      farmer_id: activeFarmerId,
-      verification_id: activeFarmerId,
-      document_type: doc.type,
-      document_name: doc.name,
-      document_uri: doc.uri,
-      status: "PENDING",
-      uploaded_at: now,
-      created_at: now,
-      updated_at: now,
-    }));
-
-    const { error: docsError } = await supabase
-      .from("admin_verification_documents")
-      .upsert(documentRows);
-
-    if (docsError) {
-      console.log("ADMIN VERIFICATION DOCS SUPABASE SAVE ERROR:", docsError);
-      throw new Error(docsError.message);
-    }
-  }
-}
   async function runVerification() {
     try {
       const activeFarmerId = await getOrCreateFarmerId();
@@ -1513,22 +1530,34 @@ async function saveFarmerSubmissionToSupabase(
       const credentialsSaved = await saveLoginCredentials(false);
       if (!credentialsSaved) return;
 
+      const now = new Date().toISOString();
+
       const reviewPayload = {
+        id: activeFarmerId,
+        farmerId: activeFarmerId,
+
         approved: false,
         rejected: false,
         needsMoreInfo: false,
         reviewed: false,
         accountActive: false,
         complianceSubmitted: true,
+
+        status: "PENDING_ADMIN_REVIEW",
         complianceStatus: "pending_admin_review",
         adminReviewStatus: "pending",
         reviewDecision: "pending",
-        submittedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+
+        submittedAt: now,
+        createdAt: now,
+        updatedAt: now,
+
         businessName,
         farmName: businessName,
         ownerName,
         email: farmerEmail,
+        state,
+
         username,
         password,
         securityQuestion1,
@@ -1537,16 +1566,20 @@ async function saveFarmerSubmissionToSupabase(
         securityAnswer2,
         securityQuestion3,
         securityAnswer3,
+
         farmerMembershipPaid,
         applicationFeePaid,
+
         farmerActivationPaid: false,
         activationFeePaid: false,
         farmerMonthlySubscriptionPaid: false,
+
         stripeAccountId,
         farmerStripeAccountId: stripeAccountId,
         stripePayoutsEnabled,
         stripeChargesEnabled,
         stripeOnboardingComplete,
+
         pickupDeliveryOption,
         uploadedDocs,
         legalChecks,
@@ -1556,16 +1589,11 @@ async function saveFarmerSubmissionToSupabase(
 
       await AsyncStorage.setItem(
         PENDING_FARMER_KEY,
-        JSON.stringify({ id: activeFarmerId, ...reviewPayload })
+        JSON.stringify(reviewPayload)
       );
-      await AsyncStorage.setItem(
-        "currentFarmer",
-        JSON.stringify({ id: activeFarmerId, ...reviewPayload })
-      );
-      await AsyncStorage.setItem(
-        "currentUser",
-        JSON.stringify({ id: activeFarmerId, ...reviewPayload })
-      );
+
+      await AsyncStorage.setItem("currentFarmer", JSON.stringify(reviewPayload));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(reviewPayload));
       await AsyncStorage.setItem("userRole", "farmer");
       await AsyncStorage.setItem("currentUserRole", "farmer");
 
@@ -1574,18 +1602,18 @@ async function saveFarmerSubmissionToSupabase(
         "PENDING_ADMIN_REVIEW",
         reviewPayload
       );
-      await saveFarmerSubmissionToSupabase(activeFarmerId, reviewPayload);
+
       await saveAdminVerificationQueueFallback(
         activeFarmerId,
         "PENDING_ADMIN_REVIEW",
         reviewPayload
       );
 
-      await syncCurrentFarmer(activeFarmerId);
+      await saveFarmerSubmissionToSupabase(activeFarmerId, reviewPayload);
 
       Alert.alert(
         "Submitted for Admin Review",
-        "Your farmer application has been sent to compliance review.",
+        "Your farmer application has been sent to the Admin Compliance Review queue.",
         [
           {
             text: "OK",
