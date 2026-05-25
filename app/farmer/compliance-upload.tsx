@@ -1026,11 +1026,9 @@ export default function FarmerComplianceUploadScreen() {
   async function markFarmerFeesComplete() {
     const activeFarmerId = await getOrCreateFarmerId();
 
-    setFarmerMembershipPaid(true);
     setApplicationFeePaid(true);
 
     const overrides = {
-      farmerMembershipPaid: true,
       applicationFeePaid: true,
     };
 
@@ -1053,8 +1051,8 @@ export default function FarmerComplianceUploadScreen() {
     );
 
     Alert.alert(
-      "Fees Marked Complete",
-      "Farmer membership and application process fee were marked complete."
+      "Application Fee Marked Complete",
+      "The $29.99 application process fee was marked complete. Monthly membership is handled after admin approval."
     );
   }
 
@@ -1671,6 +1669,14 @@ export default function FarmerComplianceUploadScreen() {
       const credentialsSaved = await saveLoginCredentials(false);
       if (!credentialsSaved) return;
 
+      if (!applicationFeePaid) {
+        Alert.alert(
+          "Application Fee Required",
+          "Please pay or mark the $29.99 application process fee before submitting compliance review."
+        );
+        return;
+      }
+
       if (!allLegalAccepted) {
         Alert.alert(
           "Legal Checklist Required",
@@ -1773,11 +1779,12 @@ export default function FarmerComplianceUploadScreen() {
       await saveFarmerSubmissionToSupabase(activeFarmerId, reviewPayload);
 
       router.replace({
-        pathname: "/farmer/awaiting-approval",
+        pathname: "/farmer/login",
         params: {
           farmerId: activeFarmerId,
           email: farmerEmail.trim().toLowerCase(),
           businessName: businessName.trim(),
+          status: "awaiting_approval",
         },
       } as any);
     } catch (error: any) {
@@ -2008,11 +2015,11 @@ export default function FarmerComplianceUploadScreen() {
       ),
     },
     {
-      label: "Farmer membership paid",
+      label: "Monthly membership paid after approval",
       done: farmerMembershipPaid,
     },
     {
-      label: "Application fee paid",
+      label: "Application process fee paid - $29.99",
       done: applicationFeePaid,
     },
     {
@@ -2037,8 +2044,9 @@ export default function FarmerComplianceUploadScreen() {
       <Text style={styles.header}>Farmer Compliance Verification</Text>
 
       <Text style={styles.subheader}>
-        Upload documents, pay farmer fees, create login credentials, connect
-        Stripe payouts, select pickup/delivery, and accept seller terms.
+        Upload documents, pay the $29.99 application process fee, create login
+        credentials, connect Stripe payouts, select pickup/delivery, and accept seller terms.
+        Monthly farmer membership is handled after admin approval.
       </Text>
 
       <View style={styles.card}>
@@ -2115,20 +2123,25 @@ export default function FarmerComplianceUploadScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Farmer Fees</Text>
 
+        <Text style={styles.helperText}>
+          The $29.99 application process fee is required before submitting compliance review.
+          The $14.99 monthly farmer membership is charged after admin approval when setting up the farmer store.
+        </Text>
+
         <Text
           style={[
             styles.docStatus,
             farmerMembershipPaid ? styles.uploaded : styles.missing,
           ]}
         >
-          Farmer Membership: {farmerMembershipPaid ? "Completed" : "Required"}
+          Monthly Farmer Membership - $14.99: {farmerMembershipPaid ? "Completed" : "After Approval"}
         </Text>
 
         <Pressable
           style={styles.stripeButton}
           onPress={startFarmerMembershipPayment}
         >
-          <Text style={styles.stripeButtonText}>Pay Farmer Membership</Text>
+          <Text style={styles.stripeButtonText}>Pay Monthly Farmer Membership - $14.99</Text>
         </Pressable>
 
         <Text
@@ -2138,7 +2151,7 @@ export default function FarmerComplianceUploadScreen() {
             { marginTop: 14 },
           ]}
         >
-          Application Process Fee:{" "}
+          Application Process Fee - $29.99:{" "}
           {applicationFeePaid ? "Completed" : "Required"}
         </Text>
 
@@ -2146,14 +2159,14 @@ export default function FarmerComplianceUploadScreen() {
           style={styles.saveButton}
           onPress={startApplicationFeePayment}
         >
-          <Text style={styles.saveButtonText}>Pay Application Process Fee</Text>
+          <Text style={styles.saveButtonText}>Pay Application Process Fee - $29.99</Text>
         </Pressable>
 
         <Pressable
           style={[styles.testButton, { marginTop: 14 }]}
           onPress={markFarmerFeesComplete}
         >
-          <Text style={styles.testButtonText}>I Completed Both Fee Payments</Text>
+          <Text style={styles.testButtonText}>I Completed Application Fee Payment</Text>
         </Pressable>
       </View>
 
@@ -2329,6 +2342,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginBottom: 8,
     lineHeight: 20,
+  },
+  helperText: {
+    color: "#64748B",
+    fontWeight: "800",
+    lineHeight: 21,
+    marginBottom: 12,
   },
   input: {
     backgroundColor: "#F9FAFB",
