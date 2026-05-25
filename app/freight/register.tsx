@@ -16,6 +16,7 @@ import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
+import { supabase } from "../data/supabaseClient";
 import {
   createVerificationRecordFromFreightCarrier,
   upsertVerificationRecord,
@@ -36,6 +37,7 @@ const SECURITY_QUESTIONS = [
 
 type FreightCarrierRegistration = {
   id: string;
+  role: "freight";
   companyName: string;
   contactName: string;
   ownerName: string;
@@ -66,6 +68,8 @@ type FreightCarrierRegistration = {
   approved: boolean;
   verificationStatus: string;
   membershipStatus: string;
+  subscriptionStatus: "pending" | "active";
+  freightMembershipPaid: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -85,18 +89,22 @@ function safelyParseArray(rawValue: string | null): FreightCarrierRegistration[]
   }
 }
 
-async function saveFreightCarrier(carrier: FreightCarrierRegistration) {
+async function getFreightCarriers() {
   const saved = await AsyncStorage.getItem("farm2homeFreightCarriers");
-  const carriers = safelyParseArray(saved);
+  return safelyParseArray(saved);
+}
+
+async function saveFreightCarrier(carrier: FreightCarrierRegistration) {
+  const carriers = await getFreightCarriers();
 
   const updatedCarriers = [
+    carrier,
     ...carriers.filter(
       (item) =>
         item.email.toLowerCase() !== carrier.email.toLowerCase() &&
         item.username.toLowerCase() !== carrier.username.toLowerCase() &&
         item.id !== carrier.id
     ),
-    carrier,
   ];
 
   await AsyncStorage.setItem(
@@ -157,8 +165,6 @@ export default function FreightRegister() {
       securityQuestion3,
     ].filter(Boolean);
 
-    const uniqueQuestions = new Set(selectedQuestions);
-
     if (selectedQuestions.length !== 3) {
       Alert.alert(
         "Security Questions Required",
@@ -167,7 +173,7 @@ export default function FreightRegister() {
       return false;
     }
 
-    if (uniqueQuestions.size !== 3) {
+    if (new Set(selectedQuestions).size !== 3) {
       Alert.alert(
         "Duplicate Security Questions",
         "Please choose 3 different security questions."
@@ -194,13 +200,12 @@ export default function FreightRegister() {
     cleanEmail: string,
     cleanUsername: string
   ) {
-    const saved = await AsyncStorage.getItem("farm2homeFreightCarriers");
-    const carriers = safelyParseArray(saved);
+    const carriers = await getFreightCarriers();
 
     const duplicate = carriers.find(
       (item) =>
-        item.email.toLowerCase() === cleanEmail.toLowerCase() ||
-        item.username.toLowerCase() === cleanUsername.toLowerCase()
+        item.email.toLowerCase() === cleanEmail ||
+        item.username.toLowerCase() === cleanUsername
     );
 
     if (duplicate) {
@@ -211,7 +216,74 @@ export default function FreightRegister() {
       return true;
     }
 
+    try {
+      const { data, error } = await supabase
+        .from("freight_users")
+        .select("id,email,username")
+        .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        Alert.alert(
+          "Account Exists",
+          "A freight account already exists with this email or username."
+        );
+        return true;
+      }
+    } catch (error) {
+      console.log("Freight duplicate Supabase check skipped:", error);
+    }
+
     return false;
+  }
+
+  async function saveFreightToSupabase(carrier: FreightCarrierRegistration) {
+    try {
+      const { error } = await supabase.from("freight_users").upsert({
+        id: carrier.id,
+        role: "freight",
+        company_name: carrier.companyName,
+        contact_name: carrier.contactName,
+        owner_name: carrier.ownerName,
+        email: carrier.email,
+        phone: carrier.phone,
+        username: carrier.username,
+        password: carrier.password,
+        account_active: carrier.accountActive,
+        security_question_1: carrier.securityQuestion1,
+        security_answer_1: carrier.securityAnswer1,
+        security_question_2: carrier.securityQuestion2,
+        security_answer_2: carrier.securityAnswer2,
+        security_question_3: carrier.securityQuestion3,
+        security_answer_3: carrier.securityAnswer3,
+        service_area: carrier.serviceArea,
+        business_address: carrier.businessAddress,
+        city: carrier.city,
+        state: carrier.state,
+        zip_code: carrier.zipCode,
+        mdot_number: carrier.mdotNumber,
+        mc_number: carrier.mcNumber,
+        insurance_provider: carrier.insuranceProvider,
+        insurance_policy_number: carrier.insurancePolicyNumber,
+        authority_active: carrier.authorityActive,
+        insurance_active: carrier.insuranceActive,
+        licensed_livestock: carrier.licensedLivestock,
+        licensed_refrigerated_food: carrier.licensedRefrigeratedFood,
+        approved: carrier.approved,
+        verification_status: carrier.verificationStatus,
+        membership_status: carrier.membershipStatus,
+        subscription_status: carrier.subscriptionStatus,
+        freight_membership_paid: carrier.freightMembershipPaid,
+        created_at: carrier.createdAt,
+        updated_at: carrier.updatedAt,
+      });
+
+      if (error) {
+        console.log("SUPABASE FREIGHT SAVE SKIPPED:", error.message);
+      }
+    } catch (error) {
+      console.log("SUPABASE FREIGHT SAVE FAILED BUT LOCAL SAVED:", error);
+    }
   }
 
   async function notifyAdminFreightVerification(
@@ -229,9 +301,8 @@ export default function FreightRegister() {
         }
       );
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         console.log("Freight admin email failed:", data);
       }
     } catch (error) {
@@ -304,8 +375,6 @@ export default function FreightRegister() {
   }
 
   async function submit() {
-    console.log("FREIGHT REGISTER + SUBSCRIBE CLICKED");
-
     if (loading) return;
 
     const cleanCompanyName = companyName.trim();
@@ -406,23 +475,21 @@ export default function FreightRegister() {
 
       const freightCarrier: FreightCarrierRegistration = {
         id: carrierId,
+        role: "freight",
         companyName: cleanCompanyName,
         contactName: cleanContactName,
         ownerName: cleanContactName,
         email: cleanEmail,
         phone: cleanPhone,
-
         username: cleanUsername,
         password: cleanPassword,
         accountActive: true,
-
         securityQuestion1,
         securityAnswer1: normalizeAnswer(securityAnswer1),
         securityQuestion2,
         securityAnswer2: normalizeAnswer(securityAnswer2),
         securityQuestion3,
         securityAnswer3: normalizeAnswer(securityAnswer3),
-
         serviceArea: cleanServiceArea,
         businessAddress: cleanBusinessAddress,
         city: cleanCity,
@@ -439,6 +506,8 @@ export default function FreightRegister() {
         approved: false,
         verificationStatus: "PENDING_VERIFICATION",
         membershipStatus: "Pending",
+        subscriptionStatus: "pending",
+        freightMembershipPaid: false,
         createdAt: now,
         updatedAt: now,
       };
@@ -473,10 +542,11 @@ export default function FreightRegister() {
       } as any);
 
       await saveFreightCarrier(freightCarrier);
+      await saveFreightToSupabase(freightCarrier);
       await notifyAdminFreightVerification(freightCarrier);
 
       const response = await fetch(
-        `${API_BASE_URL}/payments/create-freight-subscription-checkout`,
+        `${API_BASE_URL}/payments/create-subscription-checkout`,
         {
           method: "POST",
           headers: {
@@ -522,7 +592,7 @@ export default function FreightRegister() {
           "Account Saved",
           data.error ||
             data.message ||
-            "Your freight account was saved, but Stripe checkout did not open. Check backend .env and Stripe freight price ID."
+            "Your freight account was saved, but Stripe checkout did not open. Check STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID."
         );
         return;
       }
@@ -540,6 +610,7 @@ export default function FreightRegister() {
       await openCheckoutUrl(data.url);
     } catch (error: any) {
       console.log("FREIGHT REGISTER ERROR:", error);
+
       Alert.alert(
         "Registration Error",
         error?.message || "Unable to complete freight registration."
@@ -688,6 +759,8 @@ export default function FreightRegister() {
           setSecurityAnswer3
         )}
       </View>
+
+      <Text style={styles.section}>Business Address</Text>
 
       <TextInput
         style={styles.input}

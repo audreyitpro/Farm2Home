@@ -11,6 +11,8 @@ import {
 } from "react-native";
 import { useFocusEffect } from "expo-router";
 
+import { supabase } from "../data/supabaseClient";
+
 import {
   VerificationRecord,
   approveVerificationRecord,
@@ -19,6 +21,66 @@ import {
   rejectVerificationRecord,
   requestMoreInfoForVerificationRecord,
 } from "../data/adminStore";
+
+function mapSupabaseRecord(row: any): VerificationRecord {
+  const documents =
+    Array.isArray(row.documents) && row.documents.length > 0
+      ? row.documents.map((doc: any, index: number) => ({
+          id: doc.id || `${row.id}_doc_${index}`,
+          name: doc.name || doc.document_name || doc.type || "Document",
+          type: doc.type || doc.document_type || "document",
+          uri: doc.uri || doc.document_uri || "",
+          status: doc.status || "PENDING",
+          uploadedAt: doc.uploadedAt || doc.uploaded_at || row.submitted_at,
+        }))
+      : Object.entries(row.uploaded_docs || {}).map(([type, uri], index) => ({
+          id: `${row.id}_${type}_${index}`,
+          name: String(type).replace(/_/g, " "),
+          type,
+          uri: String(uri),
+          status: "PENDING",
+          uploadedAt: row.submitted_at,
+        }));
+
+  return {
+    id: row.id,
+    farmerId: row.farmer_id || row.id,
+    accountType: row.account_type || "FARMER",
+    businessName: row.business_name || row.farm_name || "",
+    farmName: row.farm_name || row.business_name || "",
+    companyName: row.company_name || "",
+    ownerName: row.owner_name || "",
+    email: row.email || "",
+    state: row.state || "",
+    status: row.status || "PENDING_ADMIN_REVIEW",
+    complianceStatus: row.compliance_status || "pending_admin_review",
+    adminReviewStatus: row.admin_review_status || "pending",
+    reviewDecision: row.review_decision || "pending",
+    approved: Boolean(row.approved),
+    rejected: Boolean(row.rejected),
+    needsMoreInfo: Boolean(row.needs_more_info),
+    reviewed: Boolean(row.reviewed),
+    accountActive: Boolean(row.account_active),
+    complianceSubmitted: Boolean(row.compliance_submitted),
+    farmerMembershipPaid: Boolean(row.farmer_membership_paid),
+    applicationFeePaid: Boolean(row.application_fee_paid),
+    farmerActivationPaid: Boolean(row.farmer_activation_paid),
+    farmerMonthlySubscriptionPaid: Boolean(row.farmer_monthly_subscription_paid),
+    stripeAccountId: row.stripe_account_id || "",
+    farmerStripeAccountId: row.farmer_stripe_account_id || "",
+    stripePayoutsEnabled: Boolean(row.stripe_payouts_enabled),
+    stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
+    stripeOnboardingComplete: Boolean(row.stripe_onboarding_complete),
+    pickupDeliveryOption: row.pickup_delivery_option || "",
+    uploadedDocs: row.uploaded_docs || {},
+    legalChecks: row.legal_checks || {},
+    documents,
+    adminNotes: row.admin_notes || [],
+    submittedAt: row.submitted_at || row.created_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  } as any;
+}
 
 export default function AdminDocumentsScreen() {
   const [records, setRecords] = useState<VerificationRecord[]>([]);
@@ -36,9 +98,26 @@ export default function AdminDocumentsScreen() {
     try {
       setRefreshing(true);
 
+      const { data, error } = await supabase
+        .from("admin_verifications")
+        .select("*")
+        .order("updated_at", { ascending: false });
+
+      if (error) {
+        console.log("SUPABASE ADMIN VERIFICATIONS LOAD ERROR:", error.message);
+      }
+
+      const supabaseRecords = Array.isArray(data)
+        ? data.map(mapSupabaseRecord)
+        : [];
+
+      if (supabaseRecords.length > 0) {
+        setRecords(supabaseRecords);
+        return;
+      }
+
       const pending = await getPendingVerificationRecords();
       const all = await getVerificationQueue();
-
       const combined = pending.length > 0 ? pending : all;
 
       setRecords(
@@ -54,13 +133,71 @@ export default function AdminDocumentsScreen() {
     }
   }
 
+  async function updateSupabaseStatus(
+    id: string,
+    status: "APPROVED" | "REJECTED" | "MORE_INFO_REQUIRED",
+    note?: string
+  ) {
+    const now = new Date().toISOString();
+
+    const payload: any = {
+      status,
+      updated_at: now,
+      reviewed: true,
+      admin_review_status:
+        status === "APPROVED"
+          ? "approved"
+          : status === "REJECTED"
+          ? "rejected"
+          : "needs_more_info",
+      review_decision:
+        status === "APPROVED"
+          ? "approved"
+          : status === "REJECTED"
+          ? "rejected"
+          : "needs_more_info",
+      approved: status === "APPROVED",
+      rejected: status === "REJECTED",
+      needs_more_info: status === "MORE_INFO_REQUIRED",
+      account_active: status === "APPROVED",
+      compliance_status:
+        status === "APPROVED"
+          ? "approved"
+          : status === "REJECTED"
+          ? "rejected"
+          : "needs_more_info",
+    };
+
+    if (note) {
+      payload.admin_notes = [
+        {
+          id: `note_${Date.now()}`,
+          note,
+          createdAt: now,
+          status,
+        },
+      ];
+    }
+
+    const { error } = await supabase
+      .from("admin_verifications")
+      .update(payload)
+      .eq("id", id);
+
+    if (error) {
+      console.log("SUPABASE ADMIN STATUS UPDATE ERROR:", error.message);
+      throw new Error(error.message);
+    }
+  }
+
   async function approveRecord(id: string) {
     try {
+      await updateSupabaseStatus(id, "APPROVED");
       await approveVerificationRecord(id);
 
       Alert.alert(
         "Approved",
-        "This business has been approved and the farmer account is now active."
+        "This farmer has been approved. The farmer should now be routed to activation/subscription before store setup."
       );
 
       await loadRecords();
@@ -73,9 +210,10 @@ export default function AdminDocumentsScreen() {
     try {
       const reason = rejectNotes[id] || "Rejected by admin.";
 
+      await updateSupabaseStatus(id, "REJECTED", reason);
       await rejectVerificationRecord(id, reason);
 
-      Alert.alert("Rejected", "This business has been rejected.");
+      Alert.alert("Rejected", "This farmer has been rejected.");
 
       await loadRecords();
     } catch (error: any) {
@@ -87,9 +225,10 @@ export default function AdminDocumentsScreen() {
     try {
       const note = infoNotes[id] || "More information is required.";
 
+      await updateSupabaseStatus(id, "MORE_INFO_REQUIRED", note);
       await requestMoreInfoForVerificationRecord(id, note);
 
-      Alert.alert("More Info Requested", "The record was marked for more info.");
+      Alert.alert("More Info Requested", "The farmer was marked for more info.");
 
       await loadRecords();
     } catch (error: any) {
@@ -232,6 +371,7 @@ export default function AdminDocumentsScreen() {
                 <Text style={styles.documentMeta}>
                   {doc.type} · {doc.status}
                 </Text>
+                {!!doc.uri && <Text style={styles.documentUri}>{doc.uri}</Text>}
               </View>
             ))}
           </View>
@@ -241,7 +381,7 @@ export default function AdminDocumentsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Admin Notes</Text>
 
-            {item.adminNotes.map((note) => (
+            {item.adminNotes.map((note: any) => (
               <Text key={note.id} style={styles.noteText}>
                 • {note.note}
               </Text>
@@ -344,9 +484,9 @@ export default function AdminDocumentsScreen() {
             <Text style={styles.emptyTitle}>No Compliance Records</Text>
 
             <Text style={styles.emptyDescription}>
-              Farmer and freight applications will appear here after they save
-              business info, connect Stripe, upload documents, or submit for
-              admin review.
+              Farmer and freight applications will appear here after they submit
+              for admin review. This screen now reads from Supabase
+              admin_verifications.
             </Text>
 
             <TouchableOpacity style={styles.refreshButton} onPress={loadRecords}>
@@ -482,6 +622,12 @@ const styles = StyleSheet.create({
     color: "#64748B",
     fontWeight: "700",
     marginTop: 4,
+  },
+  documentUri: {
+    color: "#334155",
+    fontWeight: "600",
+    marginTop: 6,
+    fontSize: 11,
   },
   noteText: {
     color: "#334155",

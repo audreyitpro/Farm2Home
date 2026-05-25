@@ -15,6 +15,9 @@ import { router } from "expo-router";
 const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "admin123";
 
+const ADMIN_EMAIL = "audreyitprofessional@gmail.com";
+const ADMIN_PASSCODE = "Farm2HomeAdmin2026";
+
 export default function AdminLoginScreen() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("admin123");
@@ -27,18 +30,19 @@ export default function AdminLoginScreen() {
     const cleanPassword = password.trim();
 
     if (!cleanUsername || !cleanPassword) {
-      Alert.alert("Missing Info", "Enter username and password.");
+      Alert.alert("Missing Info", "Enter username/email and password.");
       return;
     }
 
-    if (
-      cleanUsername !== ADMIN_USERNAME ||
-      cleanPassword !== ADMIN_PASSWORD
-    ) {
-      Alert.alert(
-        "Login Failed",
-        "Invalid admin username or password."
-      );
+    const isTestLogin =
+      cleanUsername === ADMIN_USERNAME && cleanPassword === ADMIN_PASSWORD;
+
+    const isProductionLogin =
+      cleanUsername === ADMIN_EMAIL.toLowerCase() &&
+      cleanPassword === ADMIN_PASSCODE;
+
+    if (!isTestLogin && !isProductionLogin) {
+      Alert.alert("Login Failed", "Invalid admin login.");
       return;
     }
 
@@ -46,32 +50,27 @@ export default function AdminLoginScreen() {
       setLoading(true);
 
       const adminUser = {
-        id: "admin_test_001",
+        id: "admin_001",
         username: ADMIN_USERNAME,
-        email: "admin@test.com",
+        email: ADMIN_EMAIL,
         fullName: "Farm2Home Admin",
-        role: "admin",
+        role: "ADMIN",
+        accountType: "ADMIN",
         loginAt: new Date().toISOString(),
       };
 
-      await AsyncStorage.setItem(
-        "currentUser",
-        JSON.stringify(adminUser)
-      );
-
-      await AsyncStorage.setItem(
-        "currentUserRole",
-        "admin"
-      );
+      await AsyncStorage.multiSet([
+        ["currentUser", JSON.stringify(adminUser)],
+        ["currentAdmin", JSON.stringify(adminUser)],
+        ["farm2homeAdminSession", JSON.stringify(adminUser)],
+        ["userRole", "admin"],
+        ["currentUserRole", "admin"],
+      ]);
 
       router.replace("/admin/dashboard" as any);
     } catch (error: any) {
       console.log("Admin login error:", error);
-
-      Alert.alert(
-        "Error",
-        error?.message || "Unable to login."
-      );
+      Alert.alert("Error", error?.message || "Unable to login.");
     } finally {
       setLoading(false);
     }
@@ -80,27 +79,17 @@ export default function AdminLoginScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.page}
-      behavior={
-        Platform.OS === "ios"
-          ? "padding"
-          : undefined
-      }
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.container}>
         <Text style={styles.logo}>🛡️</Text>
 
-        <Text style={styles.title}>
-          Admin Login
-        </Text>
+        <Text style={styles.title}>Admin Login</Text>
 
-        <Text style={styles.subtitle}>
-          Farm2Home Administration Portal
-        </Text>
+        <Text style={styles.subtitle}>Farm2Home Administration Portal</Text>
 
         <View style={styles.card}>
-          <Text style={styles.label}>
-            Username
-          </Text>
+          <Text style={styles.label}>Username or Email</Text>
 
           <TextInput
             style={styles.input}
@@ -108,57 +97,41 @@ export default function AdminLoginScreen() {
             onChangeText={setUsername}
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="admin"
+            placeholder="admin or admin email"
           />
 
-          <Text style={styles.label}>
-            Password
-          </Text>
+          <Text style={styles.label}>Password / Passcode</Text>
 
           <TextInput
             style={styles.input}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
-            placeholder="admin123"
+            placeholder="Password"
           />
 
           <TouchableOpacity
-            style={[
-              styles.button,
-              loading &&
-                styles.buttonDisabled,
-            ]}
+            style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading}
           >
-            <Text
-              style={styles.buttonText}
-            >
-              {loading
-                ? "Signing In..."
-                : "Login"}
+            <Text style={styles.buttonText}>
+              {loading ? "Signing In..." : "Login"}
             </Text>
           </TouchableOpacity>
 
           <View style={styles.testBox}>
-            <Text
-              style={styles.testTitle}
-            >
-              Test Credentials
-            </Text>
+            <Text style={styles.testTitle}>Test Credentials</Text>
+            <Text style={styles.testText}>Username: admin</Text>
+            <Text style={styles.testText}>Password: admin123</Text>
 
-            <Text
-              style={styles.testText}
-            >
-              Username: admin
+            <Text style={[styles.testTitle, { marginTop: 12 }]}>
+              Production Admin
             </Text>
-
-            <Text
-              style={styles.testText}
-            >
-              Password: admin123
+            <Text style={styles.testText}>
+              Email: audreyitprofessional@gmail.com
             </Text>
+            <Text style={styles.testText}>Passcode: Farm2HomeAdmin2026</Text>
           </View>
         </View>
       </View>
@@ -173,26 +146,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-
   container: {
     width: "100%",
     maxWidth: 460,
     alignSelf: "center",
   },
-
   logo: {
     fontSize: 62,
     textAlign: "center",
     marginBottom: 10,
   },
-
   title: {
     fontSize: 36,
     fontWeight: "900",
     color: "#111827",
     textAlign: "center",
   },
-
   subtitle: {
     color: "#4B5563",
     textAlign: "center",
@@ -200,7 +169,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 24,
   },
-
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -208,14 +176,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
-
   label: {
     color: "#374151",
     fontWeight: "900",
     marginBottom: 8,
     marginTop: 8,
   },
-
   input: {
     backgroundColor: "#F9FAFB",
     borderRadius: 16,
@@ -227,7 +193,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 10,
   },
-
   button: {
     backgroundColor: "#111827",
     padding: 16,
@@ -235,17 +200,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
-
   buttonDisabled: {
     opacity: 0.6,
   },
-
   buttonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-
   testBox: {
     marginTop: 20,
     backgroundColor: "#F9FAFB",
@@ -254,13 +216,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
-
   testTitle: {
     color: "#111827",
     fontWeight: "900",
     marginBottom: 8,
   },
-
   testText: {
     color: "#4B5563",
     fontWeight: "700",
