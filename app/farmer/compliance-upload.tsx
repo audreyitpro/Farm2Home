@@ -72,22 +72,6 @@ const LEGAL_CHECKLIST = [
 const PENDING_FARMER_KEY = "pendingFarmerApplication";
 const FARMER_DRAFT_KEY = "farmerComplianceDraft";
 
-function normalizeAnswer(value: string) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function normalizeEmail(value: string) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function isValidEmail(value: string) {
-  return normalizeEmail(value).includes("@");
-}
-
-function isApiReady() {
-  return Boolean(API_BASE_URL && API_BASE_URL.startsWith("http"));
-}
-
 export default function FarmerComplianceUploadScreen() {
   const params = useLocalSearchParams();
 
@@ -954,7 +938,7 @@ export default function FarmerComplianceUploadScreen() {
     }
 
     if (Platform.OS === "web") {
-      window.open(url, "_blank");
+      window.location.href = url;
       return;
     }
 
@@ -968,7 +952,7 @@ export default function FarmerComplianceUploadScreen() {
     }
 
     if (Platform.OS === "web") {
-      window.open(url, "_blank");
+      window.location.href = url;
       return;
     }
 
@@ -993,23 +977,17 @@ export default function FarmerComplianceUploadScreen() {
         complianceStatus: "stripe_pending",
       } as any);
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, {
-          ...overrides,
-          complianceStatus: "stripe_pending",
-        }),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, {
+        ...overrides,
+        complianceStatus: "stripe_pending",
+      });
 
       await savePendingFarmerSnapshot(activeFarmerId, "stripe_pending", overrides);
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "STRIPE_PENDING",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "STRIPE_PENDING",
+        overrides
       );
 
       router.replace({
@@ -1028,10 +1006,7 @@ export default function FarmerComplianceUploadScreen() {
     if (!saved) return;
 
     await savePendingFarmerSnapshot(activeFarmerId);
-    await safeAsync(
-      createOrUpdateAdminVerificationRecord(activeFarmerId, "STARTED"),
-      "SAVE_ADMIN_VERIFICATION"
-    );
+    await createOrUpdateAdminVerificationRecord(activeFarmerId, "STARTED");
 
     await openPaymentLink(PAYMENT_LINKS.farmerMembership);
   }
@@ -1043,10 +1018,7 @@ export default function FarmerComplianceUploadScreen() {
     if (!saved) return;
 
     await savePendingFarmerSnapshot(activeFarmerId);
-    await safeAsync(
-      createOrUpdateAdminVerificationRecord(activeFarmerId, "STARTED"),
-      "SAVE_ADMIN_VERIFICATION"
-    );
+    await createOrUpdateAdminVerificationRecord(activeFarmerId, "STARTED");
 
     await openPaymentLink(PAYMENT_LINKS.farmerApplicationProcessFee);
   }
@@ -1067,23 +1039,17 @@ export default function FarmerComplianceUploadScreen() {
       complianceStatus: "fees_paid",
     } as any);
 
-    await safeAsync(
-      saveFarmerProfileToSupabase(activeFarmerId, {
-        ...overrides,
-        complianceStatus: "fees_paid",
-      }),
-      "SAVE_FARMER_PROFILE"
-    );
+    await saveFarmerProfileToSupabase(activeFarmerId, {
+      ...overrides,
+      complianceStatus: "fees_paid",
+    });
 
     await savePendingFarmerSnapshot(activeFarmerId, "fees_paid", overrides);
 
-    await safeAsync(
-      createOrUpdateAdminVerificationRecord(
-        activeFarmerId,
-        "PENDING_VERIFICATION",
-        overrides
-      ),
-      "SAVE_ADMIN_VERIFICATION"
+    await createOrUpdateAdminVerificationRecord(
+      activeFarmerId,
+      "PENDING_VERIFICATION",
+      overrides
     );
 
     Alert.alert(
@@ -1146,7 +1112,7 @@ export default function FarmerComplianceUploadScreen() {
         return false;
       }
 
-      if (!isValidEmail(farmerEmail)) {
+      if (!farmerEmail.includes("@")) {
         if (showErrors) {
           Alert.alert("Valid Email Required", "Please enter a valid email.");
         }
@@ -1156,7 +1122,7 @@ export default function FarmerComplianceUploadScreen() {
       const overrides = {
         businessName: businessName.trim(),
         ownerName: ownerName.trim(),
-        email: normalizeEmail(farmerEmail),
+        email: farmerEmail.trim().toLowerCase(),
         state,
       };
 
@@ -1171,23 +1137,17 @@ export default function FarmerComplianceUploadScreen() {
         accountActive: false,
       } as any);
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, {
-          ...overrides,
-          complianceStatus: "in_progress",
-        }),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, {
+        ...overrides,
+        complianceStatus: "in_progress",
+      });
 
       await savePendingFarmerSnapshot(activeFarmerId, "in_progress", overrides);
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "PENDING_VERIFICATION",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "PENDING_VERIFICATION",
+        overrides
       );
 
       return true;
@@ -1219,12 +1179,7 @@ export default function FarmerComplianceUploadScreen() {
         return false;
       }
 
-      if (password.trim().length < 6) {
-        Alert.alert("Weak Password", "Password must be at least 6 characters.");
-        return false;
-      }
-
-      if (password.trim() !== confirmPassword.trim()) {
+      if (password !== confirmPassword) {
         Alert.alert("Password Mismatch", "Passwords do not match.");
         return false;
       }
@@ -1234,29 +1189,23 @@ export default function FarmerComplianceUploadScreen() {
       const overrides = {
         username: username.trim().toLowerCase(),
         password: password.trim(),
-        email: normalizeEmail(farmerEmail),
+        email: farmerEmail.trim().toLowerCase(),
         securityQuestion1,
-        securityAnswer1: normalizeAnswer(securityAnswer1),
+        securityAnswer1: securityAnswer1.trim().toLowerCase(),
         securityQuestion2,
-        securityAnswer2: normalizeAnswer(securityAnswer2),
+        securityAnswer2: securityAnswer2.trim().toLowerCase(),
         securityQuestion3,
-        securityAnswer3: normalizeAnswer(securityAnswer3),
+        securityAnswer3: securityAnswer3.trim().toLowerCase(),
       };
 
       await updateFarmerStore(activeFarmerId, overrides as any);
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, overrides),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, overrides);
       await savePendingFarmerSnapshot(activeFarmerId, "in_progress", overrides);
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "PENDING_VERIFICATION",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "PENDING_VERIFICATION",
+        overrides
       );
 
       if (showSuccess) {
@@ -1287,10 +1236,7 @@ export default function FarmerComplianceUploadScreen() {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         multiple: false,
-        type:
-          Platform.OS === "web"
-            ? ["application/pdf", "image/*"]
-            : "*/*",
+        type: "*/*",
       });
 
       if (result.canceled) return;
@@ -1310,7 +1256,7 @@ export default function FarmerComplianceUploadScreen() {
 
       const nextDocs = {
         ...uploadedDocs,
-        [String(type)]: asset.uri,
+        [type]: asset.uri,
       };
 
       setUploadedDocs(nextDocs);
@@ -1322,13 +1268,10 @@ export default function FarmerComplianceUploadScreen() {
         complianceStatus: "documents_in_progress",
       } as any);
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, {
-          uploadedDocs: nextDocs,
-          complianceStatus: "documents_in_progress",
-        }),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, {
+        uploadedDocs: nextDocs,
+        complianceStatus: "documents_in_progress",
+      });
 
       await savePendingFarmerSnapshot(
         activeFarmerId,
@@ -1336,13 +1279,10 @@ export default function FarmerComplianceUploadScreen() {
         overrides
       );
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "DOCUMENTS_IN_PROGRESS",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "DOCUMENTS_IN_PROGRESS",
+        overrides
       );
 
       Alert.alert("Uploaded", `${label} uploaded successfully.`);
@@ -1363,20 +1303,12 @@ export default function FarmerComplianceUploadScreen() {
       if (!valid) return;
 
       await savePendingFarmerSnapshot(activeFarmerId);
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "STRIPE_STARTED"
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "STRIPE_STARTED"
       );
 
       setStripeLoading(true);
-
-      if (!isApiReady()) {
-        Alert.alert("API Error", "Backend API is not configured correctly.");
-        return;
-      }
 
       const response = await fetch(
         `${API_BASE_URL}/payments/create-farmer-connect-account`,
@@ -1385,7 +1317,7 @@ export default function FarmerComplianceUploadScreen() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             farmerId: activeFarmerId,
-            email: normalizeEmail(farmerEmail),
+            email: farmerEmail.trim(),
             farmName: businessName.trim(),
             existingStripeAccountId: stripeAccountId || "",
           }),
@@ -1420,17 +1352,14 @@ export default function FarmerComplianceUploadScreen() {
 
       await updateFarmerStore(activeFarmerId, {
         ...overrides,
-        email: normalizeEmail(farmerEmail),
+        email: farmerEmail.trim(),
         complianceStatus: "stripe_pending",
       } as any);
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, {
-          ...overrides,
-          complianceStatus: "stripe_pending",
-        }),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, {
+        ...overrides,
+        complianceStatus: "stripe_pending",
+      });
 
       setStripeAccountId(accountId);
       setStripePayoutAccount("Stripe Express setup pending");
@@ -1441,13 +1370,10 @@ export default function FarmerComplianceUploadScreen() {
         overrides
       );
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "STRIPE_PENDING",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "STRIPE_PENDING",
+        overrides
       );
 
       await openStripeUrl(stripeUrl);
@@ -1475,11 +1401,6 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       setStripeChecking(true);
-
-      if (!isApiReady()) {
-        Alert.alert("API Error", "Backend API is not configured correctly.");
-        return false;
-      }
 
       const response = await fetch(
         `${API_BASE_URL}/payments/check-farmer-connect-account`,
@@ -1555,13 +1476,10 @@ export default function FarmerComplianceUploadScreen() {
         complianceStatus: payoutsEnabled ? "stripe_complete" : "stripe_pending",
       } as any);
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, {
-          ...overrides,
-          complianceStatus: payoutsEnabled ? "stripe_complete" : "stripe_pending",
-        }),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, {
+        ...overrides,
+        complianceStatus: payoutsEnabled ? "stripe_complete" : "stripe_pending",
+      });
 
       await addComplianceDocument(activeFarmerId, businessName, ownerName, state, {
         type: "stripe_payout" as any,
@@ -1583,13 +1501,10 @@ export default function FarmerComplianceUploadScreen() {
         overrides
       );
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          payoutsEnabled ? "STRIPE_COMPLETE_PENDING_REVIEW" : "STRIPE_PENDING",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        payoutsEnabled ? "STRIPE_COMPLETE_PENDING_REVIEW" : "STRIPE_PENDING",
+        overrides
       );
 
       Alert.alert(
@@ -1647,10 +1562,7 @@ export default function FarmerComplianceUploadScreen() {
         uploadedDocs: nextDocs,
       } as any);
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, overrides),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, overrides);
 
       await addComplianceDocument(activeFarmerId, businessName, ownerName, state, {
         type: "pickup_delivery_agreement" as any,
@@ -1664,13 +1576,10 @@ export default function FarmerComplianceUploadScreen() {
 
       await savePendingFarmerSnapshot(activeFarmerId, "in_progress", overrides);
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "DELIVERY_OPTION_SAVED",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "DELIVERY_OPTION_SAVED",
+        overrides
       );
 
       Alert.alert("Option Saved", `${option} was saved.`);
@@ -1723,20 +1632,14 @@ export default function FarmerComplianceUploadScreen() {
         legalChecks,
       } as any);
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, overrides),
-        "SAVE_FARMER_PROFILE"
-      );
+      await saveFarmerProfileToSupabase(activeFarmerId, overrides);
 
       await savePendingFarmerSnapshot(activeFarmerId, "in_progress", overrides);
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "LEGAL_ACCEPTED",
-          overrides
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "LEGAL_ACCEPTED",
+        overrides
       );
 
       if (showSuccess) {
@@ -1805,17 +1708,17 @@ export default function FarmerComplianceUploadScreen() {
         businessName: businessName.trim(),
         farmName: businessName.trim(),
         ownerName: ownerName.trim(),
-        email: normalizeEmail(farmerEmail),
+        email: farmerEmail.trim().toLowerCase(),
         state,
         username: username.trim().toLowerCase(),
         password: password.trim(),
         confirmPassword: password.trim(),
         securityQuestion1,
-        securityAnswer1: normalizeAnswer(securityAnswer1),
+        securityAnswer1: securityAnswer1.trim().toLowerCase(),
         securityQuestion2,
-        securityAnswer2: normalizeAnswer(securityAnswer2),
+        securityAnswer2: securityAnswer2.trim().toLowerCase(),
         securityQuestion3,
-        securityAnswer3: normalizeAnswer(securityAnswer3),
+        securityAnswer3: securityAnswer3.trim().toLowerCase(),
         farmerMembershipPaid,
         applicationFeePaid,
         stripeAccountId,
@@ -1853,39 +1756,27 @@ export default function FarmerComplianceUploadScreen() {
       await AsyncStorage.setItem("userRole", "farmer");
       await AsyncStorage.setItem("currentUserRole", "farmer");
 
-      await safeAsync(
-        saveFarmerProfileToSupabase(activeFarmerId, reviewPayload),
-        "SAVE_FARMER_PROFILE"
+      await saveFarmerProfileToSupabase(activeFarmerId, reviewPayload);
+
+      await createOrUpdateAdminVerificationRecord(
+        activeFarmerId,
+        "PENDING_ADMIN_REVIEW",
+        reviewPayload
       );
 
-      await safeAsync(
-        createOrUpdateAdminVerificationRecord(
-          activeFarmerId,
-          "PENDING_ADMIN_REVIEW",
-          reviewPayload
-        ),
-        "SAVE_ADMIN_VERIFICATION"
+      await saveAdminVerificationQueueFallback(
+        activeFarmerId,
+        "PENDING_ADMIN_REVIEW",
+        reviewPayload
       );
 
-      await safeAsync(
-        saveAdminVerificationQueueFallback(
-          activeFarmerId,
-          "PENDING_ADMIN_REVIEW",
-          reviewPayload
-        ),
-        "SAVE_ADMIN_QUEUE"
-      );
-
-      await safeAsync(
-        saveFarmerSubmissionToSupabase(activeFarmerId, reviewPayload),
-        "SAVE_FARMER_SUBMISSION"
-      );
+      await saveFarmerSubmissionToSupabase(activeFarmerId, reviewPayload);
 
       router.replace({
         pathname: "/farmer/awaiting-approval",
         params: {
           farmerId: activeFarmerId,
-          email: normalizeEmail(farmerEmail),
+          email: farmerEmail.trim().toLowerCase(),
           businessName: businessName.trim(),
         },
       } as any);
