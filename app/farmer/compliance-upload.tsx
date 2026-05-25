@@ -72,6 +72,22 @@ const LEGAL_CHECKLIST = [
 const PENDING_FARMER_KEY = "pendingFarmerApplication";
 const FARMER_DRAFT_KEY = "farmerComplianceDraft";
 
+function normalizeAnswer(value: string) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeEmail(value: string) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidEmail(value: string) {
+  return normalizeEmail(value).includes("@");
+}
+
+function isApiReady() {
+  return Boolean(API_BASE_URL && API_BASE_URL.startsWith("http"));
+}
+
 export default function FarmerComplianceUploadScreen() {
   const params = useLocalSearchParams();
 
@@ -938,7 +954,7 @@ export default function FarmerComplianceUploadScreen() {
     }
 
     if (Platform.OS === "web") {
-      window.location.href = url;
+      window.open(url, "_blank");
       return;
     }
 
@@ -952,7 +968,7 @@ export default function FarmerComplianceUploadScreen() {
     }
 
     if (Platform.OS === "web") {
-      window.location.href = url;
+      window.open(url, "_blank");
       return;
     }
 
@@ -1110,7 +1126,7 @@ export default function FarmerComplianceUploadScreen() {
         return false;
       }
 
-      if (!farmerEmail.includes("@")) {
+      if (!isValidEmail(farmerEmail)) {
         if (showErrors) {
           Alert.alert("Valid Email Required", "Please enter a valid email.");
         }
@@ -1120,7 +1136,7 @@ export default function FarmerComplianceUploadScreen() {
       const overrides = {
         businessName: businessName.trim(),
         ownerName: ownerName.trim(),
-        email: farmerEmail.trim().toLowerCase(),
+        email: normalizeEmail(farmerEmail),
         state,
       };
 
@@ -1177,7 +1193,12 @@ export default function FarmerComplianceUploadScreen() {
         return false;
       }
 
-      if (password !== confirmPassword) {
+      if (password.trim().length < 6) {
+        Alert.alert("Weak Password", "Password must be at least 6 characters.");
+        return false;
+      }
+
+      if (password.trim() !== confirmPassword.trim()) {
         Alert.alert("Password Mismatch", "Passwords do not match.");
         return false;
       }
@@ -1187,13 +1208,13 @@ export default function FarmerComplianceUploadScreen() {
       const overrides = {
         username: username.trim().toLowerCase(),
         password: password.trim(),
-        email: farmerEmail.trim().toLowerCase(),
+        email: normalizeEmail(farmerEmail),
         securityQuestion1,
-        securityAnswer1: securityAnswer1.trim().toLowerCase(),
+        securityAnswer1: normalizeAnswer(securityAnswer1),
         securityQuestion2,
-        securityAnswer2: securityAnswer2.trim().toLowerCase(),
+        securityAnswer2: normalizeAnswer(securityAnswer2),
         securityQuestion3,
-        securityAnswer3: securityAnswer3.trim().toLowerCase(),
+        securityAnswer3: normalizeAnswer(securityAnswer3),
       };
 
       await updateFarmerStore(activeFarmerId, overrides as any);
@@ -1234,7 +1255,10 @@ export default function FarmerComplianceUploadScreen() {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         multiple: false,
-        type: "*/*",
+        type:
+          Platform.OS === "web"
+            ? ["application/pdf", "image/*"]
+            : "*/*",
       });
 
       if (result.canceled) return;
@@ -1254,7 +1278,7 @@ export default function FarmerComplianceUploadScreen() {
 
       const nextDocs = {
         ...uploadedDocs,
-        [type]: asset.uri,
+        [String(type)]: asset.uri,
       };
 
       setUploadedDocs(nextDocs);
@@ -1308,6 +1332,16 @@ export default function FarmerComplianceUploadScreen() {
 
       setStripeLoading(true);
 
+      if (!isApiReady()) {
+        Alert.alert("API Error", "Backend API is not configured correctly.");
+        return;
+      }
+
+      const existingStripeAccountId =
+        stripeAccountId && stripeAccountId.startsWith("acct_")
+          ? stripeAccountId
+          : "";
+
       const response = await fetch(
         `${API_BASE_URL}/payments/create-farmer-connect-account`,
         {
@@ -1315,9 +1349,9 @@ export default function FarmerComplianceUploadScreen() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             farmerId: activeFarmerId,
-            email: farmerEmail.trim(),
+            email: normalizeEmail(farmerEmail),
             farmName: businessName.trim(),
-            existingStripeAccountId: stripeAccountId || "",
+            existingStripeAccountId,
           }),
         }
       );
@@ -1350,7 +1384,7 @@ export default function FarmerComplianceUploadScreen() {
 
       await updateFarmerStore(activeFarmerId, {
         ...overrides,
-        email: farmerEmail.trim(),
+        email: normalizeEmail(farmerEmail),
         complianceStatus: "stripe_pending",
       } as any);
 
@@ -1399,6 +1433,11 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       setStripeChecking(true);
+
+      if (!isApiReady()) {
+        Alert.alert("API Error", "Backend API is not configured correctly.");
+        return false;
+      }
 
       const response = await fetch(
         `${API_BASE_URL}/payments/check-farmer-connect-account`,
@@ -1714,17 +1753,17 @@ export default function FarmerComplianceUploadScreen() {
         businessName: businessName.trim(),
         farmName: businessName.trim(),
         ownerName: ownerName.trim(),
-        email: farmerEmail.trim().toLowerCase(),
+        email: normalizeEmail(farmerEmail),
         state,
         username: username.trim().toLowerCase(),
         password: password.trim(),
         confirmPassword: password.trim(),
         securityQuestion1,
-        securityAnswer1: securityAnswer1.trim().toLowerCase(),
+        securityAnswer1: normalizeAnswer(securityAnswer1),
         securityQuestion2,
-        securityAnswer2: securityAnswer2.trim().toLowerCase(),
+        securityAnswer2: normalizeAnswer(securityAnswer2),
         securityQuestion3,
-        securityAnswer3: securityAnswer3.trim().toLowerCase(),
+        securityAnswer3: normalizeAnswer(securityAnswer3),
         farmerMembershipPaid,
         applicationFeePaid,
         stripeAccountId,
@@ -1782,7 +1821,7 @@ export default function FarmerComplianceUploadScreen() {
         pathname: "/farmer/login",
         params: {
           farmerId: activeFarmerId,
-          email: farmerEmail.trim().toLowerCase(),
+          email: normalizeEmail(farmerEmail),
           businessName: businessName.trim(),
           status: "awaiting_approval",
         },
@@ -2045,8 +2084,8 @@ export default function FarmerComplianceUploadScreen() {
 
       <Text style={styles.subheader}>
         Upload documents, pay the $29.99 application process fee, create login
-        credentials, connect Stripe payouts, select pickup/delivery, and accept seller terms.
-        Monthly farmer membership is handled after admin approval.
+        credentials, connect Stripe payouts, select pickup/delivery, and accept
+        seller terms. Monthly farmer membership is handled after admin approval.
       </Text>
 
       <View style={styles.card}>
@@ -2124,8 +2163,9 @@ export default function FarmerComplianceUploadScreen() {
         <Text style={styles.sectionTitle}>Farmer Fees</Text>
 
         <Text style={styles.helperText}>
-          The $29.99 application process fee is required before submitting compliance review.
-          The $14.99 monthly farmer membership is charged after admin approval when setting up the farmer store.
+          The $29.99 application process fee is required before submitting
+          compliance review. The $14.99 monthly farmer membership is handled
+          after admin approval when setting up the farmer store.
         </Text>
 
         <Text
