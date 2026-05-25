@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   KeyboardAvoidingView,
@@ -10,9 +11,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
-import { supabase, getCurrentUser } from "../services/supabaseClient";
+import { supabase } from "../data/supabaseClient";
 
 type ChatMessage = {
   id: string;
@@ -27,15 +29,52 @@ type ChatMessage = {
   created_at: string;
 };
 
+type CurrentUser = {
+  id?: string;
+  email?: string;
+  username?: string;
+  fullName?: string;
+  name?: string;
+  companyName?: string;
+  farmName?: string;
+  businessName?: string;
+  role?: string;
+};
+
+function cleanString(value: any) {
+  return String(value || "").trim();
+}
+
+function buildConversationId(params: any) {
+  const directId = cleanString(params.conversationId);
+  const orderId = cleanString(params.orderId);
+  const loadId = cleanString(params.loadId);
+  const role = cleanString(params.role).toLowerCase();
+
+  if (directId) return directId;
+  if (orderId) return `order_${orderId}`;
+  if (loadId) return `load_${loadId}`;
+  if (role) return `support_${role}`;
+
+  return "farm2home_general_support";
+}
+
+async function getStoredJson(key: string) {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ChatCenter() {
   const params = useLocalSearchParams();
 
-  const conversationId =
-    String(params.conversationId || "") || "farm2home_general_support";
-
-  const orderId = String(params.orderId || "");
-  const loadId = String(params.loadId || "");
-  const roleParam = String(params.role || "");
+  const conversationId = buildConversationId(params);
+  const orderId = cleanString(params.orderId);
+  const loadId = cleanString(params.loadId);
+  const roleParam = cleanString(params.role);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
@@ -48,6 +87,7 @@ export default function ChatCenter() {
   );
 
   const [loading, setLoading] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -78,49 +118,72 @@ export default function ChatCenter() {
 
   async function loadCurrentUser() {
     try {
-      const user = await getCurrentUser();
+      const role =
+        roleParam ||
+        (await AsyncStorage.getItem("currentUserRole")) ||
+        (await AsyncStorage.getItem("userRole")) ||
+        "customer";
 
-      if (user) {
-        setSenderId(user.id);
-        setSenderEmail(user.email || "");
-        setSenderName(
-          user.user_metadata?.full_name ||
-            user.user_metadata?.name ||
-            user.email ||
-            "Farm2Home User"
-        );
-      }
+      const currentUser: CurrentUser =
+        (await getStoredJson("currentUser")) ||
+        (await getStoredJson("currentCustomer")) ||
+        (await getStoredJson("currentFarmer")) ||
+        (await getStoredJson("currentFreight")) ||
+        (await getStoredJson("currentFreightCarrier")) ||
+        (await getStoredJson("currentDriver")) ||
+        {};
 
-      if (roleParam) {
-        setSenderRole(roleParam.toUpperCase());
-      }
+      const displayName =
+        currentUser.fullName ||
+        currentUser.name ||
+        currentUser.companyName ||
+        currentUser.farmName ||
+        currentUser.businessName ||
+        currentUser.username ||
+        currentUser.email ||
+        "Farm2Home User";
+
+      setSenderId(currentUser.id || currentUser.email || null);
+      setSenderEmail(currentUser.email || "");
+      setSenderName(displayName);
+      setSenderRole(String(role || "customer").toUpperCase());
     } catch (error) {
       console.log("LOAD_CHAT_USER_ERROR:", error);
     }
   }
 
   async function loadMessages() {
-    const { data, error } = await supabase
-      .from("chat_messages")
-      .select("*")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true });
+    try {
+      setMessagesLoading(true);
 
-    if (error) {
-      console.log("LOAD_CHAT_MESSAGES_ERROR:", error.message);
-      return;
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.log("LOAD_CHAT_MESSAGES_ERROR:", error.message);
+        return;
+      }
+
+      setMessages((data || []) as ChatMessage[]);
+    } catch (error) {
+      console.log("LOAD_CHAT_MESSAGES_FAILED:", error);
+    } finally {
+      setMessagesLoading(false);
     }
-
-    setMessages((data || []) as ChatMessage[]);
   }
 
   async function sendMessage() {
-    if (!message.trim()) return;
+    const cleanMessage = message.trim();
+
+    if (!cleanMessage) return;
 
     try {
       setLoading(true);
 
-      const { error } = await supabase.from("chat_messages").insert({
+      const payload = {
         conversation_id: conversationId,
         order_id: orderId || null,
         load_id: loadId || null,
@@ -128,9 +191,11 @@ export default function ChatCenter() {
         sender_role: senderRole,
         sender_name: senderName,
         sender_email: senderEmail || null,
-        message: message.trim(),
+        message: cleanMessage,
         created_at: new Date().toISOString(),
-      });
+      };
+
+      const { error } = await supabase.from("chat_messages").insert(payload);
 
       if (error) {
         Alert.alert("Message Error", error.message);
@@ -171,10 +236,10 @@ export default function ChatCenter() {
           and admin support.
         </Text>
 
-        <Text style={styles.meta}>
-          Conversation: {conversationId}
-        </Text>
+        <Text style={styles.meta}>Conversation: {conversationId}</Text>
+        <Text style={styles.meta}>Role: {senderRole}</Text>
 
+        {orderId ? <Text style={styles.meta}>Order ID: {orderId}</Text> : null}
         {loadId ? <Text style={styles.meta}>Load ID: {loadId}</Text> : null}
 
         <View style={styles.headerButtons}>
@@ -188,43 +253,51 @@ export default function ChatCenter() {
         </View>
       </View>
 
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messageList}
-        ListEmptyComponent={
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No messages yet.</Text>
-            <Text style={styles.emptyText}>
-              Start the conversation for this order, load, route, or support request.
-            </Text>
-          </View>
-        }
-        renderItem={({ item }) => {
-          const mine = isMine(item);
-
-          return (
-            <View
-              style={[
-                styles.messageBubble,
-                mine ? styles.myMessage : styles.otherMessage,
-              ]}
-            >
-              <Text style={[styles.sender, mine && styles.mySender]}>
-                {item.sender_name} · {item.sender_role}
-              </Text>
-
-              <Text style={[styles.messageText, mine && styles.myMessageText]}>
-                {item.message}
-              </Text>
-
-              <Text style={[styles.timeText, mine && styles.myTimeText]}>
-                {new Date(item.created_at).toLocaleString()}
+      {messagesLoading ? (
+        <View style={styles.loadingBox}>
+          <ActivityIndicator color="#064E3B" />
+          <Text style={styles.loadingText}>Loading messages...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.messageList}
+          ListEmptyComponent={
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No messages yet.</Text>
+              <Text style={styles.emptyText}>
+                Start the conversation for this order, load, route, or support
+                request.
               </Text>
             </View>
-          );
-        }}
-      />
+          }
+          renderItem={({ item }) => {
+            const mine = isMine(item);
+
+            return (
+              <View
+                style={[
+                  styles.messageBubble,
+                  mine ? styles.myMessage : styles.otherMessage,
+                ]}
+              >
+                <Text style={[styles.sender, mine && styles.mySender]}>
+                  {item.sender_name} · {item.sender_role}
+                </Text>
+
+                <Text style={[styles.messageText, mine && styles.myMessageText]}>
+                  {item.message}
+                </Text>
+
+                <Text style={[styles.timeText, mine && styles.myTimeText]}>
+                  {new Date(item.created_at).toLocaleString()}
+                </Text>
+              </View>
+            );
+          }}
+        />
+      )}
 
       <View style={styles.composer}>
         <TextInput
@@ -241,7 +314,11 @@ export default function ChatCenter() {
           onPress={sendMessage}
           disabled={loading}
         >
-          <Text style={styles.sendText}>{loading ? "..." : "Send"}</Text>
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.sendText}>Send</Text>
+          )}
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -298,6 +375,15 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   refreshText: {
+    color: "#064E3B",
+    fontWeight: "900",
+  },
+  loadingBox: {
+    padding: 24,
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 10,
     color: "#064E3B",
     fontWeight: "900",
   },
@@ -397,6 +483,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderRadius: 16,
+    minWidth: 76,
+    alignItems: "center",
   },
   disabledButton: {
     opacity: 0.6,

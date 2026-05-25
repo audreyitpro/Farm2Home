@@ -124,7 +124,14 @@ export default function RootLayout() {
           name="customer/customer-dashboard"
           options={{ title: "Customer Dashboard" }}
         />
-        <Stack.Screen name="customer/login" options={{ title: "Customer Login" }} />
+        <Stack.Screen
+          name="customer/login"
+          options={{ title: "Customer Login" }}
+        />
+        <Stack.Screen
+          name="customer/password-recovery"
+          options={{ title: "Customer Recovery" }}
+        />
         <Stack.Screen
           name="customer/register"
           options={{ title: "Customer Registration" }}
@@ -229,10 +236,22 @@ export default function RootLayout() {
           name="customer/customer-support"
           options={{ title: "Customer Support" }}
         />
-        <Stack.Screen name="customer/live-map" options={{ title: "Live Map" }} />
-        <Stack.Screen name="customer/cart" options={{ title: "Shopping Cart" }} />
-        <Stack.Screen name="customer/checkout" options={{ title: "Checkout" }} />
-        <Stack.Screen name="customer/orders" options={{ title: "My Orders" }} />
+        <Stack.Screen
+          name="customer/live-map"
+          options={{ title: "Live Map" }}
+        />
+        <Stack.Screen
+          name="customer/cart"
+          options={{ title: "Shopping Cart" }}
+        />
+        <Stack.Screen
+          name="customer/checkout"
+          options={{ title: "Checkout" }}
+        />
+        <Stack.Screen
+          name="customer/orders"
+          options={{ title: "My Orders" }}
+        />
         <Stack.Screen
           name="customer/order-confirmation"
           options={{ title: "Order Confirmation" }}
@@ -242,18 +261,11 @@ export default function RootLayout() {
           options={{ title: "Live Order Tracking" }}
         />
 
-        {/* NEW CUSTOMER AI */}
-        <Stack.Screen
-          name="customer/ai-shopping-assistant"
-          options={{ title: "AI Shopping Assistant" }}
-        />
-        <Stack.Screen
-          name="customer/smart-pantry-ai"
-          options={{ title: "Smart Pantry AI" }}
-        />
-
         {/* FARMER */}
-        <Stack.Screen name="farmer/login" options={{ title: "Farmer Login" }} />
+        <Stack.Screen
+          name="farmer/login"
+          options={{ title: "Farmer Login" }}
+        />
         <Stack.Screen
           name="farmer/register"
           options={{ title: "Farmer Registration" }}
@@ -270,7 +282,10 @@ export default function RootLayout() {
           name="farmer/add-product"
           options={{ title: "Add Product" }}
         />
-        <Stack.Screen name="farmer/orders" options={{ title: "Farmer Orders" }} />
+        <Stack.Screen
+          name="farmer/orders"
+          options={{ title: "Farmer Orders" }}
+        />
         <Stack.Screen
           name="farmer/delivery-orders"
           options={{ title: "Delivery Orders" }}
@@ -285,7 +300,14 @@ export default function RootLayout() {
         />
 
         {/* FREIGHT */}
-        <Stack.Screen name="freight/login" options={{ title: "Freight Login" }} />
+        <Stack.Screen
+          name="freight/login"
+          options={{ title: "Freight Login" }}
+        />
+        <Stack.Screen
+          name="freight/password-recovery"
+          options={{ title: "Freight Recovery" }}
+        />
         <Stack.Screen
           name="freight/register"
           options={{ title: "Freight Registration" }}
@@ -294,8 +316,14 @@ export default function RootLayout() {
           name="freight/dashboard"
           options={{ title: "Freight Dashboard" }}
         />
-        <Stack.Screen name="freight/board" options={{ title: "Load Board" }} />
-        <Stack.Screen name="freight/post-load" options={{ title: "Post Load" }} />
+        <Stack.Screen
+          name="freight/board"
+          options={{ title: "Load Board" }}
+        />
+        <Stack.Screen
+          name="freight/post-load"
+          options={{ title: "Post Load" }}
+        />
         <Stack.Screen
           name="freight/live-route"
           options={{ title: "Live Route" }}
@@ -324,12 +352,16 @@ export default function RootLayout() {
           name="freight/load-payment-tracking"
           options={{ title: "Load Payment Tracking" }}
         />
-        <Stack.Screen
-          name="freight/ai-brokerage-center"
-          options={{ title: "AI Brokerage Center" }}
-        />
 
         {/* DRIVER */}
+        <Stack.Screen
+          name="driver/login"
+          options={{ title: "Driver Login" }}
+        />
+        <Stack.Screen
+          name="driver/register"
+          options={{ title: "Driver Registration" }}
+        />
         <Stack.Screen
           name="driver/mobile-driver-app"
           options={{ title: "Driver App" }}
@@ -348,65 +380,19 @@ export default function RootLayout() {
         />
 
         {/* ADMIN */}
-        <Stack.Screen name="admin/login" options={{ title: "Admin Login" }} />
+        <Stack.Screen
+          name="admin/login"
+          options={{ title: "Admin Login" }}
+        />
         <Stack.Screen
           name="admin/dashboard"
           options={{ title: "Admin Dashboard" }}
-        />
-        <Stack.Screen
-          name="admin/analytics-center"
-          options={{ title: "Analytics Center" }}
-        />
-        <Stack.Screen name="admin/fleet-map" options={{ title: "Fleet Map" }} />
-        <Stack.Screen
-          name="admin/live-operations-center"
-          options={{ title: "Live Operations Center" }}
-        />
-        <Stack.Screen
-          name="admin/executive-command-center"
-          options={{ title: "Executive Command Center" }}
-        />
-        <Stack.Screen
-          name="admin/predictive-analytics-center"
-          options={{ title: "Predictive Analytics" }}
-        />
-        <Stack.Screen
-          name="admin/marketplace-intelligence-center"
-          options={{ title: "Marketplace Intelligence" }}
-        />
-
-        {/* AI */}
-        <Stack.Screen
-          name="ai/dispatch-dashboard"
-          options={{ title: "AI Dispatch Dashboard" }}
-        />
-        <Stack.Screen
-          name="ai/autonomous-dispatch-dashboard"
-          options={{ title: "Autonomous Dispatch" }}
-        />
-        <Stack.Screen
-          name="ai/dispatch-intelligence-center"
-          options={{ title: "AI Dispatch Intelligence" }}
-        />
-        <Stack.Screen
-          name="ai/voice-dispatch-assistant"
-          options={{ title: "Voice Dispatch Assistant" }}
-        />
-        <Stack.Screen
-          name="ai/customer-support-agent"
-          options={{ title: "Customer Support Agent" }}
         />
 
         {/* CHAT */}
         <Stack.Screen
           name="chat/chat-center"
           options={{ title: "Farm2Home Chat" }}
-        />
-
-        {/* DEMO */}
-        <Stack.Screen
-          name="demo/executive-demo"
-          options={{ title: "Executive Demo" }}
         />
       </Stack>
     </AuthProvider>
