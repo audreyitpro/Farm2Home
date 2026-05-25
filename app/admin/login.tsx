@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -12,16 +12,30 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "admin123";
-
-const ADMIN_EMAIL = "audreyitprofessional@gmail.com";
-const ADMIN_PASSCODE = "Farm2HomeAdmin2026";
+const ADMIN_USERNAME = "audreyitpro";
+const ADMIN_PASSWORD = "Farm2HomeAdmin26";
 
 export default function AdminLoginScreen() {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    async function restoreAdminSession() {
+      try {
+        const adminLoggedIn = await AsyncStorage.getItem("adminLoggedIn");
+        const currentAdmin = await AsyncStorage.getItem("currentAdmin");
+
+        if (adminLoggedIn === "true" && currentAdmin) {
+          router.replace("/admin/dashboard" as any);
+        }
+      } catch (error) {
+        console.log("Admin restore session error:", error);
+      }
+    }
+
+    restoreAdminSession();
+  }, []);
 
   async function handleLogin() {
     if (loading) return;
@@ -30,19 +44,18 @@ export default function AdminLoginScreen() {
     const cleanPassword = password.trim();
 
     if (!cleanUsername || !cleanPassword) {
-      Alert.alert("Missing Info", "Enter username/email and password.");
+      Alert.alert(
+        "Missing Information",
+        "Please enter admin username and password."
+      );
       return;
     }
 
-    const isTestLogin =
-      cleanUsername === ADMIN_USERNAME && cleanPassword === ADMIN_PASSWORD;
-
-    const isProductionLogin =
-      cleanUsername === ADMIN_EMAIL.toLowerCase() &&
-      cleanPassword === ADMIN_PASSCODE;
-
-    if (!isTestLogin && !isProductionLogin) {
-      Alert.alert("Login Failed", "Invalid admin login.");
+    if (
+      cleanUsername !== ADMIN_USERNAME.toLowerCase() ||
+      cleanPassword !== ADMIN_PASSWORD
+    ) {
+      Alert.alert("Access Denied", "Invalid admin credentials.");
       return;
     }
 
@@ -50,12 +63,11 @@ export default function AdminLoginScreen() {
       setLoading(true);
 
       const adminUser = {
-        id: "admin_001",
+        id: "farm2home_admin_001",
         username: ADMIN_USERNAME,
-        email: ADMIN_EMAIL,
-        fullName: "Farm2Home Admin",
         role: "ADMIN",
         accountType: "ADMIN",
+        fullName: "Farm2Home Administration",
         loginAt: new Date().toISOString(),
       };
 
@@ -65,12 +77,18 @@ export default function AdminLoginScreen() {
         ["farm2homeAdminSession", JSON.stringify(adminUser)],
         ["userRole", "admin"],
         ["currentUserRole", "admin"],
+        ["adminLoggedIn", "true"],
+        ["adminUsername", ADMIN_USERNAME],
       ]);
 
       router.replace("/admin/dashboard" as any);
     } catch (error: any) {
       console.log("Admin login error:", error);
-      Alert.alert("Error", error?.message || "Unable to login.");
+
+      Alert.alert(
+        "Admin Login Error",
+        error?.message || "Unable to login."
+      );
     } finally {
       setLoading(false);
     }
@@ -84,12 +102,14 @@ export default function AdminLoginScreen() {
       <View style={styles.container}>
         <Text style={styles.logo}>🛡️</Text>
 
-        <Text style={styles.title}>Admin Login</Text>
+        <Text style={styles.title}>Farm2Home Admin Portal</Text>
 
-        <Text style={styles.subtitle}>Farm2Home Administration Portal</Text>
+        <Text style={styles.subtitle}>
+          Authorized administration access only
+        </Text>
 
         <View style={styles.card}>
-          <Text style={styles.label}>Username or Email</Text>
+          <Text style={styles.label}>Admin Username</Text>
 
           <TextInput
             style={styles.input}
@@ -97,42 +117,31 @@ export default function AdminLoginScreen() {
             onChangeText={setUsername}
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="admin or admin email"
+            placeholder="Enter admin username"
+            placeholderTextColor="#9CA3AF"
           />
 
-          <Text style={styles.label}>Password / Passcode</Text>
+          <Text style={styles.label}>Admin Password</Text>
 
           <TextInput
             style={styles.input}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
-            placeholder="Password"
+            placeholder="Enter admin password"
+            placeholderTextColor="#9CA3AF"
           />
 
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading}
+            activeOpacity={0.85}
           >
             <Text style={styles.buttonText}>
-              {loading ? "Signing In..." : "Login"}
+              {loading ? "Signing In..." : "Secure Admin Login"}
             </Text>
           </TouchableOpacity>
-
-          <View style={styles.testBox}>
-            <Text style={styles.testTitle}>Test Credentials</Text>
-            <Text style={styles.testText}>Username: admin</Text>
-            <Text style={styles.testText}>Password: admin123</Text>
-
-            <Text style={[styles.testTitle, { marginTop: 12 }]}>
-              Production Admin
-            </Text>
-            <Text style={styles.testText}>
-              Email: audreyitprofessional@gmail.com
-            </Text>
-            <Text style={styles.testText}>Passcode: Farm2HomeAdmin2026</Text>
-          </View>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -146,29 +155,35 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
+
   container: {
     width: "100%",
     maxWidth: 460,
     alignSelf: "center",
   },
+
   logo: {
-    fontSize: 62,
+    fontSize: 64,
     textAlign: "center",
-    marginBottom: 10,
+    marginBottom: 12,
   },
+
   title: {
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: "900",
     color: "#111827",
     textAlign: "center",
   },
+
   subtitle: {
     color: "#4B5563",
     textAlign: "center",
     fontWeight: "700",
-    marginTop: 6,
+    marginTop: 8,
     marginBottom: 24,
+    lineHeight: 22,
   },
+
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -176,12 +191,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
+
   label: {
     color: "#374151",
     fontWeight: "900",
     marginBottom: 8,
     marginTop: 8,
   },
+
   input: {
     backgroundColor: "#F9FAFB",
     borderRadius: 16,
@@ -193,37 +210,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 10,
   },
+
   button: {
     backgroundColor: "#111827",
     padding: 16,
     borderRadius: 16,
     alignItems: "center",
-    marginTop: 12,
+    marginTop: 14,
   },
+
   buttonDisabled: {
     opacity: 0.6,
   },
+
   buttonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
-  },
-  testBox: {
-    marginTop: 20,
-    backgroundColor: "#F9FAFB",
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  testTitle: {
-    color: "#111827",
-    fontWeight: "900",
-    marginBottom: 8,
-  },
-  testText: {
-    color: "#4B5563",
-    fontWeight: "700",
-    lineHeight: 22,
   },
 });
