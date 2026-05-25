@@ -2032,7 +2032,7 @@ export default function FarmerComplianceUploadScreen() {
       style={styles.page}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
+      keyboardShouldPersistTaps="always"
     >
       <Text style={styles.header}>Farmer Compliance Verification</Text>
 
@@ -2260,30 +2260,16 @@ export default function FarmerComplianceUploadScreen() {
         </Pressable>
       </View>
 
-      <TouchableOpacity
-        activeOpacity={0.85}
+      <Pressable
         style={[styles.verifyButton, loading && styles.disabled]}
-        disabled={loading}
-        onPress={async () => {
-          console.log("COMPLETE COMPLIANCE REVIEW CLICKED");
-
-          try {
-            await runVerification();
-          } catch (error) {
-            console.log("COMPLETE COMPLIANCE BUTTON ERROR:", error);
-            Alert.alert(
-              "Submission Error",
-              "Unable to complete compliance review."
-            );
-          }
-        }}
+        onPress={runVerification}
       >
         {loading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
           <Text style={styles.verifyButtonText}>Complete Compliance Review</Text>
         )}
-      </TouchableOpacity>
+      </Pressable>
 
       <View style={{ height: 50 }} />
     </ScrollView>
@@ -2488,7 +2474,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 20,
     marginBottom: 40,
-    width: "100%",
+    zIndex: 999,
+    elevation: 10,
   },
   verifyButtonText: {
     color: "#FFFFFF",
