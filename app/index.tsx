@@ -91,8 +91,8 @@ export default function HomeScreen() {
             <Text style={styles.cardTitle}>Driver Delivery Network</Text>
 
             <Text style={styles.cardText}>
-              Drivers can accept local and long-distance farm deliveries through
-              the Farm2Home driver board.
+              Drivers can register, subscribe, and accept available delivery
+              orders through the Farm2Home driver board.
             </Text>
           </View>
         </View>
@@ -154,10 +154,10 @@ export default function HomeScreen() {
 
           <TouchableOpacity
             style={styles.driverButton}
-            onPress={() => router.push("/driver/mobile-driver-app")}
+            onPress={() => router.push("/driver/login")}
             activeOpacity={0.85}
           >
-            <Text style={styles.buttonText}>Driver Login / Delivery Board</Text>
+            <Text style={styles.buttonText}>Driver Login / Driver Setup</Text>
           </TouchableOpacity>
         </View>
       </View>
