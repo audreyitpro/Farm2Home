@@ -901,20 +901,21 @@ export default function FarmerComplianceUploadScreen() {
     await openPaymentLink(PAYMENT_LINKS.farmerApplicationProcessFee);
   }
 
-  async function markFarmerFeesComplete() {
+  async function markApplicationFeeComplete() {
     const activeFarmerId = await getOrCreateFarmerId();
 
     setApplicationFeePaid(true);
+    setFarmerMembershipPaid(false);
 
     const overrides = {
       applicationFeePaid: true,
-      farmerMembershipPaid,
+      farmerMembershipPaid: false,
       farmerMonthlySubscriptionPaid: false,
+      complianceStatus: "application_fee_paid",
     };
 
     await updateFarmerStore(activeFarmerId, {
       ...overrides,
-      complianceStatus: "application_fee_paid",
     } as any);
 
     await savePendingFarmerSnapshot(
@@ -922,7 +923,9 @@ export default function FarmerComplianceUploadScreen() {
       "application_fee_paid",
       overrides
     );
+
     await syncCurrentFarmer(activeFarmerId);
+
     await createOrUpdateAdminVerificationRecord(
       activeFarmerId,
       "APPLICATION_FEE_PAID",
@@ -930,8 +933,8 @@ export default function FarmerComplianceUploadScreen() {
     );
 
     Alert.alert(
-      "Application Fee Marked Complete",
-      "The $29.99 application process fee was marked complete. Continue with Stripe payout setup and the remaining verification checks."
+      "Application Fee Saved",
+      "The $29.99 application process fee was saved. Monthly membership starts after admin approval."
     );
   }
 
@@ -1180,16 +1183,6 @@ export default function FarmerComplianceUploadScreen() {
 
       setStripeLoading(true);
 
-      if (!API_BASE_URL || !API_BASE_URL.startsWith("http")) {
-        Alert.alert("API Error", "Backend API is not configured correctly.");
-        return;
-      }
-
-      const existingStripeAccountId =
-        stripeAccountId && stripeAccountId.startsWith("acct_")
-          ? stripeAccountId
-          : "";
-
       const response = await fetch(
         `${API_BASE_URL}/payments/create-farmer-connect-account`,
         {
@@ -1199,7 +1192,7 @@ export default function FarmerComplianceUploadScreen() {
             farmerId: activeFarmerId,
             email: farmerEmail.trim(),
             farmName: businessName.trim(),
-            existingStripeAccountId,
+            existingStripeAccountId: stripeAccountId || "",
           }),
         }
       );
@@ -1278,11 +1271,6 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       setStripeChecking(true);
-
-      if (!API_BASE_URL || !API_BASE_URL.startsWith("http")) {
-        Alert.alert("API Error", "Backend API is not configured correctly.");
-        return false;
-      }
 
       const response = await fetch(
         `${API_BASE_URL}/payments/check-farmer-connect-account`,
@@ -1552,31 +1540,7 @@ export default function FarmerComplianceUploadScreen() {
       if (!applicationFeePaid) {
         Alert.alert(
           "Application Fee Required",
-          "Please pay or mark the $29.99 application process fee before submitting your compliance review."
-        );
-        return;
-      }
-
-      if (!stripeAccountId) {
-        Alert.alert(
-          "Stripe Payout Setup Required",
-          "Please complete Stripe payout setup before submitting your compliance review."
-        );
-        return;
-      }
-
-      if (!stripePayoutsEnabled) {
-        Alert.alert(
-          "Stripe Verification Required",
-          "Please click Verify after Stripe setup. If Stripe still says pending, finish the Stripe onboarding steps first."
-        );
-        return;
-      }
-
-      if (!uploadedDocs.pickup_delivery_agreement) {
-        Alert.alert(
-          "Pickup / Delivery Required",
-          "Please select and save a pickup/delivery option before submitting."
+          "Please complete the $29.99 application process fee before submitting your compliance review."
         );
         return;
       }
@@ -1584,7 +1548,23 @@ export default function FarmerComplianceUploadScreen() {
       if (missingRequiredDocs.length > 0) {
         Alert.alert(
           "Documents Required",
-          `Please upload all required documents before submitting. Missing: ${missingRequiredDocs.join(", ")}`
+          "Please upload all required verification documents before submitting."
+        );
+        return;
+      }
+
+      if (!stripeAccountId || !stripePayoutsEnabled) {
+        Alert.alert(
+          "Stripe Payout Required",
+          "Please complete and verify Stripe payout setup before submitting."
+        );
+        return;
+      }
+
+      if (!uploadedDocs.pickup_delivery_agreement) {
+        Alert.alert(
+          "Pickup / Delivery Required",
+          "Please select and save your pickup/delivery option before submitting."
         );
         return;
       }
@@ -1592,20 +1572,12 @@ export default function FarmerComplianceUploadScreen() {
       if (!allLegalAccepted) {
         Alert.alert(
           "Legal Checklist Required",
-          "Please check and save all legal confirmations before submitting."
+          "Please accept and save all legal checklist items before submitting."
         );
         return;
       }
 
-      const legalSaved = await saveLegalChecklist(false);
-      if (!legalSaved) return;
-
       const now = new Date().toISOString();
-
-      const finalUploadedDocs = {
-        ...uploadedDocs,
-        legal_checklist: "legal-checklist://accepted",
-      };
 
       const reviewPayload = {
         id: activeFarmerId,
@@ -1642,7 +1614,7 @@ export default function FarmerComplianceUploadScreen() {
         securityQuestion3,
         securityAnswer3,
 
-        farmerMembershipPaid,
+        farmerMembershipPaid: false,
         applicationFeePaid,
 
         farmerActivationPaid: false,
@@ -1656,7 +1628,7 @@ export default function FarmerComplianceUploadScreen() {
         stripeOnboardingComplete,
 
         pickupDeliveryOption,
-        uploadedDocs: finalUploadedDocs,
+        uploadedDocs,
         legalChecks,
       };
 
@@ -1688,7 +1660,7 @@ export default function FarmerComplianceUploadScreen() {
 
       Alert.alert(
         "Submitted for Admin Review",
-        "Your farmer application has been sent to the Admin Compliance Review queue. Please login to see your awaiting approval status.",
+        "Your farmer application has been sent to the Admin Compliance Review queue. You can log in, but your account will show awaiting approval until admin review is complete.",
         [
           {
             text: "OK",
@@ -1697,7 +1669,6 @@ export default function FarmerComplianceUploadScreen() {
                 pathname: "/farmer/login",
                 params: {
                   farmerId: activeFarmerId,
-                  email: farmerEmail.trim().toLowerCase(),
                   status: "awaiting_approval",
                 },
               } as any),
@@ -1932,12 +1903,12 @@ export default function FarmerComplianceUploadScreen() {
       ),
     },
     {
-      label: "Monthly membership starts after admin approval",
-      done: farmerMembershipPaid,
-    },
-    {
       label: "Application process fee paid - $29.99",
       done: applicationFeePaid,
+    },
+    {
+      label: "Monthly membership starts after approval",
+      done: farmerMembershipPaid,
     },
     {
       label: "Pickup / delivery selected",
@@ -1961,9 +1932,10 @@ export default function FarmerComplianceUploadScreen() {
       <Text style={styles.header}>Farmer Compliance Verification</Text>
 
       <Text style={styles.subheader}>
-        Complete verification, pay the $29.99 application process fee, connect
-        Stripe payouts, upload required documents, and submit for admin review.
-        The $14.99 monthly farmer membership begins after admin approval.
+        Upload documents, pay the $29.99 application process fee, create login
+        credentials, connect Stripe payouts, select pickup/delivery, and accept
+        legal seller terms. The $14.99 monthly membership begins after admin
+        approval.
       </Text>
 
       <View style={styles.card}>
@@ -2038,19 +2010,18 @@ export default function FarmerComplianceUploadScreen() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Farmer Fees</Text>
+        <Text style={styles.sectionTitle}>Application Fee</Text>
 
         <Text style={styles.debugText}>
-          The $29.99 application process fee is required before submitting your
+          The $29.99 application process fee is required before submitting
           compliance review. The $14.99 monthly farmer membership begins after
-          admin approval when you are allowed to set up your farmer store.
+          admin approval.
         </Text>
 
         <Text
           style={[
             styles.docStatus,
             applicationFeePaid ? styles.uploaded : styles.missing,
-            { marginTop: 14 },
           ]}
         >
           Application Process Fee - $29.99:{" "}
@@ -2068,7 +2039,7 @@ export default function FarmerComplianceUploadScreen() {
 
         <Pressable
           style={[styles.testButton, { marginTop: 14 }]}
-          onPress={markFarmerFeesComplete}
+          onPress={markApplicationFeeComplete}
         >
           <Text style={styles.testButtonText}>
             I Completed Application Fee Payment
@@ -2083,17 +2054,8 @@ export default function FarmerComplianceUploadScreen() {
           ]}
         >
           Monthly Farmer Membership - $14.99:{" "}
-          {farmerMembershipPaid ? "Completed" : "Begins After Admin Approval"}
+          {farmerMembershipPaid ? "Active" : "Starts After Approval"}
         </Text>
-
-        <Pressable
-          style={[styles.stripeButton, styles.disabledSoft]}
-          disabled
-        >
-          <Text style={styles.stripeButtonText}>
-            Monthly Membership Opens After Approval
-          </Text>
-        </Pressable>
       </View>
 
       <View style={styles.card}>
