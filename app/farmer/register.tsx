@@ -34,6 +34,9 @@ const productOptions = [
   "Jams",
   "Bale of Hay",
   "Live Stock",
+  "Flowers",
+  "Plants",
+  "Seasonal Items",
 ];
 
 export default function FarmerRegister() {

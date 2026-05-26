@@ -7,7 +7,7 @@ export const PRODUCT_UNITS = [
   "dozen",
   "1/2 dozen",
   "gallon",
-  "pound",
+  "pounds",
   "bundle",
   "box",
   "crate",

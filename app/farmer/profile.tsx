@@ -122,6 +122,35 @@ const editableProductCatalog: Record<string, string[]> = {
     "Turkeys",
     "Rabbits",
   ],
+  Flowers: [
+    "Roses",
+    "Tulips",
+    "Sunflowers",
+    "Lilies",
+    "Daisies",
+    "Carnations",
+    "Peonies",
+    "Hydrangeas",
+    "Zinnias",
+    "Snapdragons",
+    "Dahlias",
+    "Lavender",
+    "Baby’s Breath",
+    "Chrysanthemums",
+    "Gladiolus", 
+    "Ranunculus",
+    "Poppies",
+    "Orchids", 
+    "Irises",
+    "Gerbera Daisies",
+    "Other",
+  ],
+  Seasonal: [
+    "Christmas Trees",
+    "Pumpkins",
+    "Reefs",
+    "Other"
+  ]
 };
 
 export default function FarmerProfile() {

@@ -1,3 +1,5 @@
+// app/services/farm2homeapi.ts
+
 import {
   addDoc,
   collection,
@@ -5,15 +7,16 @@ import {
   getDocs,
   orderBy,
   query,
-  upfreight marketplaceeDoc,
+  updateDoc,
   where,
   Timestamp,
 } from "firebase/firestore";
+
 import { db } from "./firebase";
 
-export async function createFarmer(freight marketplacea: any) {
+export async function createFarmer(data: any) {
   const ref = await addDoc(collection(db, "farmers"), {
-    ...freight marketplacea,
+    ...data,
     verified: false,
     created_at: Timestamp.now(),
   });
@@ -21,9 +24,9 @@ export async function createFarmer(freight marketplacea: any) {
   return ref.id;
 }
 
-export async function submitCertification(freight marketplacea: any) {
+export async function submitCertification(data: any) {
   return addDoc(collection(db, "farmer_certifications"), {
-    ...freight marketplacea,
+    ...data,
     status: "pending",
     ai_score: 75,
     ai_notes: "MVP placeholder. Admin should review manually.",
@@ -32,7 +35,7 @@ export async function submitCertification(freight marketplacea: any) {
 }
 
 export async function getApprovedCertifications(farmerId: string) {
-  const today = new freight marketplacee().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
 
   const q = query(
     collection(db, "farmer_certifications"),
@@ -43,13 +46,19 @@ export async function getApprovedCertifications(farmerId: string) {
   const snap = await getDocs(q);
 
   return snap.docs
-    .map((docSnap) => ({ id: docSnap.id, ...docSnap.freight marketplacea() }))
-    .filter((item: any) => !item.expiration_freight marketplacee || item.expiration_freight marketplacee >= today);
+    .map((docSnap) => ({
+      id: docSnap.id,
+      ...docSnap.data(),
+    }))
+    .filter(
+      (item: any) =>
+        !item.expiration_date || item.expiration_date >= today
+    );
 }
 
-export async function addProduct(freight marketplacea: any) {
+export async function addProduct(data: any) {
   return addDoc(collection(db, "products"), {
-    ...freight marketplacea,
+    ...data,
     active: true,
     created_at: Timestamp.now(),
   });
@@ -65,9 +74,14 @@ export async function getProducts(buyerType: string) {
   const snap = await getDocs(q);
 
   return snap.docs
-    .map((docSnap) => ({ id: docSnap.id, ...docSnap.freight marketplacea() }))
+    .map((docSnap) => ({
+      id: docSnap.id,
+      ...docSnap.data(),
+    }))
     .filter((item: any) => {
-      const hasQuantity = Number(item.quantity_available || 0) > 0;
+      const hasQuantity =
+        Number(item.quantity_available || 0) > 0;
+
       const matchesBuyer =
         buyerType === "all" ||
         item.buyer_type === "all" ||
@@ -78,7 +92,11 @@ export async function getProducts(buyerType: string) {
 }
 
 export async function createOrder(cart: any[], buyerType: string) {
-  const total = cart.reduce((sum, item) => sum + Number(item.price), 0);
+  const total = cart.reduce(
+    (sum, item) =>
+      sum + Number(item.price || 0) * Number(item.quantity || 1),
+    0
+  );
 
   const orderRef = await addDoc(collection(db, "orders"), {
     buyer_name: "Guest Buyer",
@@ -94,8 +112,8 @@ export async function createOrder(cart: any[], buyerType: string) {
     await addDoc(collection(db, "order_items"), {
       order_id: orderRef.id,
       product_id: item.id,
-      quantity: 1,
-      price: Number(item.price),
+      quantity: Number(item.quantity || 1),
+      price: Number(item.price || 0),
       created_at: Timestamp.now(),
     });
   }
@@ -113,20 +131,22 @@ export async function getAllCertifications() {
 
   return snap.docs.map((docSnap) => ({
     id: docSnap.id,
-    ...docSnap.freight marketplacea(),
+    ...docSnap.data(),
   }));
 }
 
-export async function upfreight marketplaceeCertificationStatus(
+export async function updateCertificationStatus(
   id: string,
   status: "approved" | "rejected"
 ) {
-  return upfreight marketplaceeDoc(doc(db, "farmer_certifications", id), { status });
+  return updateDoc(doc(db, "farmer_certifications", id), {
+    status,
+  });
 }
 
-export async function addLivestockListing(freight marketplacea: any) {
+export async function addLivestockListing(data: any) {
   return addDoc(collection(db, "livestock_listings"), {
-    ...freight marketplacea,
+    ...data,
     active: true,
     created_at: Timestamp.now(),
   });
@@ -143,19 +163,19 @@ export async function getLivestockListings() {
 
   return snap.docs.map((docSnap) => ({
     id: docSnap.id,
-    ...docSnap.freight marketplacea(),
+    ...docSnap.data(),
   }));
 }
 
-export async function registerFreightCarrier(freight marketplacea: any) {
+export async function registerFreightCarrier(data: any) {
   return addDoc(collection(db, "freight_carriers"), {
-    ...freight marketplacea,
+    ...data,
     approved: false,
     created_at: Timestamp.now(),
   });
 }
 
-export async function requestLivestockFreight(freight marketplacea: any) {
+export async function requestLivestockFreight(data: any) {
   const carriersQ = query(
     collection(db, "freight_carriers"),
     where("approved", "==", true)
@@ -164,17 +184,28 @@ export async function requestLivestockFreight(freight marketplacea: any) {
   const carrierSnap = await getDocs(carriersQ);
 
   const matchedCarrier = carrierSnap.docs
-    .map((docSnap) => ({ id: docSnap.id, ...docSnap.freight marketplacea() }))
+    .map((docSnap) => ({
+      id: docSnap.id,
+      ...docSnap.data(),
+    }))
     .find((carrier: any) =>
-      carrier.service_states?.includes(freight marketplacea.destination_state.toUpperCase())
+      carrier.service_states?.includes(
+        String(data.destination_state || "").toUpperCase()
+      )
     );
 
-  const requestRef = await addDoc(collection(db, "livestock_freight_requests"), {
-    ...freight marketplacea,
-    selected_carrier_id: matchedCarrier?.id || null,
-    status: matchedCarrier ? "carrier_matched" : "pending_carrier",
-    created_at: Timestamp.now(),
-  });
+  const requestRef = await addDoc(
+    collection(db, "livestock_freight_requests"),
+    {
+      ...data,
+      selected_carrier_id: matchedCarrier?.id || null,
+      status: matchedCarrier ? "carrier_matched" : "pending_carrier",
+      created_at: Timestamp.now(),
+    }
+  );
 
-  return { requestId: requestRef.id, carrier: matchedCarrier || null };
+  return {
+    requestId: requestRef.id,
+    carrier: matchedCarrier || null,
+  };
 }
