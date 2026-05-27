@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   Image,
   Linking,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,8 +14,9 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
+import * as WebBrowser from "expo-web-browser";
 
-const API_URL = "http://YOUR_COMPUTER_IP:4242";
+import { API_BASE_URL } from "../config/api";
 
 type UploadedFile = {
   name: string;
@@ -137,20 +139,15 @@ const editableProductCatalog: Record<string, string[]> = {
     "Lavender",
     "Baby’s Breath",
     "Chrysanthemums",
-    "Gladiolus", 
+    "Gladiolus",
     "Ranunculus",
     "Poppies",
-    "Orchids", 
+    "Orchids",
     "Irises",
     "Gerbera Daisies",
     "Other",
   ],
-  Seasonal: [
-    "Christmas Trees",
-    "Pumpkins",
-    "Reefs",
-    "Other"
-  ]
+  Seasonal: ["Christmas Trees", "Pumpkins", "Reefs", "Other"],
 };
 
 export default function FarmerProfile() {
@@ -158,45 +155,120 @@ export default function FarmerProfile() {
   const [allFarmers, setAllFarmers] = useState<any[]>([]);
 
   const [businessName, setBusinessName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [logo, setLogo] = useState<UploadedFile | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
 
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+
+  const approvalStatus = useMemo(() => {
+    if (!farmer) return "Unknown";
+
+    if (
+      farmer.approved === true ||
+      farmer.accountActive === true ||
+      farmer.complianceStatus === "approved" ||
+      farmer.adminReviewStatus === "approved" ||
+      farmer.reviewDecision === "approved"
+    ) {
+      return "Approved";
+    }
+
+    if (
+      farmer.rejected === true ||
+      farmer.complianceStatus === "rejected" ||
+      farmer.adminReviewStatus === "rejected" ||
+      farmer.reviewDecision === "rejected"
+    ) {
+      return "Rejected";
+    }
+
+    if (
+      farmer.complianceStatus === "pending_admin_review" ||
+      farmer.adminReviewStatus === "pending" ||
+      farmer.reviewDecision === "pending"
+    ) {
+      return "Awaiting Admin Approval";
+    }
+
+    return farmer.status || farmer.complianceStatus || "In Progress";
+  }, [farmer]);
+
+  const storeUnlocked = useMemo(() => {
+    return (
+      farmer?.approved === true ||
+      farmer?.accountActive === true ||
+      farmer?.storeUnlocked === true ||
+      farmer?.adminReviewStatus === "approved" ||
+      farmer?.reviewDecision === "approved"
+    );
+  }, [farmer]);
+
+  const membershipStatus = useMemo(() => {
+    return (
+      farmer?.membershipStatus ||
+      farmer?.subscriptionStatus ||
+      farmer?.farmerMembershipStatus ||
+      (storeUnlocked ? "Membership available after approval" : "Starts after approval")
+    );
+  }, [farmer, storeUnlocked]);
+
   useFocusEffect(
     useCallback(() => {
-      async function loadFarmer() {
-        try {
-          const savedCurrentFarmer = await AsyncStorage.getItem("currentFarmer");
-          const savedFarmers = await AsyncStorage.getItem("farm2homeFarmers");
-
-          const farmers = savedFarmers ? JSON.parse(savedFarmers) : [];
-          setAllFarmers(Array.isArray(farmers) ? farmers : []);
-
-          let current = savedCurrentFarmer
-            ? JSON.parse(savedCurrentFarmer)
-            : null;
-
-          if (!current && Array.isArray(farmers) && farmers.length > 0) {
-            current = farmers[farmers.length - 1];
-          }
-
-          if (current) {
-            setFarmer(current);
-            setBusinessName(current.businessName || "");
-            setPhone(current.phone || "");
-            setAddress(current.address || "");
-            setLogo(current.logo || null);
-            setSelectedProducts(current.products || []);
-          }
-        } catch (error) {
-          console.log("Load farmer profile error:", error);
-        }
-      }
-
       loadFarmer();
     }, [])
   );
+
+  async function loadFarmer() {
+    try {
+      const savedCurrentFarmer = await AsyncStorage.getItem("currentFarmer");
+      const savedCurrentUser = await AsyncStorage.getItem("currentUser");
+      const savedPendingFarmer = await AsyncStorage.getItem(
+        "pendingFarmerApplication"
+      );
+      const savedFarmers = await AsyncStorage.getItem("farm2homeFarmers");
+
+      const farmers = savedFarmers ? JSON.parse(savedFarmers) : [];
+      const safeFarmers = Array.isArray(farmers) ? farmers : [];
+      setAllFarmers(safeFarmers);
+
+      let current = savedCurrentFarmer ? JSON.parse(savedCurrentFarmer) : null;
+
+      if (!current && savedCurrentUser) {
+        current = JSON.parse(savedCurrentUser);
+      }
+
+      if (!current && savedPendingFarmer) {
+        current = JSON.parse(savedPendingFarmer);
+      }
+
+      if (!current && safeFarmers.length > 0) {
+        current = safeFarmers[safeFarmers.length - 1];
+      }
+
+      if (current) {
+        setFarmer(current);
+        setBusinessName(current.businessName || current.farmName || "");
+        setOwnerName(current.ownerName || "");
+        setUsername(current.username || "");
+        setEmail(current.email || "");
+        setPhone(current.phone || "");
+        setAddress(current.address || current.businessAddress || "");
+        setLogo(current.logo || null);
+        setSelectedProducts(current.products || []);
+      }
+    } catch (error) {
+      console.log("Load farmer profile error:", error);
+      Alert.alert("Profile Error", "Unable to load farmer profile.");
+    }
+  }
 
   function toggleProduct(product: string) {
     setSelectedProducts((current) =>
@@ -216,7 +288,8 @@ export default function FarmerProfile() {
 
       if (result.canceled) return;
 
-      const asset = result.assets[0];
+      const asset = result.assets?.[0];
+      if (!asset) return;
 
       setLogo({
         name: asset.name,
@@ -229,128 +302,248 @@ export default function FarmerProfile() {
     }
   }
 
+  async function persistUpdatedFarmer(updatedFarmer: any) {
+    const updatedFarmers =
+      allFarmers.length > 0
+        ? allFarmers.map((item) =>
+            item.id === updatedFarmer.id ? updatedFarmer : item
+          )
+        : [updatedFarmer];
+
+    const exists = updatedFarmers.some((item) => item.id === updatedFarmer.id);
+    const finalFarmers = exists ? updatedFarmers : [...updatedFarmers, updatedFarmer];
+
+    await AsyncStorage.setItem("farm2homeFarmers", JSON.stringify(finalFarmers));
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.setItem("currentUserRole", "farmer");
+
+    setFarmer(updatedFarmer);
+    setAllFarmers(finalFarmers);
+  }
+
   async function saveProfile() {
     if (!farmer) {
       Alert.alert("No Farmer", "No farmer profile was found.");
       return;
     }
 
+    if (!businessName.trim()) {
+      Alert.alert("Business Name Required", "Please enter your business name.");
+      return;
+    }
+
+    if (!username.trim()) {
+      Alert.alert("Username Required", "Please enter a username.");
+      return;
+    }
+
     const updatedFarmer = {
       ...farmer,
-      businessName,
-      phone,
-      address,
+      farmName: businessName.trim(),
+      businessName: businessName.trim(),
+      ownerName: ownerName.trim(),
+      username: username.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      address: address.trim(),
+      businessAddress: address.trim(),
       logo,
       products: selectedProducts,
       updatedAt: new Date().toISOString(),
     };
 
-    const updatedFarmers = allFarmers.map((item) =>
-      item.id === farmer.id ? updatedFarmer : item
-    );
-
-    await AsyncStorage.setItem(
-      "farm2homeFarmers",
-      JSON.stringify(updatedFarmers)
-    );
-
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
-
-    setFarmer(updatedFarmer);
-    setAllFarmers(updatedFarmers);
-
+    await persistUpdatedFarmer(updatedFarmer);
     Alert.alert("Saved", "Farmer profile updated.");
   }
 
+  async function changePassword() {
+    if (!farmer) return;
+
+    if (!currentPassword.trim()) {
+      Alert.alert("Current Password Required", "Enter your current password.");
+      return;
+    }
+
+    if (farmer.password && currentPassword !== farmer.password) {
+      Alert.alert("Incorrect Password", "Your current password is incorrect.");
+      return;
+    }
+
+    if (!newPassword.trim()) {
+      Alert.alert("New Password Required", "Enter a new password.");
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      Alert.alert("Password Too Short", "Password must be at least 6 characters.");
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      Alert.alert("Password Mismatch", "New passwords do not match.");
+      return;
+    }
+
+    const updatedFarmer = {
+      ...farmer,
+      password: newPassword,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await persistUpdatedFarmer(updatedFarmer);
+
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+
+    Alert.alert("Password Updated", "Your password was changed successfully.");
+  }
+
+  async function openUrl(url: string) {
+    if (!url) return;
+
+    if (Platform.OS === "web") {
+      window.location.href = url;
+      return;
+    }
+
+    const result = await WebBrowser.openBrowserAsync(url);
+    if (result.type === "cancel" || result.type === "dismiss") {
+      return;
+    }
+  }
+
   async function manageBilling() {
-    if (!farmer?.stripeCustomerId) {
+    const stripeCustomerId =
+      farmer?.stripeCustomerId ||
+      farmer?.customerId ||
+      farmer?.farmerStripeCustomerId;
+
+    if (!stripeCustomerId) {
       Alert.alert(
-        "No Stripe Account",
-        "This farmer does not have a Stripe customer ID saved yet."
+        "No Stripe Customer ID",
+        "This farmer does not have a Stripe customer ID saved yet. The monthly membership starts after admin approval."
       );
       return;
     }
 
     try {
-      const response = await fetch(`${API_URL}/create-billing-portal-session`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          customerId: farmer.stripeCustomerId,
-          returnUrl: "farm2home://farmer/profile",
-        }),
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/payments/create-customer-portal-session`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            customerId: stripeCustomerId,
+            returnUrl: "farm2home://farmer/profile",
+          }),
+        }
+      );
 
       const data = await response.json();
 
-      if (!response.ok || data.error) {
+      if (!response.ok || data.error || !data.url) {
         Alert.alert("Stripe Error", data.error || "Unable to open billing.");
         return;
       }
 
-      if (data.url) {
-        Linking.openURL(data.url);
-      }
+      await openUrl(data.url);
     } catch (error: any) {
       Alert.alert("Billing Error", error.message || "Unable to open billing.");
     }
   }
 
   async function cancelSubscription() {
-    if (!farmer?.stripeSubscriptionId) {
+    const subscriptionId =
+      farmer?.stripeSubscriptionId ||
+      farmer?.subscriptionId ||
+      farmer?.farmerSubscriptionId;
+
+    if (!subscriptionId) {
       Alert.alert(
         "No Subscription",
-        "This farmer does not have a Stripe subscription ID saved yet."
+        "No active farmer monthly subscription was found. If your application is not approved yet, the monthly membership has not started."
       );
       return;
     }
 
-    try {
-      const response = await fetch(`${API_URL}/cancel-subscription`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+    Alert.alert(
+      "Cancel Subscription",
+      "Are you sure you want to cancel your farmer monthly membership?",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const response = await fetch(
+                `${API_BASE_URL}/payments/cancel-subscription`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    subscriptionId,
+                    farmerId: farmer?.id,
+                    role: "farmer",
+                  }),
+                }
+              );
+
+              const data = await response.json();
+
+              if (!response.ok || data.error) {
+                Alert.alert("Stripe Error", data.error || "Unable to cancel.");
+                return;
+              }
+
+              const updatedFarmer = {
+                ...farmer,
+                membershipStatus: "Canceled",
+                subscriptionStatus: "canceled",
+                status: "Subscription Canceled",
+                accountActive: false,
+                updatedAt: new Date().toISOString(),
+              };
+
+              await persistUpdatedFarmer(updatedFarmer);
+
+              Alert.alert("Canceled", "Farmer subscription was canceled.");
+            } catch (error: any) {
+              Alert.alert("Cancel Error", error.message || "Unable to cancel.");
+            }
+          },
         },
-        body: JSON.stringify({
-          subscriptionId: farmer.stripeSubscriptionId,
-        }),
-      });
+      ]
+    );
+  }
 
-      const data = await response.json();
+  async function logout() {
+    await AsyncStorage.removeItem("currentFarmer");
+    await AsyncStorage.removeItem("currentUser");
+    await AsyncStorage.removeItem("userRole");
+    await AsyncStorage.removeItem("currentUserRole");
 
-      if (!response.ok || data.error) {
-        Alert.alert("Stripe Error", data.error || "Unable to cancel.");
-        return;
-      }
+    router.replace("/farmer/login" as never);
+  }
 
-      const updatedFarmer = {
-        ...farmer,
-        membershipStatus: "Canceled",
-        status: "Subscription Canceled",
-        verified: false,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const updatedFarmers = allFarmers.map((item) =>
-        item.id === farmer.id ? updatedFarmer : item
+  function goToStoreSetup() {
+    if (!storeUnlocked) {
+      Alert.alert(
+        "Awaiting Approval",
+        "Your farmer store will unlock after admin approval."
       );
-
-      await AsyncStorage.setItem(
-        "farm2homeFarmers",
-        JSON.stringify(updatedFarmers)
-      );
-
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
-
-      setFarmer(updatedFarmer);
-      setAllFarmers(updatedFarmers);
-
-      Alert.alert("Canceled", "Farmer subscription was canceled.");
-    } catch (error: any) {
-      Alert.alert("Cancel Error", error.message || "Unable to cancel.");
+      router.push("/farmer/awaiting-approval" as never);
+      return;
     }
+
+    router.push("/farmer/setup-store" as never);
   }
 
   if (!farmer) {
@@ -373,6 +566,23 @@ export default function FarmerProfile() {
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <Text style={styles.header}>Farmer Profile</Text>
 
+      <View style={styles.statusCard}>
+        <Text style={styles.statusTitle}>Account Status</Text>
+        <Text style={styles.statusLine}>Approval: {approvalStatus}</Text>
+        <Text style={styles.statusLine}>
+          Store: {storeUnlocked ? "Unlocked" : "Locked Until Approval"}
+        </Text>
+        <Text style={styles.statusLine}>Membership: {membershipStatus}</Text>
+        <Text style={styles.statusLine}>
+          Stripe Payout:{" "}
+          {farmer.stripePayoutsEnabled
+            ? "Payouts Enabled"
+            : farmer.stripeAccountId || farmer.farmerStripeAccountId
+            ? "Connected / Pending Verification"
+            : "Not Connected"}
+        </Text>
+      </View>
+
       <View style={styles.logoBox}>
         {logo?.uri ? (
           <Image source={{ uri: logo.uri }} style={styles.logoImage} />
@@ -387,84 +597,164 @@ export default function FarmerProfile() {
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.label}>Business Name</Text>
-      <TextInput
-        style={styles.input}
-        value={businessName}
-        onChangeText={setBusinessName}
-        placeholder="Business name"
-      />
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Profile Information</Text>
 
-      <Text style={styles.label}>Phone Number</Text>
-      <TextInput
-        style={styles.input}
-        value={phone}
-        onChangeText={setPhone}
-        placeholder="Phone number"
-        keyboardType="phone-pad"
-      />
+        <Text style={styles.label}>Username</Text>
+        <TextInput
+          style={styles.input}
+          value={username}
+          onChangeText={setUsername}
+          placeholder="Username"
+          autoCapitalize="none"
+        />
 
-      <Text style={styles.label}>Farm / Business Address</Text>
-      <TextInput
-        style={styles.input}
-        value={address}
-        onChangeText={setAddress}
-        placeholder="Farm address"
-      />
+        <Text style={styles.label}>Email</Text>
+        <TextInput
+          style={styles.input}
+          value={email}
+          onChangeText={setEmail}
+          placeholder="Email"
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
 
-      <Text style={styles.statusText}>
-        Status: {farmer.status || "Pending Admin Approval"}
-      </Text>
+        <Text style={styles.label}>Business Name</Text>
+        <TextInput
+          style={styles.input}
+          value={businessName}
+          onChangeText={setBusinessName}
+          placeholder="Business name"
+        />
 
-      <Text style={styles.statusText}>
-        Membership: {farmer.membershipStatus || "Active"}
-      </Text>
+        <Text style={styles.label}>Owner Name</Text>
+        <TextInput
+          style={styles.input}
+          value={ownerName}
+          onChangeText={setOwnerName}
+          placeholder="Owner name"
+        />
 
-      <Text style={styles.sectionTitle}>Products You Sell</Text>
+        <Text style={styles.label}>Phone Number</Text>
+        <TextInput
+          style={styles.input}
+          value={phone}
+          onChangeText={setPhone}
+          placeholder="Phone number"
+          keyboardType="phone-pad"
+        />
 
-      {Object.keys(editableProductCatalog).map((category) => (
-        <View key={category}>
-          <Text style={styles.categoryTitle}>{category}</Text>
+        <Text style={styles.label}>Farm / Business Address</Text>
+        <TextInput
+          style={styles.input}
+          value={address}
+          onChangeText={setAddress}
+          placeholder="Farm address"
+        />
 
-          <View style={styles.productGrid}>
-            {editableProductCatalog[category].map((product) => {
-              const selected = selectedProducts.includes(product);
+        <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
+          <Text style={styles.buttonText}>Save Profile</Text>
+        </TouchableOpacity>
+      </View>
 
-              return (
-                <TouchableOpacity
-                  key={product}
-                  style={[
-                    styles.productCard,
-                    selected && styles.productCardSelected,
-                  ]}
-                  onPress={() => toggleProduct(product)}
-                >
-                  <Text style={styles.productName}>{product}</Text>
-                  {selected && <Text style={styles.selectedTag}>Selected</Text>}
-                </TouchableOpacity>
-              );
-            })}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Change Password</Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="Current password"
+          value={currentPassword}
+          onChangeText={setCurrentPassword}
+          secureTextEntry
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="New password"
+          value={newPassword}
+          onChangeText={setNewPassword}
+          secureTextEntry
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Confirm new password"
+          value={confirmNewPassword}
+          onChangeText={setConfirmNewPassword}
+          secureTextEntry
+        />
+
+        <TouchableOpacity style={styles.blueButton} onPress={changePassword}>
+          <Text style={styles.buttonText}>Change Password</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Manage Subscription</Text>
+
+        <Text style={styles.helpText}>
+          The $14.99 monthly farmer membership starts after admin approval. Once
+          active, you can manage billing or cancel your subscription here.
+        </Text>
+
+        <TouchableOpacity style={styles.blueButton} onPress={manageBilling}>
+          <Text style={styles.buttonText}>Manage Subscription / Update Card</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
+          <Text style={styles.buttonText}>Cancel Farmer Subscription</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Products You Sell</Text>
+
+        {Object.keys(editableProductCatalog).map((category) => (
+          <View key={category}>
+            <Text style={styles.categoryTitle}>{category}</Text>
+
+            <View style={styles.productGrid}>
+              {editableProductCatalog[category].map((product) => {
+                const selected = selectedProducts.includes(product);
+
+                return (
+                  <TouchableOpacity
+                    key={product}
+                    style={[
+                      styles.productCard,
+                      selected && styles.productCardSelected,
+                    ]}
+                    onPress={() => toggleProduct(product)}
+                  >
+                    <Text style={styles.productName}>{product}</Text>
+                    {selected && <Text style={styles.selectedTag}>Selected</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
-        </View>
-      ))}
+        ))}
 
-      <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
-        <Text style={styles.buttonText}>Save Profile</Text>
-      </TouchableOpacity>
+        <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
+          <Text style={styles.buttonText}>Save Products</Text>
+        </TouchableOpacity>
+      </View>
 
-      <TouchableOpacity style={styles.blueButton} onPress={manageBilling}>
-        <Text style={styles.buttonText}>Update Card on File</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
-        <Text style={styles.buttonText}>Cancel Farmer Subscription</Text>
+      <TouchableOpacity style={styles.greenButton} onPress={goToStoreSetup}>
+        <Text style={styles.buttonText}>
+          {storeUnlocked ? "Go to Store Setup" : "Store Locked - Awaiting Approval"}
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.outlineButton}
-        onPress={() => router.push("/marketplace" as never)}
+        onPress={() => router.push("/customer/marketplace" as never)}
       >
         <Text style={styles.outlineText}>View Marketplace</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+        <Text style={styles.buttonText}>Logout</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -477,7 +767,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 22,
-    paddingBottom: 60,
+    paddingBottom: 70,
   },
   header: {
     fontSize: 30,
@@ -488,6 +778,34 @@ const styles = StyleSheet.create({
   subheader: {
     color: "#666",
     marginBottom: 20,
+    fontWeight: "700",
+  },
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginBottom: 16,
+  },
+  statusCard: {
+    backgroundColor: "#E8F5E9",
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#B7DFB9",
+    marginBottom: 16,
+  },
+  statusTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#14532D",
+    marginBottom: 8,
+  },
+  statusLine: {
+    fontWeight: "900",
+    color: "#14532D",
+    marginBottom: 5,
   },
   logoBox: {
     backgroundColor: "#fff",
@@ -519,6 +837,12 @@ const styles = StyleSheet.create({
     color: "#2F7D32",
     fontWeight: "900",
   },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    marginBottom: 12,
+    color: "#222",
+  },
   label: {
     fontWeight: "900",
     color: "#222",
@@ -532,18 +856,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     marginBottom: 8,
+    fontWeight: "700",
   },
-  statusText: {
-    marginTop: 8,
-    fontWeight: "900",
-    color: "#2F7D32",
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "900",
-    marginTop: 18,
-    marginBottom: 8,
-    color: "#222",
+  helpText: {
+    color: "#4B5563",
+    fontWeight: "700",
+    lineHeight: 21,
+    marginBottom: 12,
   },
   categoryTitle: {
     fontSize: 17,
@@ -598,6 +917,12 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     backgroundColor: "#D32F2F",
+    padding: 16,
+    borderRadius: 14,
+    marginTop: 10,
+  },
+  logoutButton: {
+    backgroundColor: "#111827",
     padding: 16,
     borderRadius: 14,
     marginTop: 10,

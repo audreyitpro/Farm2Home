@@ -16,6 +16,7 @@ import { router } from "expo-router";
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 import freightTheme from "../styles/freightTheme";
+import { registerFreightPushNotifications } from "../services/notificationService";
 
 type FreightUser = {
   id: string;
@@ -87,9 +88,25 @@ function mapCarrierToFreightUser(item: any): FreightUser {
       item.subscriptionStatus || item.subscription_status || "pending",
     approved: item.approved === true,
     verificationStatus:
-      item.verificationStatus || item.verification_status || "PENDING_VERIFICATION",
+      item.verificationStatus ||
+      item.verification_status ||
+      "PENDING_VERIFICATION",
     token: item.token,
   };
+}
+
+function isFreightActive(user: FreightUser) {
+  if (user.accountActive === false) return false;
+
+  const membershipStatus = String(user.membershipStatus || "").toLowerCase();
+  const subscriptionStatus = String(user.subscriptionStatus || "").toLowerCase();
+
+  if (membershipStatus === "canceled") return false;
+  if (subscriptionStatus === "canceled") return false;
+  if (subscriptionStatus === "past_due") return false;
+  if (subscriptionStatus === "unpaid") return false;
+
+  return true;
 }
 
 export default function FreightLoginScreen() {
@@ -150,6 +167,18 @@ export default function FreightLoginScreen() {
       "farm2homeFreightCarriers",
       JSON.stringify(updated)
     );
+  }
+
+  async function registerFreightNotificationsSafely(userId: string) {
+    try {
+      if (!userId) return;
+
+      const pushToken = await registerFreightPushNotifications(userId);
+
+      console.log("Freight push token:", pushToken);
+    } catch (error) {
+      console.log("Freight push registration error:", error);
+    }
   }
 
   async function tryBackendLogin(cleanLogin: string, cleanPassword: string) {
@@ -267,7 +296,17 @@ export default function FreightLoginScreen() {
       const backendLogin = await tryBackendLogin(cleanLogin, cleanPassword);
 
       if (backendLogin?.user) {
+        if (!isFreightActive(backendLogin.user)) {
+          Alert.alert(
+            "Account Not Active",
+            "Your freight account is not active or subscription is not active."
+          );
+          return;
+        }
+
         await saveFreightSession(backendLogin.user, backendLogin.token);
+        await registerFreightNotificationsSafely(backendLogin.user.id);
+
         router.replace("/freight/dashboard" as any);
         return;
       }
@@ -279,8 +318,11 @@ export default function FreightLoginScreen() {
         return;
       }
 
-      if (!foundUser.accountActive) {
-        Alert.alert("Account Not Active", "Your freight account is not active.");
+      if (!isFreightActive(foundUser)) {
+        Alert.alert(
+          "Account Not Active",
+          "Your freight account is not active or subscription is not active."
+        );
         return;
       }
 
@@ -290,6 +332,7 @@ export default function FreightLoginScreen() {
       }
 
       await saveFreightSession(foundUser);
+      await registerFreightNotificationsSafely(foundUser.id);
 
       router.replace("/freight/dashboard" as any);
     } catch (error) {

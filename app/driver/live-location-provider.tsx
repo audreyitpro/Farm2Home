@@ -9,13 +9,14 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
 import { supabase } from "../services/supabaseClient";
 
 type LoadStatus =
-  | "available"
   | "accepted"
   | "arrived_pickup"
   | "picked_up"
@@ -25,9 +26,12 @@ type LoadStatus =
 
 export default function LiveLocationProviderScreen() {
   const params = useLocalSearchParams();
-  const loadId = String(params.loadId || "");
+  const loadId = String(params.loadId || params.orderId || "");
 
   const watcherRef = useRef<Location.LocationSubscription | null>(null);
+
+  const [driverId, setDriverId] = useState("");
+  const [driverName, setDriverName] = useState("Farm2Home Driver");
 
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -41,12 +45,29 @@ export default function LiveLocationProviderScreen() {
   const [updatedAt, setUpdatedAt] = useState<string>("");
 
   useEffect(() => {
+    loadDriver();
     requestPermission();
 
     return () => {
       stopSharingLocation();
     };
   }, []);
+
+  async function loadDriver() {
+    const raw =
+      (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!raw) return;
+
+    try {
+      const driver = JSON.parse(raw);
+      setDriverId(driver.id || driver.email || "");
+      setDriverName(
+        driver.fullName || driver.name || driver.username || "Farm2Home Driver"
+      );
+    } catch {}
+  }
 
   async function requestPermission() {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -57,10 +78,11 @@ export default function LiveLocationProviderScreen() {
         "Please allow location access so drivers can share live tracking."
       );
       setPermissionGranted(false);
-      return;
+      return false;
     }
 
     setPermissionGranted(true);
+    return true;
   }
 
   async function saveDriverLocation(location: Location.LocationObject) {
@@ -78,17 +100,36 @@ export default function LiveLocationProviderScreen() {
 
     if (!loadId) return;
 
-    const { error } = await supabase.from("driver_locations").upsert({
+    const payload = {
       load_id: loadId,
+      driver_id: driverId,
+      carrier_id: driverId,
+      driver_name: driverName,
       latitude: lat,
       longitude: lng,
       speed: currentSpeed,
       heading: currentHeading,
+      status,
       updated_at: now,
-    });
+    };
 
-    if (error) {
-      console.log("LOCATION_SAVE_ERROR:", error.message);
+    const { data: existing } = await supabase
+      .from("driver_locations")
+      .select("*")
+      .eq("load_id", loadId)
+      .maybeSingle();
+
+    if (existing?.id) {
+      const { error } = await supabase
+        .from("driver_locations")
+        .update(payload)
+        .eq("id", existing.id);
+
+      if (error) console.log("LOCATION_UPDATE_ERROR:", error.message);
+    } else {
+      const { error } = await supabase.from("driver_locations").insert(payload);
+
+      if (error) console.log("LOCATION_INSERT_ERROR:", error.message);
     }
   }
 
@@ -96,9 +137,8 @@ export default function LiveLocationProviderScreen() {
     try {
       setLoading(true);
 
-      if (!permissionGranted) {
-        await requestPermission();
-      }
+      const allowed = permissionGranted || (await requestPermission());
+      if (!allowed) return;
 
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
@@ -119,15 +159,23 @@ export default function LiveLocationProviderScreen() {
     try {
       setLoading(true);
 
-      if (!permissionGranted) {
-        await requestPermission();
+      if (!loadId) {
+        Alert.alert("Missing Load ID", "This screen needs a loadId or orderId.");
+        return;
       }
+
+      const allowed = permissionGranted || (await requestPermission());
+      if (!allowed) return;
 
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
 
       await saveDriverLocation(location);
+
+      if (watcherRef.current) {
+        watcherRef.current.remove();
+      }
 
       watcherRef.current = await Location.watchPositionAsync(
         {
@@ -163,6 +211,24 @@ export default function LiveLocationProviderScreen() {
     setSharing(false);
   }
 
+  async function updateBackendOrderStatus(nextStatus: LoadStatus) {
+    if (!loadId.startsWith("order_")) return;
+
+    try {
+      await fetch(`${API_BASE_URL}/orders/${loadId}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status: nextStatus.toUpperCase(),
+        }),
+      });
+    } catch (error) {
+      console.log("Backend order status update skipped:", error);
+    }
+  }
+
   async function updateLoadStatus(nextStatus: LoadStatus) {
     if (!loadId) {
       Alert.alert("Missing Load ID", "This screen needs a loadId.");
@@ -178,38 +244,33 @@ export default function LiveLocationProviderScreen() {
         status: nextStatus,
       };
 
-      if (nextStatus === "arrived_pickup") {
-        updates.arrived_pickup_at = now;
+      if (nextStatus === "arrived_pickup") updates.arrived_pickup_at = now;
+      if (nextStatus === "picked_up") updates.picked_up_at = now;
+      if (nextStatus === "in_transit") updates.in_transit_at = now;
+      if (nextStatus === "arrived_dropoff") updates.arrived_dropoff_at = now;
+      if (nextStatus === "delivered") updates.delivered_at = now;
+
+      if (!loadId.startsWith("order_")) {
+        const { error } = await supabase
+          .from("freight_loads")
+          .update(updates)
+          .eq("id", loadId);
+
+        if (error) {
+          Alert.alert("Update Error", error.message);
+          return;
+        }
       }
 
-      if (nextStatus === "picked_up") {
-        updates.picked_up_at = now;
-      }
-
-      if (nextStatus === "in_transit") {
-        updates.picked_up_at = now;
-      }
-
-      if (nextStatus === "arrived_dropoff") {
-        updates.arrived_dropoff_at = now;
-      }
-
-      if (nextStatus === "delivered") {
-        updates.delivered_at = now;
-      }
-
-      const { error } = await supabase
-        .from("freight_loads")
-        .update(updates)
-        .eq("id", loadId);
-
-      if (error) {
-        console.log("STATUS_UPDATE_ERROR:", error.message);
-        Alert.alert("Update Error", error.message);
-        return;
-      }
+      await updateBackendOrderStatus(nextStatus);
 
       setStatus(nextStatus);
+
+      const currentLocation = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      await saveDriverLocation(currentLocation);
 
       Alert.alert("Status Updated", `Load status updated to ${nextStatus}.`);
     } catch (error) {
@@ -227,11 +288,14 @@ export default function LiveLocationProviderScreen() {
         <Text style={styles.title}>Live Location Provider</Text>
 
         <Text style={styles.subtitle}>
-          Share driver location and update freight delivery milestones.
+          Share driver location and update delivery milestones in real time.
         </Text>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Load ID</Text>
+          <Text style={styles.cardTitle}>Driver</Text>
+          <Text style={styles.cardValue}>{driverName}</Text>
+
+          <Text style={styles.cardTitle}>Load / Order ID</Text>
           <Text style={styles.cardValue}>{loadId || "No load selected"}</Text>
 
           <Text style={styles.cardTitle}>Current Status</Text>
@@ -240,23 +304,19 @@ export default function LiveLocationProviderScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Current Location</Text>
-
           <Text style={styles.locationText}>
             Latitude: {latitude ?? "Not available"}
           </Text>
-
           <Text style={styles.locationText}>
             Longitude: {longitude ?? "Not available"}
           </Text>
-
           <Text style={styles.locationText}>
             Speed: {speed !== null ? `${speed.toFixed(1)} m/s` : "Not available"}
           </Text>
-
           <Text style={styles.locationText}>
-            Heading: {heading !== null ? `${heading.toFixed(1)}°` : "Not available"}
+            Heading:{" "}
+            {heading !== null ? `${heading.toFixed(1)}°` : "Not available"}
           </Text>
-
           <Text style={styles.locationText}>
             Updated: {updatedAt ? new Date(updatedAt).toLocaleString() : "Not yet"}
           </Text>
@@ -307,10 +367,12 @@ export default function LiveLocationProviderScreen() {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => router.push({
-              pathname: "/driver/proof-of-pickup",
-              params: { loadId },
-            })}
+            onPress={() =>
+              router.push({
+                pathname: "/driver/proof-of-pickup",
+                params: { loadId },
+              } as any)
+            }
           >
             <Text style={styles.actionButtonText}>Take Pickup Photo</Text>
           </TouchableOpacity>
@@ -341,10 +403,12 @@ export default function LiveLocationProviderScreen() {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => router.push({
-              pathname: "/driver/proof-of-delivery",
-              params: { loadId },
-            })}
+            onPress={() =>
+              router.push({
+                pathname: "/driver/proof-of-delivery",
+                params: { loadId },
+              } as any)
+            }
           >
             <Text style={styles.actionButtonText}>Take Delivery Photo</Text>
           </TouchableOpacity>
@@ -360,9 +424,9 @@ export default function LiveLocationProviderScreen() {
 
         <TouchableOpacity
           style={styles.boardButton}
-          onPress={() => router.push("/freight/board" as any)}
+          onPress={() => router.push("/driver/mobile-driver-app" as any)}
         >
-          <Text style={styles.boardButtonText}>Back To Freight Board</Text>
+          <Text style={styles.boardButtonText}>Back To Driver App</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -370,14 +434,8 @@ export default function LiveLocationProviderScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F7F7F2",
-  },
-  content: {
-    padding: 20,
-    paddingBottom: 80,
-  },
+  container: { flex: 1, backgroundColor: "#F7F7F2" },
+  content: { padding: 20, paddingBottom: 80 },
   kicker: {
     color: "#1F7A3F",
     fontSize: 12,
@@ -439,11 +497,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 15,
-  },
+  primaryButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 15 },
   secondaryButton: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -453,11 +507,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  secondaryButtonText: {
-    color: "#1F7A3F",
-    fontWeight: "900",
-    fontSize: 15,
-  },
+  secondaryButtonText: { color: "#1F7A3F", fontWeight: "900", fontSize: 15 },
   dangerButton: {
     backgroundColor: "#991B1B",
     borderRadius: 16,
@@ -465,14 +515,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 18,
   },
-  dangerButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 15,
-  },
-  section: {
-    marginTop: 8,
-  },
+  dangerButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 15 },
+  section: { marginTop: 8 },
   sectionTitle: {
     fontSize: 22,
     fontWeight: "900",
@@ -488,10 +532,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  actionButtonText: {
-    color: "#2F7D32",
-    fontWeight: "900",
-  },
+  actionButtonText: { color: "#2F7D32", fontWeight: "900" },
   completeButton: {
     backgroundColor: "#064E3B",
     borderRadius: 14,
@@ -499,19 +540,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 4,
   },
-  completeButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  boardButton: {
-    marginTop: 18,
-    alignItems: "center",
-  },
-  boardButtonText: {
-    color: "#1F7A3F",
-    fontWeight: "900",
-  },
-  disabledButton: {
-    opacity: 0.65,
-  },
+  completeButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  boardButton: { marginTop: 18, alignItems: "center" },
+  boardButtonText: { color: "#1F7A3F", fontWeight: "900" },
+  disabledButton: { opacity: 0.65 },
 });

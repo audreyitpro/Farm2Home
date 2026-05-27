@@ -13,6 +13,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { router, useFocusEffect } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 import freightTheme from "../styles/freightTheme";
 import ProtectedRoute from "../components/ProtectedRoute";
@@ -21,13 +22,36 @@ type DriverLoad = {
   id: string;
   title?: string;
   commodity?: string;
+
   pickup_city?: string;
   pickup_state?: string;
   delivery_city?: string;
   delivery_state?: string;
+
+  pickupAddress?: string;
+  dropoffAddress?: string;
+
+  deliveryInfo?: {
+    address?: string;
+    city?: string;
+    state?: string;
+    [key: string]: any;
+  };
+
   rate?: number;
+  deliveryFee?: number;
+  total?: number;
+
   status?: string;
+  fulfillmentStatus?: string;
+
+  customerEmail?: string;
+  customerName?: string;
+
   carrier_id?: string | null;
+  assignedDriverId?: string;
+  assignedFreightCarrierId?: string;
+
   farmers?: {
     farm_name?: string;
     owner_name?: string;
@@ -43,8 +67,8 @@ type DriverStats = {
 
 export default function MobileDriverApp() {
   const [loading, setLoading] = useState(false);
-  const [carrierId, setCarrierId] = useState("");
-  const [carrierName, setCarrierName] = useState("Farm2Home Driver");
+  const [driverId, setDriverId] = useState("");
+  const [driverName, setDriverName] = useState("Farm2Home Driver");
   const [loads, setLoads] = useState<DriverLoad[]>([]);
   const [stats, setStats] = useState<DriverStats>({
     activeLoads: 0,
@@ -59,75 +83,144 @@ export default function MobileDriverApp() {
     }, [])
   );
 
+  async function getCurrentDriver() {
+    const saved =
+      (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!saved) return null;
+
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return null;
+    }
+  }
+
   async function loadDriverDashboard() {
     try {
       setLoading(true);
 
-      const saved =
-        (await AsyncStorage.getItem("currentFreightCarrier")) ||
-        (await AsyncStorage.getItem("currentFreight"));
+      const currentDriver = await getCurrentDriver();
 
-      let localCarrierId = "";
-      let localCarrierName = "Farm2Home Driver";
+      const localDriverId = currentDriver?.id || currentDriver?.email || "";
 
-      if (saved) {
-        const carrier = JSON.parse(saved);
+      const localDriverName =
+        currentDriver?.fullName ||
+        currentDriver?.name ||
+        currentDriver?.username ||
+        "Farm2Home Driver";
 
-        localCarrierId = carrier.id || carrier.email || "";
-        localCarrierName =
-          carrier.companyName ||
-          carrier.businessName ||
-          carrier.ownerName ||
-          carrier.name ||
-          "Farm2Home Driver";
+      setDriverId(localDriverId);
+      setDriverName(localDriverName);
+
+      const response = await fetch(`${API_BASE_URL}/orders`);
+      const data = await response.json();
+
+      let backendOrders: DriverLoad[] = [];
+
+      if (response.ok && Array.isArray(data.orders)) {
+        backendOrders = data.orders.filter((order: any) => {
+          const status = String(
+            order.fulfillmentStatus || order.status || "NEW"
+          ).toUpperCase();
+
+          const assignedToMe = order.assignedDriverId === localDriverId;
+
+          const openForDriver =
+            !order.assignedDriverId &&
+            ["NEW", "OPEN", "AVAILABLE"].includes(status);
+
+          return assignedToMe || openForDriver;
+        });
       }
 
-      setCarrierId(localCarrierId);
-      setCarrierName(localCarrierName);
+      const mappedBackendOrders: DriverLoad[] = backendOrders.map((order: any) => ({
+        ...order,
+        status: order.fulfillmentStatus || order.status || "OPEN",
+        title: order.title || "Farm2Home Delivery Order",
+        commodity: order.commodity || "Farm2Home Groceries",
+        pickup_city:
+          order.pickup_city ||
+          order.pickupCity ||
+          order.deliveryInfo?.pickupCity ||
+          "Pickup",
+        pickup_state:
+          order.pickup_state ||
+          order.pickupState ||
+          order.deliveryInfo?.pickupState ||
+          "",
+        delivery_city:
+          order.delivery_city ||
+          order.deliveryCity ||
+          order.deliveryInfo?.city ||
+          "Delivery",
+        delivery_state:
+          order.delivery_state ||
+          order.deliveryState ||
+          order.deliveryInfo?.state ||
+          "",
+        rate: Number(order.deliveryFee || order.rate || order.tip || 0),
+      }));
 
-      const { data: carrierRecord } = await supabase
-        .from("freight_carriers")
-        .select("*")
-        .or(`id.eq.${localCarrierId},email.eq.${localCarrierId}`)
-        .maybeSingle();
+      let freightLoads: DriverLoad[] = [];
 
-      const cloudCarrierId = carrierRecord?.id || localCarrierId;
-
-      const { data, error } = await supabase
-        .from("freight_loads")
-        .select(
+      try {
+        const { data: cloudLoads } = await supabase
+          .from("freight_loads")
+          .select(
+            `
+            *,
+            farmers (
+              farm_name,
+              owner_name
+            )
           `
-          *,
-          farmers (
-            farm_name,
-            owner_name
           )
-        `
-        )
-        .or(`status.eq.OPEN,carrier_id.eq.${cloudCarrierId}`)
-        .order("created_at", { ascending: false });
+          .or(`status.eq.OPEN,status.eq.available,carrier_id.eq.${localDriverId}`)
+          .order("created_at", { ascending: false });
 
-      if (error) {
-        console.log("Driver loads error:", error.message);
-        setLoads([]);
-        return;
+        freightLoads = Array.isArray(cloudLoads)
+          ? (cloudLoads as DriverLoad[])
+          : [];
+      } catch (error) {
+        console.log("Supabase freight loads skipped:", error);
       }
 
-      const cleanLoads = (data || []) as DriverLoad[];
-      setLoads(cleanLoads);
+      const allLoads = [...mappedBackendOrders, ...freightLoads];
 
-      const activeStatuses = ["BOOKED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"];
+      setLoads(allLoads);
+
+      const activeStatuses = [
+        "ACCEPTED",
+        "BOOKED",
+        "PICKED_UP",
+        "IN_TRANSIT",
+      ];
 
       setStats({
-        activeLoads: cleanLoads.filter((item) =>
-          activeStatuses.includes(item.status || "")
+        activeLoads: allLoads.filter((item) =>
+          activeStatuses.includes(
+            String(item.status || item.fulfillmentStatus || "").toUpperCase()
+          )
         ).length,
-        completedLoads: cleanLoads.filter((item) => item.status === "DELIVERED")
-          .length,
-        openLoads: cleanLoads.filter((item) => item.status === "OPEN").length,
-        earnings: cleanLoads
-          .filter((item) => item.status === "DELIVERED")
-          .reduce((sum, item) => sum + Number(item.rate || 0), 0),
+        completedLoads: allLoads.filter(
+          (item) =>
+            String(item.status || item.fulfillmentStatus || "").toUpperCase() ===
+            "DELIVERED"
+        ).length,
+        openLoads: allLoads.filter((item) =>
+          ["OPEN", "NEW", "AVAILABLE"].includes(
+            String(item.status || item.fulfillmentStatus || "").toUpperCase()
+          )
+        ).length,
+        earnings: allLoads
+          .filter(
+            (item) =>
+              String(item.status || item.fulfillmentStatus || "").toUpperCase() ===
+              "DELIVERED"
+          )
+          .reduce((sum, item) => sum + Number(item.rate || item.total || 0), 0),
       });
     } catch (error) {
       console.log("Driver dashboard error:", error);
@@ -135,16 +228,6 @@ export default function MobileDriverApp() {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function getCloudCarrierId() {
-    const { data } = await supabase
-      .from("freight_carriers")
-      .select("id")
-      .or(`id.eq.${carrierId},email.eq.${carrierId}`)
-      .maybeSingle();
-
-    return data?.id || carrierId || null;
   }
 
   async function requestLocation() {
@@ -164,57 +247,105 @@ export default function MobileDriverApp() {
   }
 
   async function saveDriverGps(loadId: string, status: string) {
-    const location = await requestLocation();
+    try {
+      const location = await requestLocation();
 
-    if (!location) return;
+      if (!location) return;
 
-    const cloudCarrierId = await getCloudCarrierId();
+      const payload = {
+        load_id: loadId,
+        driver_id: driverId,
+        carrier_id: driverId,
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        speed: location.coords.speed || null,
+        status,
+        updated_at: new Date().toISOString(),
+      };
 
-    const { data: existing } = await supabase
-      .from("driver_locations")
-      .select("*")
-      .eq("load_id", loadId)
-      .maybeSingle();
+      const { data: existing } = await supabase
+        .from("driver_locations")
+        .select("*")
+        .eq("load_id", loadId)
+        .maybeSingle();
 
-    const payload = {
-      load_id: loadId,
-      carrier_id: cloudCarrierId,
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-      speed: location.coords.speed || null,
-      status,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (existing?.id) {
-      await supabase.from("driver_locations").update(payload).eq("id", existing.id);
-    } else {
-      await supabase.from("driver_locations").insert(payload);
+      if (existing?.id) {
+        await supabase
+          .from("driver_locations")
+          .update(payload)
+          .eq("id", existing.id);
+      } else {
+        await supabase.from("driver_locations").insert(payload);
+      }
+    } catch (error) {
+      console.log("Save driver GPS skipped:", error);
     }
   }
 
-  async function acceptLoad(loadId: string) {
+  async function acceptLoad(load: DriverLoad) {
     try {
       setLoading(true);
 
-      const cloudCarrierId = await getCloudCarrierId();
+      const currentDriver = await getCurrentDriver();
 
-      const { error } = await supabase
-        .from("freight_loads")
-        .update({
-          carrier_id: cloudCarrierId,
-          status: "BOOKED",
-        })
-        .eq("id", loadId);
+      const activeDriverId =
+        currentDriver?.id || driverId || currentDriver?.email || "";
 
-      if (error) {
-        Alert.alert("Accept Error", error.message);
+      const acceptedBy =
+        currentDriver?.fullName ||
+        currentDriver?.name ||
+        currentDriver?.username ||
+        "Farm2Home Driver";
+
+      if (!activeDriverId) {
+        Alert.alert("Driver Missing", "Please log in again.");
         return;
       }
 
-      await saveDriverGps(loadId, "READY");
+      const isBackendOrder =
+        Boolean(load.fulfillmentStatus) ||
+        Boolean(load.customerEmail) ||
+        Boolean(load.deliveryInfo) ||
+        load.id.startsWith("order_");
 
-      Alert.alert("Load Accepted", "This load is now assigned to you.");
+      if (isBackendOrder) {
+        const response = await fetch(`${API_BASE_URL}/orders/${load.id}/accept`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            driverId: activeDriverId,
+            acceptedBy,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          Alert.alert("Accept Error", data.error || "Unable to accept order.");
+          return;
+        }
+      } else {
+        const { error } = await supabase
+          .from("freight_loads")
+          .update({
+            carrier_id: activeDriverId,
+            driver_id: activeDriverId,
+            status: "BOOKED",
+            accepted_at: new Date().toISOString(),
+          })
+          .eq("id", load.id);
+
+        if (error) {
+          Alert.alert("Accept Error", error.message);
+          return;
+        }
+      }
+
+      await saveDriverGps(load.id, "READY");
+
+      Alert.alert("Accepted", "This delivery is now assigned to you.");
       await loadDriverDashboard();
     } catch (error: any) {
       Alert.alert("Accept Error", error.message || "Unable to accept load.");
@@ -224,26 +355,51 @@ export default function MobileDriverApp() {
   }
 
   async function updateLoadStatus(
-    loadId: string,
+    load: DriverLoad,
     loadStatus: string,
     gpsStatus: string
   ) {
     try {
       setLoading(true);
 
-      const { error } = await supabase
-        .from("freight_loads")
-        .update({ status: loadStatus })
-        .eq("id", loadId);
+      const isBackendOrder =
+        Boolean(load.fulfillmentStatus) ||
+        Boolean(load.customerEmail) ||
+        Boolean(load.deliveryInfo) ||
+        load.id.startsWith("order_");
 
-      if (error) {
-        Alert.alert("Update Error", error.message);
-        return;
+      if (isBackendOrder) {
+        const response = await fetch(`${API_BASE_URL}/orders/${load.id}/status`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            status: loadStatus,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          Alert.alert("Update Error", data.error || "Unable to update order.");
+          return;
+        }
+      } else {
+        const { error } = await supabase
+          .from("freight_loads")
+          .update({ status: loadStatus })
+          .eq("id", load.id);
+
+        if (error) {
+          Alert.alert("Update Error", error.message);
+          return;
+        }
       }
 
-      await saveDriverGps(loadId, gpsStatus);
+      await saveDriverGps(load.id, gpsStatus);
 
-      Alert.alert("Status Updated", `Load marked as ${loadStatus}.`);
+      Alert.alert("Status Updated", `Delivery marked as ${loadStatus}.`);
       await loadDriverDashboard();
     } catch (error: any) {
       Alert.alert("Update Error", error.message || "Unable to update load.");
@@ -252,9 +408,15 @@ export default function MobileDriverApp() {
     }
   }
 
+  function normalizeStatus(load: DriverLoad) {
+    return String(load.status || load.fulfillmentStatus || "OPEN").toUpperCase();
+  }
+
   function statusColor(status?: string) {
-    switch (status) {
+    switch (String(status || "").toUpperCase()) {
       case "OPEN":
+      case "NEW":
+      case "AVAILABLE":
         return "#2563EB";
       case "BOOKED":
       case "ACCEPTED":
@@ -273,24 +435,26 @@ export default function MobileDriverApp() {
   }
 
   function renderActions(load: DriverLoad) {
-    if (load.status === "OPEN") {
+    const status = normalizeStatus(load);
+
+    if (["OPEN", "NEW", "AVAILABLE"].includes(status)) {
       return (
         <TouchableOpacity
           style={styles.acceptButton}
-          onPress={() => acceptLoad(load.id)}
+          onPress={() => acceptLoad(load)}
         >
-          <Text style={styles.actionText}>Accept Load</Text>
+          <Text style={styles.actionText}>Accept Delivery</Text>
         </TouchableOpacity>
       );
     }
 
-    if (load.status === "BOOKED" || load.status === "ACCEPTED") {
+    if (status === "BOOKED" || status === "ACCEPTED") {
       return (
         <View style={styles.actionGrid}>
           <TouchableOpacity
             style={styles.blueButton}
             onPress={() =>
-              updateLoadStatus(load.id, "BOOKED", "EN_ROUTE_TO_PICKUP")
+              updateLoadStatus(load, "ACCEPTED", "EN_ROUTE_TO_PICKUP")
             }
           >
             <Text style={styles.actionText}>Start Pickup</Text>
@@ -299,7 +463,7 @@ export default function MobileDriverApp() {
           <TouchableOpacity
             style={styles.orangeButton}
             onPress={() =>
-              updateLoadStatus(load.id, "BOOKED", "ARRIVED_AT_PICKUP")
+              updateLoadStatus(load, "ACCEPTED", "ARRIVED_AT_PICKUP")
             }
           >
             <Text style={styles.actionText}>Arrived Pickup</Text>
@@ -307,7 +471,7 @@ export default function MobileDriverApp() {
 
           <TouchableOpacity
             style={styles.greenButton}
-            onPress={() => updateLoadStatus(load.id, "PICKED_UP", "PICKED_UP")}
+            onPress={() => updateLoadStatus(load, "PICKED_UP", "PICKED_UP")}
           >
             <Text style={styles.actionText}>Picked Up</Text>
           </TouchableOpacity>
@@ -315,13 +479,13 @@ export default function MobileDriverApp() {
       );
     }
 
-    if (load.status === "PICKED_UP") {
+    if (status === "PICKED_UP") {
       return (
         <View style={styles.actionGrid}>
           <TouchableOpacity
             style={styles.blueButton}
             onPress={() =>
-              updateLoadStatus(load.id, "IN_TRANSIT", "EN_ROUTE_TO_DROPOFF")
+              updateLoadStatus(load, "IN_TRANSIT", "EN_ROUTE_TO_DROPOFF")
             }
           >
             <Text style={styles.actionText}>Start Delivery</Text>
@@ -332,7 +496,7 @@ export default function MobileDriverApp() {
             onPress={() =>
               router.push({
                 pathname: "/freight/navigation-assistant",
-              })
+              } as any)
             }
           >
             <Text style={styles.actionText}>Navigation</Text>
@@ -341,13 +505,13 @@ export default function MobileDriverApp() {
       );
     }
 
-    if (load.status === "IN_TRANSIT") {
+    if (status === "IN_TRANSIT") {
       return (
         <View style={styles.actionGrid}>
           <TouchableOpacity
             style={styles.orangeButton}
             onPress={() =>
-              updateLoadStatus(load.id, "IN_TRANSIT", "ARRIVED_AT_DROPOFF")
+              updateLoadStatus(load, "IN_TRANSIT", "ARRIVED_AT_DROPOFF")
             }
           >
             <Text style={styles.actionText}>Arrived Dropoff</Text>
@@ -355,7 +519,7 @@ export default function MobileDriverApp() {
 
           <TouchableOpacity
             style={styles.greenButton}
-            onPress={() => updateLoadStatus(load.id, "DELIVERED", "DELIVERED")}
+            onPress={() => updateLoadStatus(load, "DELIVERED", "DELIVERED")}
           >
             <Text style={styles.actionText}>Delivered</Text>
           </TouchableOpacity>
@@ -366,7 +530,7 @@ export default function MobileDriverApp() {
               router.push({
                 pathname: "/driver/proof-of-delivery",
                 params: { loadId: load.id },
-              })
+              } as any)
             }
           >
             <Text style={styles.actionText}>Proof</Text>
@@ -375,7 +539,7 @@ export default function MobileDriverApp() {
       );
     }
 
-    if (load.status === "DELIVERED") {
+    if (status === "DELIVERED") {
       return (
         <View style={styles.completedBadge}>
           <Text style={styles.completedText}>Completed</Text>
@@ -393,7 +557,7 @@ export default function MobileDriverApp() {
           <Text style={styles.eyebrow}>Farm2Home Driver</Text>
           <Text style={styles.title}>Mobile Driver App</Text>
           <Text style={styles.subtitle}>
-            Accept loads, update GPS, manage pickups, complete deliveries, and
+            Accept orders, update GPS, manage pickups, complete deliveries, and
             track your driver earnings.
           </Text>
         </View>
@@ -401,16 +565,16 @@ export default function MobileDriverApp() {
         <View style={styles.navRow}>
           <TouchableOpacity
             style={styles.navButton}
-            onPress={() => router.push("/freight/board")}
+            onPress={() => router.push("/freight/board" as any)}
           >
             <Text style={styles.navText}>Load Board</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.navButtonOutline}
-            onPress={() => router.push("/freight/navigation-assistant")}
+            onPress={() => router.push("/driver/profile" as any)}
           >
-            <Text style={styles.navTextOutline}>Navigation</Text>
+            <Text style={styles.navTextOutline}>Profile</Text>
           </TouchableOpacity>
         </View>
 
@@ -422,9 +586,9 @@ export default function MobileDriverApp() {
         ) : (
           <ScrollView showsVerticalScrollIndicator={false}>
             <View style={styles.driverCard}>
-              <Text style={styles.driverName}>🚚 {carrierName}</Text>
+              <Text style={styles.driverName}>🚚 {driverName}</Text>
               <Text style={styles.driverMeta}>
-                Manage active Farm2Home loads and delivery workflow.
+                Manage active Farm2Home orders and delivery workflow.
               </Text>
             </View>
 
@@ -446,15 +610,20 @@ export default function MobileDriverApp() {
             </View>
 
             <View style={styles.earningsCard}>
-              <Text style={styles.earningsLabel}>Completed Load Earnings</Text>
-              <Text style={styles.earningsValue}>${stats.earnings.toFixed(2)}</Text>
+              <Text style={styles.earningsLabel}>Completed Delivery Earnings</Text>
+              <Text style={styles.earningsValue}>
+                ${stats.earnings.toFixed(2)}
+              </Text>
             </View>
 
-            <TouchableOpacity style={styles.refreshButton} onPress={loadDriverDashboard}>
-              <Text style={styles.refreshText}>Refresh Loads</Text>
+            <TouchableOpacity
+              style={styles.refreshButton}
+              onPress={loadDriverDashboard}
+            >
+              <Text style={styles.refreshText}>Refresh Deliveries</Text>
             </TouchableOpacity>
 
-            <Text style={styles.sectionTitle}>Driver Loads</Text>
+            <Text style={styles.sectionTitle}>Available & Assigned Deliveries</Text>
 
             <FlatList
               data={loads}
@@ -463,73 +632,69 @@ export default function MobileDriverApp() {
               contentContainerStyle={{ paddingBottom: 100 }}
               ListEmptyComponent={
                 <View style={styles.emptyCard}>
-                  <Text style={styles.emptyTitle}>No loads available.</Text>
+                  <Text style={styles.emptyTitle}>No deliveries available.</Text>
                   <Text style={styles.emptyText}>
-                    Open and assigned loads will appear here.
+                    Available and assigned deliveries will appear here.
                   </Text>
                 </View>
               }
-              renderItem={({ item }) => (
-                <View style={styles.loadCard}>
-                  <View style={styles.loadHeader}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.loadTitle}>
-                        {item.title || "Farm2Home Load"}
+              renderItem={({ item }) => {
+                const status = normalizeStatus(item);
+
+                return (
+                  <View style={styles.loadCard}>
+                    <View style={styles.loadHeader}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.loadTitle}>
+                          {item.title || "Farm2Home Delivery"}
+                        </Text>
+                        <Text style={styles.commodity}>
+                          {item.commodity || "Farm Goods"}
+                        </Text>
+                      </View>
+
+                      <View
+                        style={[
+                          styles.statusBadge,
+                          { backgroundColor: statusColor(status) },
+                        ]}
+                      >
+                        <Text style={styles.statusText}>{status}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.routeBox}>
+                      <Text style={styles.routeText}>
+                        📍{" "}
+                        {item.pickup_city || item.pickupAddress || "Pickup"}{" "}
+                        {item.pickup_state || ""}
                       </Text>
-                      <Text style={styles.commodity}>
-                        {item.commodity || "Farm Goods"}
+
+                      <Text style={styles.arrow}>→</Text>
+
+                      <Text style={styles.routeText}>
+                        🏁{" "}
+                        {item.delivery_city ||
+                          item.dropoffAddress ||
+                          item.deliveryInfo?.address ||
+                          "Delivery"}{" "}
+                        {item.delivery_state || ""}
                       </Text>
                     </View>
 
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        { backgroundColor: statusColor(item.status) },
-                      ]}
-                    >
-                      <Text style={styles.statusText}>{item.status || "OPEN"}</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.routeBox}>
-                    <Text style={styles.routeText}>
-                      📍 {item.pickup_city || "Pickup"}, {item.pickup_state || ""}
+                    <Text style={styles.metaText}>
+                      Farm: {item.farmers?.farm_name || "Farm2Home Farmer"}
                     </Text>
 
-                    <Text style={styles.arrow}>→</Text>
-
-                    <Text style={styles.routeText}>
-                      🏁 {item.delivery_city || "Delivery"},{" "}
-                      {item.delivery_state || ""}
+                    <Text style={styles.metaText}>
+                      Rate: $
+                      {Number(item.rate || item.deliveryFee || 0).toFixed(2)}
                     </Text>
+
+                    <View style={styles.loadActions}>{renderActions(item)}</View>
                   </View>
-
-                  <Text style={styles.metaText}>
-                    Farm: {item.farmers?.farm_name || "Farm2Home Farmer"}
-                  </Text>
-
-                  <Text style={styles.metaText}>
-                    Rate: ${Number(item.rate || 0).toFixed(2)}
-                  </Text>
-
-                  <View style={styles.loadActions}>{renderActions(item)}</View>
-
-                  <TouchableOpacity
-                    style={styles.chatButton}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/chat/chat-center",
-                        params: {
-                          conversationId: `load_${item.id}`,
-                          loadId: item.id,
-                        },
-                      })
-                    }
-                  >
-                    <Text style={styles.chatText}>Open Load Chat</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+                );
+              }}
             />
           </ScrollView>
         )}
@@ -539,37 +704,22 @@ export default function MobileDriverApp() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
+  container: { flex: 1, backgroundColor: freightTheme.colors.background },
   hero: {
     backgroundColor: "#111827",
     paddingTop: 62,
     paddingHorizontal: 20,
     paddingBottom: 26,
   },
-  eyebrow: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginBottom: 8,
-  },
+  eyebrow: { color: "#10B981", fontWeight: "900", marginBottom: 8 },
   title: {
     color: "#FFFFFF",
     fontSize: 34,
     fontWeight: "900",
     marginBottom: 10,
   },
-  subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 23,
-    fontSize: 15,
-  },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  subtitle: { color: "#D1D5DB", lineHeight: 23, fontSize: 15 },
+  navRow: { flexDirection: "row", gap: 10, padding: 18 },
   navButton: {
     flex: 1,
     backgroundColor: freightTheme.colors.primary,
@@ -586,14 +736,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
   },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
+  navText: { color: "#FFFFFF", fontWeight: "900" },
+  navTextOutline: { color: freightTheme.colors.primary, fontWeight: "900" },
   loadingCard: {
     backgroundColor: freightTheme.colors.card,
     margin: 18,
@@ -660,16 +804,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 18,
   },
-  earningsLabel: {
-    color: "#BBF7D0",
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  earningsValue: {
-    color: "#FFFFFF",
-    fontSize: 30,
-    fontWeight: "900",
-  },
+  earningsLabel: { color: "#BBF7D0", fontWeight: "900", marginBottom: 6 },
+  earningsValue: { color: "#FFFFFF", fontSize: 30, fontWeight: "900" },
   refreshButton: {
     backgroundColor: "#334155",
     marginHorizontal: 18,
@@ -678,10 +814,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 18,
   },
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  refreshText: { color: "#FFFFFF", fontWeight: "900" },
   sectionTitle: {
     color: freightTheme.colors.text,
     fontSize: 24,
@@ -738,11 +871,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 999,
   },
-  statusText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 11,
-  },
+  statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 11 },
   routeBox: {
     backgroundColor: freightTheme.colors.surface,
     padding: 14,
@@ -766,14 +895,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     lineHeight: 21,
   },
-  loadActions: {
-    marginTop: 10,
-  },
-  actionGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
+  loadActions: { marginTop: 10 },
+  actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   acceptButton: {
     backgroundColor: freightTheme.colors.primary,
     paddingHorizontal: 18,
@@ -811,29 +934,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
   },
-  actionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  actionText: { color: "#FFFFFF", fontWeight: "900" },
   completedBadge: {
     backgroundColor: "#10B981",
     padding: 13,
     borderRadius: 14,
     alignItems: "center",
   },
-  completedText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  chatButton: {
-    backgroundColor: "#111827",
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  chatText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  completedText: { color: "#FFFFFF", fontWeight: "900" },
 });

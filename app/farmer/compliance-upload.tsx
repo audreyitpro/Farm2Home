@@ -1404,7 +1404,7 @@ export default function FarmerComplianceUploadScreen() {
         businessName,
         farmName: businessName,
         ownerName,
-        email: farmerEmail,
+        email: farmerEmail.trim().toLowerCase(),
         username,
         password,
         securityQuestion1,
@@ -1457,18 +1457,18 @@ export default function FarmerComplianceUploadScreen() {
       await syncCurrentFarmer(activeFarmerId);
 
       Alert.alert(
-        "Submitted for Admin Review",
-        "Your farmer application has been sent to compliance review. You can log in, but your account will remain awaiting approval until admin review is complete.",
+        "Application Under Review",
+        "Your Farm2Home farmer application has been submitted. Your application is under review. Once approved, your farmer store will be unlocked and your $14.99 monthly membership will start.",
         [
           {
             text: "OK",
             onPress: () =>
               router.replace({
-                pathname: "/farmer/login",
+                pathname: "/farmer/awaiting-approval",
                 params: {
                   farmerId: activeFarmerId,
-                  email: farmerEmail.trim(),
-                  status: "awaiting_approval",
+                  email: farmerEmail.trim().toLowerCase(),
+                  businessName: businessName.trim(),
                 },
               } as any),
           },
@@ -1703,7 +1703,7 @@ export default function FarmerComplianceUploadScreen() {
     },
     {
       label: "Monthly membership starts after approval",
-      done: false,
+      done: true,
     },
     {
       label: "Application fee paid - $29.99",
@@ -1965,7 +1965,7 @@ export default function FarmerComplianceUploadScreen() {
         <Text style={styles.verifyButtonText}>
           {loading
             ? "Submitting for Admin Review..."
-            : "Submit Compliance for Admin Review"}
+            : "Complete Compliance Review"}
         </Text>
       </Pressable>
 

@@ -18,6 +18,9 @@ import { supabase } from "../services/supabaseClient";
 type DriverLocation = {
   id?: string;
   load_id: string;
+  driver_id?: string | null;
+  carrier_id?: string | null;
+  driver_name?: string | null;
   latitude: number;
   longitude: number;
   speed?: number | null;
@@ -33,6 +36,9 @@ const ACTIVE_STATUSES = [
   "picked_up",
   "in_transit",
   "arrived_dropoff",
+  "ACCEPTED",
+  "PICKED_UP",
+  "IN_TRANSIT",
 ];
 
 export default function AdminFleetMap() {
@@ -57,7 +63,7 @@ export default function AdminFleetMap() {
             schema: "public",
             table: "driver_locations",
           },
-          () => loadFleetMap()
+          () => loadFleetMap(false)
         )
         .subscribe();
 
@@ -67,9 +73,9 @@ export default function AdminFleetMap() {
     }, [])
   );
 
-  async function loadFleetMap() {
+  async function loadFleetMap(showLoader = true) {
     try {
-      setLoading(true);
+      if (showLoader) setLoading(true);
 
       const { data, error } = await supabase
         .from("driver_locations")
@@ -106,17 +112,6 @@ export default function AdminFleetMap() {
       if (!selectedDriver && cleanDrivers.length > 0) {
         setSelectedDriver(cleanDrivers[0]);
       }
-
-      if (
-        selectedDriver &&
-        !cleanDrivers.find(
-          (item) =>
-            item.load_id === selectedDriver.load_id &&
-            item.updated_at === selectedDriver.updated_at
-        )
-      ) {
-        setSelectedDriver(cleanDrivers[0] || null);
-      }
     } catch (error) {
       console.log("FLEET_MAP_ERROR:", error);
       Alert.alert("Fleet Error", "Unable to load fleet map.");
@@ -128,14 +123,17 @@ export default function AdminFleetMap() {
 
   function onRefresh() {
     setRefreshing(true);
-    loadFleetMap();
+    loadFleetMap(false);
   }
 
   function statusColor(status?: string | null) {
-    switch (status) {
+    switch (String(status || "").toLowerCase()) {
       case "available":
+      case "new":
+      case "open":
         return "#2563EB";
       case "accepted":
+      case "booked":
         return "#7C3AED";
       case "arrived_pickup":
         return "#0891B2";
@@ -178,14 +176,22 @@ export default function AdminFleetMap() {
   );
 
   const deliveredDrivers = useMemo(
-    () => drivers.filter((item) => item.status === "delivered"),
+    () =>
+      drivers.filter(
+        (item) => String(item.status || "").toLowerCase() === "delivered"
+      ),
     [drivers]
   );
 
   const staleDrivers = useMemo(
     () =>
       drivers.filter((driver) => {
-        if (!driver.updated_at || driver.status === "delivered") return false;
+        if (
+          !driver.updated_at ||
+          String(driver.status || "").toLowerCase() === "delivered"
+        ) {
+          return false;
+        }
 
         const minutes =
           (Date.now() - new Date(driver.updated_at).getTime()) / 1000 / 60;
@@ -273,11 +279,7 @@ export default function AdminFleetMap() {
   }
 
   if (loading && drivers.length === 0) {
-    return (
-      <View style={styles.container}>
-        {renderWebSafeMap()}
-      </View>
-    );
+    return <View style={styles.container}>{renderWebSafeMap()}</View>;
   }
 
   return (
@@ -317,7 +319,7 @@ export default function AdminFleetMap() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.refreshButton} onPress={loadFleetMap}>
+        <TouchableOpacity style={styles.refreshButton} onPress={() => loadFleetMap()}>
           <Text style={styles.refreshText}>Refresh Fleet GPS</Text>
         </TouchableOpacity>
 
@@ -345,6 +347,10 @@ export default function AdminFleetMap() {
                 </Text>
               </View>
             </View>
+
+            <Text style={styles.metaText}>
+              Driver: {selectedDriver.driver_name || selectedDriver.driver_id || "Unknown"}
+            </Text>
 
             <Text style={styles.metaText}>
               Load: #{selectedDriver.load_id?.slice(-6)}
@@ -382,10 +388,13 @@ export default function AdminFleetMap() {
               <TouchableOpacity
                 style={styles.chatButton}
                 onPress={() =>
-                  Alert.alert(
-                    "Driver Chat",
-                    "Chat screen can be connected after chat-center is ready."
-                  )
+                  router.push({
+                    pathname: "/chat/chat-center" as any,
+                    params: {
+                      conversationId: `load_${selectedDriver.load_id}`,
+                      loadId: selectedDriver.load_id,
+                    },
+                  })
                 }
               >
                 <Text style={styles.chatText}>Driver Chat</Text>
@@ -450,7 +459,9 @@ export default function AdminFleetMap() {
               >
                 <View style={styles.driverHeader}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.driverName}>Driver GPS</Text>
+                    <Text style={styles.driverName}>
+                      {item.driver_name || "Driver GPS"}
+                    </Text>
 
                     <Text style={styles.driverSub}>
                       Load #{item.load_id?.slice(-6)}
@@ -482,12 +493,7 @@ export default function AdminFleetMap() {
                     : "Not available"}
                 </Text>
 
-                <Text
-                  style={[
-                    styles.freshnessText,
-                    stale && styles.staleText,
-                  ]}
-                >
+                <Text style={[styles.freshnessText, stale && styles.staleText]}>
                   Signal: {getFreshness(item)}
                 </Text>
               </TouchableOpacity>
@@ -502,10 +508,7 @@ export default function AdminFleetMap() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-  },
+  container: { flex: 1, backgroundColor: "#F3F4F6" },
   mapFallback: {
     height: "38%",
     backgroundColor: "#DDEFE4",
@@ -513,10 +516,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  mapIcon: {
-    fontSize: 58,
-    marginBottom: 12,
-  },
+  mapIcon: { fontSize: 58, marginBottom: 12 },
   mapTitle: {
     color: "#111827",
     fontSize: 28,
@@ -531,11 +531,7 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     maxWidth: 520,
   },
-  centerText: {
-    color: "#064E3B",
-    fontWeight: "900",
-    marginTop: 10,
-  },
+  centerText: { color: "#064E3B", fontWeight: "900", marginTop: 10 },
   mapStatsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -553,26 +549,15 @@ const styles = StyleSheet.create({
     borderColor: "#E5E7EB",
     minWidth: 76,
   },
-  mapStatValue: {
-    color: "#111827",
-    fontSize: 22,
-    fontWeight: "900",
-  },
+  mapStatValue: { color: "#111827", fontSize: 22, fontWeight: "900" },
   mapStatLabel: {
     color: "#6B7280",
     fontWeight: "800",
     marginTop: 3,
     fontSize: 12,
   },
-  loadingBox: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadingText: {
-    color: "#374151",
-    fontWeight: "800",
-    marginTop: 10,
-  },
+  loadingBox: { alignItems: "center", justifyContent: "center" },
+  loadingText: { color: "#374151", fontWeight: "800", marginTop: 10 },
   panel: {
     flex: 1,
     backgroundColor: "#F3F4F6",
@@ -580,15 +565,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     marginTop: -28,
   },
-  panelInner: {
-    padding: 18,
-    paddingBottom: 80,
-  },
-  eyebrow: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginBottom: 5,
-  },
+  panelInner: { padding: 18, paddingBottom: 80 },
+  eyebrow: { color: "#10B981", fontWeight: "900", marginBottom: 5 },
   title: {
     color: "#111827",
     fontSize: 31,
@@ -601,11 +579,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginBottom: 14,
   },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 12,
-  },
+  navRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
   navButton: {
     flex: 1,
     backgroundColor: "#10B981",
@@ -622,14 +596,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
   },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: "#10B981",
-    fontWeight: "900",
-  },
+  navText: { color: "#FFFFFF", fontWeight: "900" },
+  navTextOutline: { color: "#10B981", fontWeight: "900" },
   refreshButton: {
     backgroundColor: "#111827",
     padding: 15,
@@ -637,10 +605,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 14,
   },
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  refreshText: { color: "#FFFFFF", fontWeight: "900" },
   selectedCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
@@ -661,10 +626,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginBottom: 4,
   },
-  selectedSub: {
-    color: "#10B981",
-    fontWeight: "900",
-  },
+  selectedSub: { color: "#10B981", fontWeight: "900" },
   statusBadge: {
     alignSelf: "flex-start",
     paddingHorizontal: 12,
@@ -683,11 +645,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     lineHeight: 21,
   },
-  selectedActions: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 10,
-  },
+  selectedActions: { flexDirection: "row", gap: 10, marginTop: 10 },
   chatButton: {
     flex: 1,
     backgroundColor: "#10B981",
@@ -695,10 +653,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
   },
-  chatText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  chatText: { color: "#FFFFFF", fontWeight: "900" },
   trackButton: {
     flex: 1,
     backgroundColor: "#111827",
@@ -706,10 +661,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
   },
-  trackText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  trackText: { color: "#FFFFFF", fontWeight: "900" },
   sectionTitle: {
     color: "#111827",
     fontSize: 22,
@@ -729,11 +681,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     marginBottom: 6,
   },
-  emptyText: {
-    color: "#6B7280",
-    fontWeight: "700",
-    lineHeight: 21,
-  },
+  emptyText: { color: "#6B7280", fontWeight: "700", lineHeight: 21 },
   driverCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 18,
@@ -742,48 +690,23 @@ const styles = StyleSheet.create({
     borderColor: "#E5E7EB",
     marginBottom: 12,
   },
-  driverCardActive: {
-    borderColor: "#10B981",
-    borderWidth: 2,
-  },
+  driverCardActive: { borderColor: "#10B981", borderWidth: 2 },
   driverHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 10,
     marginBottom: 8,
   },
-  driverName: {
-    color: "#111827",
-    fontSize: 17,
-    fontWeight: "900",
-  },
-  driverSub: {
-    color: "#6B7280",
-    fontWeight: "700",
-    marginTop: 4,
-  },
-  smallStatus: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
+  driverName: { color: "#111827", fontSize: 17, fontWeight: "900" },
+  driverSub: { color: "#6B7280", fontWeight: "700", marginTop: 4 },
+  smallStatus: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
   smallStatusText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 10,
     textTransform: "capitalize",
   },
-  driverMeta: {
-    color: "#374151",
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  freshnessText: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginTop: 5,
-  },
-  staleText: {
-    color: "#DC2626",
-  },
+  driverMeta: { color: "#374151", fontWeight: "700", marginBottom: 4 },
+  freshnessText: { color: "#10B981", fontWeight: "900", marginTop: 5 },
+  staleText: { color: "#DC2626" },
 });

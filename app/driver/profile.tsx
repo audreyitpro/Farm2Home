@@ -15,20 +15,18 @@ import { router, useFocusEffect } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
 
-export default function FreightProfile() {
-  const [carrier, setCarrier] = useState<any>(null);
-  const [allCarriers, setAllCarriers] = useState<any[]>([]);
+export default function DriverProfile() {
+  const [driver, setDriver] = useState<any>(null);
+  const [allDrivers, setAllDrivers] = useState<any[]>([]);
 
-  const [companyName, setCompanyName] = useState("");
-  const [contactName, setContactName] = useState("");
+  const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
 
-  const [mdotNumber, setMdotNumber] = useState("");
-  const [mcNumber, setMcNumber] = useState("");
-  const [insuranceProvider, setInsuranceProvider] = useState("");
-  const [insurancePolicyNumber, setInsurancePolicyNumber] = useState("");
+  const [vehicleType, setVehicleType] = useState("");
+  const [licenseNumber, setLicenseNumber] = useState("");
+  const [serviceArea, setServiceArea] = useState("");
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -36,84 +34,75 @@ export default function FreightProfile() {
 
   useFocusEffect(
     useCallback(() => {
-      loadCarrier();
+      loadDriver();
     }, [])
   );
 
-  async function loadCarrier() {
+  async function loadDriver() {
     try {
       const raw =
-        (await AsyncStorage.getItem("currentFreightCarrier")) ||
+        (await AsyncStorage.getItem("currentDriver")) ||
         (await AsyncStorage.getItem("currentUser"));
 
-      const savedCarriers = await AsyncStorage.getItem("farm2homeFreightCarriers");
-      const carriers = savedCarriers ? JSON.parse(savedCarriers) : [];
-      const safeCarriers = Array.isArray(carriers) ? carriers : [];
+      const savedDrivers = await AsyncStorage.getItem("farm2homeDrivers");
+      const drivers = savedDrivers ? JSON.parse(savedDrivers) : [];
+      const safeDrivers = Array.isArray(drivers) ? drivers : [];
 
-      setAllCarriers(safeCarriers);
+      setAllDrivers(safeDrivers);
 
-      if (!raw && safeCarriers.length === 0) {
-        router.replace("/freight/login" as never);
+      if (!raw && safeDrivers.length === 0) {
+        router.replace("/driver/login" as never);
         return;
       }
 
-      let current = raw ? JSON.parse(raw) : safeCarriers[safeCarriers.length - 1];
+      const current = raw ? JSON.parse(raw) : safeDrivers[safeDrivers.length - 1];
 
       if (!current) {
-        router.replace("/freight/login" as never);
+        router.replace("/driver/login" as never);
         return;
       }
 
-      setCarrier(current);
-      setCompanyName(current.companyName || "");
-      setContactName(current.contactName || "");
+      setDriver(current);
+      setFullName(current.fullName || current.name || "");
       setUsername(current.username || "");
       setEmail(current.email || "");
       setPhone(current.phone || "");
-      setMdotNumber(current.mdotNumber || "");
-      setMcNumber(current.mcNumber || "");
-      setInsuranceProvider(current.insuranceProvider || "");
-      setInsurancePolicyNumber(current.insurancePolicyNumber || "");
+      setVehicleType(current.vehicleType || "");
+      setLicenseNumber(current.licenseNumber || "");
+      setServiceArea(current.serviceArea || "");
     } catch (error) {
-      console.log("Load freight profile error:", error);
-      Alert.alert("Profile Error", "Unable to load freight profile.");
+      console.log("Load driver profile error:", error);
+      Alert.alert("Profile Error", "Unable to load driver profile.");
+      router.replace("/driver/login" as never);
     }
   }
 
-  async function persistCarrier(updatedCarrier: any) {
-    const existing = allCarriers.length > 0 ? allCarriers : [];
-    const exists = existing.some((item) => item.id === updatedCarrier.id);
+  async function persistDriver(updatedDriver: any) {
+    const existing = allDrivers.length > 0 ? allDrivers : [];
+    const exists = existing.some((item) => item.id === updatedDriver.id);
 
-    const updatedCarriers = exists
-      ? existing.map((item) => (item.id === updatedCarrier.id ? updatedCarrier : item))
-      : [...existing, updatedCarrier];
+    const updatedDrivers = exists
+      ? existing.map((item) => (item.id === updatedDriver.id ? updatedDriver : item))
+      : [...existing, updatedDriver];
 
-    await AsyncStorage.setItem(
-      "farm2homeFreightCarriers",
-      JSON.stringify(updatedCarriers)
-    );
+    await AsyncStorage.setItem("farm2homeDrivers", JSON.stringify(updatedDrivers));
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(updatedDriver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(updatedDriver));
+    await AsyncStorage.setItem("userRole", "driver");
+    await AsyncStorage.setItem("currentUserRole", "driver");
 
-    await AsyncStorage.setItem(
-      "currentFreightCarrier",
-      JSON.stringify(updatedCarrier)
-    );
-
-    await AsyncStorage.setItem("currentUser", JSON.stringify(updatedCarrier));
-    await AsyncStorage.setItem("userRole", "freight");
-    await AsyncStorage.setItem("currentUserRole", "freight");
-
-    setCarrier(updatedCarrier);
-    setAllCarriers(updatedCarriers);
+    setDriver(updatedDriver);
+    setAllDrivers(updatedDrivers);
   }
 
   async function saveProfile() {
-    if (!carrier) {
-      Alert.alert("No Profile", "No freight profile was found.");
+    if (!driver) {
+      Alert.alert("No Driver", "No driver profile was found.");
       return;
     }
 
-    if (!companyName.trim()) {
-      Alert.alert("Company Required", "Please enter your company name.");
+    if (!fullName.trim()) {
+      Alert.alert("Name Required", "Please enter your full name.");
       return;
     }
 
@@ -122,33 +111,32 @@ export default function FreightProfile() {
       return;
     }
 
-    const updatedCarrier = {
-      ...carrier,
-      companyName: companyName.trim(),
-      contactName: contactName.trim(),
+    const updatedDriver = {
+      ...driver,
+      fullName: fullName.trim(),
+      name: fullName.trim(),
       username: username.trim(),
       email: email.trim(),
       phone: phone.trim(),
-      mdotNumber: mdotNumber.trim(),
-      mcNumber: mcNumber.trim(),
-      insuranceProvider: insuranceProvider.trim(),
-      insurancePolicyNumber: insurancePolicyNumber.trim(),
+      vehicleType: vehicleType.trim(),
+      licenseNumber: licenseNumber.trim(),
+      serviceArea: serviceArea.trim(),
       updatedAt: new Date().toISOString(),
     };
 
-    await persistCarrier(updatedCarrier);
-    Alert.alert("Saved", "Freight profile updated.");
+    await persistDriver(updatedDriver);
+    Alert.alert("Saved", "Driver profile updated.");
   }
 
   async function changePassword() {
-    if (!carrier) return;
+    if (!driver) return;
 
     if (!currentPassword.trim()) {
       Alert.alert("Current Password Required", "Enter your current password.");
       return;
     }
 
-    if (carrier.password && currentPassword !== carrier.password) {
+    if (driver.password && currentPassword !== driver.password) {
       Alert.alert("Incorrect Password", "Your current password is incorrect.");
       return;
     }
@@ -168,13 +156,13 @@ export default function FreightProfile() {
       return;
     }
 
-    const updatedCarrier = {
-      ...carrier,
+    const updatedDriver = {
+      ...driver,
       password: newPassword,
       updatedAt: new Date().toISOString(),
     };
 
-    await persistCarrier(updatedCarrier);
+    await persistDriver(updatedDriver);
 
     setCurrentPassword("");
     setNewPassword("");
@@ -196,14 +184,14 @@ export default function FreightProfile() {
 
   async function manageSubscription() {
     const stripeCustomerId =
-      carrier?.stripeCustomerId ||
-      carrier?.customerId ||
-      carrier?.freightStripeCustomerId;
+      driver?.stripeCustomerId ||
+      driver?.customerId ||
+      driver?.driverStripeCustomerId;
 
     if (!stripeCustomerId) {
       Alert.alert(
         "Missing Stripe Customer",
-        "No Stripe customer ID was found for this freight account."
+        "No Stripe customer ID was found for this driver account."
       );
       return;
     }
@@ -218,7 +206,7 @@ export default function FreightProfile() {
           },
           body: JSON.stringify({
             customerId: stripeCustomerId,
-            returnUrl: "farm2home://freight/profile",
+            returnUrl: "farm2home://driver/profile",
           }),
         }
       );
@@ -244,21 +232,21 @@ export default function FreightProfile() {
 
   async function cancelSubscription() {
     const subscriptionId =
-      carrier?.stripeSubscriptionId ||
-      carrier?.subscriptionId ||
-      carrier?.freightSubscriptionId;
+      driver?.stripeSubscriptionId ||
+      driver?.subscriptionId ||
+      driver?.driverSubscriptionId;
 
     if (!subscriptionId) {
       Alert.alert(
         "No Subscription",
-        "No active freight subscription ID was found."
+        "No active driver subscription ID was found."
       );
       return;
     }
 
     Alert.alert(
       "Cancel Subscription",
-      "Are you sure you want to cancel your freight membership?",
+      "Are you sure you want to cancel your driver board membership?",
       [
         { text: "No", style: "cancel" },
         {
@@ -275,8 +263,8 @@ export default function FreightProfile() {
                   },
                   body: JSON.stringify({
                     subscriptionId,
-                    carrierId: carrier?.id,
-                    role: "freight",
+                    driverId: driver?.id,
+                    role: "driver",
                   }),
                 }
               );
@@ -288,17 +276,17 @@ export default function FreightProfile() {
                 return;
               }
 
-              const updatedCarrier = {
-                ...carrier,
+              const updatedDriver = {
+                ...driver,
                 membershipStatus: "Canceled",
                 subscriptionStatus: "canceled",
                 accountActive: false,
                 updatedAt: new Date().toISOString(),
               };
 
-              await persistCarrier(updatedCarrier);
+              await persistDriver(updatedDriver);
 
-              Alert.alert("Canceled", "Freight subscription was canceled.");
+              Alert.alert("Canceled", "Driver subscription was canceled.");
             } catch (error: any) {
               Alert.alert(
                 "Cancel Error",
@@ -312,25 +300,25 @@ export default function FreightProfile() {
   }
 
   async function logout() {
-    await AsyncStorage.removeItem("currentFreightCarrier");
+    await AsyncStorage.removeItem("currentDriver");
     await AsyncStorage.removeItem("currentUser");
     await AsyncStorage.removeItem("userRole");
     await AsyncStorage.removeItem("currentUserRole");
 
-    router.replace("/freight/login" as never);
+    router.replace("/driver/login" as never);
   }
 
-  if (!carrier) {
+  if (!driver) {
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Freight Carrier Profile</Text>
-        <Text style={styles.subheader}>No freight carrier profile found.</Text>
+        <Text style={styles.title}>Driver Profile</Text>
+        <Text style={styles.subheader}>No driver profile found.</Text>
 
         <TouchableOpacity
           style={styles.greenButton}
-          onPress={() => router.replace("/freight/login" as never)}
+          onPress={() => router.replace("/driver/login" as never)}
         >
-          <Text style={styles.buttonText}>Go to Freight Login</Text>
+          <Text style={styles.buttonText}>Go to Driver Login</Text>
         </TouchableOpacity>
       </ScrollView>
     );
@@ -338,22 +326,28 @@ export default function FreightProfile() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Freight Carrier Profile</Text>
+      <Text style={styles.title}>Driver Profile</Text>
 
       <View style={styles.statusCard}>
-        <Text style={styles.statusTitle}>Membership Status</Text>
+        <Text style={styles.statusTitle}>Driver Board Membership</Text>
         <Text style={styles.statusValue}>
-          {carrier.membershipStatus || carrier.subscriptionStatus || "Active"}
+          {driver.membershipStatus || driver.subscriptionStatus || "Active"}
         </Text>
-
         <Text style={styles.statusSmall}>
-          Freight subscription gives access to the freight board, available
-          loads, and carrier tools.
+          Driver board membership gives access to available local delivery orders.
         </Text>
       </View>
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Profile Information</Text>
+
+        <Text style={styles.label}>Full Name</Text>
+        <TextInput
+          style={styles.input}
+          value={fullName}
+          onChangeText={setFullName}
+          placeholder="Full name"
+        />
 
         <Text style={styles.label}>Username</Text>
         <TextInput
@@ -362,22 +356,6 @@ export default function FreightProfile() {
           onChangeText={setUsername}
           placeholder="Username"
           autoCapitalize="none"
-        />
-
-        <Text style={styles.label}>Company Name</Text>
-        <TextInput
-          style={styles.input}
-          value={companyName}
-          onChangeText={setCompanyName}
-          placeholder="Company name"
-        />
-
-        <Text style={styles.label}>Contact Name</Text>
-        <TextInput
-          style={styles.input}
-          value={contactName}
-          onChangeText={setContactName}
-          placeholder="Contact name"
         />
 
         <Text style={styles.label}>Email</Text>
@@ -405,53 +383,34 @@ export default function FreightProfile() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Carrier Details</Text>
+        <Text style={styles.sectionTitle}>Driver Details</Text>
 
-        <Text style={styles.label}>MDOT Number</Text>
+        <Text style={styles.label}>Vehicle Type</Text>
         <TextInput
           style={styles.input}
-          value={mdotNumber}
-          onChangeText={setMdotNumber}
-          placeholder="MDOT Number"
+          value={vehicleType}
+          onChangeText={setVehicleType}
+          placeholder="Car, van, pickup truck, box truck"
         />
 
-        <Text style={styles.label}>MC Number</Text>
+        <Text style={styles.label}>License Number</Text>
         <TextInput
           style={styles.input}
-          value={mcNumber}
-          onChangeText={setMcNumber}
-          placeholder="MC Number"
+          value={licenseNumber}
+          onChangeText={setLicenseNumber}
+          placeholder="Driver license number"
         />
 
-        <Text style={styles.label}>Insurance Provider</Text>
+        <Text style={styles.label}>Service Area</Text>
         <TextInput
           style={styles.input}
-          value={insuranceProvider}
-          onChangeText={setInsuranceProvider}
-          placeholder="Insurance provider"
+          value={serviceArea}
+          onChangeText={setServiceArea}
+          placeholder="Example: Detroit Metro, Ann Arbor, Toledo"
         />
-
-        <Text style={styles.label}>Policy Number</Text>
-        <TextInput
-          style={styles.input}
-          value={insurancePolicyNumber}
-          onChangeText={setInsurancePolicyNumber}
-          placeholder="Policy number"
-        />
-
-        <Text style={styles.label}>Authorized Services</Text>
-        <Text style={styles.value}>
-          {carrier.licensedLivestock ? "Livestock Transport\n" : ""}
-          {carrier.licensedRefrigeratedFood
-            ? "Refrigerated Fresh Food"
-            : ""}
-          {!carrier.licensedLivestock && !carrier.licensedRefrigeratedFood
-            ? "No services selected"
-            : ""}
-        </Text>
 
         <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
-          <Text style={styles.buttonText}>Save Carrier Details</Text>
+          <Text style={styles.buttonText}>Save Driver Details</Text>
         </TouchableOpacity>
       </View>
 
@@ -491,24 +450,31 @@ export default function FreightProfile() {
         <Text style={styles.sectionTitle}>Manage Subscription</Text>
 
         <Text style={styles.helpText}>
-          Manage your freight membership, update your card, review billing, or
-          cancel your subscription.
+          Manage your $4.99 driver board membership, update your payment method,
+          review billing, or cancel your subscription.
         </Text>
 
         <TouchableOpacity style={styles.blueButton} onPress={manageSubscription}>
-          <Text style={styles.buttonText}>Manage Freight Membership</Text>
+          <Text style={styles.buttonText}>Manage Driver Membership</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
-          <Text style={styles.buttonText}>Cancel Freight Subscription</Text>
+          <Text style={styles.buttonText}>Cancel Driver Subscription</Text>
         </TouchableOpacity>
       </View>
 
       <TouchableOpacity
         style={styles.greenButton}
+        onPress={() => router.push("/driver/mobile-driver-app" as never)}
+      >
+        <Text style={styles.buttonText}>Back to Driver Dashboard</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.darkButton}
         onPress={() => router.push("/freight/board" as never)}
       >
-        <Text style={styles.buttonText}>Back to Freight Board</Text>
+        <Text style={styles.buttonText}>View Driver Board</Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.logoutButton} onPress={logout}>
@@ -534,7 +500,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   subheader: {
-    color: "#666",
+    color: "#666666",
     marginBottom: 20,
     fontWeight: "700",
   },
@@ -592,12 +558,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 8,
   },
-  value: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#111827",
-    lineHeight: 22,
-  },
   helpText: {
     color: "#4B5563",
     fontWeight: "700",
@@ -618,6 +578,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 10,
   },
+  darkButton: {
+    backgroundColor: "#111827",
+    padding: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    marginTop: 10,
+  },
   cancelButton: {
     backgroundColor: "#D32F2F",
     padding: 16,
@@ -626,7 +593,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   logoutButton: {
-    backgroundColor: "#111827",
+    backgroundColor: "#6B7280",
     padding: 16,
     borderRadius: 14,
     alignItems: "center",

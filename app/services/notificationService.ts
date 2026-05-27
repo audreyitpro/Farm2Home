@@ -16,6 +16,14 @@ Notifications.setNotificationHandler({
   }),
 });
 
+export type UserRole =
+  | "customer"
+  | "farmer"
+  | "driver"
+  | "freight"
+  | "freight_carrier"
+  | "admin";
+
 export type NotificationPayload = {
   title: string;
   body: string;
@@ -40,7 +48,37 @@ function getProjectId() {
   );
 }
 
-export async function registerPushNotifications(userId?: string) {
+function normalizeRole(role?: UserRole | string) {
+  const value = String(role || "").toLowerCase();
+
+  if (value === "freight_carrier") return "freight";
+  if (value === "freight") return "freight";
+  if (value === "driver") return "driver";
+  if (value === "farmer") return "farmer";
+  if (value === "admin") return "admin";
+
+  return "customer";
+}
+
+function getProfileTable(role?: UserRole | string) {
+  const normalized = normalizeRole(role);
+
+  if (normalized === "driver") return "drivers";
+  if (normalized === "freight") return "freight_carriers";
+  if (normalized === "farmer") return "farmers";
+  if (normalized === "customer") return "customers";
+
+  return "";
+}
+
+export async function registerForPushNotificationsAsync() {
+  return registerPushNotifications();
+}
+
+export async function registerPushNotifications(
+  userId?: string,
+  role?: UserRole | string
+) {
   try {
     if (!Device.isDevice) {
       console.log("Push notifications require a physical device.");
@@ -78,7 +116,7 @@ export async function registerPushNotifications(userId?: string) {
     const token = tokenData.data;
 
     if (userId && token) {
-      await savePushToken(userId, token);
+      await savePushToken(userId, token, role);
     }
 
     return token;
@@ -88,11 +126,20 @@ export async function registerPushNotifications(userId?: string) {
   }
 }
 
-export async function savePushToken(userId: string, expoPushToken: string) {
+export async function savePushToken(
+  userId: string,
+  expoPushToken: string,
+  role?: UserRole | string
+) {
   try {
-    const { error } = await supabase.from("push_tokens").upsert(
+    if (!userId || !expoPushToken) return false;
+
+    const normalizedRole = normalizeRole(role);
+
+    await supabase.from("push_tokens").upsert(
       {
         user_id: userId,
+        user_role: normalizedRole,
         expo_push_token: expoPushToken,
         platform: Platform.OS,
         updated_at: new Date().toISOString(),
@@ -102,16 +149,46 @@ export async function savePushToken(userId: string, expoPushToken: string) {
       }
     );
 
-    if (error) {
-      console.log("SAVE_PUSH_TOKEN_ERROR:", error.message);
-      return false;
+    const table = getProfileTable(normalizedRole);
+
+    if (table) {
+      await supabase
+        .from(table)
+        .update({
+          expo_push_token: expoPushToken,
+          notifications_enabled: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", userId);
     }
 
     return true;
   } catch (error) {
-    console.log("SAVE_PUSH_TOKEN_CRASH:", error);
+    console.log("SAVE_PUSH_TOKEN_ERROR:", error);
     return false;
   }
+}
+
+export async function saveDriverPushToken(
+  driverId: string,
+  expoPushToken: string
+) {
+  return savePushToken(driverId, expoPushToken, "driver");
+}
+
+export async function saveFreightCarrierPushToken(
+  carrierId: string,
+  expoPushToken: string
+) {
+  return savePushToken(carrierId, expoPushToken, "freight");
+}
+
+export async function registerDriverPushNotifications(driverId: string) {
+  return registerPushNotifications(driverId, "driver");
+}
+
+export async function registerFreightPushNotifications(carrierId: string) {
+  return registerPushNotifications(carrierId, "freight");
 }
 
 export async function sendLocalNotification({
@@ -157,7 +234,7 @@ export async function clearBadgeCount() {
 }
 
 function readableStatus(status: string) {
-  return status.replace(/_/g, " ");
+  return String(status || "").replace(/_/g, " ");
 }
 
 /*
@@ -171,6 +248,7 @@ export async function notifyOrderAccepted(orderId: string) {
     data: {
       type: "ORDER_ACCEPTED",
       orderId,
+      route: "/customer/orders",
     },
   });
 }
@@ -182,6 +260,7 @@ export async function notifyOrderInTransit(orderId: string) {
     data: {
       type: "ORDER_IN_TRANSIT",
       orderId,
+      route: "/customer/live-map",
     },
   });
 }
@@ -193,6 +272,47 @@ export async function notifyOrderDelivered(orderId: string) {
     data: {
       type: "ORDER_DELIVERED",
       orderId,
+      route: "/customer/orders",
+    },
+  });
+}
+
+/*
+  DRIVER / LOCAL DELIVERY NOTIFICATIONS
+*/
+
+export async function notifyNewLocalDelivery(orderId: string) {
+  return sendLocalNotification({
+    title: "New Delivery Available",
+    body: "A new Farm2Home delivery is available in your area.",
+    data: {
+      type: "NEW_LOCAL_DELIVERY",
+      orderId,
+      route: "/driver/mobile-driver-app",
+    },
+  });
+}
+
+export async function notifyDriverOrderAvailable(orderId: string) {
+  return sendLocalNotification({
+    title: "New Farm2Home Delivery",
+    body: "New Farm2Home delivery available in your area. Tap to view and accept.",
+    data: {
+      type: "DRIVER_ORDER_AVAILABLE",
+      orderId,
+      route: "/driver/mobile-driver-app",
+    },
+  });
+}
+
+export async function notifyDriverAcceptedOrder(orderId: string) {
+  return sendLocalNotification({
+    title: "Delivery Accepted",
+    body: "A driver accepted this Farm2Home delivery.",
+    data: {
+      type: "DRIVER_ACCEPTED_ORDER",
+      orderId,
+      route: "/admin/live-operations-center",
     },
   });
 }
@@ -207,6 +327,18 @@ export async function notifyNewFreightLoad(loadId: string) {
     body: "A new Farm2Home freight load is available.",
     data: {
       type: "NEW_FREIGHT_LOAD",
+      loadId,
+      route: "/freight/board",
+    },
+  });
+}
+
+export async function notifyFreightLoadAvailable(loadId: string) {
+  return sendLocalNotification({
+    title: "New Farm2Home Freight Load",
+    body: "New Farm2Home freight load available in your area. Tap to view and accept.",
+    data: {
+      type: "FREIGHT_LOAD_AVAILABLE",
       loadId,
       route: "/freight/board",
     },
@@ -351,10 +483,17 @@ export function getNotificationRoute(
   }
 
   switch (data.type) {
+    case "NEW_LOCAL_DELIVERY":
+    case "DRIVER_ORDER_AVAILABLE":
+      return "/driver/mobile-driver-app";
+
     case "NEW_FREIGHT_LOAD":
+    case "FREIGHT_LOAD_AVAILABLE":
+    case "LOAD_CANCELLED":
       return "/freight/board";
 
     case "DRIVER_ACCEPTED_LOAD":
+    case "DRIVER_ACCEPTED_ORDER":
     case "DRIVER_ARRIVED_PICKUP":
     case "PICKUP_COMPLETED":
     case "DRIVER_ARRIVED_DROPOFF":
@@ -370,9 +509,11 @@ export function getNotificationRoute(
       return "/admin/fleet-map";
 
     case "ORDER_ACCEPTED":
-    case "ORDER_IN_TRANSIT":
     case "ORDER_DELIVERED":
-      return "/customer/marketplace";
+      return "/customer/orders";
+
+    case "ORDER_IN_TRANSIT":
+      return "/customer/live-map";
 
     default:
       return null;

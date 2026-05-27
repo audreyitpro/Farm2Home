@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -9,77 +9,60 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
+import { API_BASE_URL } from "../config/api";
 import { supabase } from "../services/supabaseClient";
-
-type FreightLoad = {
-  id: string;
-  title?: string | null;
-  farmer_name?: string | null;
-  pickup_location?: string | null;
-  dropoff_location?: string | null;
-  pickup_date?: string | null;
-  pickup_time?: string | null;
-  dropoff_date?: string | null;
-  dropoff_time?: string | null;
-  commodity?: string | null;
-  rate?: number | null;
-  distance_miles?: number | null;
-  status?: string | null;
-  created_at?: string | null;
-  accepted_at?: string | null;
-  picked_up_at?: string | null;
-  delivered_at?: string | null;
-  proof_of_delivery_photo_url?: string | null;
-};
 
 type DriverLocation = {
   id?: string;
   load_id: string;
+  driver_id?: string | null;
+  carrier_id?: string | null;
   latitude: number;
   longitude: number;
   speed?: number | null;
   heading?: number | null;
-  updated_at?: string | null;
   status?: string | null;
+  updated_at?: string | null;
+};
+
+type CustomerOrder = {
+  id: string;
+  customerEmail?: string;
+  customerName?: string;
+  fulfillmentStatus?: string;
+  paymentStatus?: string;
+  assignedDriverId?: string;
+  assignedFreightCarrierId?: string;
+  deliveryInfo?: any;
+  total?: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export default function CustomerLiveMap() {
   const params = useLocalSearchParams();
 
-  const orderId = Array.isArray(params.orderId)
-    ? params.orderId[0]
-    : params.orderId || "";
-
-  const loadId = Array.isArray(params.loadId)
-    ? params.loadId[0]
-    : params.loadId || "";
-
-  const resolvedLoadId = loadId || orderId;
+  const orderIdParam = String(params.orderId || params.loadId || "");
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [load, setLoad] = useState<FreightLoad | null>(null);
-  const [driverLocation, setDriverLocation] =
-    useState<DriverLocation | null>(null);
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [orders, setOrders] = useState<CustomerOrder[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
+  const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(
+    null
+  );
 
   useFocusEffect(
     useCallback(() => {
-      loadTracking();
+      loadLiveTracking();
 
       const channel = supabase
-        .channel(`customer-live-map-${resolvedLoadId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "freight_loads",
-          },
-          () => loadTracking()
-        )
+        .channel("customer-live-map-driver-location")
         .on(
           "postgres_changes",
           {
@@ -87,65 +70,102 @@ export default function CustomerLiveMap() {
             schema: "public",
             table: "driver_locations",
           },
-          () => loadTracking()
+          () => loadLiveTracking(false)
         )
         .subscribe();
 
       return () => {
         supabase.removeChannel(channel);
       };
-    }, [resolvedLoadId])
+    }, [orderIdParam])
   );
 
-  async function loadTracking() {
+  async function getCurrentCustomerEmail() {
+    const raw =
+      (await AsyncStorage.getItem("currentCustomer")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!raw) return "";
+
     try {
-      setLoading(true);
+      const user = JSON.parse(raw);
+      return String(user.email || "").trim().toLowerCase();
+    } catch {
+      return "";
+    }
+  }
 
-      if (!resolvedLoadId) {
-        setLoad(null);
-        setDriverLocation(null);
-        return;
-      }
+  async function loadLiveTracking(showLoader = true) {
+    try {
+      if (showLoader) setLoading(true);
 
-      const { data: loadData, error: loadError } = await supabase
-        .from("freight_loads")
-        .select("*")
-        .eq("id", resolvedLoadId)
-        .single();
+      const email = await getCurrentCustomerEmail();
+      setCustomerEmail(email);
 
-      if (loadError) {
-        console.log("LOAD_TRACKING_ERROR:", loadError.message);
-        setLoad(null);
-        return;
-      }
+      const response = await fetch(`${API_BASE_URL}/orders`);
+      const data = await response.json();
 
-      const { data: locationData, error: locationError } = await supabase
-        .from("driver_locations")
-        .select("*")
-        .eq("load_id", resolvedLoadId)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const allOrders: CustomerOrder[] =
+        response.ok && Array.isArray(data.orders) ? data.orders : [];
 
-      if (locationError) {
-        console.log("LOCATION_TRACKING_ERROR:", locationError.message);
-      }
+      const myOrders = allOrders.filter((order) => {
+        if (orderIdParam) return order.id === orderIdParam;
 
-      setLoad(loadData || null);
+        return (
+          String(order.customerEmail || "").toLowerCase() === email ||
+          String(order.deliveryInfo?.email || "").toLowerCase() === email
+        );
+      });
 
-      if (locationData) {
-        setDriverLocation({
-          ...locationData,
-          latitude: Number(locationData.latitude || 0),
-          longitude: Number(locationData.longitude || 0),
-        });
+      setOrders(myOrders);
+
+      const active =
+        myOrders.find((order) =>
+          ["ACCEPTED", "PICKED_UP", "IN_TRANSIT"].includes(
+            String(order.fulfillmentStatus || "").toUpperCase()
+          )
+        ) ||
+        myOrders[0] ||
+        null;
+
+      setSelectedOrder(active);
+
+      if (active?.id) {
+        const { data: locationData, error } = await supabase
+          .from("driver_locations")
+          .select("*")
+          .eq("load_id", active.id)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          console.log("Customer live map location error:", error.message);
+          setDriverLocation(null);
+        } else if (locationData) {
+          setDriverLocation({
+            ...locationData,
+            latitude: Number(locationData.latitude || 0),
+            longitude: Number(locationData.longitude || 0),
+            speed:
+              locationData.speed === null || locationData.speed === undefined
+                ? null
+                : Number(locationData.speed),
+            heading:
+              locationData.heading === null ||
+              locationData.heading === undefined
+                ? null
+                : Number(locationData.heading),
+          });
+        } else {
+          setDriverLocation(null);
+        }
       } else {
         setDriverLocation(null);
       }
     } catch (error) {
-      console.log("CUSTOMER_TRACKING_CRASH:", error);
-      setLoad(null);
-      setDriverLocation(null);
+      console.log("Customer live map error:", error);
+      Alert.alert("Live Map Error", "Unable to load live tracking.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -154,468 +174,220 @@ export default function CustomerLiveMap() {
 
   function onRefresh() {
     setRefreshing(true);
-    loadTracking();
+    loadLiveTracking(false);
   }
 
-  function readableStatus(status?: string | null) {
-    return String(status || "waiting_for_driver").replace(/_/g, " ");
+  function friendlyStatus(value?: string | null) {
+    return String(value || "waiting").replace(/_/g, " ");
   }
 
-  function statusColor(status?: string | null) {
-    switch (status) {
-      case "available":
-        return "#2563EB";
-      case "accepted":
-        return "#7C3AED";
-      case "arrived_pickup":
-        return "#0891B2";
-      case "picked_up":
-        return "#F59E0B";
-      case "in_transit":
-        return "#0F766E";
-      case "arrived_dropoff":
-        return "#14B8A6";
-      case "delivered":
-        return "#10B981";
-      case "cancelled":
-        return "#DC2626";
-      default:
-        return "#64748B";
-    }
+  function getFreshness() {
+    if (!driverLocation?.updated_at) return "No GPS update yet";
+
+    const minutes =
+      (Date.now() - new Date(driverLocation.updated_at).getTime()) / 1000 / 60;
+
+    if (minutes <= 5) return "Live now";
+    if (minutes <= 30) return `${Math.round(minutes)} minutes ago`;
+    return `GPS stale · ${Math.round(minutes)} minutes ago`;
   }
 
-  const estimatedEta = useMemo(() => {
-    if (!load) return "Calculating";
+  const trackingMessage = useMemo(() => {
+    const status = String(selectedOrder?.fulfillmentStatus || "").toUpperCase();
 
-    switch (load.status) {
-      case "available":
-        return "Waiting for driver";
-      case "accepted":
-        return "Driver heading to pickup";
-      case "arrived_pickup":
-        return "Pickup starting";
-      case "picked_up":
-      case "in_transit":
-        return "45 - 90 mins";
-      case "arrived_dropoff":
-        return "Driver arriving now";
-      case "delivered":
-        return "Delivered";
-      default:
-        return "Calculating";
-    }
-  }, [load]);
+    if (!selectedOrder) return "No active delivery selected.";
+    if (!driverLocation) return "Driver GPS will appear after pickup begins.";
+    if (status === "DELIVERED") return "Your order has been delivered.";
+    if (status === "IN_TRANSIT") return "Your delivery is on the way.";
+    if (status === "PICKED_UP") return "Your order has been picked up.";
+    if (status === "ACCEPTED") return "A driver accepted your order.";
 
-  if (loading && !load) {
+    return "Waiting for driver assignment.";
+  }, [selectedOrder, driverLocation]);
+
+  if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#10B981" />
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#1F7A3F" />
         <Text style={styles.loadingText}>Loading live tracking...</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.webMapFallback}>
-        <Text style={styles.webIcon}>🗺️</Text>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    >
+      <Text style={styles.kicker}>Farm2Home Customer</Text>
+      <Text style={styles.title}>Live Delivery Map</Text>
+      <Text style={styles.subtitle}>
+        Track your Farm2Home delivery, driver GPS, and order progress.
+      </Text>
 
-        <Text style={styles.webTitle}>Live Delivery Tracking</Text>
-
-        <Text style={styles.webText}>
-          Realtime GPS tracking, freight status updates, and delivery proof are
-          connected to the Farm2Home logistics platform.
-        </Text>
+      <View style={styles.mapBox}>
+        <Text style={styles.mapIcon}>🗺️</Text>
+        <Text style={styles.mapTitle}>Live GPS Tracking</Text>
+        <Text style={styles.mapSubtitle}>{trackingMessage}</Text>
 
         {driverLocation ? (
           <>
-            <Text style={styles.webGps}>
-              GPS: {driverLocation.latitude.toFixed(5)},{" "}
+            <Text style={styles.gpsText}>
+              Driver GPS: {driverLocation.latitude.toFixed(5)},{" "}
               {driverLocation.longitude.toFixed(5)}
             </Text>
-
-            <Text style={styles.webGps}>
-              Driver Status: {readableStatus(driverLocation.status)}
-            </Text>
+            <Text style={styles.gpsText}>Signal: {getFreshness()}</Text>
           </>
         ) : (
-          <Text style={styles.webGps}>
-            Waiting for driver GPS updates...
-          </Text>
+          <Text style={styles.gpsText}>No driver GPS yet.</Text>
         )}
       </View>
 
-      <ScrollView
-        style={styles.panel}
-        contentContainerStyle={{ paddingBottom: 80 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+      {selectedOrder ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Current Order</Text>
+          <Text style={styles.metaText}>Order: #{selectedOrder.id}</Text>
+          <Text style={styles.metaText}>
+            Status: {friendlyStatus(selectedOrder.fulfillmentStatus)}
+          </Text>
+          <Text style={styles.metaText}>
+            Payment: {selectedOrder.paymentStatus || "Pending"}
+          </Text>
+          <Text style={styles.metaText}>
+            Total: ${Number(selectedOrder.total || 0).toFixed(2)}
+          </Text>
+          <Text style={styles.metaText}>
+            Driver: {selectedOrder.assignedDriverId || "Not assigned yet"}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>No Active Order</Text>
+          <Text style={styles.metaText}>
+            Customer: {customerEmail || "Not signed in"}
+          </Text>
+        </View>
+      )}
+
+      <TouchableOpacity style={styles.primaryButton} onPress={() => loadLiveTracking()}>
+        <Text style={styles.primaryButtonText}>Refresh Tracking</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.secondaryButton}
+        onPress={() => router.push("/customer/orders" as any)}
       >
-        <Text style={styles.title}>Customer Live Tracking</Text>
+        <Text style={styles.secondaryButtonText}>View My Orders</Text>
+      </TouchableOpacity>
 
-        {load ? (
-          <>
-            <View style={styles.statusCard}>
-              <View
-                style={[
-                  styles.statusBadge,
-                  {
-                    backgroundColor: statusColor(load.status),
-                  },
-                ]}
-              >
-                <Text style={styles.statusText}>
-                  {readableStatus(load.status)}
-                </Text>
-              </View>
-
-              <Text style={styles.statusTitle}>
-                {load.title || "Farm2Home Delivery"}
-              </Text>
-
-              <Text style={styles.detail}>
-                Farmer: {load.farmer_name || "Farm2Home Farmer"}
-              </Text>
-
-              <Text style={styles.detail}>
-                Commodity: {load.commodity || "Farm Goods"}
-              </Text>
-
-              <Text style={styles.detail}>
-                Pickup: {load.pickup_location || "Pending"}
-              </Text>
-
-              <Text style={styles.detail}>
-                Dropoff: {load.dropoff_location || "Pending"}
-              </Text>
-
-              <Text style={styles.detail}>
-                ETA: {estimatedEta}
-              </Text>
-            </View>
-
-            <View style={styles.timelineCard}>
-              <Text style={styles.timelineTitle}>Delivery Timeline</Text>
-
-              <View style={styles.timelineItem}>
-                <Text style={styles.timelineDot}>●</Text>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timelineLabel}>Load Created</Text>
-
-                  <Text style={styles.timelineTime}>
-                    {load.created_at
-                      ? new Date(load.created_at).toLocaleString()
-                      : "Pending"}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.timelineItem}>
-                <Text style={styles.timelineDot}>●</Text>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timelineLabel}>Driver Accepted</Text>
-
-                  <Text style={styles.timelineTime}>
-                    {load.accepted_at
-                      ? new Date(load.accepted_at).toLocaleString()
-                      : "Waiting"}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.timelineItem}>
-                <Text style={styles.timelineDot}>●</Text>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timelineLabel}>Pickup Completed</Text>
-
-                  <Text style={styles.timelineTime}>
-                    {load.picked_up_at
-                      ? new Date(load.picked_up_at).toLocaleString()
-                      : "Waiting"}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.timelineItem}>
-                <Text style={styles.timelineDot}>●</Text>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timelineLabel}>Delivered</Text>
-
-                  <Text style={styles.timelineTime}>
-                    {load.delivered_at
-                      ? new Date(load.delivered_at).toLocaleString()
-                      : "In Progress"}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {driverLocation ? (
-              <View style={styles.gpsCard}>
-                <Text style={styles.sectionTitle}>Driver GPS</Text>
-
-                <Text style={styles.detail}>
-                  Latitude: {driverLocation.latitude.toFixed(5)}
-                </Text>
-
-                <Text style={styles.detail}>
-                  Longitude: {driverLocation.longitude.toFixed(5)}
-                </Text>
-
-                <Text style={styles.detail}>
-                  Speed:{" "}
-                  {driverLocation.speed !== null &&
-                  driverLocation.speed !== undefined
-                    ? `${Number(driverLocation.speed).toFixed(1)} m/s`
-                    : "Unavailable"}
-                </Text>
-
-                <Text style={styles.detail}>
-                  Last Update:{" "}
-                  {driverLocation.updated_at
-                    ? new Date(driverLocation.updated_at).toLocaleString()
-                    : "Unknown"}
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.warningCard}>
-                <Text style={styles.warningText}>
-                  Driver GPS will appear once the route begins.
-                </Text>
-              </View>
-            )}
-
-            {load.proof_of_delivery_photo_url ? (
-              <View style={styles.photoCard}>
-                <Text style={styles.sectionTitle}>
-                  Proof of Delivery
-                </Text>
-
-                <Image
-                  source={{
-                    uri: load.proof_of_delivery_photo_url,
-                  }}
-                  style={styles.deliveryPhoto}
-                />
-              </View>
-            ) : null}
-          </>
-        ) : (
-          <View style={styles.warningCard}>
-            <Text style={styles.warningText}>
-              No active load tracking found.
-            </Text>
-          </View>
-        )}
-
-        <TouchableOpacity
-          style={styles.refreshButton}
-          onPress={loadTracking}
-        >
-          <Text style={styles.refreshText}>Refresh Tracking</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backText}>Back</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </View>
+      <TouchableOpacity
+        style={styles.secondaryButton}
+        onPress={() => router.push("/customer/marketplace" as any)}
+      >
+        <Text style={styles.secondaryButtonText}>Back To Marketplace</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
+  container: { flex: 1, backgroundColor: "#F7F7F2" },
+  content: { padding: 20, paddingBottom: 80 },
+  centered: {
     flex: 1,
     backgroundColor: "#F7F7F2",
     alignItems: "center",
     justifyContent: "center",
   },
-  loadingText: {
-    color: "#374151",
-    fontWeight: "800",
-    marginTop: 10,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: "#F7F7F2",
-  },
-  webMapFallback: {
-    height: "34%",
-    backgroundColor: "#DCFCE7",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  webIcon: {
-    fontSize: 56,
-    marginBottom: 10,
-  },
-  webTitle: {
-    fontSize: 28,
+  loadingText: { marginTop: 10, color: "#374151", fontWeight: "800" },
+  kicker: {
+    color: "#1F7A3F",
+    fontSize: 12,
     fontWeight: "900",
-    color: "#064E3B",
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  webText: {
-    color: "#374151",
-    fontWeight: "700",
-    textAlign: "center",
-    lineHeight: 23,
-    maxWidth: 420,
-  },
-  webGps: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginTop: 10,
-    textAlign: "center",
-  },
-  panel: {
-    flex: 1,
-    backgroundColor: "#F7F7F2",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    marginTop: -28,
-    padding: 18,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   title: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: "900",
     color: "#064E3B",
-    marginBottom: 16,
+    marginTop: 6,
   },
-  statusCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
+  subtitle: {
+    color: "#4B5563",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
+    marginBottom: 18,
+  },
+  mapBox: {
+    backgroundColor: "#DDEFE4",
+    borderRadius: 24,
+    padding: 24,
+    alignItems: "center",
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: "#B7DFB9",
   },
-  statusBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    marginBottom: 12,
-  },
-  statusText: {
-    color: "#FFFFFF",
+  mapIcon: { fontSize: 58, marginBottom: 12 },
+  mapTitle: {
+    fontSize: 25,
     fontWeight: "900",
-    textTransform: "capitalize",
-  },
-  statusTitle: {
     color: "#111827",
-    fontSize: 22,
-    fontWeight: "900",
-    marginBottom: 10,
+    textAlign: "center",
   },
-  detail: {
+  mapSubtitle: {
     color: "#374151",
     fontWeight: "700",
     lineHeight: 22,
-    marginBottom: 4,
+    textAlign: "center",
+    marginTop: 8,
   },
-  timelineCard: {
+  gpsText: {
+    color: "#064E3B",
+    fontWeight: "900",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 16,
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
-  },
-  timelineTitle: {
-    color: "#111827",
-    fontSize: 22,
-    fontWeight: "900",
+    borderColor: "#E5E7EB",
     marginBottom: 14,
   },
-  timelineItem: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 14,
-  },
-  timelineDot: {
-    color: "#10B981",
-    fontSize: 18,
-    marginTop: 1,
-  },
-  timelineLabel: {
-    color: "#111827",
+  cardTitle: {
+    fontSize: 20,
     fontWeight: "900",
+    color: "#111827",
+    marginBottom: 8,
   },
-  timelineTime: {
-    color: "#6B7280",
-    marginTop: 4,
+  metaText: {
+    color: "#374151",
     fontWeight: "700",
+    marginBottom: 6,
+    lineHeight: 21,
   },
-  gpsCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-  },
-  sectionTitle: {
-    color: "#111827",
-    fontSize: 21,
-    fontWeight: "900",
-    marginBottom: 12,
-  },
-  warningCard: {
-    backgroundColor: "#FFF7ED",
-    borderWidth: 1,
-    borderColor: "#FDBA74",
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 16,
-  },
-  warningText: {
-    color: "#9A3412",
-    fontWeight: "800",
-    lineHeight: 22,
-  },
-  photoCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-  },
-  deliveryPhoto: {
-    width: "100%",
-    height: 260,
-    borderRadius: 18,
-  },
-  refreshButton: {
-    backgroundColor: "#10B981",
-    padding: 16,
+  primaryButton: {
+    backgroundColor: "#1F7A3F",
     borderRadius: 16,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  backButton: {
-    backgroundColor: "#111827",
     padding: 16,
-    borderRadius: 16,
     alignItems: "center",
+    marginBottom: 10,
   },
-  backText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
+  primaryButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  secondaryButton: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#1F7A3F",
+    borderRadius: 16,
+    padding: 16,
+    alignItems: "center",
+    marginBottom: 10,
   },
+  secondaryButtonText: { color: "#1F7A3F", fontWeight: "900" },
 });

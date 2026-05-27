@@ -1366,5 +1366,314 @@ router.post(
     }
   }
 );
+/* =====================================================
+   BILLING PORTAL
+===================================================== */
 
+router.post("/payments/create-customer-portal-session", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const { customerId, returnUrl } = req.body || {};
+
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        error: "customerId is required.",
+      });
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url:
+        returnUrl ||
+        `${APP_URL}/customer/profile`,
+    });
+
+    return res.json({
+      success: true,
+      url: session.url,
+    });
+  } catch (error) {
+    console.error(
+      "create-customer-portal-session error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error:
+        error.message ||
+        "Unable to create billing portal session.",
+    });
+  }
+});
+
+/* =====================================================
+   CANCEL SUBSCRIPTION
+===================================================== */
+
+router.post("/payments/cancel-subscription", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const {
+      subscriptionId,
+      role = "customer",
+      userId,
+      customerId,
+      farmerId,
+      freightId,
+      driverId,
+    } = req.body || {};
+
+    if (!subscriptionId) {
+      return res.status(400).json({
+        success: false,
+        error: "subscriptionId is required.",
+      });
+    }
+
+    const subscription =
+      await stripe.subscriptions.cancel(
+        subscriptionId
+      );
+
+    const normalizedRole =
+      normalizeRole(role);
+
+    const finalUserId =
+      cleanString(userId) ||
+      cleanString(customerId) ||
+      cleanString(farmerId) ||
+      cleanString(freightId) ||
+      cleanString(driverId);
+
+    await updateSubscriptionStatusByRole({
+      role: normalizedRole,
+      userId: finalUserId,
+      subscriptionId,
+      stripeCustomerId:
+        subscription.customer,
+      status: "canceled",
+    });
+
+    if (
+      normalizedRole === "farmer" &&
+      finalUserId
+    ) {
+      await updateFarmerPaymentStatus({
+        farmerId: finalUserId,
+        paymentType:
+          "farmer_monthly_subscription",
+        paid: false,
+      });
+    }
+
+    return res.json({
+      success: true,
+      canceled: true,
+      subscription,
+    });
+  } catch (error) {
+    console.error(
+      "cancel-subscription error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error:
+        error.message ||
+        "Unable to cancel subscription.",
+    });
+  }
+});
+
+/* =====================================================
+   FARMER APPLICATION FEE VERIFY
+===================================================== */
+
+router.post(
+  "/payments/verify-farmer-application-fee",
+  async (req, res) => {
+    try {
+      if (!requireSupabase(res)) return;
+
+      const {
+        farmerId,
+        farmerEmail,
+      } = req.body || {};
+
+      if (!farmerId && !farmerEmail) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "farmerId or farmerEmail required.",
+        });
+      }
+
+      let query = supabase
+        .from("admin_verifications")
+        .select("*")
+        .limit(1);
+
+      if (farmerId) {
+        query = query.eq(
+          "farmer_id",
+          farmerId
+        );
+      } else {
+        query = query.eq(
+          "email",
+          String(farmerEmail)
+            .trim()
+            .toLowerCase()
+        );
+      }
+
+      const { data, error } =
+        await query.maybeSingle();
+
+      if (error) {
+        return res.status(500).json({
+          success: false,
+          error: error.message,
+        });
+      }
+
+      const paid =
+        Boolean(
+          data?.application_fee_paid
+        ) === true;
+
+      return res.json({
+        success: true,
+        paid,
+        verification: data || null,
+      });
+    } catch (error) {
+      console.error(
+        "verify-farmer-application-fee error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Unable to verify application fee.",
+      });
+    }
+  }
+);
+
+/* =====================================================
+   FARMER MONTHLY MEMBERSHIP
+===================================================== */
+
+router.post(
+  "/payments/create-farmer-membership-checkout",
+  async (req, res) => {
+    try {
+      if (!requireStripe(res)) return;
+
+      req.body.planType =
+        "farmer_monthly";
+
+      return router.handle(req, res);
+    } catch (error) {
+      console.error(
+        "create-farmer-membership-checkout error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+/* =====================================================
+   DRIVER MEMBERSHIP
+===================================================== */
+
+router.post(
+  "/payments/create-driver-subscription-checkout",
+  async (req, res) => {
+    try {
+      if (!requireStripe(res)) return;
+
+      req.body.planType = "driver";
+
+      return router.handle(req, res);
+    } catch (error) {
+      console.error(
+        "create-driver-subscription-checkout error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+/* =====================================================
+   FREIGHT MEMBERSHIP
+===================================================== */
+
+router.post(
+  "/payments/create-freight-subscription-checkout",
+  async (req, res) => {
+    try {
+      if (!requireStripe(res)) return;
+
+      req.body.planType =
+        "freight";
+
+      return router.handle(req, res);
+    } catch (error) {
+      console.error(
+        "create-freight-subscription-checkout error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+/* =====================================================
+   CUSTOMER MEMBERSHIP
+===================================================== */
+
+router.post(
+  "/payments/create-customer-subscription-checkout",
+  async (req, res) => {
+    try {
+      if (!requireStripe(res)) return;
+
+      req.body.planType = "customer";
+
+      return router.handle(req, res);
+    } catch (error) {
+      console.error(
+        "create-customer-subscription-checkout error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
 module.exports = router;

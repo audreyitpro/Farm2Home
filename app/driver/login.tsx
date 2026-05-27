@@ -14,6 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 
 import freightTheme from "../styles/freightTheme";
+import { registerDriverPushNotifications } from "../services/notificationService";
 
 type DriverUser = {
   id: string;
@@ -29,6 +30,8 @@ type DriverUser = {
   securityAnswer3: string;
   approved?: boolean;
   accountActive?: boolean;
+  membershipStatus?: string;
+  subscriptionStatus?: string;
 };
 
 function safelyParseArray(rawValue: string | null): DriverUser[] {
@@ -44,6 +47,20 @@ function safelyParseArray(rawValue: string | null): DriverUser[] {
 
 function normalizeAnswer(value: string) {
   return String(value || "").trim().toLowerCase();
+}
+
+function isDriverActive(driver: DriverUser) {
+  if (driver.accountActive === false) return false;
+
+  const membershipStatus = String(driver.membershipStatus || "").toLowerCase();
+  const subscriptionStatus = String(driver.subscriptionStatus || "").toLowerCase();
+
+  if (membershipStatus === "canceled") return false;
+  if (subscriptionStatus === "canceled") return false;
+  if (subscriptionStatus === "past_due") return false;
+  if (subscriptionStatus === "unpaid") return false;
+
+  return true;
 }
 
 export default function DriverLoginScreen() {
@@ -67,6 +84,13 @@ export default function DriverLoginScreen() {
     return safelyParseArray(raw);
   }
 
+  async function saveLoggedInDriver(driver: DriverUser) {
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
+    await AsyncStorage.setItem("userRole", "driver");
+    await AsyncStorage.setItem("currentUserRole", "driver");
+  }
+
   async function handleLogin() {
     const cleanLogin = loginValue.trim().toLowerCase();
     const cleanPassword = password.trim();
@@ -85,14 +109,9 @@ export default function DriverLoginScreen() {
       const drivers = await getDrivers();
 
       const foundDriver = drivers.find((item) => {
-        const emailMatch =
-          item.email?.toLowerCase() === cleanLogin;
-
-        const usernameMatch =
-          item.username?.toLowerCase() === cleanLogin;
-
-        const passwordMatch =
-          item.password === cleanPassword;
+        const emailMatch = item.email?.toLowerCase() === cleanLogin;
+        const usernameMatch = item.username?.toLowerCase() === cleanLogin;
+        const passwordMatch = item.password === cleanPassword;
 
         return (emailMatch || usernameMatch) && passwordMatch;
       });
@@ -105,33 +124,22 @@ export default function DriverLoginScreen() {
         return;
       }
 
-      if (foundDriver.accountActive === false) {
+      if (!isDriverActive(foundDriver)) {
         Alert.alert(
           "Account Disabled",
-          "This driver account is disabled."
+          "This driver account is disabled or subscription is not active."
         );
         return;
       }
 
-      await AsyncStorage.setItem(
-        "currentDriver",
-        JSON.stringify(foundDriver)
-      );
+      await saveLoggedInDriver(foundDriver);
 
-      await AsyncStorage.setItem(
-        "currentUser",
-        JSON.stringify(foundDriver)
-      );
-
-      await AsyncStorage.setItem(
-        "userRole",
-        "driver"
-      );
-
-      await AsyncStorage.setItem(
-        "currentUserRole",
-        "driver"
-      );
+      try {
+        const token = await registerDriverPushNotifications(foundDriver.id);
+        console.log("Driver push token:", token);
+      } catch (pushError) {
+        console.log("Driver push registration error:", pushError);
+      }
 
       router.replace("/driver/mobile-driver-app" as any);
     } catch (error) {
@@ -216,13 +224,10 @@ export default function DriverLoginScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.card}>
-        <Text style={styles.title}>
-          Driver Login
-        </Text>
+        <Text style={styles.title}>Driver Login</Text>
 
         <Text style={styles.subtitle}>
-          Access Farm2Home delivery orders,
-          routes, proof of delivery, and
+          Access Farm2Home delivery orders, routes, proof of delivery, and
           earnings.
         </Text>
 
@@ -254,9 +259,7 @@ export default function DriverLoginScreen() {
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.loginButtonText}>
-              Driver Login
-            </Text>
+            <Text style={styles.loginButtonText}>Driver Login</Text>
           )}
         </TouchableOpacity>
 
@@ -264,34 +267,22 @@ export default function DriverLoginScreen() {
           style={styles.linkButton}
           onPress={() => setForgotVisible(true)}
         >
-          <Text style={styles.linkText}>
-            Forgot Username or Password?
-          </Text>
+          <Text style={styles.linkText}>Forgot Username or Password?</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.linkButton}
-          onPress={() =>
-            router.push("/driver/register" as any)
-          }
+          onPress={() => router.push("/driver/register" as any)}
         >
-          <Text style={styles.linkText}>
-            Register as Driver
-          </Text>
+          <Text style={styles.linkText}>Register as Driver</Text>
         </TouchableOpacity>
       </View>
 
-      <Modal
-        visible={forgotVisible}
-        transparent
-        animationType="slide"
-      >
+      <Modal visible={forgotVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView>
-              <Text style={styles.modalTitle}>
-                Driver Recovery
-              </Text>
+              <Text style={styles.modalTitle}>Driver Recovery</Text>
 
               {!recoveryDriver ? (
                 <>
@@ -308,9 +299,7 @@ export default function DriverLoginScreen() {
                     style={styles.loginButton}
                     onPress={startRecovery}
                   >
-                    <Text style={styles.loginButtonText}>
-                      Continue
-                    </Text>
+                    <Text style={styles.loginButtonText}>Continue</Text>
                   </TouchableOpacity>
                 </>
               ) : (
@@ -355,9 +344,7 @@ export default function DriverLoginScreen() {
                     style={styles.loginButton}
                     onPress={verifyRecovery}
                   >
-                    <Text style={styles.loginButtonText}>
-                      Recover Account
-                    </Text>
+                    <Text style={styles.loginButtonText}>Recover Account</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -369,9 +356,7 @@ export default function DriverLoginScreen() {
                   setRecoveryDriver(null);
                 }}
               >
-                <Text style={styles.closeText}>
-                  Close
-                </Text>
+                <Text style={styles.closeText}>Close</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
