@@ -24,16 +24,9 @@ import { updateFarmerStore } from "../data/farmerStore";
 
 type VerificationRecord = any;
 
-const QUEUE_KEYS = [
-  "farm2homeVerificationQueue",
-  "adminVerificationQueue",
-];
+const QUEUE_KEYS = ["farm2homeVerificationQueue", "adminVerificationQueue"];
 
-const FARMER_KEYS = [
-  "farm2homeFarmers",
-  "farmers",
-  "approvedFarmers",
-];
+const FARMER_KEYS = ["farm2homeFarmers", "farmers", "approvedFarmers"];
 
 const APPROVAL_EMAIL_WORDING = `Congratulations!
 
@@ -50,7 +43,6 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [adminEmail, setAdminEmail] = useState("");
 
-  const [queue, setQueue] = useState<VerificationRecord[]>([]);
   const [pendingRecords, setPendingRecords] = useState<VerificationRecord[]>([]);
 
   const [pendingCount, setPendingCount] = useState(0);
@@ -188,13 +180,33 @@ export default function AdminDashboard() {
     }
   }
 
+  async function sendFarmerApprovalEmail(record: any) {
+    try {
+      const email = getEmail(record);
+
+      if (!email || !email.includes("@")) return;
+
+      await fetch("http://10.0.0.216:4242/email/send-farmer-approval", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          businessName: getBusinessName(record),
+        }),
+      });
+    } catch (error) {
+      console.log("Approval email skipped:", error);
+    }
+  }
+
   async function saveApprovedFarmer(record: any) {
     const farmerId = getFarmerId(record);
     const approvedAt = new Date().toISOString();
 
     const approvedFarmer = {
       ...record,
-
       id: farmerId,
       farmerId,
 
@@ -249,6 +261,8 @@ export default function AdminDashboard() {
       console.log("upsertVerificationRecord approve skipped:", error);
     }
 
+    await sendFarmerApprovalEmail(approvedFarmer);
+
     return approvedFarmer;
   }
 
@@ -267,7 +281,7 @@ export default function AdminDashboard() {
 
       Alert.alert(
         "Farmer Approved",
-        "The farmer account is now approved, active, and store setup is unlocked."
+        "The farmer account is approved, active, unlocked, and approval email was triggered."
       );
 
       await loadDashboard();
@@ -351,9 +365,7 @@ export default function AdminDashboard() {
           ? pending
           : finalQueue.filter(isPending);
 
-      setQueue(finalQueue);
       setPendingRecords(finalPending);
-
       setPendingCount(finalPending.length);
       setApprovedCount(finalQueue.filter(isApproved).length);
       setRejectedCount(finalQueue.filter(isRejected).length);
@@ -416,9 +428,9 @@ export default function AdminDashboard() {
         <Text style={styles.title}>Admin Dashboard</Text>
 
         <Text style={styles.subtitle}>
-          Monitor compliance approvals, Stripe onboarding, marketplace
-          operations, deliveries, freight activity, AI verification, and platform
-          oversight.
+          Monitor compliance approvals, Stripe onboarding, account access,
+          marketplace operations, deliveries, freight activity, AI verification,
+          and platform oversight.
         </Text>
 
         <View style={styles.adminInfoBox}>
@@ -465,6 +477,20 @@ export default function AdminDashboard() {
           <Text style={styles.metricLabel}>Compliance</Text>
         </View>
       </View>
+
+      <Text style={styles.sectionTitle}>Account Access</Text>
+
+      <TouchableOpacity
+        style={styles.accountsButton}
+        onPress={() => router.push("/admin/accounts" as any)}
+      >
+        <Text style={styles.buttonTitle}>👥 Account Management</Text>
+        <Text style={styles.buttonDescription}>
+          View all current and previous accounts, usernames, passwords, active
+          status, reset login credentials, approve farmers, unlock stores, and
+          manually create accounts.
+        </Text>
+      </TouchableOpacity>
 
       <Text style={styles.sectionTitle}>Pending Farmer Approvals</Text>
 
@@ -664,6 +690,13 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  accountsButton: {
+    backgroundColor: "#0F766E",
+    borderRadius: 22,
+    padding: 22,
+    marginBottom: 24,
+  },
+
   emptyCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
@@ -713,10 +746,7 @@ const styles = StyleSheet.create({
     padding: 14,
     alignItems: "center",
   },
-  reviewButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  reviewButtonText: { color: "#FFFFFF", fontWeight: "900" },
   disabled: { opacity: 0.55 },
 
   complianceButton: {
