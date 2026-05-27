@@ -21,6 +21,8 @@ const FARMER_ARRAY_KEYS = [
   "approvedFarmers",
   "farm2homeVerificationQueue",
   "adminVerificationQueue",
+  "farm2homeAccounts",
+  "accounts",
 ];
 
 const FARMER_OBJECT_KEYS = [
@@ -30,7 +32,7 @@ const FARMER_OBJECT_KEYS = [
 ];
 
 function clean(value: any) {
-  return String(value || "").trim();
+  return String(value ?? "").trim();
 }
 
 function normalize(value: any) {
@@ -39,7 +41,6 @@ function normalize(value: any) {
 
 function safeParse(raw: string | null) {
   if (!raw) return null;
-
   try {
     return JSON.parse(raw);
   } catch {
@@ -48,11 +49,38 @@ function safeParse(raw: string | null) {
 }
 
 function getFarmerId(item: any) {
-  return clean(item?.id || item?.farmerId || item?.farmer_id);
+  return clean(
+    item?.id ||
+      item?.farmerId ||
+      item?.farmer_id ||
+      item?.userId ||
+      item?.accountId
+  );
+}
+
+function isFarmerRecord(item: any) {
+  const role = normalize(item?.role || item?.accountType || item?.account_type);
+  const hasFarmFields = Boolean(
+    item?.farmName ||
+      item?.farm_name ||
+      item?.businessName ||
+      item?.ownerName ||
+      item?.farmerId
+  );
+
+  return (
+    role === "farmer" ||
+    role === "farmers" ||
+    role === "farmer_user" ||
+    role === "farmer account" ||
+    role === "farmer_account" ||
+    role === "FARMER".toLowerCase() ||
+    hasFarmFields
+  );
 }
 
 function normalizeFarmer(item: any): FarmerUser | null {
-  if (!item) return null;
+  if (!item || !isFarmerRecord(item)) return null;
 
   const id = getFarmerId(item);
 
@@ -63,25 +91,43 @@ function normalizeFarmer(item: any): FarmerUser | null {
   const membershipStatus = normalize(item.membershipStatus);
   const subscriptionStatus = normalize(item.subscriptionStatus);
 
+  const approved =
+    item.approved === true ||
+    item.storeUnlocked === true ||
+    item.store_unlocked === true ||
+    status === "approved" ||
+    status === "active" ||
+    status === "approved_verification" ||
+    complianceStatus === "approved" ||
+    adminReviewStatus === "approved" ||
+    reviewDecision === "approved";
+
+  const active =
+    item.accountActive === true ||
+    item.account_active === true ||
+    approved ||
+    membershipStatus === "active" ||
+    subscriptionStatus === "active";
+
+  const unlocked =
+    item.storeUnlocked === true ||
+    item.store_unlocked === true ||
+    approved;
+
   return {
     ...item,
     id,
     farmerId: item.farmerId || id,
+    role: "farmer",
 
     farmName: item.farmName || item.businessName || item.farm_name || "",
     businessName: item.businessName || item.farmName || item.farm_name || "",
-    ownerName: item.ownerName || item.owner_name || "",
+    ownerName: item.ownerName || item.owner_name || item.name || "",
     email: normalize(item.email || item.farmerEmail),
     username: normalize(item.username),
     password: clean(item.password),
 
-    approved:
-      item.approved === true ||
-      status === "approved" ||
-      complianceStatus === "approved" ||
-      adminReviewStatus === "approved" ||
-      reviewDecision === "approved",
-
+    approved,
     rejected:
       item.rejected === true ||
       status === "rejected" ||
@@ -89,17 +135,8 @@ function normalizeFarmer(item: any): FarmerUser | null {
       adminReviewStatus === "rejected" ||
       reviewDecision === "rejected",
 
-    accountActive:
-      item.accountActive === true ||
-      item.account_active === true ||
-      membershipStatus === "active" ||
-      subscriptionStatus === "active",
-
-    storeUnlocked:
-      item.storeUnlocked === true ||
-      item.store_unlocked === true ||
-      item.approved === true ||
-      adminReviewStatus === "approved",
+    accountActive: active,
+    storeUnlocked: unlocked,
 
     complianceStatus: item.complianceStatus || item.status || "",
     adminReviewStatus: item.adminReviewStatus || "",
@@ -135,21 +172,17 @@ function mergeFarmerRecords(records: FarmerUser[]) {
     merged[index] = {
       ...existing,
       ...record,
-
       id: getFarmerId(record) || getFarmerId(existing),
       farmerId: record.farmerId || existing.farmerId || getFarmerId(record),
-
       username: normalize(record.username) || normalize(existing.username),
       password: clean(record.password) || clean(existing.password),
       email: normalize(record.email) || normalize(existing.email),
-
       approved: existing.approved === true || record.approved === true,
       rejected: existing.rejected === true || record.rejected === true,
       accountActive:
         existing.accountActive === true || record.accountActive === true,
       storeUnlocked:
         existing.storeUnlocked === true || record.storeUnlocked === true,
-
       membershipStatus:
         record.membershipStatus || existing.membershipStatus || "",
       subscriptionStatus:
@@ -191,10 +224,8 @@ export default function FarmerLoginScreen() {
     const farmers: FarmerUser[] = [];
 
     for (const key of FARMER_OBJECT_KEYS) {
-      const farmer = normalizeFarmer(
-        safeParse(await AsyncStorage.getItem(key))
-      );
-
+      const parsed = safeParse(await AsyncStorage.getItem(key));
+      const farmer = normalizeFarmer(parsed);
       if (farmer) farmers.push(farmer);
     }
 
@@ -212,40 +243,63 @@ export default function FarmerLoginScreen() {
         email: item.email,
         username: item.username,
         password: item.password,
-        hasPassword: Boolean(item.password),
         approved: item.approved,
         active: item.accountActive,
         unlocked: item.storeUnlocked,
-        status: item.complianceStatus,
+        status: item.status || item.complianceStatus,
         adminReviewStatus: item.adminReviewStatus,
+        role: item.role,
       }))
     );
 
     return merged;
   }
 
-  async function saveFarmerSession(farmer: FarmerUser) {
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
+  async function saveFarmerEverywhere(farmer: FarmerUser) {
+    const unlockedFarmer = {
+      ...farmer,
+      role: "farmer",
+      approved: farmer.approved === true,
+      accountActive: farmer.accountActive === true,
+      storeUnlocked: farmer.storeUnlocked === true,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(unlockedFarmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(unlockedFarmer));
     await AsyncStorage.setItem("userRole", "farmer");
     await AsyncStorage.setItem("currentUserRole", "farmer");
+
+    for (const key of ["farm2homeFarmers", "farmers", "approvedFarmers"]) {
+      const existing = await readArray(key);
+
+      const updated = [
+        unlockedFarmer,
+        ...existing.filter(
+          (item: any) =>
+            getFarmerId(item) !== getFarmerId(unlockedFarmer) &&
+            normalize(item.email) !== normalize(unlockedFarmer.email) &&
+            normalize(item.username) !== normalize(unlockedFarmer.username)
+        ),
+      ];
+
+      await AsyncStorage.setItem(key, JSON.stringify(updated));
+    }
   }
 
   function isApprovedAndUnlocked(farmer: FarmerUser) {
-    const approved =
+    return (
       farmer.approved === true ||
+      farmer.accountActive === true ||
+      farmer.storeUnlocked === true ||
+      normalize(farmer.membershipStatus) === "active" ||
+      normalize(farmer.subscriptionStatus) === "active" ||
       normalize(farmer.complianceStatus) === "approved" ||
       normalize(farmer.adminReviewStatus) === "approved" ||
-      normalize(farmer.reviewDecision) === "approved";
-
-    const active =
-      farmer.accountActive === true ||
-      normalize(farmer.membershipStatus) === "active" ||
-      normalize(farmer.subscriptionStatus) === "active";
-
-    const unlocked = farmer.storeUnlocked === true || approved;
-
-    return approved && active && unlocked;
+      normalize(farmer.reviewDecision) === "approved" ||
+      normalize(farmer.status) === "approved" ||
+      normalize(farmer.status) === "active"
+    );
   }
 
   async function handleLogin() {
@@ -266,12 +320,11 @@ export default function FarmerLoginScreen() {
         const usernameMatch = normalize(farmer.username) === cleanLogin;
         const emailMatch = normalize(farmer.email) === cleanLogin;
 
-        const storedPassword = String(farmer.password || "").trim();
-        const enteredPassword = String(cleanPassword || "").trim();
-
+        const storedPassword = clean(farmer.password);
+        const enteredPassword = clean(cleanPassword);
         const passwordMatch = storedPassword === enteredPassword;
 
-        console.log("LOGIN CHECK", {
+        console.log("FARMER LOGIN CHECK", {
           storedUsername: farmer.username,
           enteredUsername: cleanLogin,
           storedEmail: farmer.email,
@@ -291,12 +344,10 @@ export default function FarmerLoginScreen() {
       if (!matched) {
         Alert.alert(
           "Login Failed",
-          "No farmer account matched that username/email and password. Use Admin > Accounts to reset the login, then try again."
+          "No farmer account matched that username/email and password. Use Admin > Accounts > Reset Login, then try again."
         );
         return;
       }
-
-      await saveFarmerSession(matched);
 
       if (matched.rejected) {
         Alert.alert(
@@ -305,6 +356,8 @@ export default function FarmerLoginScreen() {
         );
         return;
       }
+
+      await saveFarmerEverywhere(matched);
 
       if (isApprovedAndUnlocked(matched)) {
         router.replace("/farmer/setup-store" as any);
