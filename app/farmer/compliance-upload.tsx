@@ -1344,12 +1344,19 @@ export default function FarmerComplianceUploadScreen() {
       setLoading(true);
 
       const businessSaved = await saveBusinessInfo(true);
-      if (!businessSaved) return;
+      if (!businessSaved) {
+        setLoading(false);
+        return;
+      }
 
       const credentialsSaved = await saveLoginCredentials(false);
-      if (!credentialsSaved) return;
+      if (!credentialsSaved) {
+        setLoading(false);
+        return;
+      }
 
       if (!applicationFeePaid) {
+        setLoading(false);
         Alert.alert(
           "Application Fee Required",
           "Please complete the $29.99 application process fee before submitting compliance review."
@@ -1358,6 +1365,7 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       if (!uploadedDocs.pickup_delivery_agreement) {
+        setLoading(false);
         Alert.alert(
           "Pickup / Delivery Required",
           "Please select Pickup Only, Delivery Only, or Pickup and Delivery."
@@ -1366,6 +1374,7 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       if (!allLegalAccepted) {
+        setLoading(false);
         Alert.alert(
           "Legal Checklist Required",
           "Please check all legal confirmations."
@@ -1374,6 +1383,7 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       if (missingRequiredDocs.length > 0) {
+        setLoading(false);
         Alert.alert(
           "Documents Required",
           "Please upload all required verification documents."
@@ -1382,6 +1392,7 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       if (!stripeAccountId) {
+        setLoading(false);
         Alert.alert(
           "Stripe Required",
           "Please complete Stripe payout setup before submitting."
@@ -1389,37 +1400,54 @@ export default function FarmerComplianceUploadScreen() {
         return;
       }
 
+      const submittedAt = new Date().toISOString();
+
       const reviewPayload = {
+        id: activeFarmerId,
+
         approved: false,
         rejected: false,
         needsMoreInfo: false,
         reviewed: false,
         accountActive: false,
+        storeUnlocked: false,
+
         complianceSubmitted: true,
         complianceStatus: "pending_admin_review",
         adminReviewStatus: "pending",
         reviewDecision: "pending",
-        submittedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        businessName,
-        farmName: businessName,
-        ownerName,
+
+        submittedAt,
+        updatedAt: submittedAt,
+
+        businessName: businessName.trim(),
+        farmName: businessName.trim(),
+        ownerName: ownerName.trim(),
         email: farmerEmail.trim().toLowerCase(),
-        username,
+        state,
+
+        username: username.trim(),
         password,
+
         securityQuestion1,
         securityAnswer1,
         securityQuestion2,
         securityAnswer2,
         securityQuestion3,
         securityAnswer3,
+
         farmerMembershipPaid: false,
-        applicationFeePaid,
+        monthlyMembershipStarted: false,
+        monthlyMembershipRequiredAfterApproval: true,
+
+        applicationFeePaid: true,
+
         stripeAccountId,
         farmerStripeAccountId: stripeAccountId,
         stripePayoutsEnabled,
         stripeChargesEnabled,
         stripeOnboardingComplete,
+
         pickupDeliveryOption,
         uploadedDocs,
         legalChecks,
@@ -1429,16 +1457,11 @@ export default function FarmerComplianceUploadScreen() {
 
       await AsyncStorage.setItem(
         PENDING_FARMER_KEY,
-        JSON.stringify({ id: activeFarmerId, ...reviewPayload })
+        JSON.stringify(reviewPayload)
       );
-      await AsyncStorage.setItem(
-        "currentFarmer",
-        JSON.stringify({ id: activeFarmerId, ...reviewPayload })
-      );
-      await AsyncStorage.setItem(
-        "currentUser",
-        JSON.stringify({ id: activeFarmerId, ...reviewPayload })
-      );
+
+      await AsyncStorage.setItem("currentFarmer", JSON.stringify(reviewPayload));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(reviewPayload));
       await AsyncStorage.setItem("userRole", "farmer");
       await AsyncStorage.setItem("currentUserRole", "farmer");
 
@@ -1454,34 +1477,25 @@ export default function FarmerComplianceUploadScreen() {
         reviewPayload
       );
 
-      await syncCurrentFarmer(activeFarmerId);
+      setLoading(false);
 
-      Alert.alert(
-        "Application Under Review",
-        "Your Farm2Home farmer application has been submitted. Your application is under review. Once approved, your farmer store will be unlocked and your $14.99 monthly membership will start.",
-        [
-          {
-            text: "OK",
-            onPress: () =>
-              router.replace({
-                pathname: "/farmer/awaiting-approval",
-                params: {
-                  farmerId: activeFarmerId,
-                  email: farmerEmail.trim().toLowerCase(),
-                  businessName: businessName.trim(),
-                },
-              } as any),
-          },
-        ]
-      );
+      router.replace({
+        pathname: "/farmer/awaiting-approval",
+        params: {
+          farmerId: activeFarmerId,
+          email: farmerEmail.trim().toLowerCase(),
+          businessName: businessName.trim(),
+        },
+      } as any);
     } catch (error: any) {
       console.log("Verification error:", error);
+
+      setLoading(false);
+
       Alert.alert(
         "Verification Error",
         error?.message || "Unable to submit for compliance review."
       );
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -1854,6 +1868,7 @@ export default function FarmerComplianceUploadScreen() {
           Monthly Farmer Membership - $14.99: Starts After Admin Approval
         </Text>
       </View>
+
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Create Farmer Login</Text>
 
