@@ -12,7 +12,6 @@ import {
 import { router } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
-
 import { addFarmer, Farmer } from "../data/farmerStore";
 import {
   createVerificationRecordFromFarmer,
@@ -39,12 +38,18 @@ const productOptions = [
   "Seasonal Items",
 ];
 
+const PENDING_FARMER_KEY = "pendingFarmerApplication";
+
 export default function FarmerRegister() {
   const [ownerName, setOwnerName] = useState("");
   const [farmName, setFarmName] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const [businessAddress, setBusinessAddress] = useState("");
   const [city, setCity] = useState("");
@@ -70,6 +75,37 @@ export default function FarmerRegister() {
     );
   }
 
+  async function readArray(key: string) {
+    const raw = await AsyncStorage.getItem(key);
+
+    if (!raw) return [];
+
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function upsertFarmerArray(key: string, farmer: any) {
+    const existing = await readArray(key);
+
+    const next = [
+      farmer,
+      ...existing.filter((item: any) => {
+        return (
+          item?.id !== farmer.id &&
+          item?.farmerId !== farmer.id &&
+          String(item?.email || "").toLowerCase() !== farmer.email &&
+          String(item?.username || "").toLowerCase() !== farmer.username
+        );
+      }),
+    ];
+
+    await AsyncStorage.setItem(key, JSON.stringify(next));
+  }
+
   async function notifyAdminFarmerVerification(farmer: {
     farmerId: string;
     ownerName: string;
@@ -84,16 +120,13 @@ export default function FarmerRegister() {
     selectedProducts: string[];
   }) {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/notify/farmer-verification`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(farmer),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(farmer),
+      });
 
       const data = await response.json();
 
@@ -111,28 +144,29 @@ export default function FarmerRegister() {
       !farmName.trim() ||
       !businessName.trim() ||
       !email.trim() ||
-      !phone.trim()
+      !phone.trim() ||
+      !username.trim() ||
+      !password.trim()
     ) {
       Alert.alert(
         "Missing Info",
-        "Please complete all farmer account fields."
+        "Please complete all farmer account fields, including username and password."
       );
       return;
     }
 
     if (!email.includes("@")) {
-      Alert.alert(
-        "Invalid Email",
-        "Please enter a valid email address."
-      );
+      Alert.alert("Invalid Email", "Please enter a valid email address.");
+      return;
+    }
+
+    if (password.trim() !== confirmPassword.trim()) {
+      Alert.alert("Password Mismatch", "Passwords do not match.");
       return;
     }
 
     if (selectedProducts.length === 0) {
-      Alert.alert(
-        "Missing Products",
-        "Select at least one product type."
-      );
+      Alert.alert("Missing Products", "Select at least one product type.");
       return;
     }
 
@@ -154,21 +188,28 @@ export default function FarmerRegister() {
       const cleanBusinessName = businessName.trim();
       const cleanEmail = email.trim().toLowerCase();
       const cleanPhone = phone.trim();
+      const cleanUsername = username.trim().toLowerCase();
+      const cleanPassword = password.trim();
 
       const cleanAddress = businessAddress.trim();
       const cleanCity = city.trim();
-      const cleanState = stateValue.trim();
+      const cleanState = stateValue.trim().toUpperCase();
       const cleanZip = zipCode.trim();
 
       const now = new Date().toISOString();
 
-      const newFarmer: Farmer = {
+      const newFarmer: Farmer & any = {
         id: farmerId,
+        farmerId,
+
         ownerName: cleanOwnerName,
         farmName: cleanFarmName,
         businessName: cleanBusinessName,
         email: cleanEmail,
         phone: cleanPhone,
+
+        username: cleanUsername,
+        password: cleanPassword,
 
         businessAddress: cleanAddress,
         city: cleanCity,
@@ -178,11 +219,27 @@ export default function FarmerRegister() {
         selectedProducts,
 
         approved: false,
-        accountActive: true,
+        rejected: false,
+        reviewed: false,
+        needsMoreInfo: false,
+
+        accountActive: false,
+        storeUnlocked: false,
+
+        complianceSubmitted: false,
         complianceStatus: "in_progress",
+        adminReviewStatus: "not_submitted",
+        reviewDecision: "not_submitted",
+
+        applicationFeePaid: false,
+        farmerMembershipPaid: false,
+        monthlyMembershipStarted: false,
 
         stripeAccountId: "",
+        farmerStripeAccountId: "",
         stripeOnboardingComplete: false,
+        stripePayoutsEnabled: false,
+        stripeChargesEnabled: false,
         payoutsEnabled: false,
         chargesEnabled: false,
 
@@ -190,21 +247,18 @@ export default function FarmerRegister() {
 
         createdAt: now,
         updatedAt: now,
-      } as Farmer;
+      };
 
       await addFarmer(newFarmer);
 
-      await AsyncStorage.setItem(
-        "currentFarmer",
-        JSON.stringify(newFarmer)
-      );
-
-      await AsyncStorage.setItem(
-        "currentUser",
-        JSON.stringify(newFarmer)
-      );
-
+      await AsyncStorage.setItem("currentFarmer", JSON.stringify(newFarmer));
+      await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(newFarmer));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(newFarmer));
+      await AsyncStorage.setItem("userRole", "farmer");
       await AsyncStorage.setItem("currentUserRole", "farmer");
+
+      await upsertFarmerArray("farm2homeFarmers", newFarmer);
+      await upsertFarmerArray("farmers", newFarmer);
 
       const verificationRecord = createVerificationRecordFromFarmer({
         farmerId,
@@ -217,12 +271,28 @@ export default function FarmerRegister() {
 
       await upsertVerificationRecord({
         ...verificationRecord,
+        id: farmerId,
+        farmerId,
+        accountType: "FARMER",
         businessAddress: cleanAddress,
         city: cleanCity,
         state: cleanState,
         zipCode: cleanZip,
         businessName: cleanBusinessName,
+        farmName: cleanFarmName,
+        ownerName: cleanOwnerName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        username: cleanUsername,
+        password: cleanPassword,
         selectedProducts,
+        approved: false,
+        accountActive: false,
+        storeUnlocked: false,
+        status: "STARTED",
+        complianceStatus: "in_progress",
+        adminReviewStatus: "not_submitted",
+        reviewDecision: "not_submitted",
         updatedAt: now,
       } as any);
 
@@ -250,14 +320,11 @@ export default function FarmerRegister() {
         params: {
           farmerId,
         },
-      } as never);
+      } as any);
     } catch (error) {
       console.log("Farmer registration error:", error);
 
-      Alert.alert(
-        "Registration Error",
-        "Unable to create farmer application."
-      );
+      Alert.alert("Registration Error", "Unable to create farmer application.");
     } finally {
       setLoading(false);
     }
@@ -270,42 +337,29 @@ export default function FarmerRegister() {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.header}>
-        🚜 Farmer Account Setup
-      </Text>
+      <Text style={styles.header}>🚜 Farmer Account Setup</Text>
 
       <Text style={styles.subheader}>
-        Create your farm profile, accept the Farmer Onboarding Agreement,
-        and begin Farm2Home verification review.
+        Create your farm profile, username/password, accept the Farmer
+        Onboarding Agreement, and begin Farm2Home verification review.
       </Text>
 
       <View style={styles.notice}>
-        <Text style={styles.noticeTitle}>
-          Required For Approval
-        </Text>
+        <Text style={styles.noticeTitle}>Required For Approval</Text>
 
         <Text style={styles.noticeText}>
-          Business Registration • Sales Tax/Exemption • Food Safety
-          Registration • W-9 • Liability Insurance
+          Business Registration • Sales Tax/Exemption • Food Safety Registration
+          • W-9 • Liability Insurance
         </Text>
       </View>
 
       <View style={styles.priceBox}>
-        <Text style={styles.priceTitle}>
-          Farmer Pricing
-        </Text>
-
+        <Text style={styles.priceTitle}>Farmer Pricing</Text>
+        <Text style={styles.priceText}>Application Process Fee: $29.99</Text>
         <Text style={styles.priceText}>
-          One-Time Setup Fee: $29.99
+          Monthly Membership: $14.99 after approval
         </Text>
-
-        <Text style={styles.priceText}>
-          Monthly Membership: $14.99
-        </Text>
-
-        <Text style={styles.priceText}>
-          Marketplace Service Fee: 4%
-        </Text>
+        <Text style={styles.priceText}>Marketplace Service Fee: 4%</Text>
       </View>
 
       <TextInput
@@ -351,6 +405,35 @@ export default function FarmerRegister() {
         onChangeText={setPhone}
       />
 
+      <Text style={styles.sectionTitle}>Create Farmer Login</Text>
+
+      <TextInput
+        style={styles.input}
+        placeholder="Create Username"
+        placeholderTextColor="#8A8F98"
+        autoCapitalize="none"
+        value={username}
+        onChangeText={setUsername}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Create Password"
+        placeholderTextColor="#8A8F98"
+        secureTextEntry
+        value={password}
+        onChangeText={setPassword}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Confirm Password"
+        placeholderTextColor="#8A8F98"
+        secureTextEntry
+        value={confirmPassword}
+        onChangeText={setConfirmPassword}
+      />
+
       <TextInput
         style={styles.input}
         placeholder="Business Address"
@@ -384,9 +467,7 @@ export default function FarmerRegister() {
         onChangeText={setZipCode}
       />
 
-      <Text style={styles.sectionTitle}>
-        Select Certified Products On Your Farm
-      </Text>
+      <Text style={styles.sectionTitle}>Select Certified Products On Your Farm</Text>
 
       <View style={styles.grid}>
         {productOptions.map((product) => {
@@ -395,19 +476,11 @@ export default function FarmerRegister() {
           return (
             <TouchableOpacity
               key={product}
-              style={[
-                styles.productChip,
-                active && styles.productChipActive,
-              ]}
+              style={[styles.productChip, active && styles.productChipActive]}
               onPress={() => toggleProduct(product)}
               activeOpacity={0.85}
             >
-              <Text
-                style={[
-                  styles.productText,
-                  active && styles.productTextActive,
-                ]}
-              >
+              <Text style={[styles.productText, active && styles.productTextActive]}>
                 {product}
               </Text>
             </TouchableOpacity>
@@ -416,9 +489,7 @@ export default function FarmerRegister() {
       </View>
 
       <View style={styles.legalBox}>
-        <Text style={styles.legalTitle}>
-          Farmer Onboarding Agreement
-        </Text>
+        <Text style={styles.legalTitle}>Farmer Onboarding Agreement</Text>
 
         <Agreement
           label="I understand I am an independent seller and not an employee, agent, or partner of Farm2Home."
@@ -458,29 +529,22 @@ export default function FarmerRegister() {
       </View>
 
       <TouchableOpacity
-        style={[
-          styles.button,
-          loading && styles.disabledButton,
-        ]}
+        style={[styles.button, loading && styles.disabledButton]}
         onPress={registerFarmer}
         disabled={loading}
         activeOpacity={0.85}
       >
         <Text style={styles.buttonText}>
-          {loading
-            ? "Creating Verification..."
-            : "Start Document Verification"}
+          {loading ? "Creating Verification..." : "Start Document Verification"}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.secondaryButton}
-        onPress={() => router.push("/farmer/login" as never)}
+        onPress={() => router.push("/farmer/login" as any)}
         activeOpacity={0.85}
       >
-        <Text style={styles.secondaryText}>
-          Already have account? Farmer Login
-        </Text>
+        <Text style={styles.secondaryText}>Already have account? Farmer Login</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -496,53 +560,26 @@ function Agreement({
   onPress: () => void;
 }) {
   return (
-    <TouchableOpacity
-      style={styles.row}
-      onPress={onPress}
-      activeOpacity={0.85}
-    >
-      <View
-        style={[
-          styles.fakeCheckbox,
-          value && styles.fakeCheckboxActive,
-        ]}
-      >
-        <Text style={styles.fakeCheckboxText}>
-          {value ? "✓" : ""}
-        </Text>
+    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.85}>
+      <View style={[styles.fakeCheckbox, value && styles.fakeCheckboxActive]}>
+        <Text style={styles.fakeCheckboxText}>{value ? "✓" : ""}</Text>
       </View>
 
-      <Text style={styles.agreementText}>
-        {label}
-      </Text>
+      <Text style={styles.agreementText}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: "#F7F7F2",
-  },
-
-  content: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-
-  header: {
-    fontSize: 30,
-    fontWeight: "900",
-    color: "#2F7D32",
-  },
-
+  page: { flex: 1, backgroundColor: "#F7F7F2" },
+  content: { padding: 20, paddingBottom: 40 },
+  header: { fontSize: 30, fontWeight: "900", color: "#2F7D32" },
   subheader: {
     color: "#666666",
     marginTop: 6,
     marginBottom: 18,
     lineHeight: 21,
   },
-
   notice: {
     backgroundColor: "#E8F5E9",
     padding: 14,
@@ -551,18 +588,8 @@ const styles = StyleSheet.create({
     borderLeftWidth: 5,
     borderLeftColor: "#2F7D32",
   },
-
-  noticeTitle: {
-    fontWeight: "900",
-    color: "#2F7D32",
-    marginBottom: 5,
-  },
-
-  noticeText: {
-    color: "#444444",
-    lineHeight: 20,
-  },
-
+  noticeTitle: { fontWeight: "900", color: "#2F7D32", marginBottom: 5 },
+  noticeText: { color: "#444444", lineHeight: 20 },
   priceBox: {
     backgroundColor: "#FFF8E1",
     padding: 14,
@@ -571,18 +598,8 @@ const styles = StyleSheet.create({
     borderLeftWidth: 5,
     borderLeftColor: "#D4A017",
   },
-
-  priceTitle: {
-    fontWeight: "900",
-    color: "#8A5A00",
-    marginBottom: 5,
-  },
-
-  priceText: {
-    color: "#444444",
-    marginBottom: 4,
-  },
-
+  priceTitle: { fontWeight: "900", color: "#8A5A00", marginBottom: 5 },
+  priceText: { color: "#444444", marginBottom: 4 },
   input: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -592,7 +609,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: "#111827",
   },
-
   sectionTitle: {
     fontSize: 18,
     fontWeight: "900",
@@ -600,14 +616,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: "#111111",
   },
-
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 20,
-  },
-
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 20 },
   productChip: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -616,21 +625,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 22,
   },
-
-  productChipActive: {
-    backgroundColor: "#2F7D32",
-    borderColor: "#2F7D32",
-  },
-
-  productText: {
-    color: "#111111",
-    fontWeight: "700",
-  },
-
-  productTextActive: {
-    color: "#FFFFFF",
-  },
-
+  productChipActive: { backgroundColor: "#2F7D32", borderColor: "#2F7D32" },
+  productText: { color: "#111111", fontWeight: "700" },
+  productTextActive: { color: "#FFFFFF" },
   legalBox: {
     backgroundColor: "#FFFFFF",
     padding: 15,
@@ -639,20 +636,13 @@ const styles = StyleSheet.create({
     borderColor: "#EEEEEE",
     marginBottom: 20,
   },
-
   legalTitle: {
     fontSize: 18,
     fontWeight: "900",
     color: "#111111",
     marginBottom: 12,
   },
-
-  row: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 13,
-  },
-
+  row: { flexDirection: "row", alignItems: "flex-start", marginBottom: 13 },
   fakeCheckbox: {
     width: 22,
     height: 22,
@@ -664,18 +654,13 @@ const styles = StyleSheet.create({
     marginTop: 1,
     backgroundColor: "#FFFFFF",
   },
-
-  fakeCheckboxActive: {
-    backgroundColor: "#2F7D32",
-  },
-
+  fakeCheckboxActive: { backgroundColor: "#2F7D32" },
   fakeCheckboxText: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "900",
     lineHeight: 18,
   },
-
   agreementText: {
     flex: 1,
     marginLeft: 10,
@@ -683,29 +668,20 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontSize: 13,
   },
-
   button: {
     backgroundColor: "#2F7D32",
     padding: 18,
     borderRadius: 16,
     marginTop: 6,
   },
-
-  disabledButton: {
-    backgroundColor: "#9CA3AF",
-  },
-
+  disabledButton: { backgroundColor: "#9CA3AF" },
   buttonText: {
     color: "#FFFFFF",
     textAlign: "center",
     fontWeight: "900",
     fontSize: 16,
   },
-
-  secondaryButton: {
-    padding: 16,
-  },
-
+  secondaryButton: { padding: 16 },
   secondaryText: {
     textAlign: "center",
     color: "#2F7D32",
