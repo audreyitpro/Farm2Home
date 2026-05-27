@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
+import * as DocumentPicker from "expo-document-picker";
 import { router } from "expo-router";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
@@ -31,6 +32,13 @@ const SECURITY_QUESTIONS = [
   "What was your first delivery vehicle?",
 ];
 
+type UploadedDocument = {
+  name?: string;
+  uri?: string;
+  mimeType?: string;
+  size?: number;
+};
+
 type DriverUser = {
   id: string;
   role: "driver";
@@ -45,6 +53,13 @@ type DriverUser = {
   hasInsurance: boolean;
   hasValidLicense: boolean;
   acceptsBackgroundCheck: boolean;
+  licenseDocument: UploadedDocument | null;
+  insuranceDocument: UploadedDocument | null;
+  uploadedDocs: {
+    driver_license: UploadedDocument | null;
+    insurance: UploadedDocument | null;
+  };
+  documentsUploaded: boolean;
   securityQuestion1: string;
   securityAnswer1: string;
   securityQuestion2: string;
@@ -65,7 +80,6 @@ function normalizeAnswer(value: string) {
 
 function safelyParseArray(rawValue: string | null): DriverUser[] {
   if (!rawValue) return [];
-
   try {
     const parsed = JSON.parse(rawValue);
     return Array.isArray(parsed) ? parsed : [];
@@ -80,22 +94,30 @@ async function getDrivers() {
 }
 
 async function saveDriver(driver: DriverUser) {
-  const drivers = await getDrivers();
+  const keys = ["farm2homeDrivers", "drivers", "driverAccounts"];
 
-  const updatedDrivers = [
-    driver,
-    ...drivers.filter(
-      (item) =>
-        item.email.toLowerCase() !== driver.email.toLowerCase() &&
-        item.username.toLowerCase() !== driver.username.toLowerCase() &&
-        item.id !== driver.id
-    ),
-  ];
+  for (const key of keys) {
+    const raw = await AsyncStorage.getItem(key);
+    const drivers = safelyParseArray(raw);
 
-  await AsyncStorage.setItem("farm2homeDrivers", JSON.stringify(updatedDrivers));
+    const updatedDrivers = [
+      driver,
+      ...drivers.filter(
+        (item) =>
+          item.id !== driver.id &&
+          String(item.email || "").toLowerCase() !== driver.email.toLowerCase() &&
+          String(item.username || "").toLowerCase() !== driver.username.toLowerCase()
+      ),
+    ];
+
+    await AsyncStorage.setItem(key, JSON.stringify(updatedDrivers));
+  }
+
   await AsyncStorage.setItem("pendingDriver", JSON.stringify(driver));
   await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
   await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
+  await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(driver));
+  await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(driver));
   await AsyncStorage.setItem("userRole", "driver");
   await AsyncStorage.setItem("currentUserRole", "driver");
 }
@@ -115,6 +137,9 @@ export default function DriverRegisterScreen() {
   const [licenseNumber, setLicenseNumber] = useState("");
   const [serviceArea, setServiceArea] = useState("");
 
+  const [licenseDocument, setLicenseDocument] = useState<UploadedDocument | null>(null);
+  const [insuranceDocument, setInsuranceDocument] = useState<UploadedDocument | null>(null);
+
   const [hasInsurance, setHasInsurance] = useState(false);
   const [hasValidLicense, setHasValidLicense] = useState(false);
   const [acceptsBackgroundCheck, setAcceptsBackgroundCheck] = useState(false);
@@ -130,6 +155,36 @@ export default function DriverRegisterScreen() {
     () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
+
+  async function pickDocument(type: "license" | "insurance") {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["image/*", "application/pdf"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled) return;
+
+      const file = result.assets?.[0];
+      if (!file) return;
+
+      const savedFile: UploadedDocument = {
+        name: file.name,
+        uri: file.uri,
+        mimeType: file.mimeType,
+        size: file.size,
+      };
+
+      if (type === "license") {
+        setLicenseDocument(savedFile);
+      } else {
+        setInsuranceDocument(savedFile);
+      }
+    } catch (error: any) {
+      Alert.alert("Upload Error", error?.message || "Unable to select document.");
+    }
+  }
 
   function validateForm() {
     if (!fullName.trim() || !email.trim() || !phone.trim()) {
@@ -166,6 +221,14 @@ export default function DriverRegisterScreen() {
       Alert.alert(
         "Driver Info Required",
         "Vehicle type, license number, and service area are required."
+      );
+      return false;
+    }
+
+    if (!licenseDocument || !insuranceDocument) {
+      Alert.alert(
+        "Documents Required",
+        "Please upload your driver license and insurance document."
       );
       return false;
     }
@@ -262,81 +325,82 @@ export default function DriverRegisterScreen() {
         hasInsurance,
         hasValidLicense,
         acceptsBackgroundCheck,
+        licenseDocument,
+        insuranceDocument,
+        uploadedDocs: {
+          driver_license: licenseDocument,
+          insurance: insuranceDocument,
+        },
+        documentsUploaded: true,
         securityQuestion1,
         securityAnswer1: normalizeAnswer(securityAnswer1),
         securityQuestion2,
         securityAnswer2: normalizeAnswer(securityAnswer2),
         securityQuestion3,
         securityAnswer3: normalizeAnswer(securityAnswer3),
-        approved: false,
+        approved: true,
         accountActive: true,
-        subscriptionStatus: "pending",
-        membershipStatus: "Pending",
+        subscriptionStatus: "active",
+        membershipStatus: "Active",
         createdAt: now,
         updatedAt: now,
       };
 
       await saveDriver(driver);
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-subscription-checkout`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            customerEmail: cleanEmail,
-            email: cleanEmail,
-            name: cleanFullName,
-            username: cleanUsername,
-            userId: driver.id,
-            driverId: driver.id,
-            planType: "driver",
-            successUrl: `${APP_URL}/driver/mobile-driver-app?session_id={CHECKOUT_SESSION_ID}`,
-            cancelUrl: `${APP_URL}/driver/register`,
-          }),
-        }
-      );
-
-      const text = await response.text();
-
-      let data: {
-        success?: boolean;
-        url?: string;
-        id?: string;
-        sessionId?: string;
-        error?: string;
-        message?: string;
-      } = {};
-
       try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = {};
-      }
-
-      if (!response.ok || !data.url) {
-        Alert.alert(
-          "Account Saved",
-          data.error ||
-            data.message ||
-            "Your driver account was saved, but Stripe checkout did not open. Check STRIPE_DRIVER_BOARD_PRICE_ID."
+        const response = await fetch(
+          `${API_BASE_URL}/payments/create-subscription-checkout`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              customerEmail: cleanEmail,
+              email: cleanEmail,
+              name: cleanFullName,
+              username: cleanUsername,
+              userId: driver.id,
+              driverId: driver.id,
+              planType: "driver",
+              successUrl: `${APP_URL}/driver/mobile-driver-app`,
+              cancelUrl: `${APP_URL}/driver/register`,
+            }),
+          }
         );
-        return;
+
+        const text = await response.text();
+        let data: any = {};
+
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          data = {};
+        }
+
+        if (response.ok && data.url) {
+          await AsyncStorage.setItem(
+            "pendingDriver",
+            JSON.stringify({
+              ...driver,
+              stripeCheckoutSessionId: data.id || data.sessionId || null,
+              membershipStatus: "Checkout Started",
+              updatedAt: new Date().toISOString(),
+            })
+          );
+
+          await openCheckoutUrl(data.url);
+          return;
+        }
+      } catch (stripeError) {
+        console.log("Stripe driver checkout skipped:", stripeError);
       }
 
-      await AsyncStorage.setItem(
-        "pendingDriver",
-        JSON.stringify({
-          ...driver,
-          stripeCheckoutSessionId: data.id || data.sessionId || null,
-          membershipStatus: "Checkout Started",
-          updatedAt: new Date().toISOString(),
-        })
-      );
-
-      await openCheckoutUrl(data.url);
+      Alert.alert("Driver Account Created", "Welcome to Farm2Home Driver Network!", [
+        {
+          text: "Continue",
+          onPress: () => router.replace("/driver/mobile-driver-app" as any),
+        },
+      ]);
     } catch (error: any) {
       console.log("Driver register error:", error);
       Alert.alert(
@@ -501,6 +565,28 @@ export default function DriverRegisterScreen() {
         onChangeText={setServiceArea}
       />
 
+      <TouchableOpacity
+        style={styles.uploadButton}
+        onPress={() => pickDocument("license")}
+      >
+        <Text style={styles.uploadText}>
+          {licenseDocument
+            ? `✅ License: ${licenseDocument.name}`
+            : "Upload Driver License"}
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.uploadButton}
+        onPress={() => pickDocument("insurance")}
+      >
+        <Text style={styles.uploadText}>
+          {insuranceDocument
+            ? `✅ Insurance: ${insuranceDocument.name}`
+            : "Upload Insurance"}
+        </Text>
+      </TouchableOpacity>
+
       <View style={styles.switchRow}>
         <Text style={styles.switchText}>I have active auto insurance</Text>
         <Switch value={hasInsurance} onValueChange={setHasInsurance} />
@@ -637,6 +723,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#111827",
     fontWeight: "700",
+  },
+  uploadButton: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 2,
+    borderColor: "#EA580C",
+    padding: 15,
+    borderRadius: 14,
+    marginBottom: 12,
+  },
+  uploadText: {
+    color: "#EA580C",
+    fontWeight: "900",
+    textAlign: "center",
   },
   switchRow: {
     backgroundColor: "#FFFFFF",

@@ -16,47 +16,8 @@ import { router, useFocusEffect } from "expo-router";
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 import freightTheme from "../styles/freightTheme";
-import ProtectedRoute from "../components/ProtectedRoute";
 
-type DriverLoad = {
-  id: string;
-  title?: string;
-  commodity?: string;
-
-  pickup_city?: string;
-  pickup_state?: string;
-  delivery_city?: string;
-  delivery_state?: string;
-
-  pickupAddress?: string;
-  dropoffAddress?: string;
-
-  deliveryInfo?: {
-    address?: string;
-    city?: string;
-    state?: string;
-    [key: string]: any;
-  };
-
-  rate?: number;
-  deliveryFee?: number;
-  total?: number;
-
-  status?: string;
-  fulfillmentStatus?: string;
-
-  customerEmail?: string;
-  customerName?: string;
-
-  carrier_id?: string | null;
-  assignedDriverId?: string;
-  assignedFreightCarrierId?: string;
-
-  farmers?: {
-    farm_name?: string;
-    owner_name?: string;
-  };
-};
+type DriverLoad = any;
 
 type DriverStats = {
   activeLoads: number;
@@ -64,6 +25,10 @@ type DriverStats = {
   openLoads: number;
   earnings: number;
 };
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
 
 export default function MobileDriverApp() {
   const [loading, setLoading] = useState(false);
@@ -84,14 +49,33 @@ export default function MobileDriverApp() {
   );
 
   async function getCurrentDriver() {
-    const saved =
-      (await AsyncStorage.getItem("currentDriver")) ||
-      (await AsyncStorage.getItem("currentUser"));
+    const currentDriverRaw = await AsyncStorage.getItem("currentDriver");
+    const currentUserRaw = await AsyncStorage.getItem("currentUser");
 
-    if (!saved) return null;
+    const raw = currentDriverRaw || currentUserRaw;
+
+    if (!raw) return null;
 
     try {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(raw);
+
+      const driver = {
+        ...parsed,
+        id: parsed.id || parsed.driverId || parsed.email || `driver_${Date.now()}`,
+        driverId:
+          parsed.driverId || parsed.id || parsed.email || `driver_${Date.now()}`,
+        role: "driver",
+        accountActive: parsed.accountActive !== false,
+        membershipStatus: parsed.membershipStatus || "Active",
+        subscriptionStatus: parsed.subscriptionStatus || "active",
+      };
+
+      await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
+      await AsyncStorage.setItem("userRole", "driver");
+      await AsyncStorage.setItem("currentUserRole", "driver");
+
+      return driver;
     } catch {
       return null;
     }
@@ -103,36 +87,51 @@ export default function MobileDriverApp() {
 
       const currentDriver = await getCurrentDriver();
 
-      const localDriverId = currentDriver?.id || currentDriver?.email || "";
+      if (!currentDriver) {
+        Alert.alert("Driver Login Required", "Please login as a driver.");
+        router.replace("/driver/login" as any);
+        return;
+      }
+
+      const localDriverId =
+        currentDriver.id || currentDriver.driverId || currentDriver.email || "";
 
       const localDriverName =
-        currentDriver?.fullName ||
-        currentDriver?.name ||
-        currentDriver?.username ||
+        currentDriver.fullName ||
+        currentDriver.name ||
+        currentDriver.driverName ||
+        currentDriver.username ||
         "Farm2Home Driver";
 
       setDriverId(localDriverId);
       setDriverName(localDriverName);
 
-      const response = await fetch(`${API_BASE_URL}/orders`);
-      const data = await response.json();
-
       let backendOrders: DriverLoad[] = [];
 
-      if (response.ok && Array.isArray(data.orders)) {
-        backendOrders = data.orders.filter((order: any) => {
-          const status = String(
-            order.fulfillmentStatus || order.status || "NEW"
-          ).toUpperCase();
+      try {
+        const response = await fetch(`${API_BASE_URL}/orders`);
+        const data = await response.json();
 
-          const assignedToMe = order.assignedDriverId === localDriverId;
+        if (response.ok && Array.isArray(data.orders)) {
+          backendOrders = data.orders.filter((order: any) => {
+            const status = String(
+              order.fulfillmentStatus || order.status || "NEW"
+            ).toUpperCase();
 
-          const openForDriver =
-            !order.assignedDriverId &&
-            ["NEW", "OPEN", "AVAILABLE"].includes(status);
+            const assignedToMe =
+              order.assignedDriverId === localDriverId ||
+              order.driverId === localDriverId;
 
-          return assignedToMe || openForDriver;
-        });
+            const openForDriver =
+              !order.assignedDriverId &&
+              !order.driverId &&
+              ["NEW", "OPEN", "AVAILABLE"].includes(status);
+
+            return assignedToMe || openForDriver;
+          });
+        }
+      } catch (error) {
+        console.log("Backend orders skipped:", error);
       }
 
       const mappedBackendOrders: DriverLoad[] = backendOrders.map((order: any) => ({
@@ -154,6 +153,7 @@ export default function MobileDriverApp() {
           order.delivery_city ||
           order.deliveryCity ||
           order.deliveryInfo?.city ||
+          order.deliveryInfo?.address ||
           "Delivery",
         delivery_state:
           order.delivery_state ||
@@ -180,9 +180,7 @@ export default function MobileDriverApp() {
           .or(`status.eq.OPEN,status.eq.available,carrier_id.eq.${localDriverId}`)
           .order("created_at", { ascending: false });
 
-        freightLoads = Array.isArray(cloudLoads)
-          ? (cloudLoads as DriverLoad[])
-          : [];
+        freightLoads = Array.isArray(cloudLoads) ? cloudLoads : [];
       } catch (error) {
         console.log("Supabase freight loads skipped:", error);
       }
@@ -191,12 +189,7 @@ export default function MobileDriverApp() {
 
       setLoads(allLoads);
 
-      const activeStatuses = [
-        "ACCEPTED",
-        "BOOKED",
-        "PICKED_UP",
-        "IN_TRANSIT",
-      ];
+      const activeStatuses = ["ACCEPTED", "BOOKED", "PICKED_UP", "IN_TRANSIT"];
 
       setStats({
         activeLoads: allLoads.filter((item) =>
@@ -289,7 +282,7 @@ export default function MobileDriverApp() {
       const currentDriver = await getCurrentDriver();
 
       const activeDriverId =
-        currentDriver?.id || driverId || currentDriver?.email || "";
+        currentDriver?.id || currentDriver?.driverId || driverId || "";
 
       const acceptedBy =
         currentDriver?.fullName ||
@@ -306,15 +299,14 @@ export default function MobileDriverApp() {
         Boolean(load.fulfillmentStatus) ||
         Boolean(load.customerEmail) ||
         Boolean(load.deliveryInfo) ||
-        load.id.startsWith("order_");
+        String(load.id || "").startsWith("order_");
 
       if (isBackendOrder) {
-        const response = await fetch(`${API_BASE_URL}/orders/${load.id}/accept`, {
+        const response = await fetch(`${API_BASE_URL}/orders/${load.id}/status`, {
           method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            status: "ACCEPTED",
             driverId: activeDriverId,
             acceptedBy,
           }),
@@ -366,17 +358,13 @@ export default function MobileDriverApp() {
         Boolean(load.fulfillmentStatus) ||
         Boolean(load.customerEmail) ||
         Boolean(load.deliveryInfo) ||
-        load.id.startsWith("order_");
+        String(load.id || "").startsWith("order_");
 
       if (isBackendOrder) {
         const response = await fetch(`${API_BASE_URL}/orders/${load.id}/status`, {
           method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            status: loadStatus,
-          }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: loadStatus }),
         });
 
         const data = await response.json();
@@ -496,6 +484,7 @@ export default function MobileDriverApp() {
             onPress={() =>
               router.push({
                 pathname: "/freight/navigation-assistant",
+                params: { loadId: load.id },
               } as any)
             }
           >
@@ -551,155 +540,149 @@ export default function MobileDriverApp() {
   }
 
   return (
-    <ProtectedRoute allowedRoles={["driver"]}>
-      <View style={styles.container}>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Farm2Home Driver</Text>
-          <Text style={styles.title}>Mobile Driver App</Text>
-          <Text style={styles.subtitle}>
-            Accept orders, update GPS, manage pickups, complete deliveries, and
-            track your driver earnings.
-          </Text>
-        </View>
-
-        <View style={styles.navRow}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => router.push("/freight/board" as any)}
-          >
-            <Text style={styles.navText}>Load Board</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.navButtonOutline}
-            onPress={() => router.push("/driver/profile" as any)}
-          >
-            <Text style={styles.navTextOutline}>Profile</Text>
-          </TouchableOpacity>
-        </View>
-
-        {loading ? (
-          <View style={styles.loadingCard}>
-            <ActivityIndicator size="large" color={freightTheme.colors.primary} />
-            <Text style={styles.loadingText}>Loading driver app...</Text>
-          </View>
-        ) : (
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <View style={styles.driverCard}>
-              <Text style={styles.driverName}>🚚 {driverName}</Text>
-              <Text style={styles.driverMeta}>
-                Manage active Farm2Home orders and delivery workflow.
-              </Text>
-            </View>
-
-            <View style={styles.statsRow}>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{stats.openLoads}</Text>
-                <Text style={styles.statLabel}>Open</Text>
-              </View>
-
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{stats.activeLoads}</Text>
-                <Text style={styles.statLabel}>Active</Text>
-              </View>
-
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{stats.completedLoads}</Text>
-                <Text style={styles.statLabel}>Done</Text>
-              </View>
-            </View>
-
-            <View style={styles.earningsCard}>
-              <Text style={styles.earningsLabel}>Completed Delivery Earnings</Text>
-              <Text style={styles.earningsValue}>
-                ${stats.earnings.toFixed(2)}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.refreshButton}
-              onPress={loadDriverDashboard}
-            >
-              <Text style={styles.refreshText}>Refresh Deliveries</Text>
-            </TouchableOpacity>
-
-            <Text style={styles.sectionTitle}>Available & Assigned Deliveries</Text>
-
-            <FlatList
-              data={loads}
-              keyExtractor={(item) => item.id}
-              scrollEnabled={false}
-              contentContainerStyle={{ paddingBottom: 100 }}
-              ListEmptyComponent={
-                <View style={styles.emptyCard}>
-                  <Text style={styles.emptyTitle}>No deliveries available.</Text>
-                  <Text style={styles.emptyText}>
-                    Available and assigned deliveries will appear here.
-                  </Text>
-                </View>
-              }
-              renderItem={({ item }) => {
-                const status = normalizeStatus(item);
-
-                return (
-                  <View style={styles.loadCard}>
-                    <View style={styles.loadHeader}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.loadTitle}>
-                          {item.title || "Farm2Home Delivery"}
-                        </Text>
-                        <Text style={styles.commodity}>
-                          {item.commodity || "Farm Goods"}
-                        </Text>
-                      </View>
-
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          { backgroundColor: statusColor(status) },
-                        ]}
-                      >
-                        <Text style={styles.statusText}>{status}</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.routeBox}>
-                      <Text style={styles.routeText}>
-                        📍{" "}
-                        {item.pickup_city || item.pickupAddress || "Pickup"}{" "}
-                        {item.pickup_state || ""}
-                      </Text>
-
-                      <Text style={styles.arrow}>→</Text>
-
-                      <Text style={styles.routeText}>
-                        🏁{" "}
-                        {item.delivery_city ||
-                          item.dropoffAddress ||
-                          item.deliveryInfo?.address ||
-                          "Delivery"}{" "}
-                        {item.delivery_state || ""}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.metaText}>
-                      Farm: {item.farmers?.farm_name || "Farm2Home Farmer"}
-                    </Text>
-
-                    <Text style={styles.metaText}>
-                      Rate: $
-                      {Number(item.rate || item.deliveryFee || 0).toFixed(2)}
-                    </Text>
-
-                    <View style={styles.loadActions}>{renderActions(item)}</View>
-                  </View>
-                );
-              }}
-            />
-          </ScrollView>
-        )}
+    <View style={styles.container}>
+      <View style={styles.hero}>
+        <Text style={styles.eyebrow}>Farm2Home Driver</Text>
+        <Text style={styles.title}>Mobile Driver App</Text>
+        <Text style={styles.subtitle}>
+          Accept orders, update GPS, manage pickups, complete deliveries, and
+          track your driver earnings.
+        </Text>
       </View>
-    </ProtectedRoute>
+
+      <View style={styles.navRow}>
+        <TouchableOpacity
+          style={styles.navButton}
+          onPress={() => router.push("/freight/board" as any)}
+        >
+          <Text style={styles.navText}>Load Board</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.navButtonOutline}
+          onPress={() => router.push("/driver/profile" as any)}
+        >
+          <Text style={styles.navTextOutline}>Profile</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loading ? (
+        <View style={styles.loadingCard}>
+          <ActivityIndicator size="large" color={freightTheme.colors.primary} />
+          <Text style={styles.loadingText}>Loading driver app...</Text>
+        </View>
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View style={styles.driverCard}>
+            <Text style={styles.driverName}>🚚 {driverName}</Text>
+            <Text style={styles.driverMeta}>
+              Manage active Farm2Home orders and delivery workflow.
+            </Text>
+          </View>
+
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{stats.openLoads}</Text>
+              <Text style={styles.statLabel}>Open</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{stats.activeLoads}</Text>
+              <Text style={styles.statLabel}>Active</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{stats.completedLoads}</Text>
+              <Text style={styles.statLabel}>Done</Text>
+            </View>
+          </View>
+
+          <View style={styles.earningsCard}>
+            <Text style={styles.earningsLabel}>Completed Delivery Earnings</Text>
+            <Text style={styles.earningsValue}>${stats.earnings.toFixed(2)}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={loadDriverDashboard}
+          >
+            <Text style={styles.refreshText}>Refresh Deliveries</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.sectionTitle}>Available & Assigned Deliveries</Text>
+
+          <FlatList
+            data={loads}
+            keyExtractor={(item) => String(item.id)}
+            scrollEnabled={false}
+            contentContainerStyle={{ paddingBottom: 100 }}
+            ListEmptyComponent={
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>No deliveries available.</Text>
+                <Text style={styles.emptyText}>
+                  Available and assigned deliveries will appear here.
+                </Text>
+              </View>
+            }
+            renderItem={({ item }) => {
+              const status = normalizeStatus(item);
+
+              return (
+                <View style={styles.loadCard}>
+                  <View style={styles.loadHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.loadTitle}>
+                        {item.title || "Farm2Home Delivery"}
+                      </Text>
+                      <Text style={styles.commodity}>
+                        {item.commodity || "Farm Goods"}
+                      </Text>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: statusColor(status) },
+                      ]}
+                    >
+                      <Text style={styles.statusText}>{status}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.routeBox}>
+                    <Text style={styles.routeText}>
+                      📍 {item.pickup_city || item.pickupAddress || "Pickup"}{" "}
+                      {item.pickup_state || ""}
+                    </Text>
+
+                    <Text style={styles.arrow}>→</Text>
+
+                    <Text style={styles.routeText}>
+                      🏁{" "}
+                      {item.delivery_city ||
+                        item.dropoffAddress ||
+                        item.deliveryInfo?.address ||
+                        "Delivery"}{" "}
+                      {item.delivery_state || ""}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.metaText}>
+                    Farm: {item.farmers?.farm_name || "Farm2Home Farmer"}
+                  </Text>
+
+                  <Text style={styles.metaText}>
+                    Rate: ${Number(item.rate || item.deliveryFee || 0).toFixed(2)}
+                  </Text>
+
+                  <View style={styles.loadActions}>{renderActions(item)}</View>
+                </View>
+              );
+            }}
+          />
+        </ScrollView>
+      )}
+    </View>
   );
 }
 

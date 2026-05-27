@@ -10,46 +10,12 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 
-import { supabase } from "../services/supabaseClient";
+import { supabase } from "../data/supabaseClient";
 
-type LoadStatus =
-  | "available"
-  | "accepted"
-  | "arrived_pickup"
-  | "picked_up"
-  | "in_transit"
-  | "arrived_dropoff"
-  | "delivered"
-  | "cancelled";
-
-type FreightLoad = {
-  id: string;
-  title?: string | null;
-  farmer_name?: string | null;
-  pickup_location?: string | null;
-  dropoff_location?: string | null;
-  pickup_date?: string | null;
-  pickup_time?: string | null;
-  dropoff_date?: string | null;
-  dropoff_time?: string | null;
-  equipment_type?: string | null;
-  weight_lbs?: number | null;
-  temperature_required?: string | null;
-  rate?: number | null;
-  distance_miles?: number | null;
-  commodity?: string | null;
-  notes?: string | null;
-  status?: LoadStatus | string | null;
-  driver_id?: string | null;
-  created_at?: string | null;
-  accepted_at?: string | null;
-  arrived_pickup_at?: string | null;
-  picked_up_at?: string | null;
-  arrived_dropoff_at?: string | null;
-  delivered_at?: string | null;
-};
+type FreightLoad = any;
 
 type EarningStats = {
   totalEarnings: number;
@@ -67,6 +33,7 @@ export default function DriverEarnings() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [driver, setDriver] = useState<any>(null);
   const [loads, setLoads] = useState<FreightLoad[]>([]);
   const [stats, setStats] = useState<EarningStats>({
     totalEarnings: 0,
@@ -84,25 +51,76 @@ export default function DriverEarnings() {
     }, [])
   );
 
+  async function getCurrentDriver() {
+    const raw =
+      (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw);
+
+      if (parsed?.role && parsed.role !== "driver") return null;
+
+      const normalized = {
+        ...parsed,
+        id: parsed.id || parsed.driverId || parsed.email || `driver_${Date.now()}`,
+        driverId:
+          parsed.driverId || parsed.id || parsed.email || `driver_${Date.now()}`,
+        role: "driver",
+        accountActive: parsed.accountActive !== false,
+        membershipStatus: parsed.membershipStatus || "Active",
+        subscriptionStatus: parsed.subscriptionStatus || "active",
+      };
+
+      await AsyncStorage.setItem("currentDriver", JSON.stringify(normalized));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(normalized));
+      await AsyncStorage.setItem("userRole", "driver");
+      await AsyncStorage.setItem("currentUserRole", "driver");
+
+      return normalized;
+    } catch {
+      return null;
+    }
+  }
+
   async function loadEarnings() {
     try {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from(TABLE_NAME)
-        .select("*")
-        .order("created_at", { ascending: false });
+      const currentDriver = await getCurrentDriver();
 
-      if (error) {
-        console.log("DRIVER_EARNINGS_ERROR:", error.message);
-        Alert.alert("Earnings Error", error.message);
+      if (!currentDriver) {
+        router.replace("/driver/login" as any);
         return;
       }
 
-      const cleanLoads = Array.isArray(data) ? (data as FreightLoad[]) : [];
+      setDriver(currentDriver);
 
-      setLoads(cleanLoads);
-      calculateStats(cleanLoads);
+      const driverId =
+        currentDriver.id || currentDriver.driverId || currentDriver.email || "";
+
+      let cloudLoads: FreightLoad[] = [];
+
+      try {
+        const { data, error } = await supabase
+          .from(TABLE_NAME)
+          .select("*")
+          .or(`driver_id.eq.${driverId},carrier_id.eq.${driverId}`)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.log("DRIVER_EARNINGS_ERROR:", error.message);
+        } else {
+          cloudLoads = Array.isArray(data) ? data : [];
+        }
+      } catch (error) {
+        console.log("Supabase earnings skipped:", error);
+      }
+
+      setLoads(cloudLoads);
+      calculateStats(cloudLoads);
     } catch (error) {
       console.log("LOAD_EARNINGS_CRASH:", error);
       Alert.alert("Earnings Error", "Unable to load driver earnings.");
@@ -113,17 +131,23 @@ export default function DriverEarnings() {
   }
 
   function calculateStats(driverLoads: FreightLoad[]) {
-    const completed = driverLoads.filter((item) => item.status === "delivered");
-
-    const active = driverLoads.filter((item) =>
-      ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
-        String(item.status || "")
-      )
+    const completed = driverLoads.filter(
+      (item) => String(item.status || "").toLowerCase() === "delivered"
     );
 
-    const now = new Date();
+    const active = driverLoads.filter((item) =>
+      [
+        "accepted",
+        "booked",
+        "arrived_pickup",
+        "picked_up",
+        "in_transit",
+        "arrived_dropoff",
+      ].includes(String(item.status || "").toLowerCase())
+    );
+
     const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(now.getDate() - 7);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     const weeklyCompleted = completed.filter((item) => {
       const dateValue = item.delivered_at || item.created_at;
@@ -132,12 +156,12 @@ export default function DriverEarnings() {
     });
 
     const totalEarnings = completed.reduce(
-      (sum, item) => sum + Number(item.rate || 0),
+      (sum, item) => sum + Number(item.rate || item.deliveryFee || item.total || 0),
       0
     );
 
     const weeklyEarnings = weeklyCompleted.reduce(
-      (sum, item) => sum + Number(item.rate || 0),
+      (sum, item) => sum + Number(item.rate || item.deliveryFee || item.total || 0),
       0
     );
 
@@ -164,16 +188,21 @@ export default function DriverEarnings() {
   }
 
   const completedLoads = useMemo(
-    () => loads.filter((item) => item.status === "delivered"),
+    () => loads.filter((item) => String(item.status || "").toLowerCase() === "delivered"),
     [loads]
   );
 
   const activeLoads = useMemo(
     () =>
       loads.filter((item) =>
-        ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
-          String(item.status || "")
-        )
+        [
+          "accepted",
+          "booked",
+          "arrived_pickup",
+          "picked_up",
+          "in_transit",
+          "arrived_dropoff",
+        ].includes(String(item.status || "").toLowerCase())
       ),
     [loads]
   );
@@ -188,7 +217,7 @@ export default function DriverEarnings() {
   }
 
   function statusColor(status?: string | null) {
-    switch (status) {
+    switch (String(status || "").toLowerCase()) {
       case "delivered":
         return "#10B981";
       case "in_transit":
@@ -196,10 +225,12 @@ export default function DriverEarnings() {
       case "picked_up":
         return "#F59E0B";
       case "accepted":
+      case "booked":
       case "arrived_pickup":
       case "arrived_dropoff":
         return "#7C3AED";
       case "available":
+      case "open":
         return "#2563EB";
       case "cancelled":
         return "#DC2626";
@@ -254,20 +285,20 @@ export default function DriverEarnings() {
         </View>
 
         <Text style={styles.routeText}>
-          📍 {item.pickup_location || "Pickup location"}
+          📍 {item.pickup_location || item.pickup_city || "Pickup location"}
         </Text>
 
         <Text style={styles.arrow}>→</Text>
 
         <Text style={styles.routeText}>
-          🏁 {item.dropoff_location || "Dropoff location"}
+          🏁 {item.dropoff_location || item.delivery_city || "Dropoff location"}
         </Text>
 
         <View style={styles.payoutRow}>
           <View>
             <Text style={styles.payoutLabel}>Payout</Text>
             <Text style={styles.payoutValue}>
-              {formatMoney(Number(item.rate || 0))}
+              {formatMoney(Number(item.rate || item.deliveryFee || item.total || 0))}
             </Text>
           </View>
 
@@ -280,7 +311,7 @@ export default function DriverEarnings() {
         </View>
 
         <Text style={styles.metaText}>
-          Farmer: {item.farmer_name || "Farm2Home Farmer"}
+          Farmer: {item.farmer_name || item.farmers?.farm_name || "Farm2Home Farmer"}
         </Text>
 
         {completed ? (
@@ -292,9 +323,9 @@ export default function DriverEarnings() {
             style={styles.actionButton}
             onPress={() =>
               router.push({
-                pathname: "/driver/live-location-provider" as any,
+                pathname: "/driver/live-location-provider",
                 params: { loadId: item.id },
-              })
+              } as any)
             }
           >
             <Text style={styles.actionText}>Open Load Workflow</Text>
@@ -334,9 +365,9 @@ export default function DriverEarnings() {
 
         <TouchableOpacity
           style={styles.navButtonOutline}
-          onPress={() => router.push("/freight/board" as any)}
+          onPress={() => router.push("/driver/profile" as any)}
         >
-          <Text style={styles.navTextOutline}>Freight Board</Text>
+          <Text style={styles.navTextOutline}>Profile</Text>
         </TouchableOpacity>
       </View>
 
@@ -347,9 +378,11 @@ export default function DriverEarnings() {
         }
       >
         <View style={styles.driverCard}>
-          <Text style={styles.driverName}>🚚 Farm2Home Driver</Text>
+          <Text style={styles.driverName}>
+            🚚 {driver?.fullName || driver?.name || driver?.username || "Farm2Home Driver"}
+          </Text>
           <Text style={styles.driverMeta}>
-            Earnings are calculated from delivered freight loads.
+            Earnings are calculated from delivered loads assigned to this driver.
           </Text>
         </View>
 
@@ -369,20 +402,16 @@ export default function DriverEarnings() {
 
         <View style={styles.settlementCard}>
           <Text style={styles.settlementTitle}>Settlement Summary</Text>
-
           <Text style={styles.settlementText}>
             Completed load payout: {formatMoney(stats.totalEarnings)}
           </Text>
-
           <Text style={styles.settlementText}>
             Bonus estimate: {formatMoney(stats.bonusEstimate)}
           </Text>
-
           <Text style={styles.settlementText}>
             Estimated total settlement:{" "}
             {formatMoney(stats.totalEarnings + stats.bonusEstimate)}
           </Text>
-
           <Text style={styles.settlementNote}>
             Final payout timing depends on admin approval, payment processor,
             dispute checks, and proof-of-delivery verification.
@@ -393,7 +422,7 @@ export default function DriverEarnings() {
 
         <FlatList
           data={activeLoads}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => String(item.id)}
           scrollEnabled={false}
           ListEmptyComponent={
             <View style={styles.emptyCard}>
@@ -410,7 +439,7 @@ export default function DriverEarnings() {
 
         <FlatList
           data={completedLoads}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => String(item.id)}
           scrollEnabled={false}
           contentContainerStyle={{ paddingBottom: 100 }}
           ListEmptyComponent={
@@ -435,42 +464,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  loadingText: {
-    color: "#4B5563",
-    marginTop: 10,
-    fontWeight: "800",
-  },
-  container: {
-    flex: 1,
-    backgroundColor: "#F7F7F2",
-  },
+  loadingText: { color: "#4B5563", marginTop: 10, fontWeight: "800" },
+  container: { flex: 1, backgroundColor: "#F7F7F2" },
   hero: {
     backgroundColor: "#111827",
     paddingTop: 62,
     paddingHorizontal: 20,
     paddingBottom: 26,
   },
-  eyebrow: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginBottom: 8,
-  },
+  eyebrow: { color: "#10B981", fontWeight: "900", marginBottom: 8 },
   title: {
     color: "#FFFFFF",
     fontSize: 34,
     fontWeight: "900",
     marginBottom: 10,
   },
-  subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 23,
-    fontSize: 15,
-  },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  subtitle: { color: "#D1D5DB", lineHeight: 23, fontSize: 15 },
+  navRow: { flexDirection: "row", gap: 10, padding: 18 },
   navButton: {
     flex: 1,
     backgroundColor: "#10B981",
@@ -487,14 +497,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
   },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: "#10B981",
-    fontWeight: "900",
-  },
+  navText: { color: "#FFFFFF", fontWeight: "900" },
+  navTextOutline: { color: "#10B981", fontWeight: "900" },
   driverCard: {
     backgroundColor: "#FFFFFF",
     marginHorizontal: 18,
@@ -510,10 +514,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginBottom: 6,
   },
-  driverMeta: {
-    color: "#6B7280",
-    fontWeight: "700",
-  },
+  driverMeta: { color: "#6B7280", fontWeight: "700" },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -529,26 +530,11 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 14,
   },
-  statCardAccent: {
-    backgroundColor: "#064E3B",
-    borderColor: "#064E3B",
-  },
-  statValue: {
-    color: "#10B981",
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  statValueAccent: {
-    color: "#FFFFFF",
-  },
-  statLabel: {
-    color: "#6B7280",
-    fontWeight: "800",
-    marginTop: 4,
-  },
-  statLabelAccent: {
-    color: "#BBF7D0",
-  },
+  statCardAccent: { backgroundColor: "#064E3B", borderColor: "#064E3B" },
+  statValue: { color: "#10B981", fontSize: 22, fontWeight: "900" },
+  statValueAccent: { color: "#FFFFFF" },
+  statLabel: { color: "#6B7280", fontWeight: "800", marginTop: 4 },
+  statLabelAccent: { color: "#BBF7D0" },
   refreshButton: {
     backgroundColor: "#334155",
     marginHorizontal: 18,
@@ -557,10 +543,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 18,
   },
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  refreshText: { color: "#FFFFFF", fontWeight: "900" },
   settlementCard: {
     backgroundColor: "#064E3B",
     marginHorizontal: 18,
@@ -608,11 +591,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginBottom: 6,
   },
-  emptyText: {
-    color: "#6B7280",
-    lineHeight: 22,
-    fontWeight: "700",
-  },
+  emptyText: { color: "#6B7280", lineHeight: 22, fontWeight: "700" },
   loadCard: {
     backgroundColor: "#FFFFFF",
     marginHorizontal: 18,
@@ -628,44 +607,18 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: "flex-start",
   },
-  loadTitle: {
-    color: "#111827",
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  commodity: {
-    color: "#6B7280",
-    fontWeight: "700",
-    marginTop: 4,
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
+  loadTitle: { color: "#111827", fontSize: 21, fontWeight: "900" },
+  commodity: { color: "#6B7280", fontWeight: "700", marginTop: 4 },
+  statusBadge: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
   statusText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 11,
     textTransform: "capitalize",
   },
-  routeText: {
-    color: "#111827",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  arrow: {
-    color: "#10B981",
-    fontWeight: "900",
-    fontSize: 20,
-    marginVertical: 4,
-  },
-  metaText: {
-    color: "#6B7280",
-    fontWeight: "700",
-    marginTop: 8,
-    lineHeight: 21,
-  },
+  routeText: { color: "#111827", fontWeight: "900", fontSize: 16 },
+  arrow: { color: "#10B981", fontWeight: "900", fontSize: 20, marginVertical: 4 },
+  metaText: { color: "#6B7280", fontWeight: "700", marginTop: 8, lineHeight: 21 },
   payoutRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -674,16 +627,8 @@ const styles = StyleSheet.create({
     padding: 14,
     marginTop: 12,
   },
-  payoutLabel: {
-    color: "#6B7280",
-    fontWeight: "900",
-    marginBottom: 4,
-  },
-  payoutValue: {
-    color: "#10B981",
-    fontSize: 22,
-    fontWeight: "900",
-  },
+  payoutLabel: { color: "#6B7280", fontWeight: "900", marginBottom: 4 },
+  payoutValue: { color: "#10B981", fontSize: 22, fontWeight: "900" },
   actionButton: {
     backgroundColor: "#10B981",
     padding: 14,
@@ -691,8 +636,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
-  actionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  actionText: { color: "#FFFFFF", fontWeight: "900" },
 });

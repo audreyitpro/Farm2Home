@@ -32,7 +32,7 @@ export default function DriverLiveDeliveries() {
     try {
       setLoading(true);
       const data = await getDeliveryOrders();
-      setOrders(data);
+      setOrders(Array.isArray(data) ? data : []);
     } catch (error) {
       console.log("Load deliveries error:", error);
       Alert.alert("Error", "Unable to load deliveries.");
@@ -43,39 +43,48 @@ export default function DriverLiveDeliveries() {
 
   async function updateToPickedUp(orderId: string) {
     await markOrderPickedUp(orderId);
-    loadDeliveries();
+    await loadDeliveries();
   }
 
   async function updateToInTransit(orderId: string) {
     await markOrderInTransit(orderId);
-    loadDeliveries();
+    await loadDeliveries();
   }
 
   async function updateToDelivered(orderId: string) {
     await markOrderDelivered(orderId);
-    loadDeliveries();
+    await loadDeliveries();
   }
 
   function renderOrder({ item }: { item: Farm2HomeOrder }) {
+    const deliveryInfo: any = item.deliveryInfo || {};
+
     return (
       <View style={styles.card}>
         <Text style={styles.orderId}>Order: {item.id}</Text>
-        <Text style={styles.status}>Status: {item.status}</Text>
+        <Text style={styles.status}>Status: {item.status || "NEW"}</Text>
 
         <Text style={styles.label}>Customer</Text>
-        <Text style={styles.value}>{item.customerName || item.customerEmail}</Text>
+        <Text style={styles.value}>
+          {item.customerName || item.customerEmail || "Customer"}
+        </Text>
 
         <Text style={styles.label}>Delivery Address</Text>
         <Text style={styles.value}>
-          {item.deliveryInfo.deliveryAddress}
+          {deliveryInfo.deliveryAddress ||
+            deliveryInfo.address ||
+            deliveryInfo.street ||
+            "Address not available"}
           {"\n"}
-          {item.deliveryInfo.city}, {item.deliveryInfo.state}{" "}
-          {item.deliveryInfo.zipCode}
+          {deliveryInfo.city || ""} {deliveryInfo.state || ""}{" "}
+          {deliveryInfo.zipCode || deliveryInfo.zip || ""}
         </Text>
 
         <Text style={styles.label}>Instructions</Text>
         <Text style={styles.value}>
-          {item.deliveryInfo.deliveryInstructions || "No instructions"}
+          {deliveryInfo.deliveryInstructions ||
+            deliveryInfo.instructions ||
+            "No instructions"}
         </Text>
 
         <View style={styles.buttonRow}>
@@ -120,7 +129,7 @@ export default function DriverLiveDeliveries() {
 
       <FlatList
         data={orders}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         renderItem={renderOrder}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
@@ -135,9 +144,9 @@ export default function DriverLiveDeliveries() {
 
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => router.push("/driver/dashboard")}
+        onPress={() => router.push("/driver/mobile-driver-app" as any)}
       >
-        <Text style={styles.backText}>Back to Driver Dashboard</Text>
+        <Text style={styles.backText}>Back to Driver App</Text>
       </TouchableOpacity>
     </View>
   );

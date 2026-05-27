@@ -38,60 +38,121 @@ export default function DriverProfile() {
     }, [])
   );
 
+  function normalize(value: any) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  async function readArray(key: string) {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return [];
+
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
   async function loadDriver() {
     try {
       const raw =
         (await AsyncStorage.getItem("currentDriver")) ||
         (await AsyncStorage.getItem("currentUser"));
 
-      const savedDrivers = await AsyncStorage.getItem("farm2homeDrivers");
-      const drivers = savedDrivers ? JSON.parse(savedDrivers) : [];
-      const safeDrivers = Array.isArray(drivers) ? drivers : [];
+      const storageDrivers = [
+        ...(await readArray("farm2homeDrivers")),
+        ...(await readArray("drivers")),
+        ...(await readArray("driverAccounts")),
+      ];
 
-      setAllDrivers(safeDrivers);
+      setAllDrivers(storageDrivers);
 
-      if (!raw && safeDrivers.length === 0) {
-        router.replace("/driver/login" as never);
+      if (!raw && storageDrivers.length === 0) {
+        router.replace("/driver/login" as any);
         return;
       }
 
-      const current = raw ? JSON.parse(raw) : safeDrivers[safeDrivers.length - 1];
+      const current = raw ? JSON.parse(raw) : storageDrivers[0];
 
       if (!current) {
-        router.replace("/driver/login" as never);
+        router.replace("/driver/login" as any);
         return;
       }
 
-      setDriver(current);
-      setFullName(current.fullName || current.name || "");
-      setUsername(current.username || "");
-      setEmail(current.email || "");
-      setPhone(current.phone || "");
-      setVehicleType(current.vehicleType || "");
-      setLicenseNumber(current.licenseNumber || "");
-      setServiceArea(current.serviceArea || "");
+      const normalizedDriver = {
+        ...current,
+        id: current.id || current.driverId || current.email || `driver_${Date.now()}`,
+        driverId:
+          current.driverId || current.id || current.email || `driver_${Date.now()}`,
+        role: "driver",
+        accountActive: current.accountActive !== false,
+        membershipStatus: current.membershipStatus || "Active",
+        subscriptionStatus: current.subscriptionStatus || "active",
+      };
+
+      await persistDriver(normalizedDriver, storageDrivers);
+
+      setDriver(normalizedDriver);
+      setFullName(normalizedDriver.fullName || normalizedDriver.name || "");
+      setUsername(normalizedDriver.username || "");
+      setEmail(normalizedDriver.email || "");
+      setPhone(normalizedDriver.phone || "");
+      setVehicleType(normalizedDriver.vehicleType || "");
+      setLicenseNumber(normalizedDriver.licenseNumber || "");
+      setServiceArea(normalizedDriver.serviceArea || "");
     } catch (error) {
       console.log("Load driver profile error:", error);
       Alert.alert("Profile Error", "Unable to load driver profile.");
-      router.replace("/driver/login" as never);
+      router.replace("/driver/login" as any);
     }
   }
 
-  async function persistDriver(updatedDriver: any) {
-    const existing = allDrivers.length > 0 ? allDrivers : [];
-    const exists = existing.some((item) => item.id === updatedDriver.id);
+  async function persistDriver(updatedDriver: any, baseDrivers?: any[]) {
+    const normalizedDriver = {
+      ...updatedDriver,
+      id:
+        updatedDriver.id ||
+        updatedDriver.driverId ||
+        updatedDriver.email ||
+        `driver_${Date.now()}`,
+      driverId:
+        updatedDriver.driverId ||
+        updatedDriver.id ||
+        updatedDriver.email ||
+        `driver_${Date.now()}`,
+      role: "driver",
+      username: normalize(updatedDriver.username),
+      email: normalize(updatedDriver.email),
+      accountActive: updatedDriver.accountActive !== false,
+      updatedAt: new Date().toISOString(),
+    };
 
-    const updatedDrivers = exists
-      ? existing.map((item) => (item.id === updatedDriver.id ? updatedDriver : item))
-      : [...existing, updatedDriver];
+    const existing = baseDrivers || allDrivers || [];
 
-    await AsyncStorage.setItem("farm2homeDrivers", JSON.stringify(updatedDrivers));
-    await AsyncStorage.setItem("currentDriver", JSON.stringify(updatedDriver));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(updatedDriver));
+    const updatedDrivers = [
+      normalizedDriver,
+      ...existing.filter(
+        (item) =>
+          item.id !== normalizedDriver.id &&
+          item.driverId !== normalizedDriver.driverId &&
+          normalize(item.email) !== normalizedDriver.email &&
+          normalize(item.username) !== normalizedDriver.username
+      ),
+    ];
+
+    for (const key of ["farm2homeDrivers", "drivers", "driverAccounts"]) {
+      await AsyncStorage.setItem(key, JSON.stringify(updatedDrivers));
+    }
+
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(normalizedDriver));
     await AsyncStorage.setItem("userRole", "driver");
     await AsyncStorage.setItem("currentUserRole", "driver");
 
-    setDriver(updatedDriver);
+    setDriver(normalizedDriver);
     setAllDrivers(updatedDrivers);
   }
 
@@ -115,8 +176,8 @@ export default function DriverProfile() {
       ...driver,
       fullName: fullName.trim(),
       name: fullName.trim(),
-      username: username.trim(),
-      email: email.trim(),
+      username: username.trim().toLowerCase(),
+      email: email.trim().toLowerCase(),
       phone: phone.trim(),
       vehicleType: vehicleType.trim(),
       licenseNumber: licenseNumber.trim(),
@@ -136,7 +197,7 @@ export default function DriverProfile() {
       return;
     }
 
-    if (driver.password && currentPassword !== driver.password) {
+    if (driver.password && currentPassword.trim() !== driver.password) {
       Alert.alert("Incorrect Password", "Your current password is incorrect.");
       return;
     }
@@ -201,9 +262,7 @@ export default function DriverProfile() {
         `${API_BASE_URL}/payments/create-customer-portal-session`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             customerId: stripeCustomerId,
             returnUrl: "farm2home://driver/profile",
@@ -258,9 +317,7 @@ export default function DriverProfile() {
                 `${API_BASE_URL}/payments/cancel-subscription`,
                 {
                   method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
+                  headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     subscriptionId,
                     driverId: driver?.id,
@@ -305,7 +362,7 @@ export default function DriverProfile() {
     await AsyncStorage.removeItem("userRole");
     await AsyncStorage.removeItem("currentUserRole");
 
-    router.replace("/driver/login" as never);
+    router.replace("/driver/login" as any);
   }
 
   if (!driver) {
@@ -316,7 +373,7 @@ export default function DriverProfile() {
 
         <TouchableOpacity
           style={styles.greenButton}
-          onPress={() => router.replace("/driver/login" as never)}
+          onPress={() => router.replace("/driver/login" as any)}
         >
           <Text style={styles.buttonText}>Go to Driver Login</Text>
         </TouchableOpacity>
@@ -342,19 +399,13 @@ export default function DriverProfile() {
         <Text style={styles.sectionTitle}>Profile Information</Text>
 
         <Text style={styles.label}>Full Name</Text>
-        <TextInput
-          style={styles.input}
-          value={fullName}
-          onChangeText={setFullName}
-          placeholder="Full name"
-        />
+        <TextInput style={styles.input} value={fullName} onChangeText={setFullName} />
 
         <Text style={styles.label}>Username</Text>
         <TextInput
           style={styles.input}
           value={username}
           onChangeText={setUsername}
-          placeholder="Username"
           autoCapitalize="none"
         />
 
@@ -363,7 +414,6 @@ export default function DriverProfile() {
           style={styles.input}
           value={email}
           onChangeText={setEmail}
-          placeholder="Email"
           autoCapitalize="none"
           keyboardType="email-address"
         />
@@ -373,7 +423,6 @@ export default function DriverProfile() {
           style={styles.input}
           value={phone}
           onChangeText={setPhone}
-          placeholder="Phone"
           keyboardType="phone-pad"
         />
 
@@ -386,28 +435,27 @@ export default function DriverProfile() {
         <Text style={styles.sectionTitle}>Driver Details</Text>
 
         <Text style={styles.label}>Vehicle Type</Text>
-        <TextInput
-          style={styles.input}
-          value={vehicleType}
-          onChangeText={setVehicleType}
-          placeholder="Car, van, pickup truck, box truck"
-        />
+        <TextInput style={styles.input} value={vehicleType} onChangeText={setVehicleType} />
 
         <Text style={styles.label}>License Number</Text>
-        <TextInput
-          style={styles.input}
-          value={licenseNumber}
-          onChangeText={setLicenseNumber}
-          placeholder="Driver license number"
-        />
+        <TextInput style={styles.input} value={licenseNumber} onChangeText={setLicenseNumber} />
 
         <Text style={styles.label}>Service Area</Text>
-        <TextInput
-          style={styles.input}
-          value={serviceArea}
-          onChangeText={setServiceArea}
-          placeholder="Example: Detroit Metro, Ann Arbor, Toledo"
-        />
+        <TextInput style={styles.input} value={serviceArea} onChangeText={setServiceArea} />
+
+        <Text style={styles.label}>Uploaded License</Text>
+        <Text style={styles.documentText}>
+          {driver.licenseDocument?.name ||
+            driver.uploadedDocs?.driver_license?.name ||
+            "Not uploaded"}
+        </Text>
+
+        <Text style={styles.label}>Uploaded Insurance</Text>
+        <Text style={styles.documentText}>
+          {driver.insuranceDocument?.name ||
+            driver.uploadedDocs?.insurance?.name ||
+            "Not uploaded"}
+        </Text>
 
         <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
           <Text style={styles.buttonText}>Save Driver Details</Text>
@@ -465,14 +513,14 @@ export default function DriverProfile() {
 
       <TouchableOpacity
         style={styles.greenButton}
-        onPress={() => router.push("/driver/mobile-driver-app" as never)}
+        onPress={() => router.push("/driver/mobile-driver-app" as any)}
       >
         <Text style={styles.buttonText}>Back to Driver Dashboard</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.darkButton}
-        onPress={() => router.push("/freight/board" as never)}
+        onPress={() => router.push("/freight/board" as any)}
       >
         <Text style={styles.buttonText}>View Driver Board</Text>
       </TouchableOpacity>
@@ -485,25 +533,15 @@ export default function DriverProfile() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F7F7F2",
-  },
-  content: {
-    padding: 22,
-    paddingBottom: 70,
-  },
+  container: { flex: 1, backgroundColor: "#F7F7F2" },
+  content: { padding: 22, paddingBottom: 70 },
   title: {
     fontSize: 30,
     fontWeight: "900",
     color: "#1f7a3f",
     marginBottom: 8,
   },
-  subheader: {
-    color: "#666666",
-    marginBottom: 20,
-    fontWeight: "700",
-  },
+  subheader: { color: "#666666", marginBottom: 20, fontWeight: "700" },
   statusCard: {
     backgroundColor: "#E8F5E9",
     borderRadius: 18,
@@ -518,11 +556,7 @@ const styles = StyleSheet.create({
     color: "#14532D",
     marginBottom: 6,
   },
-  statusValue: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#1f7a3f",
-  },
+  statusValue: { fontSize: 18, fontWeight: "900", color: "#1f7a3f" },
   statusSmall: {
     marginTop: 8,
     color: "#14532D",
@@ -557,6 +591,13 @@ const styles = StyleSheet.create({
     padding: 14,
     fontWeight: "700",
     marginBottom: 8,
+  },
+  documentText: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 12,
+    padding: 12,
+    color: "#111827",
+    fontWeight: "800",
   },
   helpText: {
     color: "#4B5563",
@@ -600,9 +641,5 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 40,
   },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    textAlign: "center",
-  },
+  buttonText: { color: "#FFFFFF", fontWeight: "900", textAlign: "center" },
 });
