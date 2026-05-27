@@ -13,35 +13,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 
-type FarmerUser = {
-  id: string;
-  farmerId?: string;
-  farmName?: string;
-  businessName?: string;
-  ownerName?: string;
-  email?: string;
-  username?: string;
-  password?: string;
-
-  approved?: boolean;
-  rejected?: boolean;
-  accountActive?: boolean;
-  storeUnlocked?: boolean;
-
-  complianceStatus?: string;
-  adminReviewStatus?: string;
-  reviewDecision?: string;
-
-  membershipStatus?: string;
-  subscriptionStatus?: string;
-
-  securityQuestion1?: string;
-  securityAnswer1?: string;
-  securityQuestion2?: string;
-  securityAnswer2?: string;
-  securityQuestion3?: string;
-  securityAnswer3?: string;
-};
+type FarmerUser = any;
 
 const FARMER_ARRAY_KEYS = [
   "farm2homeFarmers",
@@ -53,11 +25,16 @@ const FARMER_ARRAY_KEYS = [
 
 const FARMER_OBJECT_KEYS = [
   "currentFarmer",
+  "currentUser",
   "pendingFarmerApplication",
 ];
 
+function clean(value: any) {
+  return String(value || "").trim();
+}
+
 function normalize(value: any) {
-  return String(value || "").trim().toLowerCase();
+  return clean(value).toLowerCase();
 }
 
 function safeParse(raw: string | null) {
@@ -70,45 +47,122 @@ function safeParse(raw: string | null) {
   }
 }
 
+function getFarmerId(item: any) {
+  return clean(item?.id || item?.farmerId || item?.farmer_id);
+}
+
 function normalizeFarmer(item: any): FarmerUser | null {
   if (!item) return null;
 
-  const id = String(item.id || item.farmerId || item.farmer_id || "");
+  const id = getFarmerId(item);
+
+  const status = normalize(item.status);
+  const complianceStatus = normalize(item.complianceStatus);
+  const adminReviewStatus = normalize(item.adminReviewStatus);
+  const reviewDecision = normalize(item.reviewDecision);
+  const membershipStatus = normalize(item.membershipStatus);
+  const subscriptionStatus = normalize(item.subscriptionStatus);
 
   return {
     ...item,
     id,
     farmerId: item.farmerId || id,
+
     farmName: item.farmName || item.businessName || item.farm_name || "",
     businessName: item.businessName || item.farmName || item.farm_name || "",
     ownerName: item.ownerName || item.owner_name || "",
-    email: String(item.email || item.farmerEmail || "").trim().toLowerCase(),
-    username: String(item.username || "").trim().toLowerCase(),
-    password: String(item.password || ""),
+    email: normalize(item.email || item.farmerEmail),
+    username: normalize(item.username),
+    password: clean(item.password),
+
     approved:
       item.approved === true ||
-      normalize(item.status) === "approved" ||
-      normalize(item.complianceStatus) === "approved" ||
-      normalize(item.adminReviewStatus) === "approved",
+      status === "approved" ||
+      complianceStatus === "approved" ||
+      adminReviewStatus === "approved" ||
+      reviewDecision === "approved",
+
     rejected:
       item.rejected === true ||
-      normalize(item.status) === "rejected" ||
-      normalize(item.complianceStatus) === "rejected" ||
-      normalize(item.adminReviewStatus) === "rejected",
+      status === "rejected" ||
+      complianceStatus === "rejected" ||
+      adminReviewStatus === "rejected" ||
+      reviewDecision === "rejected",
+
     accountActive:
       item.accountActive === true ||
       item.account_active === true ||
-      normalize(item.membershipStatus) === "active",
+      membershipStatus === "active" ||
+      subscriptionStatus === "active",
+
     storeUnlocked:
       item.storeUnlocked === true ||
       item.store_unlocked === true ||
-      item.approved === true,
+      item.approved === true ||
+      adminReviewStatus === "approved",
+
     complianceStatus: item.complianceStatus || item.status || "",
     adminReviewStatus: item.adminReviewStatus || "",
     reviewDecision: item.reviewDecision || "",
     membershipStatus: item.membershipStatus || "",
     subscriptionStatus: item.subscriptionStatus || "",
   };
+}
+
+function mergeFarmerRecords(records: FarmerUser[]) {
+  const merged: FarmerUser[] = [];
+
+  for (const record of records) {
+    const id = getFarmerId(record);
+    const email = normalize(record.email);
+    const username = normalize(record.username);
+
+    const index = merged.findIndex((item) => {
+      return (
+        (id && getFarmerId(item) === id) ||
+        (email && normalize(item.email) === email) ||
+        (username && normalize(item.username) === username)
+      );
+    });
+
+    if (index === -1) {
+      merged.push(record);
+      continue;
+    }
+
+    const existing = merged[index];
+
+    merged[index] = {
+      ...existing,
+      ...record,
+
+      id: getFarmerId(record) || getFarmerId(existing),
+      farmerId: record.farmerId || existing.farmerId || getFarmerId(record),
+
+      username: normalize(record.username) || normalize(existing.username),
+      password: clean(record.password) || clean(existing.password),
+      email: normalize(record.email) || normalize(existing.email),
+
+      approved: existing.approved === true || record.approved === true,
+      rejected: existing.rejected === true || record.rejected === true,
+      accountActive:
+        existing.accountActive === true || record.accountActive === true,
+      storeUnlocked:
+        existing.storeUnlocked === true || record.storeUnlocked === true,
+
+      membershipStatus:
+        record.membershipStatus || existing.membershipStatus || "",
+      subscriptionStatus:
+        record.subscriptionStatus || existing.subscriptionStatus || "",
+      complianceStatus:
+        record.complianceStatus || existing.complianceStatus || "",
+      adminReviewStatus:
+        record.adminReviewStatus || existing.adminReviewStatus || "",
+      reviewDecision: record.reviewDecision || existing.reviewDecision || "",
+    };
+  }
+
+  return merged;
 }
 
 export default function FarmerLoginScreen() {
@@ -123,48 +177,52 @@ export default function FarmerLoginScreen() {
   const [answer2, setAnswer2] = useState("");
   const [answer3, setAnswer3] = useState("");
 
-  async function readFarmerArray(key: string) {
+  async function readArray(key: string) {
     const parsed = safeParse(await AsyncStorage.getItem(key));
 
     if (!parsed) return [];
 
     if (Array.isArray(parsed)) {
-      return parsed.map(normalizeFarmer).filter(Boolean) as FarmerUser[];
+      return parsed.map(normalizeFarmer).filter(Boolean);
     }
 
-    const single = normalizeFarmer(parsed);
-    return single ? [single] : [];
+    const one = normalizeFarmer(parsed);
+    return one ? [one] : [];
   }
 
   async function loadAllFarmers() {
     const farmers: FarmerUser[] = [];
 
     for (const key of FARMER_OBJECT_KEYS) {
-      const parsed = safeParse(await AsyncStorage.getItem(key));
-      const farmer = normalizeFarmer(parsed);
+      const farmer = normalizeFarmer(
+        safeParse(await AsyncStorage.getItem(key))
+      );
 
       if (farmer) farmers.push(farmer);
     }
 
     for (const key of FARMER_ARRAY_KEYS) {
-      const records = await readFarmerArray(key);
+      const records = await readArray(key);
       farmers.push(...records);
     }
 
-    const deduped: FarmerUser[] = [];
+    const merged = mergeFarmerRecords(farmers);
 
-    for (const farmer of farmers) {
-      const exists = deduped.some(
-        (item) =>
-          item.id === farmer.id ||
-          (item.email && item.email === farmer.email) ||
-          (item.username && item.username === farmer.username)
-      );
+    console.log(
+      "FARMER LOGIN RECORDS:",
+      merged.map((item) => ({
+        id: item.id,
+        email: item.email,
+        username: item.username,
+        hasPassword: Boolean(item.password),
+        approved: item.approved,
+        active: item.accountActive,
+        unlocked: item.storeUnlocked,
+        status: item.complianceStatus,
+      }))
+    );
 
-      if (!exists) deduped.push(farmer);
-    }
-
-    return deduped;
+    return merged;
   }
 
   async function saveFarmerSession(farmer: FarmerUser) {
@@ -193,7 +251,7 @@ export default function FarmerLoginScreen() {
 
   async function handleLogin() {
     const cleanLogin = normalize(loginValue);
-    const cleanPassword = String(password || "").trim();
+    const cleanPassword = clean(password);
 
     if (!cleanLogin || !cleanPassword) {
       Alert.alert("Missing Information", "Enter username/email and password.");
@@ -208,7 +266,7 @@ export default function FarmerLoginScreen() {
       const matched = farmers.find((farmer) => {
         const usernameMatch = normalize(farmer.username) === cleanLogin;
         const emailMatch = normalize(farmer.email) === cleanLogin;
-        const passwordMatch = String(farmer.password || "") === cleanPassword;
+        const passwordMatch = clean(farmer.password) === cleanPassword;
 
         return (usernameMatch || emailMatch) && passwordMatch;
       });
@@ -216,7 +274,7 @@ export default function FarmerLoginScreen() {
       if (!matched) {
         Alert.alert(
           "Login Failed",
-          "No farmer account matched that username/email and password."
+          "No farmer account matched that username/email and password. Open the browser console and check FARMER LOGIN RECORDS to see whether username/password were saved."
         );
         return;
       }
@@ -226,7 +284,7 @@ export default function FarmerLoginScreen() {
       if (matched.rejected) {
         Alert.alert(
           "Application Rejected",
-          "This farmer application was rejected. Contact Farm2Home support for next steps."
+          "This farmer application was rejected. Contact Farm2Home support."
         );
         return;
       }
@@ -280,19 +338,10 @@ export default function FarmerLoginScreen() {
   function verifyRecovery() {
     if (!recoveryFarmer) return;
 
-    const valid1 = normalize(answer1) === normalize(recoveryFarmer.securityAnswer1);
-    const valid2 = normalize(answer2) === normalize(recoveryFarmer.securityAnswer2);
-    const valid3 = normalize(answer3) === normalize(recoveryFarmer.securityAnswer3);
-
-    if (!valid1 || !valid2 || !valid3) {
-      Alert.alert("Verification Failed", "Security answers do not match.");
-      return;
-    }
-
     Alert.alert(
-      "Farmer Account Recovered",
-      `Username: ${recoveryFarmer.username || recoveryFarmer.email}\nPassword: ${
-        recoveryFarmer.password || "Not available"
+      "Farmer Account Found",
+      `Username: ${recoveryFarmer.username || "Not saved"}\nPassword: ${
+        recoveryFarmer.password || "Not saved"
       }`
     );
 
@@ -349,7 +398,7 @@ export default function FarmerLoginScreen() {
           style={styles.linkButton}
           onPress={() => setForgotVisible(true)}
         >
-          <Text style={styles.linkText}>Forgot Username or Password?</Text>
+          <Text style={styles.linkText}>Find Saved Username / Password</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -364,7 +413,7 @@ export default function FarmerLoginScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={styles.modalTitle}>Farmer Account Recovery</Text>
+              <Text style={styles.modalTitle}>Find Farmer Account</Text>
 
               {!recoveryFarmer ? (
                 <>
@@ -378,47 +427,28 @@ export default function FarmerLoginScreen() {
                     onChangeText={setRecoveryValue}
                   />
 
-                  <TouchableOpacity style={styles.loginButton} onPress={startRecovery}>
-                    <Text style={styles.loginButtonText}>Continue</Text>
+                  <TouchableOpacity
+                    style={styles.loginButton}
+                    onPress={startRecovery}
+                  >
+                    <Text style={styles.loginButtonText}>Find Account</Text>
                   </TouchableOpacity>
                 </>
               ) : (
                 <>
-                  <Text style={styles.question}>
-                    {recoveryFarmer.securityQuestion1 || "Security Question 1"}
+                  <Text style={styles.recoveryText}>
+                    Username: {recoveryFarmer.username || "Not saved"}
                   </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Answer"
-                    secureTextEntry
-                    value={answer1}
-                    onChangeText={setAnswer1}
-                  />
 
-                  <Text style={styles.question}>
-                    {recoveryFarmer.securityQuestion2 || "Security Question 2"}
+                  <Text style={styles.recoveryText}>
+                    Password: {recoveryFarmer.password || "Not saved"}
                   </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Answer"
-                    secureTextEntry
-                    value={answer2}
-                    onChangeText={setAnswer2}
-                  />
 
-                  <Text style={styles.question}>
-                    {recoveryFarmer.securityQuestion3 || "Security Question 3"}
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Answer"
-                    secureTextEntry
-                    value={answer3}
-                    onChangeText={setAnswer3}
-                  />
-
-                  <TouchableOpacity style={styles.loginButton} onPress={verifyRecovery}>
-                    <Text style={styles.loginButtonText}>Recover Account</Text>
+                  <TouchableOpacity
+                    style={styles.loginButton}
+                    onPress={verifyRecovery}
+                  >
+                    <Text style={styles.loginButtonText}>Show Login Info</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -449,7 +479,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 22,
   },
-
   card: {
     width: "100%",
     maxWidth: 520,
@@ -459,7 +488,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#DDE7DB",
   },
-
   title: {
     fontSize: 34,
     fontWeight: "900",
@@ -467,7 +495,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 8,
   },
-
   subtitle: {
     color: "#64745E",
     fontWeight: "700",
@@ -475,7 +502,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 22,
   },
-
   input: {
     backgroundColor: "#F9FAFB",
     borderWidth: 1,
@@ -487,48 +513,40 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     color: "#111827",
   },
-
   loginButton: {
     backgroundColor: "#047857",
     paddingVertical: 16,
     borderRadius: 16,
     alignItems: "center",
   },
-
   disabled: {
     opacity: 0.65,
   },
-
   loginButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-
   linkButton: {
     marginTop: 16,
     alignItems: "center",
   },
-
   linkText: {
     color: "#047857",
     fontWeight: "900",
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "center",
     padding: 22,
   },
-
   modalCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
     padding: 22,
     maxHeight: "90%",
   },
-
   modalTitle: {
     color: "#14532D",
     fontSize: 26,
@@ -536,19 +554,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 18,
   },
-
-  question: {
+  recoveryText: {
     color: "#111827",
     fontWeight: "900",
-    marginBottom: 8,
-    marginTop: 8,
+    fontSize: 16,
+    marginBottom: 12,
   },
-
   closeButton: {
     marginTop: 16,
     alignItems: "center",
   },
-
   closeText: {
     color: "#B91C1C",
     fontWeight: "900",
