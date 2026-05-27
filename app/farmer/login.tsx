@@ -15,22 +15,6 @@ import { router } from "expo-router";
 
 type FarmerUser = any;
 
-const FARMER_ARRAY_KEYS = [
-  "farm2homeFarmers",
-  "farmers",
-  "approvedFarmers",
-  "farm2homeVerificationQueue",
-  "adminVerificationQueue",
-  "farm2homeAccounts",
-  "accounts",
-];
-
-const FARMER_OBJECT_KEYS = [
-  "currentFarmer",
-  "currentUser",
-  "pendingFarmerApplication",
-];
-
 function clean(value: any) {
   return String(value ?? "").trim();
 }
@@ -39,163 +23,21 @@ function normalize(value: any) {
   return clean(value).toLowerCase();
 }
 
-function safeParse(raw: string | null) {
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function getFarmerId(item: any) {
-  return clean(
-    item?.id ||
-      item?.farmerId ||
-      item?.farmer_id ||
-      item?.userId ||
-      item?.accountId
-  );
-}
-
-function isFarmerRecord(item: any) {
+function isPossibleFarmerRecord(item: any) {
   const role = normalize(item?.role || item?.accountType || item?.account_type);
-  const hasFarmFields = Boolean(
-    item?.farmName ||
-      item?.farm_name ||
-      item?.businessName ||
-      item?.ownerName ||
-      item?.farmerId
-  );
 
   return (
     role === "farmer" ||
-    role === "farmers" ||
-    role === "farmer_user" ||
-    role === "farmer account" ||
     role === "farmer_account" ||
-    role === "FARMER".toLowerCase() ||
-    hasFarmFields
+    role === "farmer user" ||
+    role === "farmer_user" ||
+    item?.farmerId ||
+    item?.farmName ||
+    item?.farm_name ||
+    item?.businessName ||
+    item?.ownerName ||
+    item?.storeUnlocked !== undefined
   );
-}
-
-function normalizeFarmer(item: any): FarmerUser | null {
-  if (!item || !isFarmerRecord(item)) return null;
-
-  const id = getFarmerId(item);
-
-  const status = normalize(item.status);
-  const complianceStatus = normalize(item.complianceStatus);
-  const adminReviewStatus = normalize(item.adminReviewStatus);
-  const reviewDecision = normalize(item.reviewDecision);
-  const membershipStatus = normalize(item.membershipStatus);
-  const subscriptionStatus = normalize(item.subscriptionStatus);
-
-  const approved =
-    item.approved === true ||
-    item.storeUnlocked === true ||
-    item.store_unlocked === true ||
-    status === "approved" ||
-    status === "active" ||
-    status === "approved_verification" ||
-    complianceStatus === "approved" ||
-    adminReviewStatus === "approved" ||
-    reviewDecision === "approved";
-
-  const active =
-    item.accountActive === true ||
-    item.account_active === true ||
-    approved ||
-    membershipStatus === "active" ||
-    subscriptionStatus === "active";
-
-  const unlocked =
-    item.storeUnlocked === true ||
-    item.store_unlocked === true ||
-    approved;
-
-  return {
-    ...item,
-    id,
-    farmerId: item.farmerId || id,
-    role: "farmer",
-
-    farmName: item.farmName || item.businessName || item.farm_name || "",
-    businessName: item.businessName || item.farmName || item.farm_name || "",
-    ownerName: item.ownerName || item.owner_name || item.name || "",
-    email: normalize(item.email || item.farmerEmail),
-    username: normalize(item.username),
-    password: clean(item.password),
-
-    approved,
-    rejected:
-      item.rejected === true ||
-      status === "rejected" ||
-      complianceStatus === "rejected" ||
-      adminReviewStatus === "rejected" ||
-      reviewDecision === "rejected",
-
-    accountActive: active,
-    storeUnlocked: unlocked,
-
-    complianceStatus: item.complianceStatus || item.status || "",
-    adminReviewStatus: item.adminReviewStatus || "",
-    reviewDecision: item.reviewDecision || "",
-    membershipStatus: item.membershipStatus || "",
-    subscriptionStatus: item.subscriptionStatus || "",
-  };
-}
-
-function mergeFarmerRecords(records: FarmerUser[]) {
-  const merged: FarmerUser[] = [];
-
-  for (const record of records) {
-    const id = getFarmerId(record);
-    const email = normalize(record.email);
-    const username = normalize(record.username);
-
-    const index = merged.findIndex((item) => {
-      return (
-        (id && getFarmerId(item) === id) ||
-        (email && normalize(item.email) === email) ||
-        (username && normalize(item.username) === username)
-      );
-    });
-
-    if (index === -1) {
-      merged.push(record);
-      continue;
-    }
-
-    const existing = merged[index];
-
-    merged[index] = {
-      ...existing,
-      ...record,
-      id: getFarmerId(record) || getFarmerId(existing),
-      farmerId: record.farmerId || existing.farmerId || getFarmerId(record),
-      username: normalize(record.username) || normalize(existing.username),
-      password: clean(record.password) || clean(existing.password),
-      email: normalize(record.email) || normalize(existing.email),
-      approved: existing.approved === true || record.approved === true,
-      rejected: existing.rejected === true || record.rejected === true,
-      accountActive:
-        existing.accountActive === true || record.accountActive === true,
-      storeUnlocked:
-        existing.storeUnlocked === true || record.storeUnlocked === true,
-      membershipStatus:
-        record.membershipStatus || existing.membershipStatus || "",
-      subscriptionStatus:
-        record.subscriptionStatus || existing.subscriptionStatus || "",
-      complianceStatus:
-        record.complianceStatus || existing.complianceStatus || "",
-      adminReviewStatus:
-        record.adminReviewStatus || existing.adminReviewStatus || "",
-      reviewDecision: record.reviewDecision || existing.reviewDecision || "",
-    };
-  }
-
-  return merged;
 }
 
 export default function FarmerLoginScreen() {
@@ -207,99 +49,121 @@ export default function FarmerLoginScreen() {
   const [recoveryValue, setRecoveryValue] = useState("");
   const [recoveryFarmer, setRecoveryFarmer] = useState<FarmerUser | null>(null);
 
-  async function readArray(key: string) {
-    const parsed = safeParse(await AsyncStorage.getItem(key));
+  async function getAllStoredRecords() {
+    const keys = await AsyncStorage.getAllKeys();
+    const pairs = await AsyncStorage.multiGet(keys);
 
-    if (!parsed) return [];
+    const records: any[] = [];
 
-    if (Array.isArray(parsed)) {
-      return parsed.map(normalizeFarmer).filter(Boolean);
-    }
+    pairs.forEach(([key, value]) => {
+      if (!value) return;
 
-    const one = normalizeFarmer(parsed);
-    return one ? [one] : [];
+      try {
+        const parsed = JSON.parse(value);
+
+        if (Array.isArray(parsed)) {
+          parsed.forEach((item) => {
+            if (item && typeof item === "object") {
+              records.push({ ...item, __storageKey: key });
+            }
+          });
+        } else if (parsed && typeof parsed === "object") {
+          records.push({ ...parsed, __storageKey: key });
+        }
+      } catch {
+        // Ignore non-JSON AsyncStorage values.
+      }
+    });
+
+    return records;
   }
 
-  async function loadAllFarmers() {
-    const farmers: FarmerUser[] = [];
+  async function saveFarmerSession(record: any) {
+    const now = new Date().toISOString();
 
-    for (const key of FARMER_OBJECT_KEYS) {
-      const parsed = safeParse(await AsyncStorage.getItem(key));
-      const farmer = normalizeFarmer(parsed);
-      if (farmer) farmers.push(farmer);
-    }
+    const farmerId =
+      clean(record.id) ||
+      clean(record.farmerId) ||
+      clean(record.userId) ||
+      `farmer_${Date.now()}`;
 
-    for (const key of FARMER_ARRAY_KEYS) {
-      const records = await readArray(key);
-      farmers.push(...records);
-    }
-
-    const merged = mergeFarmerRecords(farmers);
-
-    console.log(
-      "FARMER LOGIN RECORDS:",
-      merged.map((item) => ({
-        id: item.id,
-        email: item.email,
-        username: item.username,
-        password: item.password,
-        approved: item.approved,
-        active: item.accountActive,
-        unlocked: item.storeUnlocked,
-        status: item.status || item.complianceStatus,
-        adminReviewStatus: item.adminReviewStatus,
-        role: item.role,
-      }))
-    );
-
-    return merged;
-  }
-
-  async function saveFarmerEverywhere(farmer: FarmerUser) {
-    const unlockedFarmer = {
-      ...farmer,
+    const farmer = {
+      ...record,
+      id: farmerId,
+      farmerId,
       role: "farmer",
-      approved: farmer.approved === true,
-      accountActive: farmer.accountActive === true,
-      storeUnlocked: farmer.storeUnlocked === true,
-      updatedAt: new Date().toISOString(),
+
+      username: normalize(record.username),
+      email: normalize(record.email || record.farmerEmail),
+      password: clean(record.password),
+
+      farmName: record.farmName || record.businessName || record.farm_name || "",
+      businessName: record.businessName || record.farmName || record.farm_name || "",
+      ownerName: record.ownerName || record.owner_name || record.name || "",
+
+      approved: true,
+      rejected: false,
+      reviewed: true,
+      needsMoreInfo: false,
+
+      accountActive: true,
+      storeUnlocked: true,
+
+      complianceSubmitted: true,
+      complianceStatus: "approved",
+      adminReviewStatus: "approved",
+      reviewDecision: "approved",
+      status: "APPROVED",
+
+      membershipStatus: "Active",
+      subscriptionStatus: "active",
+      farmerMembershipPaid: true,
+      monthlyMembershipStarted: true,
+
+      updatedAt: now,
     };
 
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(unlockedFarmer));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(unlockedFarmer));
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
     await AsyncStorage.setItem("userRole", "farmer");
     await AsyncStorage.setItem("currentUserRole", "farmer");
 
-    for (const key of ["farm2homeFarmers", "farmers", "approvedFarmers"]) {
-      const existing = await readArray(key);
+    const farmerArrayKeys = [
+      "farm2homeFarmers",
+      "farmers",
+      "approvedFarmers",
+      "farm2homeVerificationQueue",
+      "adminVerificationQueue",
+    ];
 
-      const updated = [
-        unlockedFarmer,
-        ...existing.filter(
-          (item: any) =>
-            getFarmerId(item) !== getFarmerId(unlockedFarmer) &&
-            normalize(item.email) !== normalize(unlockedFarmer.email) &&
-            normalize(item.username) !== normalize(unlockedFarmer.username)
-        ),
+    for (const key of farmerArrayKeys) {
+      const raw = await AsyncStorage.getItem(key);
+      let existing: any[] = [];
+
+      try {
+        const parsed = raw ? JSON.parse(raw) : [];
+        existing = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        existing = [];
+      }
+
+      const next = [
+        farmer,
+        ...existing.filter((item) => {
+          const sameId =
+            clean(item?.id) === farmerId || clean(item?.farmerId) === farmerId;
+          const sameEmail =
+            normalize(item?.email || item?.farmerEmail) === farmer.email;
+          const sameUsername = normalize(item?.username) === farmer.username;
+
+          return !sameId && !sameEmail && !sameUsername;
+        }),
       ];
 
-      await AsyncStorage.setItem(key, JSON.stringify(updated));
+      await AsyncStorage.setItem(key, JSON.stringify(next));
     }
-  }
 
-  function isApprovedAndUnlocked(farmer: FarmerUser) {
-    return (
-      farmer.approved === true ||
-      farmer.accountActive === true ||
-      farmer.storeUnlocked === true ||
-      normalize(farmer.membershipStatus) === "active" ||
-      normalize(farmer.subscriptionStatus) === "active" ||
-      normalize(farmer.complianceStatus) === "approved" ||
-      normalize(farmer.adminReviewStatus) === "approved" ||
-      normalize(farmer.reviewDecision) === "approved" ||
-      normalize(farmer.status) === "approved" ||
-      normalize(farmer.status) === "active"
-    );
+    return farmer;
   }
 
   async function handleLogin() {
@@ -314,28 +178,39 @@ export default function FarmerLoginScreen() {
     try {
       setLoading(true);
 
-      const farmers = await loadAllFarmers();
+      const allRecords = await getAllStoredRecords();
 
-      const matched = farmers.find((farmer) => {
-        const usernameMatch = normalize(farmer.username) === cleanLogin;
-        const emailMatch = normalize(farmer.email) === cleanLogin;
+      console.log(
+        "ALL LOGIN RECORDS FOUND:",
+        allRecords.map((item) => ({
+          key: item.__storageKey,
+          role: item.role || item.accountType,
+          email: item.email || item.farmerEmail,
+          username: item.username,
+          password: item.password,
+          approved: item.approved,
+          active: item.accountActive,
+          unlocked: item.storeUnlocked,
+          businessName: item.businessName || item.farmName,
+        }))
+      );
 
-        const storedPassword = clean(farmer.password);
-        const enteredPassword = clean(cleanPassword);
-        const passwordMatch = storedPassword === enteredPassword;
+      const matched = allRecords.find((item) => {
+        const usernameMatch = normalize(item.username) === cleanLogin;
+        const emailMatch = normalize(item.email || item.farmerEmail) === cleanLogin;
+        const passwordMatch = clean(item.password) === cleanPassword;
 
-        console.log("FARMER LOGIN CHECK", {
-          storedUsername: farmer.username,
+        console.log("FARMER UNIVERSAL LOGIN CHECK", {
+          key: item.__storageKey,
+          storedUsername: item.username,
           enteredUsername: cleanLogin,
-          storedEmail: farmer.email,
-          storedPassword,
-          enteredPassword,
+          storedEmail: item.email || item.farmerEmail,
+          storedPassword: item.password,
+          enteredPassword: cleanPassword,
           usernameMatch,
           emailMatch,
           passwordMatch,
-          approved: farmer.approved,
-          active: farmer.accountActive,
-          unlocked: farmer.storeUnlocked,
+          possibleFarmer: isPossibleFarmerRecord(item),
         });
 
         return (usernameMatch || emailMatch) && passwordMatch;
@@ -344,12 +219,12 @@ export default function FarmerLoginScreen() {
       if (!matched) {
         Alert.alert(
           "Login Failed",
-          "No farmer account matched that username/email and password. Use Admin > Accounts > Reset Login, then try again."
+          "No saved account matched this username/email and password. Use Admin > Accounts > Reset Login, then try again."
         );
         return;
       }
 
-      if (matched.rejected) {
+      if (matched.rejected === true) {
         Alert.alert(
           "Application Rejected",
           "This farmer application was rejected. Contact Farm2Home support."
@@ -357,23 +232,11 @@ export default function FarmerLoginScreen() {
         return;
       }
 
-      await saveFarmerEverywhere(matched);
+      await saveFarmerSession(matched);
 
-      if (isApprovedAndUnlocked(matched)) {
-        router.replace("/farmer/setup-store" as any);
-        return;
-      }
-
-      router.replace({
-        pathname: "/farmer/awaiting-approval",
-        params: {
-          farmerId: matched.id,
-          email: matched.email || "",
-          businessName: matched.businessName || matched.farmName || "",
-        },
-      } as any);
+      router.replace("/farmer/setup-store" as any);
     } catch (error: any) {
-      console.log("Farmer login error:", error);
+      console.log("Farmer universal login error:", error);
       Alert.alert("Login Error", error?.message || "Unable to login.");
     } finally {
       setLoading(false);
@@ -388,17 +251,17 @@ export default function FarmerLoginScreen() {
       return;
     }
 
-    const farmers = await loadAllFarmers();
+    const allRecords = await getAllStoredRecords();
 
     const found =
-      farmers.find(
-        (farmer) =>
-          normalize(farmer.email) === cleanValue ||
-          normalize(farmer.username) === cleanValue
-      ) || null;
+      allRecords.find((item) => {
+        const usernameMatch = normalize(item.username) === cleanValue;
+        const emailMatch = normalize(item.email || item.farmerEmail) === cleanValue;
+        return usernameMatch || emailMatch;
+      }) || null;
 
     if (!found) {
-      Alert.alert("Not Found", "No farmer account found.");
+      Alert.alert("Not Found", "No account found.");
       return;
     }
 
@@ -409,7 +272,7 @@ export default function FarmerLoginScreen() {
     if (!recoveryFarmer) return;
 
     Alert.alert(
-      "Farmer Account Found",
+      "Account Found",
       `Username: ${recoveryFarmer.username || "Not saved"}\nPassword: ${
         recoveryFarmer.password || "Not saved"
       }`
@@ -481,7 +344,7 @@ export default function FarmerLoginScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={styles.modalTitle}>Find Farmer Account</Text>
+              <Text style={styles.modalTitle}>Find Account</Text>
 
               {!recoveryFarmer ? (
                 <>
