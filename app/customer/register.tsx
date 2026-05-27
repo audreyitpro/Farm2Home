@@ -69,27 +69,31 @@ function safelyParseArray(rawValue: string | null): CustomerAccount[] {
   }
 }
 
-async function getCustomers() {
-  const savedCustomers = await AsyncStorage.getItem("farm2homeCustomers");
-  return safelyParseArray(savedCustomers);
+async function readCustomerArray(key: string) {
+  const saved = await AsyncStorage.getItem(key);
+  return safelyParseArray(saved);
 }
 
 async function saveCustomer(customerAccount: CustomerAccount) {
-  const customers = await getCustomers();
+  const storageKeys = ["farm2homeCustomers", "customers", "customerAccounts"];
 
-  const updatedCustomers = [
-    customerAccount,
-    ...customers.filter(
-      (item) =>
-        item.email.toLowerCase() !== customerAccount.email.toLowerCase() &&
-        item.username.toLowerCase() !== customerAccount.username.toLowerCase()
-    ),
-  ];
+  for (const key of storageKeys) {
+    const customers = await readCustomerArray(key);
 
-  await AsyncStorage.setItem(
-    "farm2homeCustomers",
-    JSON.stringify(updatedCustomers)
-  );
+    const updatedCustomers = [
+      customerAccount,
+      ...customers.filter(
+        (item) =>
+          item.id !== customerAccount.id &&
+          String(item.email || "").toLowerCase() !==
+            customerAccount.email.toLowerCase() &&
+          String(item.username || "").toLowerCase() !==
+            customerAccount.username.toLowerCase()
+      ),
+    ];
+
+    await AsyncStorage.setItem(key, JSON.stringify(updatedCustomers));
+  }
 
   await AsyncStorage.setItem("pendingCustomer", JSON.stringify(customerAccount));
   await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerAccount));
@@ -121,9 +125,7 @@ export default function CustomerRegister() {
 
   const selectedQuestions = useMemo(
     () =>
-      [securityQuestion1, securityQuestion2, securityQuestion3].filter(
-        Boolean
-      ),
+      [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
@@ -161,10 +163,7 @@ export default function CustomerRegister() {
     }
 
     if (selectedQuestions.length !== 3) {
-      Alert.alert(
-        "Security Required",
-        "Please select 3 security questions."
-      );
+      Alert.alert("Security Required", "Please select 3 security questions.");
       return false;
     }
 
@@ -181,42 +180,38 @@ export default function CustomerRegister() {
       !securityAnswer2.trim() ||
       !securityAnswer3.trim()
     ) {
-      Alert.alert(
-        "Security Required",
-        "Please answer all 3 security questions."
-      );
+      Alert.alert("Security Required", "Please answer all 3 security questions.");
       return false;
     }
 
     return true;
   }
 
-  async function checkDuplicateCustomer(
-    cleanEmail: string,
-    cleanUsername: string
-  ) {
-    const customers = await getCustomers();
+  async function checkDuplicateCustomer(cleanEmail: string, cleanUsername: string) {
+    const keys = ["farm2homeCustomers", "customers", "customerAccounts"];
 
-    const duplicate = customers.find(
-      (item) =>
-        item.email.toLowerCase() === cleanEmail ||
-        item.username.toLowerCase() === cleanUsername
-    );
+    for (const key of keys) {
+      const customers = await readCustomerArray(key);
 
-    if (duplicate) {
-      Alert.alert(
-        "Account Exists",
-        "A customer account already exists with this email or username."
+      const duplicate = customers.find(
+        (item) =>
+          String(item.email || "").toLowerCase() === cleanEmail ||
+          String(item.username || "").toLowerCase() === cleanUsername
       );
-      return true;
+
+      if (duplicate) {
+        Alert.alert(
+          "Account Exists",
+          "A customer account already exists with this email or username."
+        );
+        return true;
+      }
     }
 
     return false;
   }
 
   async function createAccountAndSubscribe() {
-    console.log("CREATE ACCOUNT + SUBSCRIBE CLICKED");
-
     if (loading) return;
     if (!validateForm()) return;
 
@@ -311,8 +306,8 @@ export default function CustomerRegister() {
 
       const text = await response.text();
 
-      console.log("STRIPE STATUS:", response.status);
-      console.log("STRIPE RESPONSE:", text);
+      console.log("CUSTOMER STRIPE STATUS:", response.status);
+      console.log("CUSTOMER STRIPE RESPONSE:", text);
 
       let data: { success?: boolean; url?: string; error?: string } = {};
 
@@ -496,6 +491,7 @@ export default function CustomerRegister() {
           value={username}
           onChangeText={setUsername}
           autoCapitalize="none"
+          autoCorrect={false}
         />
 
         <TextInput
@@ -505,6 +501,8 @@ export default function CustomerRegister() {
           value={password}
           onChangeText={setPassword}
           secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
         />
 
         <TextInput
@@ -514,6 +512,8 @@ export default function CustomerRegister() {
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
         />
 
         <View style={styles.securityCard}>

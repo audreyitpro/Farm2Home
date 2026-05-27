@@ -173,9 +173,6 @@ export default function FarmerLoginScreen() {
   const [forgotVisible, setForgotVisible] = useState(false);
   const [recoveryValue, setRecoveryValue] = useState("");
   const [recoveryFarmer, setRecoveryFarmer] = useState<FarmerUser | null>(null);
-  const [answer1, setAnswer1] = useState("");
-  const [answer2, setAnswer2] = useState("");
-  const [answer3, setAnswer3] = useState("");
 
   async function readArray(key: string) {
     const parsed = safeParse(await AsyncStorage.getItem(key));
@@ -214,11 +211,13 @@ export default function FarmerLoginScreen() {
         id: item.id,
         email: item.email,
         username: item.username,
+        password: item.password,
         hasPassword: Boolean(item.password),
         approved: item.approved,
         active: item.accountActive,
         unlocked: item.storeUnlocked,
         status: item.complianceStatus,
+        adminReviewStatus: item.adminReviewStatus,
       }))
     );
 
@@ -266,7 +265,25 @@ export default function FarmerLoginScreen() {
       const matched = farmers.find((farmer) => {
         const usernameMatch = normalize(farmer.username) === cleanLogin;
         const emailMatch = normalize(farmer.email) === cleanLogin;
-        const passwordMatch = clean(farmer.password) === cleanPassword;
+
+        const storedPassword = String(farmer.password || "").trim();
+        const enteredPassword = String(cleanPassword || "").trim();
+
+        const passwordMatch = storedPassword === enteredPassword;
+
+        console.log("LOGIN CHECK", {
+          storedUsername: farmer.username,
+          enteredUsername: cleanLogin,
+          storedEmail: farmer.email,
+          storedPassword,
+          enteredPassword,
+          usernameMatch,
+          emailMatch,
+          passwordMatch,
+          approved: farmer.approved,
+          active: farmer.accountActive,
+          unlocked: farmer.storeUnlocked,
+        });
 
         return (usernameMatch || emailMatch) && passwordMatch;
       });
@@ -274,7 +291,7 @@ export default function FarmerLoginScreen() {
       if (!matched) {
         Alert.alert(
           "Login Failed",
-          "No farmer account matched that username/email and password. Open the browser console and check FARMER LOGIN RECORDS to see whether username/password were saved."
+          "No farmer account matched that username/email and password. Use Admin > Accounts to reset the login, then try again."
         );
         return;
       }
@@ -335,7 +352,7 @@ export default function FarmerLoginScreen() {
     setRecoveryFarmer(found);
   }
 
-  function verifyRecovery() {
+  function showRecoveryInfo() {
     if (!recoveryFarmer) return;
 
     Alert.alert(
@@ -348,9 +365,6 @@ export default function FarmerLoginScreen() {
     setForgotVisible(false);
     setRecoveryFarmer(null);
     setRecoveryValue("");
-    setAnswer1("");
-    setAnswer2("");
-    setAnswer3("");
   }
 
   return (
@@ -378,6 +392,7 @@ export default function FarmerLoginScreen() {
           placeholderTextColor="#6B7280"
           secureTextEntry
           autoCapitalize="none"
+          autoCorrect={false}
           value={password}
           onChangeText={setPassword}
         />
@@ -446,7 +461,7 @@ export default function FarmerLoginScreen() {
 
                   <TouchableOpacity
                     style={styles.loginButton}
-                    onPress={verifyRecovery}
+                    onPress={showRecoveryInfo}
                   >
                     <Text style={styles.loginButtonText}>Show Login Info</Text>
                   </TouchableOpacity>

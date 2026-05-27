@@ -95,22 +95,38 @@ async function getFreightCarriers() {
 }
 
 async function saveFreightCarrier(carrier: FreightCarrierRegistration) {
-  const carriers = await getFreightCarriers();
-
-  const updatedCarriers = [
-    carrier,
-    ...carriers.filter(
-      (item) =>
-        item.email.toLowerCase() !== carrier.email.toLowerCase() &&
-        item.username.toLowerCase() !== carrier.username.toLowerCase() &&
-        item.id !== carrier.id
-    ),
+  const storageKeys = [
+    "farm2homeFreightCarriers",
+    "farm2homeFreightUsers",
+    "freight_carriers",
+    "freightUsers",
   ];
 
-  await AsyncStorage.setItem(
-    "farm2homeFreightCarriers",
-    JSON.stringify(updatedCarriers)
-  );
+  for (const key of storageKeys) {
+    const raw = await AsyncStorage.getItem(key);
+    let existing: any[] = [];
+
+    try {
+      existing = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(existing)) existing = [];
+    } catch {
+      existing = [];
+    }
+
+    const updated = [
+      carrier,
+      ...existing.filter(
+        (item) =>
+          String(item.email || "").toLowerCase() !==
+            carrier.email.toLowerCase() &&
+          String(item.username || "").toLowerCase() !==
+            carrier.username.toLowerCase() &&
+          item.id !== carrier.id
+      ),
+    ];
+
+    await AsyncStorage.setItem(key, JSON.stringify(updated));
+  }
 
   await AsyncStorage.setItem("pendingFreightCarrier", JSON.stringify(carrier));
   await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
@@ -523,7 +539,11 @@ export default function FreightRegister() {
 
       await upsertVerificationRecord({
         ...verificationRecord,
+        id: carrierId,
+        carrierId,
+        accountType: "FREIGHT_CARRIER",
         username: cleanUsername,
+        password: cleanPassword,
         accountActive: true,
         businessAddress: cleanBusinessAddress,
         city: cleanCity,
@@ -597,15 +617,14 @@ export default function FreightRegister() {
         return;
       }
 
-      await AsyncStorage.setItem(
-        "pendingFreightCarrier",
-        JSON.stringify({
-          ...freightCarrier,
-          stripeCheckoutSessionId: data.id || data.sessionId || null,
-          membershipStatus: "Checkout Started",
-          updatedAt: new Date().toISOString(),
-        })
-      );
+      const checkoutCarrier = {
+        ...freightCarrier,
+        stripeCheckoutSessionId: data.id || data.sessionId || null,
+        membershipStatus: "Checkout Started",
+        updatedAt: new Date().toISOString(),
+      };
+
+      await saveFreightCarrier(checkoutCarrier);
 
       await openCheckoutUrl(data.url);
     } catch (error: any) {
@@ -873,7 +892,7 @@ export default function FreightRegister() {
       </TouchableOpacity>
 
       <TouchableOpacity
-        onPress={() => router.push("/freight/login" as never)}
+        onPress={() => router.push("/freight/login" as any)}
         activeOpacity={0.85}
       >
         <Text style={styles.link}>Already registered? Login</Text>

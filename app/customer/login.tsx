@@ -50,6 +50,36 @@ type CustomerAccount = {
   updated_at?: string;
 };
 
+const CUSTOMER_ARRAY_KEYS = [
+  "farm2homeCustomers",
+  "customers",
+  "customerAccounts",
+];
+
+const CUSTOMER_OBJECT_KEYS = [
+  "currentCustomer",
+  "currentUser",
+  "pendingCustomer",
+];
+
+function clean(value: any) {
+  return String(value || "").trim();
+}
+
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function safelyParse(rawValue: string | null): any {
+  if (!rawValue) return null;
+
+  try {
+    return JSON.parse(rawValue);
+  } catch {
+    return null;
+  }
+}
+
 function safelyParseArray(rawValue: string | null): CustomerAccount[] {
   if (!rawValue) return [];
 
@@ -69,14 +99,14 @@ function normalizeCustomer(customer: CustomerAccount): CustomerAccount {
     "Customer";
 
   return {
-    id: customer.id,
+    id: customer.id || `customer_${Date.now()}`,
     role: "customer",
     fullName,
     name: fullName,
-    email: String(customer.email || "").toLowerCase(),
+    email: normalize(customer.email),
     phone: customer.phone || "",
-    username: String(customer.username || "").toLowerCase(),
-    password: customer.password || "",
+    username: normalize(customer.username),
+    password: clean(customer.password),
     accountActive:
       customer.accountActive ?? customer.account_active ?? true,
     customerMembershipPaid:
@@ -111,9 +141,82 @@ function normalizeCustomer(customer: CustomerAccount): CustomerAccount {
   };
 }
 
+function mergeCustomers(records: CustomerAccount[]) {
+  const merged: CustomerAccount[] = [];
+
+  for (const record of records) {
+    const normalized = normalizeCustomer(record);
+
+    const index = merged.findIndex((item) => {
+      return (
+        item.id === normalized.id ||
+        (normalized.email && item.email === normalized.email) ||
+        (normalized.username && item.username === normalized.username)
+      );
+    });
+
+    if (index === -1) {
+      merged.push(normalized);
+      continue;
+    }
+
+    const existing = merged[index];
+
+    merged[index] = {
+      ...existing,
+      ...normalized,
+      username: normalized.username || existing.username,
+      password: normalized.password || existing.password,
+      email: normalized.email || existing.email,
+      accountActive:
+        existing.accountActive === true || normalized.accountActive === true,
+      membershipStatus:
+        normalized.membershipStatus || existing.membershipStatus,
+      subscriptionStatus:
+        normalized.subscriptionStatus || existing.subscriptionStatus,
+    };
+  }
+
+  return merged;
+}
+
+async function readArrayKey(key: string) {
+  const raw = await AsyncStorage.getItem(key);
+  return safelyParseArray(raw).map(normalizeCustomer);
+}
+
 async function getLocalCustomers() {
-  const savedCustomers = await AsyncStorage.getItem("farm2homeCustomers");
-  return safelyParseArray(savedCustomers).map(normalizeCustomer);
+  const customers: CustomerAccount[] = [];
+
+  for (const key of CUSTOMER_OBJECT_KEYS) {
+    const parsed = safelyParse(await AsyncStorage.getItem(key));
+
+    if (parsed) {
+      customers.push(normalizeCustomer(parsed));
+    }
+  }
+
+  for (const key of CUSTOMER_ARRAY_KEYS) {
+    const records = await readArrayKey(key);
+    customers.push(...records);
+  }
+
+  const merged = mergeCustomers(customers);
+
+  console.log(
+    "CUSTOMER LOGIN RECORDS:",
+    merged.map((item) => ({
+      id: item.id,
+      email: item.email,
+      username: item.username,
+      password: item.password,
+      active: item.accountActive,
+      membershipStatus: item.membershipStatus,
+      subscriptionStatus: item.subscriptionStatus,
+    }))
+  );
+
+  return merged;
 }
 
 async function saveCurrentCustomer(customer: CustomerAccount) {
@@ -127,21 +230,22 @@ async function saveCurrentCustomer(customer: CustomerAccount) {
 
 async function syncCustomerToLocal(customer: CustomerAccount) {
   const normalized = normalizeCustomer(customer);
-  const customers = await getLocalCustomers();
 
-  const updatedCustomers = [
-    normalized,
-    ...customers.filter(
-      (item) =>
-        item.email?.toLowerCase() !== normalized.email?.toLowerCase() &&
-        item.username?.toLowerCase() !== normalized.username?.toLowerCase()
-    ),
-  ];
+  for (const key of CUSTOMER_ARRAY_KEYS) {
+    const records = await readArrayKey(key);
 
-  await AsyncStorage.setItem(
-    "farm2homeCustomers",
-    JSON.stringify(updatedCustomers)
-  );
+    const updatedCustomers = [
+      normalized,
+      ...records.filter(
+        (item) =>
+          item.id !== normalized.id &&
+          normalize(item.email) !== normalized.email &&
+          normalize(item.username) !== normalized.username
+      ),
+    ];
+
+    await AsyncStorage.setItem(key, JSON.stringify(updatedCustomers));
+  }
 
   await saveCurrentCustomer(normalized);
 }
@@ -156,9 +260,24 @@ export default function CustomerLoginScreen() {
 
     return (
       customers.find((item) => {
-        const emailMatch = item.email?.toLowerCase() === cleanLogin;
-        const usernameMatch = item.username?.toLowerCase() === cleanLogin;
-        const passwordMatch = item.password === cleanPassword;
+        const emailMatch = normalize(item.email) === cleanLogin;
+        const usernameMatch = normalize(item.username) === cleanLogin;
+
+        const storedPassword = clean(item.password);
+        const enteredPassword = clean(cleanPassword);
+
+        const passwordMatch = storedPassword === enteredPassword;
+
+        console.log("CUSTOMER LOGIN CHECK", {
+          storedEmail: item.email,
+          storedUsername: item.username,
+          enteredLogin: cleanLogin,
+          storedPassword,
+          enteredPassword,
+          emailMatch,
+          usernameMatch,
+          passwordMatch,
+        });
 
         return (emailMatch || usernameMatch) && passwordMatch;
       }) || null
@@ -183,7 +302,7 @@ export default function CustomerLoginScreen() {
 
       if (!data) return null;
 
-      if (data.password !== cleanPassword) {
+      if (clean(data.password) !== cleanPassword) {
         return null;
       }
 
@@ -195,8 +314,8 @@ export default function CustomerLoginScreen() {
   }
 
   async function loginCustomer() {
-    const cleanLogin = emailOrUsername.trim().toLowerCase();
-    const cleanPassword = password.trim();
+    const cleanLogin = normalize(emailOrUsername);
+    const cleanPassword = clean(password);
 
     if (!cleanLogin || !cleanPassword) {
       Alert.alert(
@@ -269,6 +388,7 @@ export default function CustomerLoginScreen() {
         onChangeText={setPassword}
         secureTextEntry
         autoCapitalize="none"
+        autoCorrect={false}
       />
 
       <TouchableOpacity
