@@ -2,42 +2,39 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 
-import { supabase } from "../data/supabaseClient";
-
-import {
-  authenticateFarmer,
-  getFarmerByUsername,
-  verifyFarmerSecurityQuestions,
-} from "../data/farmerStore";
-
-type FarmerAccount = {
+type FarmerUser = {
   id: string;
   farmerId?: string;
+  farmName?: string;
+  businessName?: string;
+  ownerName?: string;
+  email?: string;
   username?: string;
   password?: string;
-  email?: string;
-  businessName?: string;
-  farmName?: string;
-  ownerName?: string;
-  state?: string;
-  complianceStatus?: string;
+
   approved?: boolean;
+  rejected?: boolean;
   accountActive?: boolean;
-  farmerMembershipPaid?: boolean;
-  applicationFeePaid?: boolean;
-  farmerActivationPaid?: boolean;
-  activationFeePaid?: boolean;
-  farmerMonthlySubscriptionPaid?: boolean;
+  storeUnlocked?: boolean;
+
+  complianceStatus?: string;
+  adminReviewStatus?: string;
+  reviewDecision?: string;
+
+  membershipStatus?: string;
+  subscriptionStatus?: string;
+
   securityQuestion1?: string;
   securityAnswer1?: string;
   securityQuestion2?: string;
@@ -46,519 +43,439 @@ type FarmerAccount = {
   securityAnswer3?: string;
 };
 
-function normalizeText(value: string) {
+const FARMER_ARRAY_KEYS = [
+  "farm2homeFarmers",
+  "farmers",
+  "approvedFarmers",
+  "farm2homeVerificationQueue",
+  "adminVerificationQueue",
+];
+
+const FARMER_OBJECT_KEYS = [
+  "currentFarmer",
+  "pendingFarmerApplication",
+];
+
+function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
-function normalizeAnswer(value: string) {
-  return String(value || "").trim().toLowerCase();
-}
+function safeParse(raw: string | null) {
+  if (!raw) return null;
 
-function mapSupabaseFarmer(row: any): FarmerAccount {
-  return {
-    id: String(row.id || row.farmer_id || ""),
-    farmerId: String(row.id || row.farmer_id || ""),
-    username: row.username || "",
-    password: row.password || "",
-    email: row.email || "",
-    businessName: row.business_name || row.farm_name || "",
-    farmName: row.farm_name || row.business_name || "",
-    ownerName: row.owner_name || "",
-    state: row.state || "MI",
-    complianceStatus: row.compliance_status || "in_progress",
-    approved: Boolean(row.approved),
-    accountActive: Boolean(row.account_active),
-    farmerMembershipPaid: Boolean(row.farmer_membership_paid),
-    applicationFeePaid: Boolean(row.application_fee_paid),
-    farmerActivationPaid: Boolean(row.farmer_activation_paid),
-    activationFeePaid: Boolean(row.farmer_activation_paid),
-    farmerMonthlySubscriptionPaid: Boolean(row.farmer_monthly_subscription_paid),
-    securityQuestion1: row.security_question_1 || "",
-    securityAnswer1: row.security_answer_1 || "",
-    securityQuestion2: row.security_question_2 || "",
-    securityAnswer2: row.security_answer_2 || "",
-    securityQuestion3: row.security_question_3 || "",
-    securityAnswer3: row.security_answer_3 || "",
-  };
-}
-
-async function findFarmerInSupabase(
-  loginValue: string,
-  passwordValue?: string
-): Promise<FarmerAccount | null> {
   try {
-    const cleanLogin = normalizeText(loginValue);
-    const cleanPassword = String(passwordValue || "").trim();
-
-    let result;
-
-    if (passwordValue !== undefined) {
-      result = await supabase
-        .from("farmers")
-        .select("*")
-        .or(`username.eq.${cleanLogin},email.eq.${cleanLogin}`)
-        .eq("password", cleanPassword)
-        .limit(1)
-        .maybeSingle();
-    } else {
-      result = await supabase
-        .from("farmers")
-        .select("*")
-        .or(`username.eq.${cleanLogin},email.eq.${cleanLogin}`)
-        .limit(1)
-        .maybeSingle();
-    }
-
-    const { data, error } = result;
-
-    if (error) {
-      console.log("SUPABASE FARMER LOGIN ERROR:", error.message);
-      return null;
-    }
-
-    return data ? mapSupabaseFarmer(data) : null;
-  } catch (error) {
-    console.log("SUPABASE FARMER LOOKUP FAILED:", error);
+    return JSON.parse(raw);
+  } catch {
     return null;
   }
 }
 
-async function saveFarmerSession(farmer: FarmerAccount) {
-  await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
-  await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
-  await AsyncStorage.setItem("userRole", "farmer");
-  await AsyncStorage.setItem("currentUserRole", "farmer");
-}
+function normalizeFarmer(item: any): FarmerUser | null {
+  if (!item) return null;
 
-function farmerIsApproved(farmer: FarmerAccount) {
-  return farmer.complianceStatus === "approved" || farmer.approved === true;
-}
+  const id = String(item.id || item.farmerId || item.farmer_id || "");
 
-function farmerHasActivationAndSubscription(farmer: FarmerAccount) {
-  const activationPaid =
-    farmer.farmerActivationPaid === true || farmer.activationFeePaid === true;
-
-  const monthlyPaid = farmer.farmerMonthlySubscriptionPaid === true;
-
-  return activationPaid && monthlyPaid;
+  return {
+    ...item,
+    id,
+    farmerId: item.farmerId || id,
+    farmName: item.farmName || item.businessName || item.farm_name || "",
+    businessName: item.businessName || item.farmName || item.farm_name || "",
+    ownerName: item.ownerName || item.owner_name || "",
+    email: String(item.email || item.farmerEmail || "").trim().toLowerCase(),
+    username: String(item.username || "").trim().toLowerCase(),
+    password: String(item.password || ""),
+    approved:
+      item.approved === true ||
+      normalize(item.status) === "approved" ||
+      normalize(item.complianceStatus) === "approved" ||
+      normalize(item.adminReviewStatus) === "approved",
+    rejected:
+      item.rejected === true ||
+      normalize(item.status) === "rejected" ||
+      normalize(item.complianceStatus) === "rejected" ||
+      normalize(item.adminReviewStatus) === "rejected",
+    accountActive:
+      item.accountActive === true ||
+      item.account_active === true ||
+      normalize(item.membershipStatus) === "active",
+    storeUnlocked:
+      item.storeUnlocked === true ||
+      item.store_unlocked === true ||
+      item.approved === true,
+    complianceStatus: item.complianceStatus || item.status || "",
+    adminReviewStatus: item.adminReviewStatus || "",
+    reviewDecision: item.reviewDecision || "",
+    membershipStatus: item.membershipStatus || "",
+    subscriptionStatus: item.subscriptionStatus || "",
+  };
 }
 
 export default function FarmerLoginScreen() {
-  const [username, setUsername] = useState("");
+  const [loginValue, setLoginValue] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const [showRecovery, setShowRecovery] = useState(false);
-  const [recoveryUsername, setRecoveryUsername] = useState("");
-  const [recoveryFarmer, setRecoveryFarmer] = useState<FarmerAccount | null>(
-    null
-  );
-
+  const [forgotVisible, setForgotVisible] = useState(false);
+  const [recoveryValue, setRecoveryValue] = useState("");
+  const [recoveryFarmer, setRecoveryFarmer] = useState<FarmerUser | null>(null);
   const [answer1, setAnswer1] = useState("");
   const [answer2, setAnswer2] = useState("");
   const [answer3, setAnswer3] = useState("");
 
-  const [loading, setLoading] = useState(false);
-  const [recoveryLoading, setRecoveryLoading] = useState(false);
-  const [lookupLoading, setLookupLoading] = useState(false);
+  async function readFarmerArray(key: string) {
+    const parsed = safeParse(await AsyncStorage.getItem(key));
 
-  async function loginFarmer() {
-    try {
-      if (!username.trim() || !password.trim()) {
-        Alert.alert("Missing Login", "Please enter username and password.");
-        return;
-      }
+    if (!parsed) return [];
 
-      setLoading(true);
+    if (Array.isArray(parsed)) {
+      return parsed.map(normalizeFarmer).filter(Boolean) as FarmerUser[];
+    }
 
-      const cleanUsername = normalizeText(username);
-      const cleanPassword = password.trim();
+    const single = normalizeFarmer(parsed);
+    return single ? [single] : [];
+  }
 
-      const supabaseFarmer = await findFarmerInSupabase(
-        cleanUsername,
-        cleanPassword
+  async function loadAllFarmers() {
+    const farmers: FarmerUser[] = [];
+
+    for (const key of FARMER_OBJECT_KEYS) {
+      const parsed = safeParse(await AsyncStorage.getItem(key));
+      const farmer = normalizeFarmer(parsed);
+
+      if (farmer) farmers.push(farmer);
+    }
+
+    for (const key of FARMER_ARRAY_KEYS) {
+      const records = await readFarmerArray(key);
+      farmers.push(...records);
+    }
+
+    const deduped: FarmerUser[] = [];
+
+    for (const farmer of farmers) {
+      const exists = deduped.some(
+        (item) =>
+          item.id === farmer.id ||
+          (item.email && item.email === farmer.email) ||
+          (item.username && item.username === farmer.username)
       );
 
-      const localFarmer = supabaseFarmer
-        ? null
-        : await authenticateFarmer(cleanUsername, cleanPassword);
+      if (!exists) deduped.push(farmer);
+    }
 
-      const farmer = (supabaseFarmer || localFarmer) as FarmerAccount | null;
+    return deduped;
+  }
 
-      if (!farmer) {
+  async function saveFarmerSession(farmer: FarmerUser) {
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
+    await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.setItem("currentUserRole", "farmer");
+  }
+
+  function isApprovedAndUnlocked(farmer: FarmerUser) {
+    const approved =
+      farmer.approved === true ||
+      normalize(farmer.complianceStatus) === "approved" ||
+      normalize(farmer.adminReviewStatus) === "approved" ||
+      normalize(farmer.reviewDecision) === "approved";
+
+    const active =
+      farmer.accountActive === true ||
+      normalize(farmer.membershipStatus) === "active" ||
+      normalize(farmer.subscriptionStatus) === "active";
+
+    const unlocked = farmer.storeUnlocked === true || approved;
+
+    return approved && active && unlocked;
+  }
+
+  async function handleLogin() {
+    const cleanLogin = normalize(loginValue);
+    const cleanPassword = String(password || "").trim();
+
+    if (!cleanLogin || !cleanPassword) {
+      Alert.alert("Missing Information", "Enter username/email and password.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const farmers = await loadAllFarmers();
+
+      const matched = farmers.find((farmer) => {
+        const usernameMatch = normalize(farmer.username) === cleanLogin;
+        const emailMatch = normalize(farmer.email) === cleanLogin;
+        const passwordMatch = String(farmer.password || "") === cleanPassword;
+
+        return (usernameMatch || emailMatch) && passwordMatch;
+      });
+
+      if (!matched) {
         Alert.alert(
           "Login Failed",
-          "Username or password is incorrect, or this farmer account was not saved."
+          "No farmer account matched that username/email and password."
         );
         return;
       }
 
-      await saveFarmerSession(farmer);
+      await saveFarmerSession(matched);
 
-      const activeFarmerId = farmer.id || farmer.farmerId || "";
-
-      if (!farmerIsApproved(farmer)) {
-        router.replace({
-          pathname: "/farmer/compliance-upload",
-          params: { farmerId: activeFarmerId },
-        } as any);
+      if (matched.rejected) {
+        Alert.alert(
+          "Application Rejected",
+          "This farmer application was rejected. Contact Farm2Home support for next steps."
+        );
         return;
       }
 
-      if (!farmerHasActivationAndSubscription(farmer)) {
-        router.replace({
-          pathname: "/subscription/subscription-locked",
-          params: {
-            role: "farmer",
-            step: "activation",
-            farmerId: activeFarmerId,
-            email: farmer.email || "",
-            businessName: farmer.businessName || farmer.farmName || "",
-          },
-        } as any);
+      if (isApprovedAndUnlocked(matched)) {
+        router.replace("/farmer/setup-store" as any);
         return;
       }
 
       router.replace({
-        pathname: "/farmer/setup-store",
-        params: { farmerId: activeFarmerId },
+        pathname: "/farmer/awaiting-approval",
+        params: {
+          farmerId: matched.id,
+          email: matched.email || "",
+          businessName: matched.businessName || matched.farmName || "",
+        },
       } as any);
-    } catch (error) {
+    } catch (error: any) {
       console.log("Farmer login error:", error);
-      Alert.alert("Login Error", "Unable to login farmer.");
+      Alert.alert("Login Error", error?.message || "Unable to login.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function lookupQuestions() {
-    try {
-      if (!recoveryUsername.trim()) {
-        Alert.alert("Username Required", "Enter your username or email first.");
-        return;
-      }
+  async function startRecovery() {
+    const cleanValue = normalize(recoveryValue);
 
-      setLookupLoading(true);
-
-      const supabaseFarmer = await findFarmerInSupabase(
-        recoveryUsername.trim()
-      );
-
-      const localFarmer = supabaseFarmer
-        ? null
-        : await getFarmerByUsername(recoveryUsername.trim());
-
-      const farmer = (supabaseFarmer || localFarmer) as FarmerAccount | null;
-
-      if (!farmer) {
-        setRecoveryFarmer(null);
-        Alert.alert("Not Found", "No farmer account found for that username.");
-        return;
-      }
-
-      setRecoveryFarmer(farmer);
-
-      Alert.alert(
-        "Security Questions Loaded",
-        "Your saved security questions are now shown below."
-      );
-    } catch (error) {
-      console.log("Lookup questions error:", error);
-      Alert.alert("Lookup Error", "Unable to load security questions.");
-    } finally {
-      setLookupLoading(false);
+    if (!cleanValue) {
+      Alert.alert("Missing Information", "Enter username or email.");
+      return;
     }
+
+    const farmers = await loadAllFarmers();
+
+    const found =
+      farmers.find(
+        (farmer) =>
+          normalize(farmer.email) === cleanValue ||
+          normalize(farmer.username) === cleanValue
+      ) || null;
+
+    if (!found) {
+      Alert.alert("Not Found", "No farmer account found.");
+      return;
+    }
+
+    setRecoveryFarmer(found);
   }
 
-  async function recoverLogin() {
-    try {
-      if (!recoveryUsername.trim()) {
-        Alert.alert("Missing Username", "Please enter username or email.");
-        return;
-      }
+  function verifyRecovery() {
+    if (!recoveryFarmer) return;
 
-      if (!answer1.trim() || !answer2.trim() || !answer3.trim()) {
-        Alert.alert(
-          "Missing Answers",
-          "Please answer all 3 saved security questions."
-        );
-        return;
-      }
+    const valid1 = normalize(answer1) === normalize(recoveryFarmer.securityAnswer1);
+    const valid2 = normalize(answer2) === normalize(recoveryFarmer.securityAnswer2);
+    const valid3 = normalize(answer3) === normalize(recoveryFarmer.securityAnswer3);
 
-      setRecoveryLoading(true);
-
-      let farmer = recoveryFarmer;
-
-      if (!farmer) {
-        const supabaseFarmer = await findFarmerInSupabase(
-          recoveryUsername.trim()
-        );
-
-        const localFarmer = supabaseFarmer
-          ? null
-          : await getFarmerByUsername(recoveryUsername.trim());
-
-        farmer = (supabaseFarmer || localFarmer) as FarmerAccount | null;
-      }
-
-      if (!farmer) {
-        Alert.alert("Not Found", "No farmer account found.");
-        return;
-      }
-
-      const answersMatch =
-        normalizeAnswer(farmer.securityAnswer1 || "") ===
-          normalizeAnswer(answer1) &&
-        normalizeAnswer(farmer.securityAnswer2 || "") ===
-          normalizeAnswer(answer2) &&
-        normalizeAnswer(farmer.securityAnswer3 || "") ===
-          normalizeAnswer(answer3);
-
-      if (!answersMatch) {
-        const fallbackFarmer = await verifyFarmerSecurityQuestions(
-          recoveryUsername.trim(),
-          answer1.trim(),
-          answer2.trim(),
-          answer3.trim()
-        );
-
-        farmer = (fallbackFarmer || null) as FarmerAccount | null;
-      }
-
-      if (!farmer) {
-        Alert.alert(
-          "Recovery Failed",
-          "Security answers do not match this farmer account."
-        );
-        return;
-      }
-
-      Alert.alert(
-        "Account Found",
-        `Username: ${farmer.username || farmer.email}\nPassword: ${
-          farmer.password || "No password saved"
-        }`
-      );
-    } catch (error) {
-      console.log("Farmer recovery error:", error);
-      Alert.alert("Recovery Error", "Unable to recover account.");
-    } finally {
-      setRecoveryLoading(false);
+    if (!valid1 || !valid2 || !valid3) {
+      Alert.alert("Verification Failed", "Security answers do not match.");
+      return;
     }
+
+    Alert.alert(
+      "Farmer Account Recovered",
+      `Username: ${recoveryFarmer.username || recoveryFarmer.email}\nPassword: ${
+        recoveryFarmer.password || "Not available"
+      }`
+    );
+
+    setForgotVisible(false);
+    setRecoveryFarmer(null);
+    setRecoveryValue("");
+    setAnswer1("");
+    setAnswer2("");
+    setAnswer3("");
   }
 
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={styles.content}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="always"
-    >
-      <Text style={styles.header}>Farmer Login</Text>
-
-      <Text style={styles.subheader}>
-        Login to continue your Farm2Home compliance, store setup, and produce
-        listings.
-      </Text>
-
+    <View style={styles.container}>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Login</Text>
+        <Text style={styles.title}>Farmer Login</Text>
+
+        <Text style={styles.subtitle}>
+          Log in to manage your Farm2Home farmer application and market store.
+        </Text>
 
         <TextInput
           style={styles.input}
-          placeholder="Username or email"
-          value={username}
-          onChangeText={setUsername}
+          placeholder="Username or Email"
+          placeholderTextColor="#6B7280"
           autoCapitalize="none"
           autoCorrect={false}
+          value={loginValue}
+          onChangeText={setLoginValue}
         />
 
         <TextInput
           style={styles.input}
           placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
+          placeholderTextColor="#6B7280"
           secureTextEntry
           autoCapitalize="none"
-          autoCorrect={false}
+          value={password}
+          onChangeText={setPassword}
         />
 
-        <Pressable
-          style={[styles.primaryButton, loading && styles.disabled]}
-          onPress={loginFarmer}
+        <TouchableOpacity
+          style={[styles.loginButton, loading && styles.disabled]}
+          onPress={handleLogin}
           disabled={loading}
         >
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.primaryButtonText}>Login</Text>
+            <Text style={styles.loginButtonText}>Login</Text>
           )}
-        </Pressable>
+        </TouchableOpacity>
 
-        <Pressable
+        <TouchableOpacity
           style={styles.linkButton}
-          onPress={() => setShowRecovery((prev) => !prev)}
+          onPress={() => setForgotVisible(true)}
         >
-          <Text style={styles.linkText}>
-            {showRecovery ? "Hide Recovery" : "Forgot username or password?"}
-          </Text>
-        </Pressable>
+          <Text style={styles.linkText}>Forgot Username or Password?</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.linkButton}
+          onPress={() => router.push("/farmer/register" as any)}
+        >
+          <Text style={styles.linkText}>Register as Farmer</Text>
+        </TouchableOpacity>
       </View>
 
-      {showRecovery && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Account Recovery</Text>
+      <Modal visible={forgotVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <Text style={styles.modalTitle}>Farmer Account Recovery</Text>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Username or email"
-            value={recoveryUsername}
-            onChangeText={(text) => {
-              setRecoveryUsername(text);
-              setRecoveryFarmer(null);
-              setAnswer1("");
-              setAnswer2("");
-              setAnswer3("");
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+              {!recoveryFarmer ? (
+                <>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Username or Email"
+                    placeholderTextColor="#6B7280"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    value={recoveryValue}
+                    onChangeText={setRecoveryValue}
+                  />
 
-          <Pressable
-            style={[styles.secondaryButton, lookupLoading && styles.disabled]}
-            onPress={lookupQuestions}
-            disabled={lookupLoading}
-          >
-            {lookupLoading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.secondaryButtonText}>
-                Show My Saved Security Questions
-              </Text>
-            )}
-          </Pressable>
+                  <TouchableOpacity style={styles.loginButton} onPress={startRecovery}>
+                    <Text style={styles.loginButtonText}>Continue</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.question}>
+                    {recoveryFarmer.securityQuestion1 || "Security Question 1"}
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Answer"
+                    secureTextEntry
+                    value={answer1}
+                    onChangeText={setAnswer1}
+                  />
 
-          {recoveryFarmer ? (
-            <View style={styles.questionsBox}>
-              <Text style={styles.questionText}>
-                1.{" "}
-                {recoveryFarmer.securityQuestion1 ||
-                  "Question 1 was not saved"}
-              </Text>
+                  <Text style={styles.question}>
+                    {recoveryFarmer.securityQuestion2 || "Security Question 2"}
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Answer"
+                    secureTextEntry
+                    value={answer2}
+                    onChangeText={setAnswer2}
+                  />
 
-              <TextInput
-                style={styles.input}
-                placeholder="Answer 1"
-                value={answer1}
-                onChangeText={setAnswer1}
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+                  <Text style={styles.question}>
+                    {recoveryFarmer.securityQuestion3 || "Security Question 3"}
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Answer"
+                    secureTextEntry
+                    value={answer3}
+                    onChangeText={setAnswer3}
+                  />
 
-              <Text style={styles.questionText}>
-                2.{" "}
-                {recoveryFarmer.securityQuestion2 ||
-                  "Question 2 was not saved"}
-              </Text>
+                  <TouchableOpacity style={styles.loginButton} onPress={verifyRecovery}>
+                    <Text style={styles.loginButtonText}>Recover Account</Text>
+                  </TouchableOpacity>
+                </>
+              )}
 
-              <TextInput
-                style={styles.input}
-                placeholder="Answer 2"
-                value={answer2}
-                onChangeText={setAnswer2}
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              <Text style={styles.questionText}>
-                3.{" "}
-                {recoveryFarmer.securityQuestion3 ||
-                  "Question 3 was not saved"}
-              </Text>
-
-              <TextInput
-                style={styles.input}
-                placeholder="Answer 3"
-                value={answer3}
-                onChangeText={setAnswer3}
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              <Pressable
-                style={[
-                  styles.primaryButton,
-                  recoveryLoading && styles.disabled,
-                ]}
-                onPress={recoverLogin}
-                disabled={recoveryLoading}
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => {
+                  setForgotVisible(false);
+                  setRecoveryFarmer(null);
+                  setRecoveryValue("");
+                }}
               >
-                {recoveryLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.primaryButtonText}>Recover Login</Text>
-                )}
-              </Pressable>
-            </View>
-          ) : (
-            <Text style={styles.helperText}>
-              Enter your username or email, then tap “Show My Saved Security
-              Questions.”
-            </Text>
-          )}
+                <Text style={styles.closeText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
         </View>
-      )}
-
-      <Pressable
-        style={styles.outlineButton}
-        onPress={() => router.replace("/farmer/compliance-upload" as any)}
-      >
-        <Text style={styles.outlineButtonText}>
-          Continue to Farmer Compliance
-        </Text>
-      </Pressable>
-    </ScrollView>
+      </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: {
+  container: {
     flex: 1,
     backgroundColor: "#F5F7EF",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 22,
   },
-  content: {
-    padding: 18,
-    paddingBottom: 40,
-  },
-  header: {
-    fontSize: 34,
-    fontWeight: "900",
-    color: "#14532D",
-    marginTop: 24,
-  },
-  subheader: {
-    color: "#64745E",
-    marginTop: 8,
-    lineHeight: 22,
-    marginBottom: 18,
-    fontWeight: "700",
-  },
+
   card: {
+    width: "100%",
+    maxWidth: 520,
     backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 16,
-    marginBottom: 16,
+    borderRadius: 26,
+    padding: 24,
     borderWidth: 1,
     borderColor: "#DDE7DB",
   },
-  sectionTitle: {
-    fontSize: 22,
+
+  title: {
+    fontSize: 34,
     fontWeight: "900",
     color: "#14532D",
-    marginBottom: 14,
+    textAlign: "center",
+    marginBottom: 8,
   },
+
+  subtitle: {
+    color: "#64745E",
+    fontWeight: "700",
+    lineHeight: 22,
+    textAlign: "center",
+    marginBottom: 22,
+  },
+
   input: {
     backgroundColor: "#F9FAFB",
     borderWidth: 1,
@@ -567,67 +484,73 @@ const styles = StyleSheet.create({
     padding: 14,
     fontSize: 15,
     fontWeight: "700",
-    marginBottom: 12,
+    marginBottom: 14,
+    color: "#111827",
   },
-  questionsBox: {
-    marginTop: 10,
-  },
-  questionText: {
-    color: "#14532D",
-    fontWeight: "900",
-    marginBottom: 8,
-    lineHeight: 20,
-  },
-  helperText: {
-    color: "#64748B",
-    fontWeight: "700",
-    lineHeight: 21,
-    marginTop: 8,
-  },
-  primaryButton: {
-    backgroundColor: "#14532D",
+
+  loginButton: {
+    backgroundColor: "#047857",
     paddingVertical: 16,
-    borderRadius: 18,
+    borderRadius: 16,
     alignItems: "center",
-    marginTop: 4,
   },
-  primaryButtonText: {
+
+  disabled: {
+    opacity: 0.65,
+  },
+
+  loginButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-  secondaryButton: {
-    backgroundColor: "#047857",
-    paddingVertical: 14,
-    borderRadius: 16,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  secondaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+
   linkButton: {
+    marginTop: 16,
     alignItems: "center",
-    paddingVertical: 14,
   },
+
   linkText: {
     color: "#047857",
     fontWeight: "900",
   },
-  outlineButton: {
-    borderWidth: 2,
-    borderColor: "#047857",
-    paddingVertical: 16,
-    borderRadius: 18,
-    alignItems: "center",
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    padding: 22,
+  },
+
+  modalCard: {
     backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 22,
+    maxHeight: "90%",
   },
-  outlineButtonText: {
-    color: "#047857",
+
+  modalTitle: {
+    color: "#14532D",
+    fontSize: 26,
     fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 18,
   },
-  disabled: {
-    opacity: 0.7,
+
+  question: {
+    color: "#111827",
+    fontWeight: "900",
+    marginBottom: 8,
+    marginTop: 8,
+  },
+
+  closeButton: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+
+  closeText: {
+    color: "#B91C1C",
+    fontWeight: "900",
   },
 });
