@@ -147,8 +147,14 @@ export default function DriverProfile() {
 
     await AsyncStorage.setItem("currentDriver", JSON.stringify(normalizedDriver));
     await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedDriver));
-    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(normalizedDriver));
-    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem(
+      "farm2homeCurrentDriver",
+      JSON.stringify(normalizedDriver)
+    );
+    await AsyncStorage.setItem(
+      "farm2homeDriverSession",
+      JSON.stringify(normalizedDriver)
+    );
     await AsyncStorage.setItem("userRole", "driver");
     await AsyncStorage.setItem("currentUserRole", "driver");
 
@@ -520,7 +526,7 @@ export default function DriverProfile() {
 
       <TouchableOpacity
         style={styles.darkButton}
-        onPress={() => router.push("/freight/board" as any)}
+        onPress={() => router.push("/driver/board" as any)}
       >
         <Text style={styles.buttonText}>View Driver Board</Text>
       </TouchableOpacity>
