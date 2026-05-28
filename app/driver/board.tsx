@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -6,6 +6,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -13,38 +14,43 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
-import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 
 type DeliveryJob = {
   id: string;
-  order_id: string;
-  farmer_id?: string;
-  farm_name?: string;
-  customer_name?: string;
-  pickup_address?: string;
-  dropoff_address?: string;
-  delivery_window?: string;
-  miles?: number;
-  payout_amount?: number;
+  customerName?: string;
+  customerEmail?: string;
+  pickupCity?: string;
+  deliveryCity?: string;
+  pickupAddress?: string;
+  dropoffAddress?: string;
+  deliveryInfo?: any;
+  deliveryFee?: number;
+  tip?: number;
+  total?: number;
+  estimatedMiles?: number;
+  fulfillmentStatus?: string;
   status?: string;
-  visibility?: string;
-  assigned_driver_id?: string;
+  assignedDriverId?: string;
+  routeGroup?: string;
 };
 
 type DriverProfile = {
   id?: string;
+  driverId?: string;
+  fullName?: string;
   name?: string;
+  username?: string;
   email?: string;
-  driverSubscriptionActive?: boolean;
 };
 
 export default function DriverBoardScreen() {
   const [loading, setLoading] = useState(false);
   const [accessChecking, setAccessChecking] = useState(true);
-  const [accessAllowed, setAccessAllowed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [jobs, setJobs] = useState<DeliveryJob[]>([]);
   const [driver, setDriver] = useState<DriverProfile | null>(null);
+  const [maxMiles, setMaxMiles] = useState("50");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -60,24 +66,19 @@ export default function DriverBoardScreen() {
     if (!rawDriver) return null;
 
     try {
-      return JSON.parse(rawDriver);
+      const parsed = JSON.parse(rawDriver);
+
+      if (parsed?.role && parsed.role !== "driver") return null;
+
+      return {
+        ...parsed,
+        id: parsed.id || parsed.driverId || parsed.email,
+        driverId: parsed.driverId || parsed.id || parsed.email,
+        role: "driver",
+      };
     } catch {
       return null;
     }
-  }
-
-  async function checkDriverAccess(currentDriver?: DriverProfile | null) {
-    const activeDriver = currentDriver || driver || (await getCurrentDriver());
-
-    const access = await enforceSubscriptionAccess({
-      role: "driver",
-      userId: activeDriver?.id || "",
-      email: activeDriver?.email || "",
-      redirectTo: "/subscription/subscription-locked",
-    });
-
-    setAccessAllowed(access.allowed);
-    return access.allowed;
   }
 
   async function initialize() {
@@ -86,18 +87,22 @@ export default function DriverBoardScreen() {
 
       const currentDriver = await getCurrentDriver();
 
-      if (currentDriver) {
-        setDriver(currentDriver);
+      if (!currentDriver) {
+        router.replace("/driver/login" as any);
+        return;
       }
 
-      const allowed = await checkDriverAccess(currentDriver);
+      setDriver(currentDriver);
 
-      if (allowed) {
-        await loadJobs();
-      }
+      await AsyncStorage.setItem("currentDriver", JSON.stringify(currentDriver));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(currentDriver));
+      await AsyncStorage.setItem("userRole", "driver");
+      await AsyncStorage.setItem("currentUserRole", "driver");
+
+      await loadJobs();
     } catch (error) {
       console.log("Driver board initialize error:", error);
-      setAccessAllowed(false);
+      Alert.alert("Driver Board Error", "Unable to load driver board.");
     } finally {
       setAccessChecking(false);
     }
@@ -107,14 +112,17 @@ export default function DriverBoardScreen() {
     try {
       setRefreshing(true);
 
-      const response = await fetch(`${API_BASE_URL}/driver/driver-board`);
+      const response = await fetch(
+        `${API_BASE_URL}/orders/driver-board?maxMiles=${Number(maxMiles || 9999)}`
+      );
+
       const data = await response.json();
 
       if (!response.ok || !data.success) {
         throw new Error(data.error || "Unable to load driver board.");
       }
 
-      setJobs(data.jobs || []);
+      setJobs(Array.isArray(data.availableOrders) ? data.availableOrders : []);
     } catch (error: any) {
       console.log("Load driver board error:", error);
       Alert.alert("Load Error", error?.message || "Unable to load jobs.");
@@ -124,10 +132,79 @@ export default function DriverBoardScreen() {
   }
 
   async function refreshBoard() {
-    const allowed = await checkDriverAccess();
-    if (!allowed) return;
-
     await loadJobs();
+  }
+
+  function pickupCity(job: DeliveryJob) {
+    return (
+      job.pickupCity ||
+      job.deliveryInfo?.pickupCity ||
+      job.deliveryInfo?.farmCity ||
+      job.pickupAddress ||
+      "Pickup"
+    );
+  }
+
+  function deliveryCity(job: DeliveryJob) {
+    return (
+      job.deliveryCity ||
+      job.deliveryInfo?.city ||
+      job.deliveryInfo?.deliveryCity ||
+      job.dropoffAddress ||
+      "Delivery"
+    );
+  }
+
+  function routeKey(job: DeliveryJob) {
+    return `${String(pickupCity(job)).toLowerCase()}-${String(
+      deliveryCity(job)
+    ).toLowerCase()}`;
+  }
+
+  const selectedJobs = useMemo(
+    () => jobs.filter((job) => selectedIds.includes(job.id)),
+    [jobs, selectedIds]
+  );
+
+  const selectedPayout = selectedJobs.reduce(
+    (sum, job) => sum + Number(job.deliveryFee || job.tip || 0),
+    0
+  );
+
+  const selectedMiles = selectedJobs.reduce(
+    (sum, job) => sum + Number(job.estimatedMiles || 0),
+    0
+  );
+
+  function toggleSelect(job: DeliveryJob) {
+    if (selectedIds.includes(job.id)) {
+      setSelectedIds((prev) => prev.filter((id) => id !== job.id));
+      return;
+    }
+
+    if (selectedJobs.length > 0) {
+      const first = selectedJobs[0];
+
+      const samePickup =
+        String(pickupCity(first)).toLowerCase() ===
+        String(pickupCity(job)).toLowerCase();
+
+      const sameDropoff =
+        String(deliveryCity(first)).toLowerCase() ===
+        String(deliveryCity(job)).toLowerCase();
+
+      const sameRoute = routeKey(first) === routeKey(job);
+
+      if (!samePickup && !sameDropoff && !sameRoute) {
+        Alert.alert(
+          "Different Area",
+          "Select deliveries from the same pickup area, same delivery area, or same route direction."
+        );
+        return;
+      }
+    }
+
+    setSelectedIds((prev) => [...prev, job.id]);
   }
 
   async function acceptJob(job: DeliveryJob) {
@@ -135,28 +212,24 @@ export default function DriverBoardScreen() {
       const currentDriver = driver || (await getCurrentDriver());
 
       if (!currentDriver?.id) {
-        Alert.alert(
-          "Driver Login Required",
-          "Please login or create a driver profile before accepting jobs."
-        );
+        Alert.alert("Driver Login Required", "Please login again.");
+        router.replace("/driver/login" as any);
         return;
       }
 
-      const allowed = await checkDriverAccess(currentDriver);
-
-      if (!allowed) return;
-
       setLoading(true);
 
-      const response = await fetch(`${API_BASE_URL}/driver/accept-delivery-job`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+      const response = await fetch(`${API_BASE_URL}/orders/${job.id}/accept`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          deliveryJobId: job.id,
           driverId: currentDriver.id,
-          driverName: currentDriver.name || currentDriver.email || "Driver",
+          acceptedBy:
+            currentDriver.fullName ||
+            currentDriver.name ||
+            currentDriver.username ||
+            currentDriver.email ||
+            "Farm2Home Driver",
         }),
       });
 
@@ -167,13 +240,9 @@ export default function DriverBoardScreen() {
       }
 
       Alert.alert("Delivery Accepted", "This delivery is now assigned to you.");
-
       await loadJobs();
 
-      router.push({
-        pathname: "/driver/my-deliveries",
-        params: { deliveryJobId: job.id },
-      } as any);
+      router.push("/driver/mobile-driver-app" as any);
     } catch (error: any) {
       console.log("Accept job error:", error);
       Alert.alert("Accept Error", error?.message || "Unable to accept job.");
@@ -182,17 +251,74 @@ export default function DriverBoardScreen() {
     }
   }
 
+  async function acceptSelectedJobs() {
+    try {
+      const currentDriver = driver || (await getCurrentDriver());
+
+      if (!currentDriver?.id) {
+        Alert.alert("Driver Login Required", "Please login again.");
+        router.replace("/driver/login" as any);
+        return;
+      }
+
+      if (selectedIds.length === 0) {
+        Alert.alert("No Deliveries Selected", "Select one or more deliveries.");
+        return;
+      }
+
+      setLoading(true);
+
+      const response = await fetch(`${API_BASE_URL}/orders/batch-accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderIds: selectedIds,
+          driverId: currentDriver.id,
+          acceptedBy:
+            currentDriver.fullName ||
+            currentDriver.name ||
+            currentDriver.username ||
+            currentDriver.email ||
+            "Farm2Home Driver",
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Unable to accept selected deliveries.");
+      }
+
+      Alert.alert(
+        "Batch Accepted",
+        `${data.totalAccepted || selectedIds.length} deliveries assigned to you.`
+      );
+
+      setSelectedIds([]);
+      await loadJobs();
+
+      router.push("/driver/mobile-driver-app" as any);
+    } catch (error: any) {
+      console.log("Batch accept error:", error);
+      Alert.alert("Batch Error", error?.message || "Unable to accept selected deliveries.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function getStatusLabel(job: DeliveryJob) {
-    if (job.visibility === "preferred_only") return "Preferred Drivers First";
-    if (job.status === "open_board") return "Open Board";
-    return job.status || "Available";
+    return job.fulfillmentStatus || job.status || "Available";
   }
 
   function renderJob({ item }: { item: DeliveryJob }) {
+    const selected = selectedIds.includes(item.id);
+
     return (
-      <View style={styles.jobCard}>
+      <View style={[styles.jobCard, selected && styles.selectedCard]}>
         <View style={styles.jobHeader}>
-          <Text style={styles.farmName}>{item.farm_name || "Farm Delivery"}</Text>
+          <Text style={styles.farmName}>
+            {item.customerName || item.customerEmail || "Farm2Home Delivery"}
+          </Text>
 
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{getStatusLabel(item)}</Text>
@@ -200,35 +326,35 @@ export default function DriverBoardScreen() {
         </View>
 
         <Text style={styles.label}>Pickup</Text>
-        <Text style={styles.value}>{item.pickup_address || "Farm pickup"}</Text>
+        <Text style={styles.value}>{pickupCity(item)}</Text>
 
         <Text style={styles.label}>Dropoff</Text>
-        <Text style={styles.value}>
-          {item.dropoff_address || "Customer delivery address"}
-        </Text>
+        <Text style={styles.value}>{deliveryCity(item)}</Text>
 
         <View style={styles.metaRow}>
           <View style={styles.metaBox}>
             <Text style={styles.metaLabel}>Miles</Text>
             <Text style={styles.metaValue}>
-              {Number(item.miles || 0).toFixed(1)}
+              {Number(item.estimatedMiles || 0).toFixed(1)}
             </Text>
           </View>
 
           <View style={styles.metaBox}>
             <Text style={styles.metaLabel}>Payout</Text>
             <Text style={styles.metaValue}>
-              ${Number(item.payout_amount || 0).toFixed(2)}
+              ${Number(item.deliveryFee || item.tip || 0).toFixed(2)}
             </Text>
           </View>
         </View>
 
-        {!!item.delivery_window && (
-          <>
-            <Text style={styles.label}>Delivery Window</Text>
-            <Text style={styles.value}>{item.delivery_window}</Text>
-          </>
-        )}
+        <TouchableOpacity
+          style={selected ? styles.unselectButton : styles.selectButton}
+          onPress={() => toggleSelect(item)}
+        >
+          <Text style={styles.selectButtonText}>
+            {selected ? "Remove From Batch" : "Select For Batch"}
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.acceptButton, loading && styles.disabled]}
@@ -238,7 +364,7 @@ export default function DriverBoardScreen() {
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.acceptButtonText}>Accept Delivery</Text>
+            <Text style={styles.acceptButtonText}>Accept This Delivery</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -249,25 +375,7 @@ export default function DriverBoardScreen() {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#22C55E" />
-        <Text style={styles.centeredText}>Checking Driver Board access...</Text>
-      </View>
-    );
-  }
-
-  if (!accessAllowed) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.lockTitle}>Driver Membership Required</Text>
-        <Text style={styles.centeredText}>Redirecting to subscription page...</Text>
-
-        <TouchableOpacity
-          style={styles.subscriptionButton}
-          onPress={() => router.push("/driver/subscription" as any)}
-        >
-          <Text style={styles.subscriptionButtonText}>
-            Manage Driver Board Membership
-          </Text>
-        </TouchableOpacity>
+        <Text style={styles.centeredText}>Loading Driver Board...</Text>
       </View>
     );
   }
@@ -276,7 +384,7 @@ export default function DriverBoardScreen() {
     <View style={styles.container}>
       <FlatList
         data={jobs}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         renderItem={renderJob}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refreshBoard} />
@@ -286,19 +394,52 @@ export default function DriverBoardScreen() {
             <Text style={styles.header}>Driver Board</Text>
 
             <Text style={styles.subheader}>
-              Accept available local farm delivery orders. Preferred farmer
-              drivers get first access, then unclaimed deliveries open to the
-              paid Driver Board.
+              Select one or multiple nearby deliveries from the same pickup
+              area, dropoff area, or route direction.
             </Text>
 
-            <TouchableOpacity
-              style={styles.subscriptionButton}
-              onPress={() => router.push("/driver/subscription" as any)}
-            >
-              <Text style={styles.subscriptionButtonText}>
-                Manage Driver Board Membership
-              </Text>
+            <TextInput
+              style={styles.input}
+              value={maxMiles}
+              onChangeText={setMaxMiles}
+              keyboardType="numeric"
+              placeholder="Max miles willing to travel"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <TouchableOpacity style={styles.refreshButton} onPress={loadJobs}>
+              <Text style={styles.refreshButtonText}>Refresh Board</Text>
             </TouchableOpacity>
+
+            {selectedJobs.length > 0 && (
+              <View style={styles.batchBox}>
+                <Text style={styles.batchTitle}>
+                  Selected: {selectedJobs.length} deliveries
+                </Text>
+
+                <Text style={styles.batchText}>
+                  Total Payout: ${selectedPayout.toFixed(2)} · Total Miles:{" "}
+                  {selectedMiles.toFixed(1)}
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.batchButton}
+                  onPress={acceptSelectedJobs}
+                  disabled={loading}
+                >
+                  <Text style={styles.batchButtonText}>
+                    Accept Selected Deliveries
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.clearButton}
+                  onPress={() => setSelectedIds([])}
+                >
+                  <Text style={styles.batchButtonText}>Clear Selection</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         }
         ListEmptyComponent={
@@ -331,12 +472,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 22,
   },
-  lockTitle: {
-    color: "#FCA5A5",
-    fontSize: 26,
-    fontWeight: "900",
-    textAlign: "center",
-  },
   content: { padding: 18, paddingBottom: 120 },
   headerBox: { marginBottom: 18 },
   header: {
@@ -351,24 +486,70 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: "700",
   },
-  subscriptionButton: {
-    backgroundColor: "#22C55E",
+  input: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 14,
+    color: "#111827",
+    fontWeight: "800",
+  },
+  refreshButton: {
+    backgroundColor: "#334155",
     paddingVertical: 14,
-    paddingHorizontal: 16,
     borderRadius: 16,
     alignItems: "center",
-    marginTop: 16,
+    marginTop: 12,
   },
-  subscriptionButtonText: {
-    color: "#052E16",
+  refreshButtonText: {
+    color: "#FFFFFF",
     fontWeight: "900",
-    textAlign: "center",
+  },
+  batchBox: {
+    backgroundColor: "#064E3B",
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 14,
+  },
+  batchTitle: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 18,
+  },
+  batchText: {
+    color: "#BBF7D0",
+    fontWeight: "800",
+    marginTop: 6,
+  },
+  batchButton: {
+    backgroundColor: "#22C55E",
+    padding: 14,
+    borderRadius: 14,
+    marginTop: 12,
+    alignItems: "center",
+  },
+  clearButton: {
+    backgroundColor: "#DC2626",
+    padding: 14,
+    borderRadius: 14,
+    marginTop: 10,
+    alignItems: "center",
+  },
+  batchButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
   jobCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
     padding: 18,
     marginBottom: 16,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+  },
+  selectedCard: {
+    borderColor: "#22C55E",
+    backgroundColor: "#ECFDF5",
   },
   jobHeader: {
     flexDirection: "row",
@@ -425,12 +606,30 @@ const styles = StyleSheet.create({
     fontSize: 18,
     marginTop: 4,
   },
+  selectButton: {
+    backgroundColor: "#2563EB",
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: "center",
+    marginTop: 18,
+  },
+  unselectButton: {
+    backgroundColor: "#DC2626",
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: "center",
+    marginTop: 18,
+  },
+  selectButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   acceptButton: {
     backgroundColor: "#15803D",
     paddingVertical: 15,
     borderRadius: 16,
     alignItems: "center",
-    marginTop: 18,
+    marginTop: 10,
   },
   acceptButtonText: {
     color: "#FFFFFF",
