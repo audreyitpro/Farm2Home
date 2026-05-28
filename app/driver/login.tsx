@@ -1,3 +1,5 @@
+// app/driver/login.tsx
+
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -12,72 +14,69 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import { createClient } from "@supabase/supabase-js";
 
 import freightTheme from "../styles/freightTheme";
 import { registerDriverPushNotifications } from "../services/notificationService";
 
-type DriverUser = any;
-
-const DRIVER_ARRAY_KEYS = [
-  "farm2homeDrivers",
-  "drivers",
-  "driverAccounts",
-  "farm2homeLoginIndex",
-];
-
-const DRIVER_OBJECT_KEYS = [
-  "currentDriver",
-  "currentUser",
-  "pendingDriver",
-  "farm2homeCurrentDriver",
-  "farm2homeDriverSession",
-];
-
-function clean(value: any) {
-  return String(value || "").trim();
-}
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 function normalize(value: any) {
-  return clean(value).toLowerCase();
-}
-
-function safeParse(raw: string | null) {
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeAnswer(value: string) {
   return String(value || "").trim().toLowerCase();
 }
 
-function mapDriver(item: any): DriverUser | null {
-  if (!item) return null;
-
-  const role = normalize(item.role);
-
-  if (role && role !== "driver") return null;
-
+function mapDriver(driver: any) {
   return {
-    ...item,
-    id: item.id || item.driverId || item.email || `driver_${Date.now()}`,
-    driverId: item.driverId || item.id || item.email || `driver_${Date.now()}`,
+    id: driver.id,
+    driverId: driver.id,
     role: "driver",
-    fullName: item.fullName || item.name || item.driverName || "Farm2Home Driver",
-    email: normalize(item.email),
-    username: normalize(item.username),
-    password: clean(item.password),
-    accountActive: item.accountActive !== false,
-    membershipStatus: item.membershipStatus || "Active",
-    subscriptionStatus: item.subscriptionStatus || "active",
+
+    fullName:
+      driver.full_name ||
+      driver.fullName ||
+      driver.name ||
+      driver.driver_name ||
+      "Farm2Home Driver",
+
+    email: normalize(driver.email),
+    username: driver.username || "",
+    phone: driver.phone || "",
+
+    accountActive:
+      driver.account_active ?? driver.accountActive ?? true,
+
+    membershipStatus:
+      driver.membership_status ||
+      driver.membershipStatus ||
+      "Active",
+
+    subscriptionStatus:
+      driver.subscription_status ||
+      driver.subscriptionStatus ||
+      "active",
+
+    approved: driver.approved ?? true,
+    verified: driver.verified ?? true,
+
+    expoPushToken:
+      driver.expo_push_token || driver.expoPushToken || "",
+
+    notificationsEnabled:
+      driver.notifications_enabled ??
+      driver.notificationsEnabled ??
+      false,
+
+    createdAt: driver.created_at || driver.createdAt || "",
+    updatedAt:
+      driver.updated_at ||
+      driver.updatedAt ||
+      new Date().toISOString(),
   };
 }
 
-function isDriverActive(driver: DriverUser) {
+function isDriverActive(driver: any) {
   if (driver.accountActive === false) return false;
 
   const membershipStatus = normalize(driver.membershipStatus);
@@ -92,118 +91,26 @@ function isDriverActive(driver: DriverUser) {
 }
 
 export default function DriverLoginScreen() {
-  const [loginValue, setLoginValue] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
 
-  const [forgotVisible, setForgotVisible] = useState(false);
-  const [recoveryValue, setRecoveryValue] = useState("");
-  const [recoveryDriver, setRecoveryDriver] = useState<DriverUser | null>(null);
+  const [resetVisible, setResetVisible] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
 
-  const [answer1, setAnswer1] = useState("");
-  const [answer2, setAnswer2] = useState("");
-  const [answer3, setAnswer3] = useState("");
+  async function saveLoggedInDriver(driver: any) {
+    const normalizedDriver = mapDriver(driver);
 
-  async function readArray(key: string) {
-    const parsed = safeParse(await AsyncStorage.getItem(key));
-
-    if (!parsed) return [];
-
-    if (Array.isArray(parsed)) {
-      return parsed.map(mapDriver).filter(Boolean);
-    }
-
-    const one = mapDriver(parsed);
-    return one ? [one] : [];
-  }
-
-  async function getDrivers() {
-    const drivers: DriverUser[] = [];
-
-    for (const key of DRIVER_OBJECT_KEYS) {
-      const parsed = safeParse(await AsyncStorage.getItem(key));
-      const driver = mapDriver(parsed);
-      if (driver) drivers.push(driver);
-    }
-
-    for (const key of DRIVER_ARRAY_KEYS) {
-      const records = await readArray(key);
-      drivers.push(...records);
-    }
-
-    const merged: DriverUser[] = [];
-
-    for (const driver of drivers) {
-      const index = merged.findIndex(
-        (item) =>
-          item.id === driver.id ||
-          (driver.email && item.email === driver.email) ||
-          (driver.username && item.username === driver.username)
-      );
-
-      if (index === -1) {
-        merged.push(driver);
-      } else {
-        merged[index] = {
-          ...merged[index],
-          ...driver,
-          username: driver.username || merged[index].username,
-          password: driver.password || merged[index].password,
-          email: driver.email || merged[index].email,
-          accountActive: merged[index].accountActive || driver.accountActive,
-        };
-      }
-    }
-
-    console.log(
-      "DRIVER LOGIN RECORDS:",
-      merged.map((item) => ({
-        id: item.id,
-        email: item.email,
-        username: item.username,
-        password: item.password,
-        active: item.accountActive,
-        membershipStatus: item.membershipStatus,
-        subscriptionStatus: item.subscriptionStatus,
-      }))
+    await AsyncStorage.setItem(
+      "currentDriver",
+      JSON.stringify(normalizedDriver)
     );
-
-    return merged;
-  }
-
-  async function saveLoggedInDriver(driver: DriverUser) {
-    const normalizedDriver = {
-      ...driver,
-      id: driver.id || driver.driverId || driver.email || `driver_${Date.now()}`,
-      driverId:
-        driver.driverId || driver.id || driver.email || `driver_${Date.now()}`,
-      role: "driver",
-      accountActive: driver.accountActive !== false,
-      membershipStatus: driver.membershipStatus || "Active",
-      subscriptionStatus: driver.subscriptionStatus || "active",
-      updatedAt: new Date().toISOString(),
-    };
-
-    for (const key of ["farm2homeDrivers", "drivers", "driverAccounts"]) {
-      const records = await readArray(key);
-
-      const updated = [
-        normalizedDriver,
-        ...records.filter(
-          (item) =>
-            item.id !== normalizedDriver.id &&
-            item.driverId !== normalizedDriver.driverId &&
-            normalize(item.email) !== normalize(normalizedDriver.email) &&
-            normalize(item.username) !== normalize(normalizedDriver.username)
-        ),
-      ];
-
-      await AsyncStorage.setItem(key, JSON.stringify(updated));
-    }
-
-    await AsyncStorage.setItem("currentDriver", JSON.stringify(normalizedDriver));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem(
+      "currentUser",
+      JSON.stringify(normalizedDriver)
+    );
     await AsyncStorage.setItem(
       "farm2homeCurrentDriver",
       JSON.stringify(normalizedDriver)
@@ -214,47 +121,61 @@ export default function DriverLoginScreen() {
     );
     await AsyncStorage.setItem("userRole", "driver");
     await AsyncStorage.setItem("currentUserRole", "driver");
+
+    return normalizedDriver;
   }
 
   async function handleLogin() {
-    const cleanLogin = normalize(loginValue);
-    const cleanPassword = clean(password);
+    const cleanEmail = normalize(email);
+    const cleanPassword = String(password || "").trim();
 
-    if (!cleanLogin || !cleanPassword) {
-      Alert.alert("Missing Information", "Enter username/email and password.");
+    if (!cleanEmail || !cleanPassword) {
+      Alert.alert("Missing Information", "Enter email and password.");
       return;
     }
 
     try {
       setLoading(true);
 
-      const drivers = await getDrivers();
-
-      const foundDriver = drivers.find((item) => {
-        const emailMatch = normalize(item.email) === cleanLogin;
-        const usernameMatch = normalize(item.username) === cleanLogin;
-        const passwordMatch = clean(item.password) === cleanPassword;
-
-        console.log("DRIVER LOGIN CHECK", {
-          storedEmail: item.email,
-          storedUsername: item.username,
-          enteredLogin: cleanLogin,
-          storedPassword: item.password,
-          enteredPassword: cleanPassword,
-          emailMatch,
-          usernameMatch,
-          passwordMatch,
-        });
-
-        return (emailMatch || usernameMatch) && passwordMatch;
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: cleanPassword,
       });
 
-      if (!foundDriver) {
-        Alert.alert("Login Failed", "Invalid driver login credentials.");
+      if (error) {
+        Alert.alert("Login Failed", error.message);
         return;
       }
 
-      if (!isDriverActive(foundDriver)) {
+      const userId = data?.user?.id;
+
+      if (!userId) {
+        Alert.alert("Login Error", "Unable to confirm driver account.");
+        return;
+      }
+
+      const { data: driver, error: driverError } = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (driverError) {
+        Alert.alert("Profile Error", driverError.message);
+        return;
+      }
+
+      if (!driver) {
+        Alert.alert(
+          "Driver Profile Missing",
+          "Your login exists, but your driver profile was not found. Please contact Farm2Home support."
+        );
+        return;
+      }
+
+      const normalizedDriver = await saveLoggedInDriver(driver);
+
+      if (!isDriverActive(normalizedDriver)) {
         Alert.alert(
           "Account Disabled",
           "This driver account is disabled or subscription is not active."
@@ -262,77 +183,57 @@ export default function DriverLoginScreen() {
         return;
       }
 
-      await saveLoggedInDriver(foundDriver);
-
       try {
-        const token = await registerDriverPushNotifications(foundDriver.id);
+        const token = await registerDriverPushNotifications(userId);
         console.log("Driver push token:", token);
       } catch (pushError) {
         console.log("Driver push registration error:", pushError);
       }
 
       router.replace("/driver/mobile-driver-app" as any);
-    } catch (error) {
+    } catch (error: any) {
       console.log("Driver login error:", error);
-      Alert.alert("Login Error", "Unable to login to driver account.");
+      Alert.alert("Login Error", error?.message || "Unable to login.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function startRecovery() {
-    const cleanValue = normalize(recoveryValue);
+  async function handlePasswordReset() {
+    const cleanEmail = normalize(resetEmail || email);
 
-    if (!cleanValue) {
-      Alert.alert("Missing Information", "Enter username or email.");
+    if (!cleanEmail) {
+      Alert.alert("Email Required", "Enter your driver email.");
       return;
     }
 
-    const drivers = await getDrivers();
+    try {
+      setResetLoading(true);
 
-    const foundDriver =
-      drivers.find(
-        (item) =>
-          normalize(item.email) === cleanValue ||
-          normalize(item.username) === cleanValue
-      ) || null;
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: "farm2home://reset-password",
+      });
 
-    if (!foundDriver) {
-      Alert.alert("Not Found", "No driver account found.");
-      return;
+      if (error) {
+        Alert.alert("Reset Error", error.message);
+        return;
+      }
+
+      Alert.alert(
+        "Password Reset Sent",
+        "Check your email for the secure password reset link."
+      );
+
+      setResetVisible(false);
+      setResetEmail("");
+    } catch (error: any) {
+      Alert.alert(
+        "Reset Error",
+        error?.message || "Unable to send password reset email."
+      );
+    } finally {
+      setResetLoading(false);
     }
-
-    setRecoveryDriver(foundDriver);
-  }
-
-  function verifyRecovery() {
-    if (!recoveryDriver) return;
-
-    const valid1 =
-      normalizeAnswer(answer1) === normalizeAnswer(recoveryDriver.securityAnswer1);
-
-    const valid2 =
-      normalizeAnswer(answer2) === normalizeAnswer(recoveryDriver.securityAnswer2);
-
-    const valid3 =
-      normalizeAnswer(answer3) === normalizeAnswer(recoveryDriver.securityAnswer3);
-
-    if (!valid1 || !valid2 || !valid3) {
-      Alert.alert("Verification Failed", "Security answers do not match.");
-      return;
-    }
-
-    Alert.alert(
-      "Driver Account Recovered",
-      `Username: ${recoveryDriver.username}\nPassword: ${recoveryDriver.password}`
-    );
-
-    setForgotVisible(false);
-    setRecoveryDriver(null);
-    setRecoveryValue("");
-    setAnswer1("");
-    setAnswer2("");
-    setAnswer3("");
   }
 
   return (
@@ -347,12 +248,13 @@ export default function DriverLoginScreen() {
 
         <TextInput
           style={styles.input}
-          placeholder="Username or Email"
+          placeholder="Email"
           placeholderTextColor="#8A8F98"
           autoCapitalize="none"
           autoCorrect={false}
-          value={loginValue}
-          onChangeText={setLoginValue}
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
         />
 
         <TextInput
@@ -380,9 +282,12 @@ export default function DriverLoginScreen() {
 
         <TouchableOpacity
           style={styles.linkButton}
-          onPress={() => setForgotVisible(true)}
+          onPress={() => {
+            setResetEmail(email);
+            setResetVisible(true);
+          }}
         >
-          <Text style={styles.linkText}>Forgot Username or Password?</Text>
+          <Text style={styles.linkText}>Forgot Password?</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -393,87 +298,48 @@ export default function DriverLoginScreen() {
         </TouchableOpacity>
       </View>
 
-      <Modal visible={forgotVisible} transparent animationType="slide">
+      <Modal visible={resetVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={styles.modalTitle}>Driver Recovery</Text>
+              <Text style={styles.modalTitle}>Reset Driver Password</Text>
 
-              {!recoveryDriver ? (
-                <>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Username or Email"
-                    placeholderTextColor="#8A8F98"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    value={recoveryValue}
-                    onChangeText={setRecoveryValue}
-                  />
+              <Text style={styles.modalSubtitle}>
+                Enter your driver email. Farm2Home will send a secure reset
+                link.
+              </Text>
 
-                  <TouchableOpacity
-                    style={styles.loginButton}
-                    onPress={startRecovery}
-                  >
-                    <Text style={styles.loginButtonText}>Continue</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.question}>
-                    {recoveryDriver.securityQuestion1}
-                  </Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Driver Email"
+                placeholderTextColor="#8A8F98"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                value={resetEmail}
+                onChangeText={setResetEmail}
+              />
 
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Answer"
-                    secureTextEntry
-                    value={answer1}
-                    onChangeText={setAnswer1}
-                  />
-
-                  <Text style={styles.question}>
-                    {recoveryDriver.securityQuestion2}
-                  </Text>
-
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Answer"
-                    secureTextEntry
-                    value={answer2}
-                    onChangeText={setAnswer2}
-                  />
-
-                  <Text style={styles.question}>
-                    {recoveryDriver.securityQuestion3}
-                  </Text>
-
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Answer"
-                    secureTextEntry
-                    value={answer3}
-                    onChangeText={setAnswer3}
-                  />
-
-                  <TouchableOpacity
-                    style={styles.loginButton}
-                    onPress={verifyRecovery}
-                  >
-                    <Text style={styles.loginButtonText}>Recover Account</Text>
-                  </TouchableOpacity>
-                </>
-              )}
+              <TouchableOpacity
+                style={[
+                  styles.loginButton,
+                  resetLoading && styles.disabledButton,
+                ]}
+                onPress={handlePasswordReset}
+                disabled={resetLoading}
+              >
+                {resetLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                )}
+              </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={() => {
-                  setForgotVisible(false);
-                  setRecoveryDriver(null);
-                  setRecoveryValue("");
-                  setAnswer1("");
-                  setAnswer2("");
-                  setAnswer3("");
+                  setResetVisible(false);
+                  setResetEmail("");
                 }}
               >
                 <Text style={styles.closeText}>Close</Text>
@@ -575,14 +441,16 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "900",
     textAlign: "center",
-    marginBottom: 18,
+    marginBottom: 8,
     color: "#111827",
   },
 
-  question: {
-    fontWeight: "900",
-    marginBottom: 8,
-    color: "#111827",
+  modalSubtitle: {
+    textAlign: "center",
+    color: freightTheme.colors.mutedText,
+    lineHeight: 22,
+    marginBottom: 18,
+    fontWeight: "700",
   },
 
   closeButton: {

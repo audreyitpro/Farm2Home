@@ -4,8 +4,15 @@ import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
+import { createClient } from "@supabase/supabase-js";
 
-import { supabase } from "./supabaseClient";
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+
+const supabase: any = createClient(
+  supabaseUrl,
+  supabaseAnonKey
+);
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -64,15 +71,18 @@ function getProfileTable(role?: UserRole | string) {
   const normalized = normalizeRole(role);
 
   if (normalized === "driver") return "drivers";
-  if (normalized === "freight") return "freight_carriers";
+  if (normalized === "freight") return "freight_users";
   if (normalized === "farmer") return "farmers";
   if (normalized === "customer") return "customers";
 
   return "";
 }
 
-export async function registerForPushNotificationsAsync() {
-  return registerPushNotifications();
+export async function registerForPushNotificationsAsync(
+  userId?: string,
+  role?: UserRole | string
+) {
+  return registerPushNotifications(userId, role);
 }
 
 export async function registerPushNotifications(
@@ -136,18 +146,25 @@ export async function savePushToken(
 
     const normalizedRole = normalizeRole(role);
 
-    await supabase.from("push_tokens").upsert(
-      {
-        user_id: userId,
-        user_role: normalizedRole,
-        expo_push_token: expoPushToken,
-        platform: Platform.OS,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "user_id,expo_push_token",
-      }
-    );
+    const { error } = await supabase
+      .from("user_push_tokens")
+      .upsert(
+        {
+          user_id: userId,
+          role: normalizedRole,
+          expo_push_token: expoPushToken,
+          platform: Platform.OS,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "user_id,expo_push_token",
+        }
+      );
+
+    if (error) {
+      console.log("SUPABASE_PUSH_TOKEN_ERROR:", error);
+      return false;
+    }
 
     const table = getProfileTable(normalizedRole);
 
@@ -468,10 +485,6 @@ export async function notifyAdminAlert(message: string, loadId?: string) {
     },
   });
 }
-
-/*
-  ROUTING HELPER FOR NOTIFICATION TAPS
-*/
 
 export function getNotificationRoute(
   data?: Record<string, any>

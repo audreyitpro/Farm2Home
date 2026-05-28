@@ -1,360 +1,191 @@
+// app/customer/login.tsx
+
 import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import { createClient } from "@supabase/supabase-js";
 
-import { supabase } from "../data/supabaseClient";
 import farmTheme from "../styles/farmTheme";
+import { registerForPushNotificationsAsync } from "../services/notificationService";
 
-type CustomerAccount = {
-  id: string;
-  role?: "customer";
-  fullName?: string;
-  name?: string;
-  full_name?: string;
-  email: string;
-  phone?: string;
-  username?: string;
-  password?: string;
-  accountActive?: boolean;
-  account_active?: boolean;
-  customerMembershipPaid?: boolean;
-  customer_membership_paid?: boolean;
-  subscriptionStatus?: "pending" | "active";
-  subscription_status?: "pending" | "active";
-  membershipStatus?: "Pending" | "Active";
-  membership_status?: "Pending" | "Active";
-  securityQuestion1?: string;
-  security_question_1?: string;
-  securityAnswer1?: string;
-  security_answer_1?: string;
-  securityQuestion2?: string;
-  security_question_2?: string;
-  securityAnswer2?: string;
-  security_answer_2?: string;
-  securityQuestion3?: string;
-  security_question_3?: string;
-  securityAnswer3?: string;
-  security_answer_3?: string;
-  createdAt?: string;
-  created_at?: string;
-  updatedAt?: string;
-  updated_at?: string;
-};
-
-const CUSTOMER_ARRAY_KEYS = [
-  "farm2homeCustomers",
-  "customers",
-  "customerAccounts",
-];
-
-const CUSTOMER_OBJECT_KEYS = [
-  "currentCustomer",
-  "currentUser",
-  "pendingCustomer",
-];
-
-function clean(value: any) {
-  return String(value || "").trim();
-}
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 function normalize(value: any) {
-  return clean(value).toLowerCase();
+  return String(value || "").trim().toLowerCase();
 }
 
-function safelyParse(rawValue: string | null): any {
-  if (!rawValue) return null;
-
-  try {
-    return JSON.parse(rawValue);
-  } catch {
-    return null;
-  }
-}
-
-function safelyParseArray(rawValue: string | null): CustomerAccount[] {
-  if (!rawValue) return [];
-
-  try {
-    const parsed = JSON.parse(rawValue);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function normalizeCustomer(customer: CustomerAccount): CustomerAccount {
-  const fullName =
-    customer.fullName ||
-    customer.full_name ||
-    customer.name ||
-    "Customer";
-
+function mapCustomer(customer: any) {
   return {
-    id: customer.id || `customer_${Date.now()}`,
+    id: customer.id,
     role: "customer",
-    fullName,
-    name: fullName,
+    fullName:
+      customer.full_name ||
+      customer.fullName ||
+      customer.name ||
+      "Customer",
+    name:
+      customer.full_name ||
+      customer.fullName ||
+      customer.name ||
+      "Customer",
     email: normalize(customer.email),
     phone: customer.phone || "",
-    username: normalize(customer.username),
-    password: clean(customer.password),
+    username: customer.username || "",
     accountActive:
-      customer.accountActive ?? customer.account_active ?? true,
+      customer.account_active ?? customer.accountActive ?? true,
     customerMembershipPaid:
-      customer.customerMembershipPaid ??
       customer.customer_membership_paid ??
+      customer.customerMembershipPaid ??
       false,
     subscriptionStatus:
-      customer.subscriptionStatus ||
       customer.subscription_status ||
+      customer.subscriptionStatus ||
       "pending",
     membershipStatus:
-      customer.membershipStatus ||
       customer.membership_status ||
+      customer.membershipStatus ||
       "Pending",
-    securityQuestion1:
-      customer.securityQuestion1 || customer.security_question_1 || "",
-    securityAnswer1:
-      customer.securityAnswer1 || customer.security_answer_1 || "",
-    securityQuestion2:
-      customer.securityQuestion2 || customer.security_question_2 || "",
-    securityAnswer2:
-      customer.securityAnswer2 || customer.security_answer_2 || "",
-    securityQuestion3:
-      customer.securityQuestion3 || customer.security_question_3 || "",
-    securityAnswer3:
-      customer.securityAnswer3 || customer.security_answer_3 || "",
-    createdAt: customer.createdAt || customer.created_at || "",
+    createdAt: customer.created_at || customer.createdAt || "",
     updatedAt:
-      customer.updatedAt ||
       customer.updated_at ||
+      customer.updatedAt ||
       new Date().toISOString(),
   };
 }
 
-function mergeCustomers(records: CustomerAccount[]) {
-  const merged: CustomerAccount[] = [];
-
-  for (const record of records) {
-    const normalized = normalizeCustomer(record);
-
-    const index = merged.findIndex((item) => {
-      return (
-        item.id === normalized.id ||
-        (normalized.email && item.email === normalized.email) ||
-        (normalized.username && item.username === normalized.username)
-      );
-    });
-
-    if (index === -1) {
-      merged.push(normalized);
-      continue;
-    }
-
-    const existing = merged[index];
-
-    merged[index] = {
-      ...existing,
-      ...normalized,
-      username: normalized.username || existing.username,
-      password: normalized.password || existing.password,
-      email: normalized.email || existing.email,
-      accountActive:
-        existing.accountActive === true || normalized.accountActive === true,
-      membershipStatus:
-        normalized.membershipStatus || existing.membershipStatus,
-      subscriptionStatus:
-        normalized.subscriptionStatus || existing.subscriptionStatus,
-    };
-  }
-
-  return merged;
-}
-
-async function readArrayKey(key: string) {
-  const raw = await AsyncStorage.getItem(key);
-  return safelyParseArray(raw).map(normalizeCustomer);
-}
-
-async function getLocalCustomers() {
-  const customers: CustomerAccount[] = [];
-
-  for (const key of CUSTOMER_OBJECT_KEYS) {
-    const parsed = safelyParse(await AsyncStorage.getItem(key));
-
-    if (parsed) {
-      customers.push(normalizeCustomer(parsed));
-    }
-  }
-
-  for (const key of CUSTOMER_ARRAY_KEYS) {
-    const records = await readArrayKey(key);
-    customers.push(...records);
-  }
-
-  const merged = mergeCustomers(customers);
-
-  console.log(
-    "CUSTOMER LOGIN RECORDS:",
-    merged.map((item) => ({
-      id: item.id,
-      email: item.email,
-      username: item.username,
-      password: item.password,
-      active: item.accountActive,
-      membershipStatus: item.membershipStatus,
-      subscriptionStatus: item.subscriptionStatus,
-    }))
-  );
-
-  return merged;
-}
-
-async function saveCurrentCustomer(customer: CustomerAccount) {
-  const normalized = normalizeCustomer(customer);
-
-  await AsyncStorage.setItem("currentCustomer", JSON.stringify(normalized));
-  await AsyncStorage.setItem("currentUser", JSON.stringify(normalized));
-  await AsyncStorage.setItem("userRole", "customer");
-  await AsyncStorage.setItem("currentUserRole", "customer");
-}
-
-async function syncCustomerToLocal(customer: CustomerAccount) {
-  const normalized = normalizeCustomer(customer);
-
-  for (const key of CUSTOMER_ARRAY_KEYS) {
-    const records = await readArrayKey(key);
-
-    const updatedCustomers = [
-      normalized,
-      ...records.filter(
-        (item) =>
-          item.id !== normalized.id &&
-          normalize(item.email) !== normalized.email &&
-          normalize(item.username) !== normalized.username
-      ),
-    ];
-
-    await AsyncStorage.setItem(key, JSON.stringify(updatedCustomers));
-  }
-
-  await saveCurrentCustomer(normalized);
-}
-
 export default function CustomerLoginScreen() {
-  const [emailOrUsername, setEmailOrUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [loading, setLoading] = useState(false);
+  const [resetVisible, setResetVisible] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
 
-  async function findLocalCustomer(cleanLogin: string, cleanPassword: string) {
-    const customers = await getLocalCustomers();
+  async function saveCurrentCustomer(customer: any) {
+    const mapped = mapCustomer(customer);
 
-    return (
-      customers.find((item) => {
-        const emailMatch = normalize(item.email) === cleanLogin;
-        const usernameMatch = normalize(item.username) === cleanLogin;
+    await AsyncStorage.setItem("currentCustomer", JSON.stringify(mapped));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(mapped));
+    await AsyncStorage.setItem("userRole", "customer");
+    await AsyncStorage.setItem("currentUserRole", "customer");
 
-        const storedPassword = clean(item.password);
-        const enteredPassword = clean(cleanPassword);
-
-        const passwordMatch = storedPassword === enteredPassword;
-
-        console.log("CUSTOMER LOGIN CHECK", {
-          storedEmail: item.email,
-          storedUsername: item.username,
-          enteredLogin: cleanLogin,
-          storedPassword,
-          enteredPassword,
-          emailMatch,
-          usernameMatch,
-          passwordMatch,
-        });
-
-        return (emailMatch || usernameMatch) && passwordMatch;
-      }) || null
-    );
-  }
-
-  async function findSupabaseCustomer(
-    cleanLogin: string,
-    cleanPassword: string
-  ) {
-    try {
-      const { data, error } = await supabase
-        .from("customers")
-        .select("*")
-        .or(`email.eq.${cleanLogin},username.eq.${cleanLogin}`)
-        .maybeSingle();
-
-      if (error) {
-        console.log("Customer Supabase login skipped:", error.message);
-        return null;
-      }
-
-      if (!data) return null;
-
-      if (clean(data.password) !== cleanPassword) {
-        return null;
-      }
-
-      return normalizeCustomer(data);
-    } catch (error) {
-      console.log("Customer Supabase login failed:", error);
-      return null;
-    }
+    return mapped;
   }
 
   async function loginCustomer() {
-    const cleanLogin = normalize(emailOrUsername);
-    const cleanPassword = clean(password);
+    const cleanEmail = normalize(email);
+    const cleanPassword = String(password || "").trim();
 
-    if (!cleanLogin || !cleanPassword) {
-      Alert.alert(
-        "Missing Login",
-        "Please enter your email/username and password."
-      );
+    if (!cleanEmail || !cleanPassword) {
+      Alert.alert("Missing Login", "Please enter your email and password.");
       return;
     }
 
     try {
       setLoading(true);
 
-      let customer = await findLocalCustomer(cleanLogin, cleanPassword);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: cleanPassword,
+      });
 
-      if (!customer) {
-        customer = await findSupabaseCustomer(cleanLogin, cleanPassword);
-      }
-
-      if (!customer) {
-        Alert.alert("Login Failed", "Invalid email/username or password.");
+      if (error) {
+        Alert.alert("Login Failed", error.message);
         return;
       }
 
-      const normalizedCustomer = normalizeCustomer(customer);
+      const userId = data?.user?.id;
 
-      if (normalizedCustomer.accountActive === false) {
+      if (!userId) {
+        Alert.alert("Login Error", "Unable to confirm customer account.");
+        return;
+      }
+
+      const { data: customer, error: customerError } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (customerError) {
+        Alert.alert("Profile Error", customerError.message);
+        return;
+      }
+
+      if (!customer) {
+        Alert.alert(
+          "Customer Profile Missing",
+          "Your login exists, but your customer profile was not found. Please contact Farm2Home support."
+        );
+        return;
+      }
+
+      const mappedCustomer = await saveCurrentCustomer(customer);
+
+      if (mappedCustomer.accountActive === false) {
         Alert.alert("Account Disabled", "This customer account is not active.");
         return;
       }
 
-      await syncCustomerToLocal(normalizedCustomer);
+      await registerForPushNotificationsAsync(userId, "customer");
 
       router.replace("/customer/marketplace" as any);
     } catch (error: any) {
       console.log("Customer login error:", error);
-
       Alert.alert("Login Error", error?.message || "Unable to login.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handlePasswordReset() {
+    const cleanEmail = normalize(resetEmail || email);
+
+    if (!cleanEmail) {
+      Alert.alert("Email Required", "Enter your customer email.");
+      return;
+    }
+
+    try {
+      setResetLoading(true);
+
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: "farm2home://reset-password",
+      });
+
+      if (error) {
+        Alert.alert("Reset Error", error.message);
+        return;
+      }
+
+      Alert.alert(
+        "Password Reset Sent",
+        "Check your email for the secure password reset link."
+      );
+
+      setResetVisible(false);
+      setResetEmail("");
+    } catch (error: any) {
+      Alert.alert(
+        "Reset Error",
+        error?.message || "Unable to send password reset email."
+      );
+    } finally {
+      setResetLoading(false);
     }
   }
 
@@ -372,12 +203,13 @@ export default function CustomerLoginScreen() {
 
       <TextInput
         style={styles.input}
-        placeholder="Email or Username"
+        placeholder="Email"
         placeholderTextColor="#8A8F98"
-        value={emailOrUsername}
-        onChangeText={setEmailOrUsername}
+        value={email}
+        onChangeText={setEmail}
         autoCapitalize="none"
         autoCorrect={false}
+        keyboardType="email-address"
       />
 
       <TextInput
@@ -413,10 +245,65 @@ export default function CustomerLoginScreen() {
 
       <TouchableOpacity
         style={styles.linkButton}
-        onPress={() => router.push("/customer/password-recovery" as any)}
+        onPress={() => {
+          setResetEmail(email);
+          setResetVisible(true);
+        }}
       >
         <Text style={styles.linkText}>Forgot password?</Text>
       </TouchableOpacity>
+
+      <Modal visible={resetVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <Text style={styles.modalTitle}>Reset Password</Text>
+
+              <Text style={styles.modalSubtitle}>
+                Enter your customer email. Farm2Home will send a secure reset
+                link.
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Customer Email"
+                placeholderTextColor="#8A8F98"
+                value={resetEmail}
+                onChangeText={setResetEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.loginButton,
+                  resetLoading && styles.disabledButton,
+                ]}
+                onPress={handlePasswordReset}
+                disabled={resetLoading}
+                activeOpacity={0.85}
+              >
+                {resetLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => {
+                  setResetVisible(false);
+                  setResetEmail("");
+                }}
+              >
+                <Text style={styles.closeText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -486,5 +373,45 @@ const styles = StyleSheet.create({
     textAlign: "center",
     color: farmTheme.colors.primary,
     fontWeight: "800",
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    padding: 22,
+  },
+
+  modalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 22,
+    maxHeight: "90%",
+  },
+
+  modalTitle: {
+    color: farmTheme.colors.primary,
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+
+  modalSubtitle: {
+    color: farmTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 22,
+    textAlign: "center",
+    marginBottom: 18,
+  },
+
+  closeButton: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+
+  closeText: {
+    color: "#B91C1C",
+    fontWeight: "900",
   },
 });

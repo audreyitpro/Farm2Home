@@ -1,6 +1,9 @@
+// app/farmer/register.tsx
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   ScrollView,
   StyleSheet,
@@ -10,13 +13,14 @@ import {
   View,
 } from "react-native";
 import { router } from "expo-router";
+import { createClient } from "@supabase/supabase-js";
 
 import { API_BASE_URL } from "../config/api";
-import { addFarmer, Farmer } from "../data/farmerStore";
-import {
-  createVerificationRecordFromFarmer,
-  upsertVerificationRecord,
-} from "../data/adminStore";
+import { registerForPushNotificationsAsync } from "../services/notificationService";
+
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 const productOptions = [
   "Produce",
@@ -75,35 +79,12 @@ export default function FarmerRegister() {
     );
   }
 
-  async function readArray(key: string) {
-    const raw = await AsyncStorage.getItem(key);
-
-    if (!raw) return [];
-
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
+  function normalizeEmail(value: string) {
+    return String(value || "").trim().toLowerCase();
   }
 
-  async function upsertFarmerArray(key: string, farmer: any) {
-    const existing = await readArray(key);
-
-    const next = [
-      farmer,
-      ...existing.filter((item: any) => {
-        return (
-          item?.id !== farmer.id &&
-          item?.farmerId !== farmer.id &&
-          String(item?.email || "").toLowerCase() !== farmer.email &&
-          String(item?.username || "").toLowerCase() !== farmer.username
-        );
-      }),
-    ];
-
-    await AsyncStorage.setItem(key, JSON.stringify(next));
+  function normalizeUsername(value: string) {
+    return String(value || "").trim().toLowerCase();
   }
 
   async function notifyAdminFarmerVerification(farmer: {
@@ -128,13 +109,76 @@ export default function FarmerRegister() {
         body: JSON.stringify(farmer),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         console.log("Farmer admin email failed:", data);
       }
     } catch (error) {
       console.log("Farmer admin email error:", error);
+    }
+  }
+
+  async function saveLocalFarmerSession(farmer: any) {
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
+    await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(farmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
+    await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.setItem("currentUserRole", "farmer");
+  }
+
+  async function createAdminVerificationRecord(farmer: any) {
+    const adminRecord = {
+      id: farmer.id,
+      farmer_id: farmer.id,
+      account_type: "FARMER",
+
+      farm_name: farmer.farm_name,
+      business_name: farmer.business_name,
+      owner_name: farmer.owner_name,
+      email: farmer.email,
+      phone: farmer.phone,
+
+      business_address: farmer.business_address,
+      city: farmer.city,
+      state: farmer.state,
+      zip_code: farmer.zip_code,
+
+      selected_products: farmer.selected_products,
+      documents: [],
+
+      status: "STARTED",
+      compliance_status: "in_progress",
+      admin_review_status: "not_submitted",
+      review_decision: "not_submitted",
+
+      approved: false,
+      rejected: false,
+      reviewed: false,
+      needs_more_info: false,
+      account_active: false,
+      store_unlocked: false,
+
+      application_fee_paid: false,
+      farmer_membership_paid: false,
+      monthly_membership_started: false,
+      monthly_membership_required_after_approval: true,
+
+      stripe_account_id: "",
+      farmer_stripe_account_id: "",
+      stripe_onboarding_complete: false,
+      stripe_payouts_enabled: false,
+      stripe_charges_enabled: false,
+
+      created_at: farmer.created_at,
+      updated_at: farmer.updated_at,
+    };
+
+    const { error } = await supabase
+      .from("admin_verifications")
+      .upsert(adminRecord, { onConflict: "id" });
+
+    if (error) {
+      console.log("Admin verification insert error:", error.message);
     }
   }
 
@@ -160,6 +204,11 @@ export default function FarmerRegister() {
       return;
     }
 
+    if (password.trim().length < 6) {
+      Alert.alert("Password Too Short", "Password must be at least 6 characters.");
+      return;
+    }
+
     if (password.trim() !== confirmPassword.trim()) {
       Alert.alert("Password Mismatch", "Passwords do not match.");
       return;
@@ -181,15 +230,12 @@ export default function FarmerRegister() {
     try {
       setLoading(true);
 
-      const farmerId = `farmer_${Date.now()}`;
-
       const cleanOwnerName = ownerName.trim();
       const cleanFarmName = farmName.trim();
       const cleanBusinessName = businessName.trim();
-      const cleanEmail = email.trim().toLowerCase();
+      const cleanEmail = normalizeEmail(email);
       const cleanPhone = phone.trim();
-      const cleanUsername = username.trim().toLowerCase();
-      const cleanPassword = password.trim();
+      const cleanUsername = normalizeUsername(username);
 
       const cleanAddress = businessAddress.trim();
       const cleanCity = city.trim();
@@ -198,18 +244,112 @@ export default function FarmerRegister() {
 
       const now = new Date().toISOString();
 
-      const newFarmer: Farmer & any = {
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: password.trim(),
+        options: {
+          data: {
+            role: "farmer",
+            username: cleanUsername,
+            owner_name: cleanOwnerName,
+            business_name: cleanBusinessName,
+            farm_name: cleanFarmName,
+          },
+        },
+      });
+
+      if (authError) {
+        Alert.alert("Registration Error", authError.message);
+        return;
+      }
+
+      const farmerId = authData?.user?.id;
+
+      if (!farmerId) {
+        Alert.alert(
+          "Registration Error",
+          "Unable to create authentication account. Please try again."
+        );
+        return;
+      }
+
+      const farmerPayload = {
+        id: farmerId,
+        farmer_id: farmerId,
+
+        role: "farmer",
+        owner_name: cleanOwnerName,
+        farm_name: cleanFarmName,
+        business_name: cleanBusinessName,
+        email: cleanEmail,
+        phone: cleanPhone,
+
+        username: cleanUsername,
+
+        business_address: cleanAddress,
+        city: cleanCity,
+        state: cleanState,
+        zip_code: cleanZip,
+
+        selected_products: selectedProducts,
+
+        approved: false,
+        rejected: false,
+        reviewed: false,
+        needs_more_info: false,
+
+        account_active: false,
+        store_unlocked: false,
+
+        compliance_submitted: false,
+        compliance_status: "in_progress",
+        admin_review_status: "not_submitted",
+        review_decision: "not_submitted",
+
+        application_fee_paid: false,
+        farmer_membership_paid: false,
+        monthly_membership_started: false,
+        monthly_membership_required_after_approval: true,
+
+        stripe_account_id: "",
+        farmer_stripe_account_id: "",
+        stripe_onboarding_complete: false,
+        stripe_payouts_enabled: false,
+        stripe_charges_enabled: false,
+        payouts_enabled: false,
+        charges_enabled: false,
+
+        products: [],
+
+        notifications_enabled: false,
+        expo_push_token: "",
+
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { error: farmerError } = await supabase
+        .from("farmers")
+        .upsert(farmerPayload, { onConflict: "id" });
+
+      if (farmerError) {
+        Alert.alert("Profile Error", farmerError.message);
+        return;
+      }
+
+      await createAdminVerificationRecord(farmerPayload);
+
+      const localFarmer = {
         id: farmerId,
         farmerId,
 
+        role: "farmer",
         ownerName: cleanOwnerName,
         farmName: cleanFarmName,
         businessName: cleanBusinessName,
         email: cleanEmail,
         phone: cleanPhone,
-
         username: cleanUsername,
-        password: cleanPassword,
 
         businessAddress: cleanAddress,
         city: cleanCity,
@@ -234,6 +374,7 @@ export default function FarmerRegister() {
         applicationFeePaid: false,
         farmerMembershipPaid: false,
         monthlyMembershipStarted: false,
+        monthlyMembershipRequiredAfterApproval: true,
 
         stripeAccountId: "",
         farmerStripeAccountId: "",
@@ -249,52 +390,9 @@ export default function FarmerRegister() {
         updatedAt: now,
       };
 
-      await addFarmer(newFarmer);
+      await saveLocalFarmerSession(localFarmer);
 
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(newFarmer));
-      await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(newFarmer));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(newFarmer));
-      await AsyncStorage.setItem("userRole", "farmer");
-      await AsyncStorage.setItem("currentUserRole", "farmer");
-
-      await upsertFarmerArray("farm2homeFarmers", newFarmer);
-      await upsertFarmerArray("farmers", newFarmer);
-
-      const verificationRecord = createVerificationRecordFromFarmer({
-        farmerId,
-        farmName: cleanFarmName,
-        ownerName: cleanOwnerName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        documents: [],
-      });
-
-      await upsertVerificationRecord({
-        ...verificationRecord,
-        id: farmerId,
-        farmerId,
-        accountType: "FARMER",
-        businessAddress: cleanAddress,
-        city: cleanCity,
-        state: cleanState,
-        zipCode: cleanZip,
-        businessName: cleanBusinessName,
-        farmName: cleanFarmName,
-        ownerName: cleanOwnerName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-        password: cleanPassword,
-        selectedProducts,
-        approved: false,
-        accountActive: false,
-        storeUnlocked: false,
-        status: "STARTED",
-        complianceStatus: "in_progress",
-        adminReviewStatus: "not_submitted",
-        reviewDecision: "not_submitted",
-        updatedAt: now,
-      } as any);
+      await registerForPushNotificationsAsync(farmerId, "farmer");
 
       await notifyAdminFarmerVerification({
         farmerId,
@@ -321,10 +419,12 @@ export default function FarmerRegister() {
           farmerId,
         },
       } as any);
-    } catch (error) {
+    } catch (error: any) {
       console.log("Farmer registration error:", error);
-
-      Alert.alert("Registration Error", "Unable to create farmer application.");
+      Alert.alert(
+        "Registration Error",
+        error?.message || "Unable to create farmer application."
+      );
     } finally {
       setLoading(false);
     }
@@ -340,8 +440,8 @@ export default function FarmerRegister() {
       <Text style={styles.header}>🚜 Farmer Account Setup</Text>
 
       <Text style={styles.subheader}>
-        Create your farm profile, username/password, accept the Farmer
-        Onboarding Agreement, and begin Farm2Home verification review.
+        Create your farm profile, secure password, accept the Farmer Onboarding
+        Agreement, and begin Farm2Home verification review.
       </Text>
 
       <View style={styles.notice}>
@@ -534,9 +634,11 @@ export default function FarmerRegister() {
         disabled={loading}
         activeOpacity={0.85}
       >
-        <Text style={styles.buttonText}>
-          {loading ? "Creating Verification..." : "Start Document Verification"}
-        </Text>
+        {loading ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.buttonText}>Start Document Verification</Text>
+        )}
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -673,6 +775,7 @@ const styles = StyleSheet.create({
     padding: 18,
     borderRadius: 16,
     marginTop: 6,
+    alignItems: "center",
   },
   disabledButton: { backgroundColor: "#9CA3AF" },
   buttonText: {

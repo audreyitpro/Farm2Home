@@ -1,3 +1,5 @@
+// app/customer/register.tsx
+
 import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,10 +15,15 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
+import { createClient } from "@supabase/supabase-js";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
-import { supabase } from "../data/supabaseClient";
 import farmTheme from "../styles/farmTheme";
+import { registerForPushNotificationsAsync } from "../services/notificationService";
+
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -31,75 +38,12 @@ const SECURITY_QUESTIONS = [
   "What is your favorite color?",
 ];
 
-type CustomerAccount = {
-  id: string;
-  role: "customer";
-  fullName: string;
-  name: string;
-  email: string;
-  phone: string;
-  username: string;
-  password: string;
-  accountActive: boolean;
-  securityQuestion1: string;
-  securityAnswer1: string;
-  securityQuestion2: string;
-  securityAnswer2: string;
-  securityQuestion3: string;
-  securityAnswer3: string;
-  customerMembershipPaid: boolean;
-  subscriptionStatus: "pending" | "active";
-  membershipStatus: "Pending" | "Active";
-  createdAt: string;
-  updatedAt?: string;
-};
-
-function normalizeAnswer(value: string) {
+function normalize(value: string) {
   return String(value || "").trim().toLowerCase();
 }
 
-function safelyParseArray(rawValue: string | null): CustomerAccount[] {
-  if (!rawValue) return [];
-
-  try {
-    const parsed = JSON.parse(rawValue);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function readCustomerArray(key: string) {
-  const saved = await AsyncStorage.getItem(key);
-  return safelyParseArray(saved);
-}
-
-async function saveCustomer(customerAccount: CustomerAccount) {
-  const storageKeys = ["farm2homeCustomers", "customers", "customerAccounts"];
-
-  for (const key of storageKeys) {
-    const customers = await readCustomerArray(key);
-
-    const updatedCustomers = [
-      customerAccount,
-      ...customers.filter(
-        (item) =>
-          item.id !== customerAccount.id &&
-          String(item.email || "").toLowerCase() !==
-            customerAccount.email.toLowerCase() &&
-          String(item.username || "").toLowerCase() !==
-            customerAccount.username.toLowerCase()
-      ),
-    ];
-
-    await AsyncStorage.setItem(key, JSON.stringify(updatedCustomers));
-  }
-
-  await AsyncStorage.setItem("pendingCustomer", JSON.stringify(customerAccount));
-  await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerAccount));
-  await AsyncStorage.setItem("currentUser", JSON.stringify(customerAccount));
-  await AsyncStorage.setItem("userRole", "customer");
-  await AsyncStorage.setItem("currentUserRole", "customer");
+function normalizeAnswer(value: string) {
+  return String(value || "").trim().toLowerCase();
 }
 
 export default function CustomerRegister() {
@@ -121,7 +65,6 @@ export default function CustomerRegister() {
   const [securityAnswer3, setSecurityAnswer3] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const [testLoading, setTestLoading] = useState(false);
 
   const selectedQuestions = useMemo(
     () =>
@@ -188,27 +131,40 @@ export default function CustomerRegister() {
   }
 
   async function checkDuplicateCustomer(cleanEmail: string, cleanUsername: string) {
-    const keys = ["farm2homeCustomers", "customers", "customerAccounts"];
+    const { data, error } = await supabase
+      .from("customers")
+      .select("id,email,username")
+      .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
+      .maybeSingle();
 
-    for (const key of keys) {
-      const customers = await readCustomerArray(key);
+    if (error) {
+      console.log("Duplicate customer check error:", error.message);
+      return false;
+    }
 
-      const duplicate = customers.find(
-        (item) =>
-          String(item.email || "").toLowerCase() === cleanEmail ||
-          String(item.username || "").toLowerCase() === cleanUsername
+    if (data) {
+      Alert.alert(
+        "Account Exists",
+        "A customer account already exists with this email or username."
       );
-
-      if (duplicate) {
-        Alert.alert(
-          "Account Exists",
-          "A customer account already exists with this email or username."
-        );
-        return true;
-      }
+      return true;
     }
 
     return false;
+  }
+
+  async function saveCurrentCustomer(customerAccount: any) {
+    await AsyncStorage.setItem(
+      "pendingCustomer",
+      JSON.stringify(customerAccount)
+    );
+    await AsyncStorage.setItem(
+      "currentCustomer",
+      JSON.stringify(customerAccount)
+    );
+    await AsyncStorage.setItem("currentUser", JSON.stringify(customerAccount));
+    await AsyncStorage.setItem("userRole", "customer");
+    await AsyncStorage.setItem("currentUserRole", "customer");
   }
 
   async function createAccountAndSubscribe() {
@@ -216,9 +172,9 @@ export default function CustomerRegister() {
     if (!validateForm()) return;
 
     const cleanFullName = fullName.trim();
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = normalize(email);
     const cleanPhone = phone.trim();
-    const cleanUsername = username.trim().toLowerCase();
+    const cleanUsername = normalize(username);
     const cleanPassword = password.trim();
     const now = new Date().toISOString();
 
@@ -228,60 +184,94 @@ export default function CustomerRegister() {
       const duplicate = await checkDuplicateCustomer(cleanEmail, cleanUsername);
       if (duplicate) return;
 
-      const customerAccount: CustomerAccount = {
-        id: `customer_${Date.now()}`,
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: cleanPassword,
+        options: {
+          data: {
+            role: "customer",
+            username: cleanUsername,
+            full_name: cleanFullName,
+          },
+        },
+      });
+
+      if (authError) {
+        Alert.alert("Signup Error", authError.message);
+        return;
+      }
+
+      const customerId = authData?.user?.id;
+
+      if (!customerId) {
+        Alert.alert(
+          "Signup Error",
+          "Unable to create customer account. Please try again."
+        );
+        return;
+      }
+
+      const customerPayload = {
+        id: customerId,
+        role: "customer",
+        full_name: cleanFullName,
+        name: cleanFullName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        username: cleanUsername,
+
+        account_active: true,
+        customer_membership_paid: false,
+        subscription_status: "pending",
+        membership_status: "Pending",
+
+        security_question_1: securityQuestion1,
+        security_answer_1: normalizeAnswer(securityAnswer1),
+        security_question_2: securityQuestion2,
+        security_answer_2: normalizeAnswer(securityAnswer2),
+        security_question_3: securityQuestion3,
+        security_answer_3: normalizeAnswer(securityAnswer3),
+
+        notifications_enabled: false,
+        expo_push_token: "",
+
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { error: profileError } = await supabase
+        .from("customers")
+        .upsert(customerPayload, { onConflict: "id" });
+
+      if (profileError) {
+        Alert.alert("Profile Error", profileError.message);
+        return;
+      }
+
+      const localCustomer = {
+        id: customerId,
         role: "customer",
         fullName: cleanFullName,
         name: cleanFullName,
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
-        password: cleanPassword,
         accountActive: true,
+        customerMembershipPaid: false,
+        subscriptionStatus: "pending",
+        membershipStatus: "Pending",
         securityQuestion1,
         securityAnswer1: normalizeAnswer(securityAnswer1),
         securityQuestion2,
         securityAnswer2: normalizeAnswer(securityAnswer2),
         securityQuestion3,
         securityAnswer3: normalizeAnswer(securityAnswer3),
-        customerMembershipPaid: false,
-        subscriptionStatus: "pending",
-        membershipStatus: "Pending",
         createdAt: now,
         updatedAt: now,
       };
 
-      await saveCustomer(customerAccount);
-
-      try {
-        const { error } = await supabase.from("customers").upsert({
-          id: customerAccount.id,
-          full_name: customerAccount.fullName,
-          name: customerAccount.name,
-          email: customerAccount.email,
-          username: customerAccount.username,
-          password: customerAccount.password,
-          phone: customerAccount.phone,
-          account_active: true,
-          customer_membership_paid: false,
-          subscription_status: customerAccount.subscriptionStatus,
-          membership_status: customerAccount.membershipStatus,
-          security_question_1: customerAccount.securityQuestion1,
-          security_answer_1: customerAccount.securityAnswer1,
-          security_question_2: customerAccount.securityQuestion2,
-          security_answer_2: customerAccount.securityAnswer2,
-          security_question_3: customerAccount.securityQuestion3,
-          security_answer_3: customerAccount.securityAnswer3,
-          created_at: customerAccount.createdAt,
-          updated_at: customerAccount.updatedAt,
-        });
-
-        if (error) {
-          console.log("SUPABASE CUSTOMER SAVE SKIPPED:", error.message);
-        }
-      } catch (error) {
-        console.log("SUPABASE SAVE FAILED BUT LOCAL SAVED:", error);
-      }
+      await saveCurrentCustomer(localCustomer);
+      await registerForPushNotificationsAsync(customerId, "customer");
 
       const response = await fetch(
         `${API_BASE_URL}/payments/create-subscription-checkout`,
@@ -295,8 +285,8 @@ export default function CustomerRegister() {
             email: cleanEmail,
             name: cleanFullName,
             username: cleanUsername,
-            userId: customerAccount.id,
-            customerId: customerAccount.id,
+            userId: customerId,
+            customerId,
             planType: "customer",
             successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
             cancelUrl: `${APP_URL}/customer/register`,
@@ -319,10 +309,12 @@ export default function CustomerRegister() {
 
       if (!response.ok || !data.url) {
         Alert.alert(
-          "Account Saved",
+          "Account Created",
           data.error ||
-            "Your account was saved, but Stripe checkout did not open. Check backend Stripe price ID."
+            "Your account was created, but Stripe checkout did not open. Please try subscribing from the customer subscription screen."
         );
+
+        router.replace("/customer/subscription" as any);
         return;
       }
 
@@ -339,56 +331,6 @@ export default function CustomerRegister() {
       );
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function createTestCustomer() {
-    if (testLoading) return;
-
-    try {
-      setTestLoading(true);
-
-      const timestamp = Date.now();
-
-      const testCustomer: CustomerAccount = {
-        id: `test_customer_${timestamp}`,
-        role: "customer",
-        fullName: "Test Customer",
-        name: "Test Customer",
-        email: `testcustomer${timestamp}@farm2home.com`,
-        phone: "555-555-5555",
-        username: `testcustomer${timestamp}`,
-        password: "Customer123",
-        accountActive: true,
-        securityQuestion1: SECURITY_QUESTIONS[0],
-        securityAnswer1: "dog",
-        securityQuestion2: SECURITY_QUESTIONS[1],
-        securityAnswer2: "detroit",
-        securityQuestion3: SECURITY_QUESTIONS[2],
-        securityAnswer3: "school",
-        customerMembershipPaid: true,
-        subscriptionStatus: "active",
-        membershipStatus: "Active",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      await saveCustomer(testCustomer);
-
-      Alert.alert(
-        "Test Customer Created",
-        `Username: ${testCustomer.username}\nPassword: ${testCustomer.password}`,
-        [
-          {
-            text: "Continue",
-            onPress: () => router.replace("/customer/marketplace" as any),
-          },
-        ]
-      );
-    } catch (error: any) {
-      Alert.alert("Error", error?.message || "Unable to create test customer.");
-    } finally {
-      setTestLoading(false);
     }
   }
 
@@ -560,19 +502,6 @@ export default function CustomerRegister() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPress={createTestCustomer}
-          disabled={testLoading}
-          style={[styles.testButton, testLoading && styles.disabledButton]}
-          activeOpacity={0.7}
-        >
-          {testLoading ? (
-            <ActivityIndicator color={farmTheme.colors.primary} />
-          ) : (
-            <Text style={styles.testButtonText}>Create Test Customer</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
           onPress={() => router.push("/customer/login" as any)}
           style={styles.loginLink}
         >
@@ -674,28 +603,11 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     elevation: 20,
   },
-  testButton: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 2,
-    borderColor: farmTheme.colors.primary,
-    padding: 16,
-    borderRadius: 16,
-    marginTop: 14,
-    alignItems: "center",
-    zIndex: 9999,
-    elevation: 20,
-  },
   disabledButton: {
     opacity: 0.6,
   },
   createButtonText: {
     color: "#FFFFFF",
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  testButtonText: {
-    color: farmTheme.colors.primary,
     textAlign: "center",
     fontWeight: "900",
     fontSize: 16,
