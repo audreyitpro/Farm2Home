@@ -26,10 +26,6 @@ type DriverStats = {
   earnings: number;
 };
 
-function normalize(value: any) {
-  return String(value || "").trim().toLowerCase();
-}
-
 export default function MobileDriverApp() {
   const [loading, setLoading] = useState(false);
   const [driverId, setDriverId] = useState("");
@@ -49,21 +45,21 @@ export default function MobileDriverApp() {
   );
 
   async function getCurrentDriver() {
-    const currentDriverRaw = await AsyncStorage.getItem("currentDriver");
-    const currentUserRaw = await AsyncStorage.getItem("currentUser");
-
-    const raw = currentDriverRaw || currentUserRaw;
+    const raw =
+      (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("currentUser"));
 
     if (!raw) return null;
 
     try {
       const parsed = JSON.parse(raw);
 
+      if (parsed?.role && parsed.role !== "driver") return null;
+
       const driver = {
         ...parsed,
         id: parsed.id || parsed.driverId || parsed.email || `driver_${Date.now()}`,
-        driverId:
-          parsed.driverId || parsed.id || parsed.email || `driver_${Date.now()}`,
+        driverId: parsed.driverId || parsed.id || parsed.email || `driver_${Date.now()}`,
         role: "driver",
         accountActive: parsed.accountActive !== false,
         membershipStatus: parsed.membershipStatus || "Active",
@@ -125,6 +121,7 @@ export default function MobileDriverApp() {
             const openForDriver =
               !order.assignedDriverId &&
               !order.driverId &&
+              !order.assignedFreightCarrierId &&
               ["NEW", "OPEN", "AVAILABLE"].includes(status);
 
             return assignedToMe || openForDriver;
@@ -143,6 +140,8 @@ export default function MobileDriverApp() {
           order.pickup_city ||
           order.pickupCity ||
           order.deliveryInfo?.pickupCity ||
+          order.deliveryInfo?.farmCity ||
+          order.pickupAddress ||
           "Pickup",
         pickup_state:
           order.pickup_state ||
@@ -153,6 +152,8 @@ export default function MobileDriverApp() {
           order.delivery_city ||
           order.deliveryCity ||
           order.deliveryInfo?.city ||
+          order.deliveryInfo?.deliveryCity ||
+          order.dropoffAddress ||
           order.deliveryInfo?.address ||
           "Delivery",
         delivery_state:
@@ -163,29 +164,7 @@ export default function MobileDriverApp() {
         rate: Number(order.deliveryFee || order.rate || order.tip || 0),
       }));
 
-      let freightLoads: DriverLoad[] = [];
-
-      try {
-        const { data: cloudLoads } = await supabase
-          .from("freight_loads")
-          .select(
-            `
-            *,
-            farmers (
-              farm_name,
-              owner_name
-            )
-          `
-          )
-          .or(`status.eq.OPEN,status.eq.available,carrier_id.eq.${localDriverId}`)
-          .order("created_at", { ascending: false });
-
-        freightLoads = Array.isArray(cloudLoads) ? cloudLoads : [];
-      } catch (error) {
-        console.log("Supabase freight loads skipped:", error);
-      }
-
-      const allLoads = [...mappedBackendOrders, ...freightLoads];
+      const allLoads = mappedBackendOrders;
 
       setLoads(allLoads);
 
@@ -248,7 +227,6 @@ export default function MobileDriverApp() {
       const payload = {
         load_id: loadId,
         driver_id: driverId,
-        carrier_id: driverId,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         speed: location.coords.speed || null,
@@ -263,10 +241,7 @@ export default function MobileDriverApp() {
         .maybeSingle();
 
       if (existing?.id) {
-        await supabase
-          .from("driver_locations")
-          .update(payload)
-          .eq("id", existing.id);
+        await supabase.from("driver_locations").update(payload).eq("id", existing.id);
       } else {
         await supabase.from("driver_locations").insert(payload);
       }
@@ -295,44 +270,20 @@ export default function MobileDriverApp() {
         return;
       }
 
-      const isBackendOrder =
-        Boolean(load.fulfillmentStatus) ||
-        Boolean(load.customerEmail) ||
-        Boolean(load.deliveryInfo) ||
-        String(load.id || "").startsWith("order_");
+      const response = await fetch(`${API_BASE_URL}/orders/${load.id}/accept`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          driverId: activeDriverId,
+          acceptedBy,
+        }),
+      });
 
-      if (isBackendOrder) {
-        const response = await fetch(`${API_BASE_URL}/orders/${load.id}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status: "ACCEPTED",
-            driverId: activeDriverId,
-            acceptedBy,
-          }),
-        });
+      const data = await response.json();
 
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-          Alert.alert("Accept Error", data.error || "Unable to accept order.");
-          return;
-        }
-      } else {
-        const { error } = await supabase
-          .from("freight_loads")
-          .update({
-            carrier_id: activeDriverId,
-            driver_id: activeDriverId,
-            status: "BOOKED",
-            accepted_at: new Date().toISOString(),
-          })
-          .eq("id", load.id);
-
-        if (error) {
-          Alert.alert("Accept Error", error.message);
-          return;
-        }
+      if (!response.ok || !data.success) {
+        Alert.alert("Accept Error", data.error || "Unable to accept order.");
+        return;
       }
 
       await saveDriverGps(load.id, "READY");
@@ -354,35 +305,20 @@ export default function MobileDriverApp() {
     try {
       setLoading(true);
 
-      const isBackendOrder =
-        Boolean(load.fulfillmentStatus) ||
-        Boolean(load.customerEmail) ||
-        Boolean(load.deliveryInfo) ||
-        String(load.id || "").startsWith("order_");
+      const response = await fetch(`${API_BASE_URL}/orders/${load.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: loadStatus,
+          driverId,
+        }),
+      });
 
-      if (isBackendOrder) {
-        const response = await fetch(`${API_BASE_URL}/orders/${load.id}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: loadStatus }),
-        });
+      const data = await response.json();
 
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-          Alert.alert("Update Error", data.error || "Unable to update order.");
-          return;
-        }
-      } else {
-        const { error } = await supabase
-          .from("freight_loads")
-          .update({ status: loadStatus })
-          .eq("id", load.id);
-
-        if (error) {
-          Alert.alert("Update Error", error.message);
-          return;
-        }
+      if (!response.ok || !data.success) {
+        Alert.alert("Update Error", data.error || "Unable to update order.");
+        return;
       }
 
       await saveDriverGps(load.id, gpsStatus);
@@ -427,10 +363,7 @@ export default function MobileDriverApp() {
 
     if (["OPEN", "NEW", "AVAILABLE"].includes(status)) {
       return (
-        <TouchableOpacity
-          style={styles.acceptButton}
-          onPress={() => acceptLoad(load)}
-        >
+        <TouchableOpacity style={styles.acceptButton} onPress={() => acceptLoad(load)}>
           <Text style={styles.actionText}>Accept Delivery</Text>
         </TouchableOpacity>
       );
@@ -483,7 +416,7 @@ export default function MobileDriverApp() {
             style={styles.mapButton}
             onPress={() =>
               router.push({
-                pathname: "/freight/navigation-assistant",
+                pathname: "/driver/navigation-assistant",
                 params: { loadId: load.id },
               } as any)
             }
@@ -553,9 +486,9 @@ export default function MobileDriverApp() {
       <View style={styles.navRow}>
         <TouchableOpacity
           style={styles.navButton}
-          onPress={() => router.push("/freight/board" as any)}
+          onPress={() => router.push("/driver/board" as any)}
         >
-          <Text style={styles.navText}>Load Board</Text>
+          <Text style={styles.navText}>Driver Board</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -602,10 +535,7 @@ export default function MobileDriverApp() {
             <Text style={styles.earningsValue}>${stats.earnings.toFixed(2)}</Text>
           </View>
 
-          <TouchableOpacity
-            style={styles.refreshButton}
-            onPress={loadDriverDashboard}
-          >
+          <TouchableOpacity style={styles.refreshButton} onPress={loadDriverDashboard}>
             <Text style={styles.refreshText}>Refresh Deliveries</Text>
           </TouchableOpacity>
 
@@ -620,7 +550,7 @@ export default function MobileDriverApp() {
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyTitle}>No deliveries available.</Text>
                 <Text style={styles.emptyText}>
-                  Available and assigned deliveries will appear here.
+                  Tap Driver Board to select available deliveries in your area.
                 </Text>
               </View>
             }
@@ -666,10 +596,6 @@ export default function MobileDriverApp() {
                       {item.delivery_state || ""}
                     </Text>
                   </View>
-
-                  <Text style={styles.metaText}>
-                    Farm: {item.farmers?.farm_name || "Farm2Home Farmer"}
-                  </Text>
 
                   <Text style={styles.metaText}>
                     Rate: ${Number(item.rate || item.deliveryFee || 0).toFixed(2)}
