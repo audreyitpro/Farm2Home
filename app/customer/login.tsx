@@ -17,7 +17,6 @@ import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
 
 import farmTheme from "../styles/farmTheme";
-import { registerForPushNotificationsAsync } from "../services/notificationService";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -140,8 +139,6 @@ export default function CustomerLoginScreen() {
         Alert.alert("Account Disabled", "This customer account is not active.");
         return;
       }
-
-      await registerForPushNotificationsAsync(userId, "customer");
 
       router.replace("/customer/marketplace" as any);
     } catch (error: any) {

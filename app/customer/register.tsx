@@ -19,7 +19,6 @@ import { createClient } from "@supabase/supabase-js";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
 import farmTheme from "../styles/farmTheme";
-import { registerForPushNotificationsAsync } from "../services/notificationService";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -57,10 +56,8 @@ export default function CustomerRegister() {
 
   const [securityQuestion1, setSecurityQuestion1] = useState("");
   const [securityAnswer1, setSecurityAnswer1] = useState("");
-
   const [securityQuestion2, setSecurityQuestion2] = useState("");
   const [securityAnswer2, setSecurityAnswer2] = useState("");
-
   const [securityQuestion3, setSecurityQuestion3] = useState("");
   const [securityAnswer3, setSecurityAnswer3] = useState("");
 
@@ -271,7 +268,6 @@ export default function CustomerRegister() {
       };
 
       await saveCurrentCustomer(localCustomer);
-      await registerForPushNotificationsAsync(customerId, "customer");
 
       const response = await fetch(
         `${API_BASE_URL}/payments/create-subscription-checkout`,
