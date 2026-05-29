@@ -16,11 +16,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
 
-import { registerForPushNotificationsAsync } from "../services/notificationService";
-
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-
 const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 function normalize(value: string) {
@@ -183,8 +180,6 @@ export default function FarmerLoginScreen() {
       }
 
       await saveFarmerSession(farmer);
-      await registerForPushNotificationsAsync(userId, "farmer");
-
       routeFarmer(farmer);
     } catch (error: any) {
       console.log("Farmer login error:", error);

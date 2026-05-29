@@ -19,7 +19,6 @@ import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
-import { registerFreightPushNotifications } from "../services/notificationService";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -534,7 +533,6 @@ export default function FreightRegister() {
 
       await saveFreightSession(localCarrier);
       await createAdminVerificationRecord(freightPayload);
-      await registerFreightPushNotifications(carrierId);
       await notifyAdminFreightVerification(localCarrier);
 
       const response = await fetch(

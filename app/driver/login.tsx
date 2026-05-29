@@ -17,7 +17,6 @@ import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
 
 import freightTheme from "../styles/freightTheme";
-import { registerDriverPushNotifications } from "../services/notificationService";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -181,13 +180,6 @@ export default function DriverLoginScreen() {
           "This driver account is disabled or subscription is not active."
         );
         return;
-      }
-
-      try {
-        const token = await registerDriverPushNotifications(userId);
-        console.log("Driver push token:", token);
-      } catch (pushError) {
-        console.log("Driver push registration error:", pushError);
       }
 
       router.replace("/driver/mobile-driver-app" as any);

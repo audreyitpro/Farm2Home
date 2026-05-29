@@ -17,7 +17,6 @@ import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
 
 import freightTheme from "../styles/freightTheme";
-import { registerFreightPushNotifications } from "../services/notificationService";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -66,14 +65,10 @@ function mapCarrierToFreightUser(item: any): FreightUser {
         : item.account_active !== false,
 
     membershipStatus:
-      item.membership_status ||
-      item.membershipStatus ||
-      "Pending",
+      item.membership_status || item.membershipStatus || "Pending",
 
     subscriptionStatus:
-      item.subscription_status ||
-      item.subscriptionStatus ||
-      "pending",
+      item.subscription_status || item.subscriptionStatus || "pending",
 
     approved:
       item.approved === true ||
@@ -134,17 +129,6 @@ export default function FreightLoginScreen() {
     return sessionUser;
   }
 
-  async function registerFreightNotificationsSafely(userId: string) {
-    try {
-      if (!userId) return;
-
-      const pushToken = await registerFreightPushNotifications(userId);
-      console.log("Freight push token:", pushToken);
-    } catch (error) {
-      console.log("Freight push registration error:", error);
-    }
-  }
-
   async function handleLogin() {
     const cleanEmail = normalize(email);
     const cleanPassword = clean(password);
@@ -201,12 +185,14 @@ export default function FreightLoginScreen() {
       }
 
       await saveFreightSession(mappedUser);
-      await registerFreightNotificationsSafely(userId);
 
       router.replace("/freight/dashboard" as any);
     } catch (error: any) {
       console.log("Freight login error:", error);
-      Alert.alert("Login Error", error?.message || "Unable to login to freight account.");
+      Alert.alert(
+        "Login Error",
+        error?.message || "Unable to login to freight account."
+      );
     } finally {
       setLoginLoading(false);
     }
@@ -333,7 +319,10 @@ export default function FreightLoginScreen() {
               />
 
               <TouchableOpacity
-                style={[styles.loginButton, resetLoading && styles.disabledButton]}
+                style={[
+                  styles.loginButton,
+                  resetLoading && styles.disabledButton,
+                ]}
                 onPress={handlePasswordReset}
                 disabled={resetLoading}
               >
