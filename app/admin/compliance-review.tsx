@@ -15,6 +15,8 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
+import { supabase } from "../data/supabaseClient";
+
 import {
   ComplianceRecord,
   getComplianceRecords,
@@ -22,13 +24,27 @@ import {
 } from "../data/complianceStore";
 
 import { updateFarmerStore } from "../data/farmerStore";
-import freightTheme from "../styles/freightTheme";
+
+const ui = {
+  bg: "#F5F7FB",
+  card: "#FFFFFF",
+  border: "#E5E7EB",
+  text: "#111827",
+  muted: "#6B7280",
+  soft: "#F9FAFB",
+  primary: "#7C3AED",
+  primarySoft: "#EDE9FE",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  red: "#EF4444",
+};
 
 function statusColor(status?: string) {
-  if (status === "approved") return "#10B981";
-  if (status === "rejected") return "#DC2626";
-  if (status === "needs_more_info") return "#F59E0B";
-  if (status === "under_ai_review") return "#2563EB";
+  if (status === "approved") return ui.green;
+  if (status === "rejected") return ui.red;
+  if (status === "needs_more_info") return ui.orange;
+  if (status === "under_ai_review") return ui.blue;
   return "#64748B";
 }
 
@@ -36,6 +52,68 @@ function prettyStatus(status?: string) {
   return String(status || "pending")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function mapAdminVerificationToComplianceRecord(row: any): any {
+  const mappedDocuments = Array.isArray(row.documents)
+    ? row.documents.map((doc: any, index: number) => ({
+        id: doc.id || `${row.id}_doc_${index}`,
+        label: doc.label || doc.name || doc.type || "Document",
+        type: doc.type || "document",
+        uri: String(doc.uri || ""),
+        verified:
+          doc.verified === true ||
+          String(doc.status || "").toUpperCase() === "VERIFIED",
+      }))
+    : Object.entries(row.uploaded_docs || {}).map(([key, value], index) => ({
+        id: `${row.id}_${key}_${index}`,
+        label: String(key).replace(/_/g, " "),
+        type: String(key),
+        uri: String(value),
+        verified: false,
+      }));
+
+  const adminStatus = String(row.admin_review_status || "").toLowerCase();
+  const rawStatus = String(row.status || "").toUpperCase();
+
+  return {
+    farmerId: String(row.farmer_id || row.id),
+    businessName:
+      row.business_name ||
+      row.farm_name ||
+      row.company_name ||
+      "Farm2Home Applicant",
+    ownerName: row.owner_name || row.contact_name || "Not listed",
+    state: row.state || "Not listed",
+    status:
+      adminStatus === "approved" || rawStatus === "APPROVED"
+        ? "approved"
+        : adminStatus === "rejected" || rawStatus === "REJECTED"
+        ? "rejected"
+        : adminStatus === "needs_more_info" || rawStatus === "MORE_INFO_REQUIRED"
+        ? "needs_more_info"
+        : "under_ai_review",
+    documents: mappedDocuments,
+    result: {
+      score:
+        adminStatus === "approved" || rawStatus === "APPROVED"
+          ? 100
+          : row.stripe_payouts_enabled
+          ? 70
+          : 0,
+      idVerified: Boolean(row.id_verified),
+      businessVerified: Boolean(row.business_verified || row.business_name),
+      einVerified: Boolean(row.ein_verified),
+      stateRegistrationVerified: Boolean(row.state_registration_verified),
+      insuranceVerified: Boolean(row.insurance_verified),
+      payoutVerified: Boolean(row.stripe_payouts_enabled),
+      noFraudFlags: !Boolean(row.fraud_flag),
+      missingItems: [],
+      verificationSources: ["Supabase admin_verifications"],
+      reviewedAt: row.updated_at || row.created_at,
+      autoApproved: false,
+    },
+  };
 }
 
 export default function AdminComplianceReviewScreen() {
@@ -48,8 +126,33 @@ export default function AdminComplianceReviewScreen() {
   );
 
   async function loadRecords() {
-    const data = await getComplianceRecords();
-    setRecords(data);
+    try {
+      const localRecords = await getComplianceRecords();
+
+      const { data, error } = await supabase
+        .from("admin_verifications")
+        .select("*")
+        .order("updated_at", { ascending: false });
+
+      if (error) {
+        console.log("Compliance review Supabase load error:", error.message);
+      }
+
+      const supabaseRecords = Array.isArray(data)
+        ? data.map(mapAdminVerificationToComplianceRecord)
+        : [];
+
+      const mergedMap = new Map<string, ComplianceRecord>();
+
+      [...supabaseRecords, ...localRecords].forEach((record: any) => {
+        mergedMap.set(String(record.farmerId), record);
+      });
+
+      setRecords(Array.from(mergedMap.values()));
+    } catch (error) {
+      console.log("Compliance review load error:", error);
+      setRecords([]);
+    }
   }
 
   const summary = useMemo(() => {
@@ -63,6 +166,8 @@ export default function AdminComplianceReviewScreen() {
   }, [records]);
 
   async function approveFarmer(record: ComplianceRecord) {
+    const now = new Date().toISOString();
+
     const result = {
       farmerId: record.farmerId,
       businessName: record.businessName,
@@ -83,7 +188,7 @@ export default function AdminComplianceReviewScreen() {
         "Document review",
         "Farm2Home compliance approval",
       ],
-      reviewedAt: new Date().toISOString(),
+      reviewedAt: now,
       autoApproved: false,
     };
 
@@ -97,14 +202,33 @@ export default function AdminComplianceReviewScreen() {
       adminReviewStatus: "approved",
       reviewDecision: "approved",
       status: "APPROVED",
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     } as any);
+
+    await supabase
+      .from("admin_verifications")
+      .update({
+        status: "APPROVED",
+        compliance_status: "approved",
+        admin_review_status: "approved",
+        review_decision: "approved",
+        approved: true,
+        rejected: false,
+        needs_more_info: false,
+        reviewed: true,
+        account_active: true,
+        store_unlocked: true,
+        updated_at: now,
+      })
+      .or(`id.eq.${record.farmerId},farmer_id.eq.${record.farmerId}`);
 
     Alert.alert("Approved", "Farmer has been approved.");
     await loadRecords();
   }
 
   async function rejectFarmer(record: ComplianceRecord) {
+    const now = new Date().toISOString();
+
     const result = {
       farmerId: record.farmerId,
       businessName: record.businessName,
@@ -124,7 +248,7 @@ export default function AdminComplianceReviewScreen() {
         "Admin manual review",
         "Farm2Home compliance rejection",
       ],
-      reviewedAt: new Date().toISOString(),
+      reviewedAt: now,
       autoApproved: false,
     };
 
@@ -138,14 +262,33 @@ export default function AdminComplianceReviewScreen() {
       adminReviewStatus: "rejected",
       reviewDecision: "rejected",
       status: "REJECTED",
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     } as any);
+
+    await supabase
+      .from("admin_verifications")
+      .update({
+        status: "REJECTED",
+        compliance_status: "rejected",
+        admin_review_status: "rejected",
+        review_decision: "rejected",
+        approved: false,
+        rejected: true,
+        needs_more_info: false,
+        reviewed: true,
+        account_active: false,
+        store_unlocked: false,
+        updated_at: now,
+      })
+      .or(`id.eq.${record.farmerId},farmer_id.eq.${record.farmerId}`);
 
     Alert.alert("Rejected", "Farmer compliance application was rejected.");
     await loadRecords();
   }
 
   async function requestMoreInfo(record: ComplianceRecord) {
+    const now = new Date().toISOString();
+
     const result = {
       farmerId: record.farmerId,
       businessName: record.businessName,
@@ -168,7 +311,7 @@ export default function AdminComplianceReviewScreen() {
         ...(record.result?.verificationSources || []),
         "Admin requested more information",
       ],
-      reviewedAt: new Date().toISOString(),
+      reviewedAt: now,
       autoApproved: false,
     };
 
@@ -180,26 +323,35 @@ export default function AdminComplianceReviewScreen() {
       adminReviewStatus: "needs_more_info",
       reviewDecision: "needs_more_info",
       status: "MORE_INFO_REQUIRED",
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     } as any);
+
+    await supabase
+      .from("admin_verifications")
+      .update({
+        status: "MORE_INFO_REQUIRED",
+        compliance_status: "needs_more_info",
+        admin_review_status: "needs_more_info",
+        review_decision: "needs_more_info",
+        approved: false,
+        rejected: false,
+        needs_more_info: true,
+        reviewed: true,
+        updated_at: now,
+      })
+      .or(`id.eq.${record.farmerId},farmer_id.eq.${record.farmerId}`);
 
     Alert.alert("More Info Requested", "Farmer was marked as needing more info.");
     await loadRecords();
   }
 
-  function CheckRow({
-    label,
-    value,
-  }: {
-    label: string;
-    value: boolean;
-  }) {
+  function CheckRow({ label, value }: { label: string; value: boolean }) {
     return (
       <View style={styles.checkRow}>
         <Ionicons
           name={value ? "checkmark-circle-outline" : "close-circle-outline"}
           size={20}
-          color={value ? "#10B981" : "#F59E0B"}
+          color={value ? ui.green : ui.orange}
         />
         <Text style={styles.checkText}>{label}</Text>
         <Text style={[styles.checkStatus, value ? styles.goodText : styles.warnText]}>
@@ -214,7 +366,7 @@ export default function AdminComplianceReviewScreen() {
       <View key={record.farmerId} style={styles.card}>
         <View style={styles.cardHeader}>
           <View style={styles.recordIcon}>
-            <Ionicons name="leaf-outline" size={22} color="#10B981" />
+            <Ionicons name="leaf-outline" size={22} color={ui.primary} />
           </View>
 
           <View style={{ flex: 1 }}>
@@ -250,29 +402,16 @@ export default function AdminComplianceReviewScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Verification Checklist</Text>
-
           <CheckRow label="Identity Verified" value={Boolean(record.result?.idVerified)} />
-          <CheckRow
-            label="Business Verified"
-            value={Boolean(record.result?.businessVerified)}
-          />
+          <CheckRow label="Business Verified" value={Boolean(record.result?.businessVerified)} />
           <CheckRow label="EIN Verified" value={Boolean(record.result?.einVerified)} />
           <CheckRow
             label="State Registration Verified"
             value={Boolean(record.result?.stateRegistrationVerified)}
           />
-          <CheckRow
-            label="Insurance Verified"
-            value={Boolean(record.result?.insuranceVerified)}
-          />
-          <CheckRow
-            label="Stripe Payout Verified"
-            value={Boolean(record.result?.payoutVerified)}
-          />
-          <CheckRow
-            label="No Fraud Flags"
-            value={Boolean(record.result?.noFraudFlags)}
-          />
+          <CheckRow label="Insurance Verified" value={Boolean(record.result?.insuranceVerified)} />
+          <CheckRow label="Stripe Payout Verified" value={Boolean(record.result?.payoutVerified)} />
+          <CheckRow label="No Fraud Flags" value={Boolean(record.result?.noFraudFlags)} />
         </View>
 
         <View style={styles.section}>
@@ -281,9 +420,9 @@ export default function AdminComplianceReviewScreen() {
           {record.documents.length === 0 ? (
             <Text style={styles.mutedText}>No documents uploaded.</Text>
           ) : (
-            record.documents.map((doc) => (
+            record.documents.map((doc: any) => (
               <View key={doc.id} style={styles.docRow}>
-                <Ionicons name="document-text-outline" size={20} color="#10B981" />
+                <Ionicons name="document-text-outline" size={20} color={ui.primary} />
 
                 <View style={{ flex: 1 }}>
                   <Text style={styles.docLabel}>{doc.label}</Text>
@@ -334,26 +473,17 @@ export default function AdminComplianceReviewScreen() {
         </View>
 
         <View style={styles.actions}>
-          <Pressable
-            style={styles.approveButton}
-            onPress={() => approveFarmer(record)}
-          >
+          <Pressable style={styles.approveButton} onPress={() => approveFarmer(record)}>
             <Ionicons name="checkmark-circle-outline" size={17} color="#FFFFFF" />
             <Text style={styles.actionText}>Approve</Text>
           </Pressable>
 
-          <Pressable
-            style={styles.moreInfoButton}
-            onPress={() => requestMoreInfo(record)}
-          >
+          <Pressable style={styles.moreInfoButton} onPress={() => requestMoreInfo(record)}>
             <Ionicons name="alert-circle-outline" size={17} color="#FFFFFF" />
             <Text style={styles.actionText}>Need Info</Text>
           </Pressable>
 
-          <Pressable
-            style={styles.rejectButton}
-            onPress={() => rejectFarmer(record)}
-          >
+          <Pressable style={styles.rejectButton} onPress={() => rejectFarmer(record)}>
             <Ionicons name="close-circle-outline" size={17} color="#FFFFFF" />
             <Text style={styles.actionText}>Reject</Text>
           </Pressable>
@@ -364,246 +494,243 @@ export default function AdminComplianceReviewScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-      <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.kicker}>Farm2Home Admin Portal</Text>
-              <Text style={styles.title}>Compliance Review</Text>
-              <Text style={styles.subtitle}>
-                Review AI compliance findings, uploaded documents, missing
-                requirements, legal checks, and final approval decisions.
-              </Text>
+      <View style={styles.shell}>
+        <View style={styles.sidebar}>
+          <View style={styles.logoRow}>
+            <View style={styles.logoMark}>
+              <Text style={styles.logoText}>F2H</Text>
             </View>
 
-            <View style={styles.heroIcon}>
-              <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
+            <View>
+              <Text style={styles.logoTitle}>Farm2Home</Text>
+              <Text style={styles.logoSub}>Compliance Review</Text>
             </View>
           </View>
+
+          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
+          <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" />
+          <NavButton label="Compliance" icon="shield-checkmark-outline" route="/admin/compliance-review" active />
+          <NavButton label="Business Docs" icon="folder-open-outline" route="/admin/business-documents" />
+          <NavButton label="Verification" icon="checkmark-done-outline" route="/admin/verification-records" />
+          <NavButton label="Settings" icon="settings-outline" route="/admin/admin-settings" />
         </View>
 
-        <View style={styles.navRow}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => router.push("/admin/dashboard" as any)}
-          >
-            <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.navText}>Dashboard</Text>
-          </TouchableOpacity>
+        <View style={styles.main}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+            <View style={styles.topbar}>
+              <View>
+                <Text style={styles.welcome}>Farm2Home Admin Portal</Text>
+                <Text style={styles.pageTitle}>Compliance Review</Text>
+                <Text style={styles.pageSub}>
+                  Review new registrations, AI compliance findings, uploaded documents, missing requirements, legal checks, and approval decisions.
+                </Text>
+              </View>
 
-          <TouchableOpacity
-            style={styles.navButtonOutline}
-            onPress={() => router.push("/admin/documents" as any)}
-          >
-            <Ionicons name="document-text-outline" size={18} color="#10B981" />
-            <Text style={styles.navTextOutline}>Documents</Text>
-          </TouchableOpacity>
+              <TouchableOpacity style={styles.refreshPill} onPress={loadRecords}>
+                <Ionicons name="refresh-outline" size={18} color={ui.primary} />
+                <Text style={styles.refreshPillText}>Refresh</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.statsGrid}>
+              <SummaryCard label="Total" value={String(summary.total)} icon="folder-outline" accent />
+              <SummaryCard label="AI Review" value={String(summary.review)} icon="sparkles-outline" />
+              <SummaryCard label="Approved" value={String(summary.approved)} icon="checkmark-circle-outline" success />
+              <SummaryCard label="Needs Info" value={String(summary.needsInfo)} icon="alert-circle-outline" warning />
+              <SummaryCard label="Rejected" value={String(summary.rejected)} icon="close-circle-outline" danger />
+            </View>
+
+            {records.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Ionicons name="file-tray-outline" size={38} color={ui.primary} />
+                <Text style={styles.emptyTitle}>No compliance records yet</Text>
+                <Text style={styles.emptyText}>
+                  New farmer and freight submissions will appear here after they submit registration or compliance review.
+                </Text>
+              </View>
+            ) : (
+              records.map(renderRecord)
+            )}
+          </ScrollView>
         </View>
-
-        <View style={styles.summaryGrid}>
-          <SummaryCard label="Total" value={String(summary.total)} accent />
-          <SummaryCard label="AI Review" value={String(summary.review)} accent />
-          <SummaryCard label="Approved" value={String(summary.approved)} />
-          <SummaryCard label="Needs Info" value={String(summary.needsInfo)} />
-          <SummaryCard label="Rejected" value={String(summary.rejected)} />
-        </View>
-
-        {records.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Ionicons name="file-tray-outline" size={38} color="#10B981" />
-            <Text style={styles.emptyTitle}>No compliance records yet</Text>
-            <Text style={styles.emptyText}>
-              Farmer submissions will appear here after documents are uploaded.
-            </Text>
-          </View>
-        ) : (
-          records.map(renderRecord)
-        )}
-      </ScrollView>
+      </View>
     </SafeAreaView>
+  );
+}
+
+function NavButton({
+  label,
+  icon,
+  route,
+  active = false,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+  active?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.navButton, active && styles.navButtonActive]}
+      onPress={() => router.push(route as any)}
+    >
+      <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
+      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
 function SummaryCard({
   label,
   value,
+  icon,
   accent = false,
+  success = false,
+  warning = false,
+  danger = false,
 }: {
   label: string;
   value: string;
+  icon: keyof typeof Ionicons.glyphMap;
   accent?: boolean;
+  success?: boolean;
+  warning?: boolean;
+  danger?: boolean;
 }) {
+  const color = danger
+    ? ui.red
+    : warning
+    ? ui.orange
+    : success
+    ? ui.green
+    : accent
+    ? ui.primary
+    : ui.blue;
+
   return (
-    <View style={[styles.summaryCard, accent && styles.summaryCardAccent]}>
-      <Text style={[styles.summaryValue, accent && styles.summaryValueAccent]}>
-        {value}
-      </Text>
-      <Text style={[styles.summaryLabel, accent && styles.summaryLabelAccent]}>
-        {label}
-      </Text>
+    <View style={styles.summaryCard}>
+      <View style={[styles.summaryIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+
+      <Text style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  page: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 90,
-  },
-  hero: {
-    backgroundColor: "#020617",
-    paddingTop: 24,
-    paddingHorizontal: 20,
-    paddingBottom: 28,
+  safe: { flex: 1, backgroundColor: ui.bg },
+  shell: { flex: 1, backgroundColor: ui.bg },
+  sidebar: {
+    backgroundColor: ui.card,
     borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    borderBottomColor: ui.border,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 12,
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
-  heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: "#064E3B",
-    borderWidth: 1,
-    borderColor: "#10B981",
+  logoRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 },
+  logoMark: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: ui.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  kicker: {
-    color: "#10B981",
-    fontWeight: "900",
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "900",
-    color: "#FFFFFF",
-  },
-  subtitle: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    marginTop: 8,
-    lineHeight: 23,
-  },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  logoText: { color: "#FFFFFF", fontWeight: "900", fontSize: 13 },
+  logoTitle: { color: ui.text, fontWeight: "900", fontSize: 18 },
+  logoSub: { color: ui.muted, fontWeight: "700", fontSize: 12 },
   navButton: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.primary,
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
     flexDirection: "row",
+    alignItems: "center",
     gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+    backgroundColor: ui.soft,
   },
-  navButtonOutline: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.card,
+  navButtonActive: { backgroundColor: ui.primary },
+  navText: { color: ui.muted, fontWeight: "900", fontSize: 13 },
+  navTextActive: { color: "#FFFFFF" },
+  main: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
+  content: { paddingBottom: 90 },
+  topbar: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    padding: 14,
-    borderRadius: 14,
+    borderColor: ui.border,
+    marginBottom: 14,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "space-between",
+  },
+  welcome: { color: ui.muted, fontWeight: "800", marginBottom: 4 },
+  pageTitle: { color: ui.text, fontSize: 26, fontWeight: "900" },
+  pageSub: { color: ui.muted, marginTop: 4, fontWeight: "700", maxWidth: 780 },
+  refreshPill: {
     flexDirection: "row",
-    gap: 8,
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  summaryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingHorizontal: 18,
-    marginBottom: 16,
-  },
+  refreshPillText: { color: ui.primary, fontWeight: "900" },
+  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 14 },
   summaryCard: {
-    width: "31%",
-    minWidth: 100,
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 18,
-    padding: 14,
+    width: "48%",
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: ui.border,
+  },
+  summaryIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
   },
-  summaryCardAccent: {
-    backgroundColor: "#064E3B",
-    borderColor: "#064E3B",
-  },
-  summaryValue: {
-    color: freightTheme.colors.primary,
-    fontSize: 25,
-    fontWeight: "900",
-  },
-  summaryValueAccent: {
-    color: "#FFFFFF",
-  },
-  summaryLabel: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "800",
-    marginTop: 4,
-    textAlign: "center",
-  },
-  summaryLabelAccent: {
-    color: "#BBF7D0",
-  },
+  summaryValue: { color: ui.text, fontSize: 22, fontWeight: "900" },
+  summaryLabel: { color: ui.muted, fontWeight: "800", marginTop: 4 },
   emptyCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: ui.card,
     borderRadius: 24,
     padding: 24,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    marginHorizontal: 18,
+    borderColor: ui.border,
     alignItems: "center",
+    marginBottom: 18,
   },
   emptyTitle: {
     fontSize: 20,
     fontWeight: "900",
-    color: freightTheme.colors.text,
+    color: ui.text,
     marginTop: 10,
   },
   emptyText: {
-    color: freightTheme.colors.mutedText,
+    color: ui.muted,
     marginTop: 8,
     lineHeight: 21,
     fontWeight: "700",
     textAlign: "center",
   },
   card: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: ui.card,
     borderRadius: 24,
     padding: 18,
-    marginHorizontal: 18,
     marginBottom: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: ui.border,
   },
   cardHeader: {
     flexDirection: "row",
@@ -613,21 +740,13 @@ const styles = StyleSheet.create({
   recordIcon: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: "#0F172A",
+    borderRadius: 16,
+    backgroundColor: ui.primarySoft,
     alignItems: "center",
     justifyContent: "center",
   },
-  businessName: {
-    color: freightTheme.colors.text,
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  ownerName: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  businessName: { color: ui.text, fontSize: 21, fontWeight: "900" },
+  ownerName: { color: ui.muted, fontWeight: "700", marginTop: 4 },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -642,118 +761,69 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   scoreBox: {
-    backgroundColor: "#064E3B",
+    backgroundColor: ui.primary,
     borderRadius: 18,
     padding: 14,
     marginTop: 16,
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 12,
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
-  scoreLabel: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  scoreLabel: { color: "#FFFFFF", fontWeight: "900" },
   scoreHelp: {
-    color: "#BBF7D0",
+    color: "#EDE9FE",
     fontWeight: "700",
     marginTop: 4,
     lineHeight: 20,
   },
-  scoreValue: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 28,
-  },
-  section: {
-    marginTop: 16,
-  },
+  scoreValue: { color: "#FFFFFF", fontWeight: "900", fontSize: 28 },
+  section: { marginTop: 16 },
   sectionTitle: {
-    color: freightTheme.colors.text,
+    color: ui.text,
     fontSize: 17,
     fontWeight: "900",
     marginBottom: 8,
   },
   checkRow: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: ui.soft,
     borderRadius: 14,
     padding: 12,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: ui.border,
     marginBottom: 8,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
-  checkText: {
-    color: freightTheme.colors.text,
-    fontWeight: "800",
-    flex: 1,
-  },
-  checkStatus: {
-    fontWeight: "900",
-    fontSize: 12,
-  },
-  goodText: {
-    color: "#10B981",
-  },
-  warnText: {
-    color: "#F59E0B",
-  },
-  mutedText: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-  },
+  checkText: { color: ui.text, fontWeight: "800", flex: 1 },
+  checkStatus: { fontWeight: "900", fontSize: 12 },
+  goodText: { color: ui.green },
+  warnText: { color: ui.orange },
+  mutedText: { color: ui.muted, fontWeight: "700" },
   docRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     borderTopWidth: 1,
-    borderTopColor: freightTheme.colors.border,
+    borderTopColor: ui.border,
     paddingVertical: 10,
   },
-  docLabel: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-  },
-  docUri: {
-    color: freightTheme.colors.mutedText,
-    marginTop: 3,
-    fontSize: 12,
-  },
-  docStatus: {
-    fontWeight: "900",
-  },
-  verified: {
-    color: "#10B981",
-  },
-  unverified: {
-    color: "#F59E0B",
-  },
+  docLabel: { color: ui.text, fontWeight: "900" },
+  docUri: { color: ui.muted, marginTop: 3, fontSize: 12 },
+  docStatus: { fontWeight: "900" },
+  verified: { color: ui.green },
+  unverified: { color: ui.orange },
   missingItem: {
-    color: "#FCA5A5",
+    color: ui.red,
     fontWeight: "800",
     marginBottom: 4,
   },
-  successText: {
-    color: "#10B981",
-    fontWeight: "900",
-  },
-  sourceText: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 18,
-  },
+  successText: { color: ui.green, fontWeight: "900" },
+  sourceText: { color: ui.muted, fontWeight: "700", marginBottom: 4 },
+  actions: { flexDirection: "row", gap: 8, marginTop: 18 },
   approveButton: {
     flex: 1,
-    backgroundColor: "#10B981",
+    backgroundColor: ui.green,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -763,7 +833,7 @@ const styles = StyleSheet.create({
   },
   moreInfoButton: {
     flex: 1,
-    backgroundColor: "#F59E0B",
+    backgroundColor: ui.orange,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -773,7 +843,7 @@ const styles = StyleSheet.create({
   },
   rejectButton: {
     flex: 1,
-    backgroundColor: "#DC2626",
+    backgroundColor: ui.red,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -781,9 +851,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 5,
   },
-  actionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  actionText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
 });

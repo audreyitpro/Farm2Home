@@ -28,8 +28,6 @@ import {
   requestMoreInfoForVerificationRecord,
 } from "../data/adminStore";
 
-import freightTheme from "../styles/freightTheme";
-
 type FilterType =
   | "all"
   | "farmer"
@@ -37,6 +35,21 @@ type FilterType =
   | "pending"
   | "approved"
   | "rejected";
+
+const ui = {
+  bg: "#F5F7FB",
+  card: "#FFFFFF",
+  border: "#E5E7EB",
+  text: "#111827",
+  muted: "#6B7280",
+  soft: "#F9FAFB",
+  primary: "#7C3AED",
+  primarySoft: "#EDE9FE",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  red: "#EF4444",
+};
 
 function mapSupabaseRecord(row: any): VerificationRecord {
   const documents =
@@ -213,11 +226,7 @@ export default function AdminDocumentsScreen() {
       await updateSupabaseStatus(id, "APPROVED");
       await approveVerificationRecord(id);
 
-      Alert.alert(
-        "Approved",
-        "This application has been approved and marked active."
-      );
-
+      Alert.alert("Approved", "This application has been approved and marked active.");
       await loadRecords();
     } catch (error: any) {
       Alert.alert("Approval Error", error?.message || "Unable to approve.");
@@ -232,7 +241,6 @@ export default function AdminDocumentsScreen() {
       await rejectVerificationRecord(id, reason);
 
       Alert.alert("Rejected", "This application has been rejected.");
-
       await loadRecords();
     } catch (error: any) {
       Alert.alert("Reject Error", error?.message || "Unable to reject.");
@@ -247,33 +255,29 @@ export default function AdminDocumentsScreen() {
       await requestMoreInfoForVerificationRecord(id, note);
 
       Alert.alert("More Info Requested", "This record was marked for more info.");
-
       await loadRecords();
     } catch (error: any) {
-      Alert.alert(
-        "Request Error",
-        error?.message || "Unable to request more information."
-      );
+      Alert.alert("Request Error", error?.message || "Unable to request more information.");
     }
   }
 
   function statusColor(status?: string) {
-    switch (status) {
+    switch (String(status || "").toUpperCase()) {
       case "APPROVED":
-        return "#10B981";
+        return ui.green;
       case "REJECTED":
-        return "#DC2626";
+        return ui.red;
       case "MORE_INFO_REQUIRED":
-        return "#F59E0B";
+        return ui.orange;
       case "STRIPE_COMPLETE_PENDING_REVIEW":
       case "STRIPE_CONNECTED_PENDING_REVIEW":
       case "PENDING_ADMIN_REVIEW":
       case "PENDING_VERIFICATION":
       case "DOCUMENTS_SUBMITTED":
-        return "#2563EB";
+        return ui.blue;
       case "STRIPE_PENDING":
       case "STRIPE_STARTED":
-        return "#7C3AED";
+        return ui.primary;
       default:
         return "#64748B";
     }
@@ -288,27 +292,17 @@ export default function AdminDocumentsScreen() {
 
   function formatDate(value?: string) {
     if (!value) return "Date unavailable";
-
     const date = new Date(value);
-
     if (Number.isNaN(date.getTime())) return "Date unavailable";
-
     return date.toLocaleString();
   }
 
   function getAccountLabel(item: VerificationRecord) {
-    return item.accountType === "FREIGHT_CARRIER"
-      ? "Freight Carrier"
-      : "Farmer";
+    return item.accountType === "FREIGHT_CARRIER" ? "Freight Carrier" : "Farmer";
   }
 
   function getDisplayName(item: VerificationRecord) {
-    return (
-      item.businessName ||
-      item.farmName ||
-      item.companyName ||
-      "Farm2Home Applicant"
-    );
+    return item.businessName || item.farmName || item.companyName || "Farm2Home Applicant";
   }
 
   const filteredRecords = useMemo(() => {
@@ -324,9 +318,7 @@ export default function AdminDocumentsScreen() {
         (filter === "freight" && accountType === "FREIGHT_CARRIER") ||
         (filter === "approved" && status === "APPROVED") ||
         (filter === "rejected" && status === "REJECTED") ||
-        (filter === "pending" &&
-          status !== "APPROVED" &&
-          status !== "REJECTED");
+        (filter === "pending" && status !== "APPROVED" && status !== "REJECTED");
 
       const searchable = [
         item.businessName,
@@ -343,17 +335,13 @@ export default function AdminDocumentsScreen() {
         .join(" ")
         .toLowerCase();
 
-      const matchesSearch = !q || searchable.includes(q);
-
-      return matchesFilter && matchesSearch;
+      return matchesFilter && (!q || searchable.includes(q));
     });
   }, [records, searchText, filter]);
 
   const summary = useMemo(() => {
     const farmers = records.filter((item) => item.accountType === "FARMER").length;
-    const freight = records.filter(
-      (item) => item.accountType === "FREIGHT_CARRIER"
-    ).length;
+    const freight = records.filter((item) => item.accountType === "FREIGHT_CARRIER").length;
     const approved = records.filter((item) => item.status === "APPROVED").length;
     const rejected = records.filter((item) => item.status === "REJECTED").length;
     const pending = records.filter(
@@ -370,13 +358,7 @@ export default function AdminDocumentsScreen() {
     };
   }, [records]);
 
-  function FilterChip({
-    label,
-    value,
-  }: {
-    label: string;
-    value: FilterType;
-  }) {
+  function FilterChip({ label, value }: { label: string; value: FilterType }) {
     const active = filter === value;
 
     return (
@@ -400,34 +382,21 @@ export default function AdminDocumentsScreen() {
         <View style={styles.header}>
           <View style={styles.accountIcon}>
             <Ionicons
-              name={
-                item.accountType === "FREIGHT_CARRIER"
-                  ? "trail-sign-outline"
-                  : "leaf-outline"
-              }
+              name={item.accountType === "FREIGHT_CARRIER" ? "trail-sign-outline" : "leaf-outline"}
               size={22}
-              color="#10B981"
+              color={ui.primary}
             />
           </View>
 
           <View style={styles.headerText}>
             <Text style={styles.businessName}>{getDisplayName(item)}</Text>
-
             <Text style={styles.meta}>
-              {getAccountLabel(item)} · {item.ownerName || "Owner not listed"}
+              {getAccountLabel(item)} • {item.ownerName || "Owner not listed"}
             </Text>
-
             <Text style={styles.meta}>{item.email || "Email not listed"}</Text>
           </View>
 
-          <View
-            style={[
-              styles.statusBadge,
-              {
-                backgroundColor: statusColor(item.status),
-              },
-            ]}
-          >
+          <View style={[styles.statusBadge, { backgroundColor: statusColor(item.status) }]}>
             <Text style={styles.statusText}>{prettyStatus(item.status)}</Text>
           </View>
         </View>
@@ -435,47 +404,17 @@ export default function AdminDocumentsScreen() {
         <View style={styles.detailBox}>
           <Text style={styles.detailTitle}>Compliance Details</Text>
 
-          <DetailRow
-            label="ID"
-            value={String(item.farmerId || item.carrierId || item.id)}
-          />
-
+          <DetailRow label="ID" value={String(item.farmerId || item.carrierId || item.id)} />
           <DetailRow label="State" value={item.state || "Not provided"} />
-
           <DetailRow
             label="Stripe Account"
-            value={
-              item.stripeAccountId ||
-              item.farmerStripeAccountId ||
-              "Not connected"
-            }
+            value={item.stripeAccountId || item.farmerStripeAccountId || "Not connected"}
           />
-
-          <DetailRow
-            label="Stripe Payouts"
-            value={item.stripePayoutsEnabled ? "Enabled" : "Pending"}
-          />
-
-          <DetailRow
-            label="Stripe Charges"
-            value={item.stripeChargesEnabled ? "Enabled" : "Pending"}
-          />
-
-          <DetailRow
-            label="Stripe Onboarding"
-            value={item.stripeOnboardingComplete ? "Complete" : "Pending"}
-          />
-
-          <DetailRow
-            label="Pickup / Delivery"
-            value={item.pickupDeliveryOption || "Not selected"}
-          />
-
-          <DetailRow
-            label="Documents"
-            value={`${documentCount} saved · ${uploadedDocCount} checklist items`}
-          />
-
+          <DetailRow label="Stripe Payouts" value={item.stripePayoutsEnabled ? "Enabled" : "Pending"} />
+          <DetailRow label="Stripe Charges" value={item.stripeChargesEnabled ? "Enabled" : "Pending"} />
+          <DetailRow label="Stripe Onboarding" value={item.stripeOnboardingComplete ? "Complete" : "Pending"} />
+          <DetailRow label="Pickup / Delivery" value={item.pickupDeliveryOption || "Not selected"} />
+          <DetailRow label="Documents" value={`${documentCount} saved • ${uploadedDocCount} checklist items`} />
           <DetailRow label="Submitted" value={formatDate(item.submittedAt)} />
           <DetailRow label="Updated" value={formatDate(item.updatedAt)} />
         </View>
@@ -486,11 +425,11 @@ export default function AdminDocumentsScreen() {
 
             {item.documents.map((doc: any) => (
               <View key={doc.id} style={styles.documentRow}>
-                <Ionicons name="document-text-outline" size={18} color="#10B981" />
+                <Ionicons name="document-text-outline" size={18} color={ui.primary} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.documentName}>{doc.name || doc.type}</Text>
                   <Text style={styles.documentMeta}>
-                    {doc.type} · {doc.status}
+                    {doc.type} • {doc.status}
                   </Text>
                   {!!doc.uri && <Text style={styles.documentUri}>{doc.uri}</Text>}
                 </View>
@@ -514,7 +453,7 @@ export default function AdminDocumentsScreen() {
         <TextInput
           style={styles.noteInput}
           placeholder="Reason if rejecting"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={ui.muted}
           value={rejectNotes[item.id] || ""}
           onChangeText={(text) =>
             setRejectNotes((prev) => ({
@@ -527,7 +466,7 @@ export default function AdminDocumentsScreen() {
         <TextInput
           style={styles.noteInput}
           placeholder="Note if requesting more info"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={ui.muted}
           value={infoNotes[item.id] || ""}
           onChangeText={(text) =>
             setInfoNotes((prev) => ({
@@ -538,26 +477,17 @@ export default function AdminDocumentsScreen() {
         />
 
         <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={styles.approveButton}
-            onPress={() => approveRecord(item.id)}
-          >
+          <TouchableOpacity style={styles.approveButton} onPress={() => approveRecord(item.id)}>
             <Ionicons name="checkmark-circle-outline" size={17} color="#FFFFFF" />
             <Text style={styles.buttonText}>Approve</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.moreInfoButton}
-            onPress={() => requestMoreInfo(item.id)}
-          >
+          <TouchableOpacity style={styles.moreInfoButton} onPress={() => requestMoreInfo(item.id)}>
             <Ionicons name="alert-circle-outline" size={17} color="#FFFFFF" />
             <Text style={styles.buttonText}>More Info</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.rejectButton}
-            onPress={() => rejectRecord(item.id)}
-          >
+          <TouchableOpacity style={styles.rejectButton} onPress={() => rejectRecord(item.id)}>
             <Ionicons name="close-circle-outline" size={17} color="#FFFFFF" />
             <Text style={styles.buttonText}>Reject</Text>
           </TouchableOpacity>
@@ -568,99 +498,105 @@ export default function AdminDocumentsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-      <View style={styles.page}>
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.kicker}>Farm2Home Admin Portal</Text>
-              <Text style={styles.title}>AI Compliance Queue</Text>
-
-              <Text style={styles.subtitle}>
-                Review farmer and freight submissions, Stripe readiness,
-                uploaded documents, and final approval.
-              </Text>
+      <View style={styles.shell}>
+        <View style={styles.sidebar}>
+          <View style={styles.logoRow}>
+            <View style={styles.logoMark}>
+              <Text style={styles.logoText}>F2H</Text>
             </View>
 
-            <View style={styles.heroIcon}>
-              <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
+            <View>
+              <Text style={styles.logoTitle}>Farm2Home</Text>
+              <Text style={styles.logoSub}>Compliance Queue</Text>
             </View>
           </View>
+
+          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
+          <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" active />
+          <NavButton label="Compliance" icon="shield-checkmark-outline" route="/admin/compliance-review" />
+          <NavButton label="Business Docs" icon="folder-open-outline" route="/admin/business-documents" />
+          <NavButton label="Platform Health" icon="pulse-outline" route="/admin/platform-health" />
+          <NavButton label="Settings" icon="settings-outline" route="/admin/admin-settings" />
         </View>
 
-        <View style={styles.navRow}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => router.push("/admin/dashboard" as any)}
-          >
-            <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.navText}>Dashboard</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.navButtonOutline} onPress={loadRecords}>
-            <Ionicons name="refresh-outline" size={18} color="#10B981" />
-            <Text style={styles.navTextOutline}>Refresh</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.summaryGrid}>
-          <SummaryCard label="Total" value={String(summary.total)} accent />
-          <SummaryCard label="Pending" value={String(summary.pending)} accent />
-          <SummaryCard label="Approved" value={String(summary.approved)} />
-          <SummaryCard label="Rejected" value={String(summary.rejected)} />
-          <SummaryCard label="Farmers" value={String(summary.farmers)} />
-          <SummaryCard label="Freight" value={String(summary.freight)} />
-        </View>
-
-        <View style={styles.searchCard}>
-          <Ionicons name="search-outline" size={20} color="#10B981" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search business, owner, email, status..."
-            placeholderTextColor="#94A3B8"
-            value={searchText}
-            onChangeText={setSearchText}
-          />
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-        >
-          <FilterChip label="All" value="all" />
-          <FilterChip label="Pending" value="pending" />
-          <FilterChip label="Farmers" value="farmer" />
-          <FilterChip label="Freight" value="freight" />
-          <FilterChip label="Approved" value="approved" />
-          <FilterChip label="Rejected" value="rejected" />
-        </ScrollView>
-
-        <FlatList
-          data={filteredRecords}
-          keyExtractor={(item, index) => item.id || `record_${index}`}
-          renderItem={renderRecord}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={loadRecords} />
-          }
-          contentContainerStyle={styles.list}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="file-tray-outline" size={38} color="#10B981" />
-              <Text style={styles.emptyTitle}>No Compliance Records</Text>
-
-              <Text style={styles.emptyDescription}>
-                Farmer and freight applications will appear here after they
-                submit for admin review.
+        <View style={styles.main}>
+          <View style={styles.topbar}>
+            <View>
+              <Text style={styles.welcome}>Farm2Home Admin Portal</Text>
+              <Text style={styles.pageTitle}>AI Compliance Queue</Text>
+              <Text style={styles.pageSub}>
+                Review farmer and freight submissions, Stripe readiness, uploaded documents, and final approval.
               </Text>
-
-              <TouchableOpacity style={styles.refreshButton} onPress={loadRecords}>
-                <Text style={styles.refreshButtonText}>Refresh Queue</Text>
-              </TouchableOpacity>
             </View>
-          }
-        />
+
+            <TouchableOpacity style={styles.refreshPill} onPress={loadRecords}>
+              <Ionicons name="refresh-outline" size={18} color={ui.primary} />
+              <Text style={styles.refreshPillText}>Refresh</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={styles.statsGrid}>
+              <SummaryCard label="Total" value={String(summary.total)} icon="folder-outline" accent />
+              <SummaryCard label="Pending" value={String(summary.pending)} icon="time-outline" warning />
+              <SummaryCard label="Approved" value={String(summary.approved)} icon="checkmark-circle-outline" success />
+              <SummaryCard label="Rejected" value={String(summary.rejected)} icon="close-circle-outline" danger />
+              <SummaryCard label="Farmers" value={String(summary.farmers)} icon="leaf-outline" success />
+              <SummaryCard label="Freight" value={String(summary.freight)} icon="trail-sign-outline" />
+            </View>
+
+            <View style={styles.searchCard}>
+              <Ionicons name="search-outline" size={20} color={ui.primary} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search business, owner, email, status..."
+                placeholderTextColor={ui.muted}
+                value={searchText}
+                onChangeText={setSearchText}
+              />
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterRow}
+            >
+              <FilterChip label="All" value="all" />
+              <FilterChip label="Pending" value="pending" />
+              <FilterChip label="Farmers" value="farmer" />
+              <FilterChip label="Freight" value="freight" />
+              <FilterChip label="Approved" value="approved" />
+              <FilterChip label="Rejected" value="rejected" />
+            </ScrollView>
+
+            <View style={styles.dataSection}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionHeaderTitle}>Compliance Records</Text>
+                <Text style={styles.sectionLink}>{filteredRecords.length} records</Text>
+              </View>
+
+              <FlatList
+                data={filteredRecords}
+                keyExtractor={(item, index) => item.id || `record_${index}`}
+                renderItem={renderRecord}
+                scrollEnabled={false}
+                refreshControl={
+                  <RefreshControl refreshing={refreshing} onRefresh={loadRecords} />
+                }
+                contentContainerStyle={{ paddingBottom: 80 }}
+                ListEmptyComponent={
+                  <EmptyCard
+                    title="No Compliance Records"
+                    text="Farmer and freight applications will appear here after they submit for admin review."
+                    onRefresh={loadRecords}
+                  />
+                }
+              />
+            </View>
+          </ScrollView>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -678,228 +614,226 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 function SummaryCard({
   label,
   value,
+  icon,
   accent = false,
+  success = false,
+  warning = false,
+  danger = false,
 }: {
   label: string;
   value: string;
+  icon: keyof typeof Ionicons.glyphMap;
   accent?: boolean;
+  success?: boolean;
+  warning?: boolean;
+  danger?: boolean;
 }) {
+  const color = danger
+    ? ui.red
+    : warning
+    ? ui.orange
+    : success
+    ? ui.green
+    : accent
+    ? ui.primary
+    : ui.blue;
+
   return (
-    <View style={[styles.summaryCard, accent && styles.summaryCardAccent]}>
-      <Text style={[styles.summaryValue, accent && styles.summaryValueAccent]}>
-        {value}
-      </Text>
-      <Text style={[styles.summaryLabel, accent && styles.summaryLabelAccent]}>
-        {label}
-      </Text>
+    <View style={styles.summaryCard}>
+      <View style={[styles.summaryIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+      <Text style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
     </View>
   );
 }
 
+function EmptyCard({
+  title,
+  text,
+  onRefresh,
+}: {
+  title: string;
+  text?: string;
+  onRefresh: () => void;
+}) {
+  return (
+    <View style={styles.emptyCard}>
+      <Ionicons name="file-tray-outline" size={34} color={ui.primary} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      {!!text && <Text style={styles.emptyDescription}>{text}</Text>}
+
+      <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
+        <Text style={styles.refreshButtonText}>Refresh Queue</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function NavButton({
+  label,
+  icon,
+  route,
+  active = false,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+  active?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.navButton, active && styles.navButtonActive]}
+      onPress={() => router.push(route as any)}
+    >
+      <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
+      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  page: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  hero: {
-    backgroundColor: "#020617",
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 28,
+  safe: { flex: 1, backgroundColor: ui.bg },
+  shell: { flex: 1, backgroundColor: ui.bg },
+  sidebar: {
+    backgroundColor: ui.card,
     borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    borderBottomColor: ui.border,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 12,
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
-  heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: "#064E3B",
-    borderWidth: 1,
-    borderColor: "#10B981",
+  logoRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 },
+  logoMark: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: ui.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  kicker: {
-    color: "#10B981",
-    fontWeight: "900",
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "900",
-    color: "#FFFFFF",
-  },
-  subtitle: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    marginTop: 8,
-    lineHeight: 23,
-  },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  logoText: { color: "#FFFFFF", fontWeight: "900", fontSize: 13 },
+  logoTitle: { color: ui.text, fontWeight: "900", fontSize: 18 },
+  logoSub: { color: ui.muted, fontWeight: "700", fontSize: 12 },
   navButton: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.primary,
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
     flexDirection: "row",
+    alignItems: "center",
     gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+    backgroundColor: ui.soft,
   },
-  navButtonOutline: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.card,
+  navButtonActive: { backgroundColor: ui.primary },
+  navText: { color: ui.muted, fontWeight: "900", fontSize: 13 },
+  navTextActive: { color: "#FFFFFF" },
+  main: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
+  topbar: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  summaryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingHorizontal: 18,
+    borderColor: ui.border,
     marginBottom: 14,
-  },
-  summaryCard: {
-    width: "31%",
-    minWidth: 100,
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    padding: 14,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
   },
-  summaryCardAccent: {
-    backgroundColor: "#064E3B",
-    borderColor: "#064E3B",
-  },
-  summaryValue: {
-    color: freightTheme.colors.primary,
-    fontSize: 25,
-    fontWeight: "900",
-  },
-  summaryValueAccent: {
-    color: "#FFFFFF",
-  },
-  summaryLabel: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "800",
-    marginTop: 4,
-    textAlign: "center",
-  },
-  summaryLabelAccent: {
-    color: "#BBF7D0",
-  },
-  searchCard: {
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+  welcome: { color: ui.muted, fontWeight: "800", marginBottom: 4 },
+  pageTitle: { color: ui.text, fontSize: 26, fontWeight: "900" },
+  pageSub: { color: ui.muted, marginTop: 4, fontWeight: "700", maxWidth: 780 },
+  refreshPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.primarySoft,
+    borderRadius: 999,
     paddingHorizontal: 14,
-    paddingVertical: 4,
-    marginHorizontal: 18,
-    marginBottom: 14,
+    paddingVertical: 10,
+  },
+  refreshPillText: { color: ui.primary, fontWeight: "900" },
+  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 14 },
+  summaryCard: {
+    width: "48%",
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: ui.border,
+  },
+  summaryIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  summaryValue: { color: ui.text, fontSize: 22, fontWeight: "900" },
+  summaryLabel: { color: ui.muted, fontWeight: "800", marginTop: 4 },
+  searchCard: {
+    backgroundColor: ui.card,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    height: 52,
+    borderWidth: 1,
+    borderColor: ui.border,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
+    marginBottom: 12,
   },
-  searchInput: {
-    flex: 1,
-    color: freightTheme.colors.text,
-    fontWeight: "700",
-    paddingVertical: 12,
-  },
-  filterRow: {
-    paddingHorizontal: 18,
-    gap: 8,
-    paddingBottom: 14,
-  },
+  searchInput: { flex: 1, color: ui.text, fontWeight: "800" },
+  filterRow: { gap: 8, paddingBottom: 14 },
   filterChip: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: ui.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: ui.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
   },
-  filterChipActive: {
-    backgroundColor: freightTheme.colors.primary,
-  },
-  filterText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  filterTextActive: {
-    color: "#FFFFFF",
-  },
-  list: {
-    paddingHorizontal: 18,
-    paddingBottom: 90,
-  },
-  card: {
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 22,
-    padding: 18,
+  filterChipActive: { backgroundColor: ui.primary, borderColor: ui.primary },
+  filterText: { color: ui.primary, fontWeight: "900" },
+  filterTextActive: { color: "#FFFFFF" },
+  dataSection: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    marginBottom: 16,
+    borderColor: ui.border,
+    marginBottom: 14,
   },
-  header: {
+  sectionHeader: {
     flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
-    gap: 10,
   },
+  sectionHeaderTitle: { color: ui.text, fontSize: 19, fontWeight: "900" },
+  sectionLink: { color: ui.primary, fontWeight: "900", fontSize: 12 },
+  card: {
+    backgroundColor: ui.soft,
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 14,
+  },
+  header: { flexDirection: "row", marginBottom: 12, gap: 10 },
   accountIcon: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: "#0F172A",
+    borderRadius: 16,
+    backgroundColor: ui.primarySoft,
     alignItems: "center",
     justifyContent: "center",
   },
-  headerText: {
-    flex: 1,
-  },
-  businessName: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: freightTheme.colors.text,
-  },
-  meta: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  headerText: { flex: 1 },
+  businessName: { fontSize: 18, fontWeight: "900", color: ui.text },
+  meta: { color: ui.muted, fontWeight: "700", marginTop: 4 },
   statusBadge: {
     paddingHorizontal: 11,
     paddingVertical: 8,
@@ -914,92 +848,52 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   detailBox: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: ui.card,
     borderRadius: 18,
     padding: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: ui.border,
     marginTop: 8,
   },
-  detailTitle: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-    marginBottom: 8,
-    fontSize: 16,
-  },
-  detailRow: {
-    marginBottom: 8,
-  },
+  detailTitle: { color: ui.text, fontWeight: "900", marginBottom: 8, fontSize: 16 },
+  detailRow: { marginBottom: 8 },
   detailLabel: {
-    color: freightTheme.colors.primary,
+    color: ui.primary,
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  detailText: {
-    color: freightTheme.colors.text,
-    fontWeight: "700",
-    marginTop: 3,
-    lineHeight: 20,
-  },
-  section: {
-    marginTop: 14,
-  },
-  sectionTitle: {
-    fontWeight: "900",
-    color: freightTheme.colors.text,
-    marginBottom: 8,
-    fontSize: 16,
-  },
+  detailText: { color: ui.text, fontWeight: "700", marginTop: 3, lineHeight: 20 },
+  section: { marginTop: 14 },
+  sectionTitle: { fontWeight: "900", color: ui.text, marginBottom: 8, fontSize: 16 },
   documentRow: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: ui.card,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: ui.border,
     padding: 12,
     marginBottom: 8,
     flexDirection: "row",
     gap: 10,
   },
-  documentName: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-  },
-  documentMeta: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginTop: 4,
-  },
-  documentUri: {
-    color: "#CBD5E1",
-    fontWeight: "600",
-    marginTop: 6,
-    fontSize: 11,
-  },
-  noteText: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    lineHeight: 21,
-    marginBottom: 4,
-  },
+  documentName: { color: ui.text, fontWeight: "900" },
+  documentMeta: { color: ui.muted, fontWeight: "700", marginTop: 4 },
+  documentUri: { color: ui.muted, fontWeight: "600", marginTop: 6, fontSize: 11 },
+  noteText: { color: ui.text, fontWeight: "700", lineHeight: 21, marginBottom: 4 },
   noteInput: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: ui.card,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
+    borderColor: ui.border,
     borderRadius: 14,
     padding: 12,
     marginTop: 12,
-    color: "#111827",
+    color: ui.text,
     fontWeight: "700",
   },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 16,
-  },
+  buttonRow: { flexDirection: "row", gap: 8, marginTop: 16 },
   approveButton: {
     flex: 1,
-    backgroundColor: "#10B981",
+    backgroundColor: ui.green,
     padding: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1009,7 +903,7 @@ const styles = StyleSheet.create({
   },
   moreInfoButton: {
     flex: 1,
-    backgroundColor: "#F59E0B",
+    backgroundColor: ui.orange,
     padding: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1019,7 +913,7 @@ const styles = StyleSheet.create({
   },
   rejectButton: {
     flex: 1,
-    backgroundColor: "#DC2626",
+    backgroundColor: ui.red,
     padding: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1027,42 +921,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 5,
   },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  buttonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
   emptyCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: ui.card,
     borderRadius: 22,
     padding: 24,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: ui.border,
     alignItems: "center",
     marginTop: 20,
   },
   emptyTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "900",
-    color: freightTheme.colors.text,
+    color: ui.text,
     marginTop: 10,
     marginBottom: 8,
   },
   emptyDescription: {
-    color: freightTheme.colors.mutedText,
+    color: ui.muted,
     textAlign: "center",
     lineHeight: 22,
     fontWeight: "700",
   },
   refreshButton: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: ui.primary,
     paddingHorizontal: 18,
     paddingVertical: 13,
     borderRadius: 16,
     marginTop: 16,
   },
-  refreshButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  refreshButtonText: { color: "#FFFFFF", fontWeight: "900" },
 });

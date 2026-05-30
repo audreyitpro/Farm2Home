@@ -26,9 +26,23 @@ import {
 } from "../data/adminStore";
 
 import { updateFarmerStore } from "../data/farmerStore";
-import freightTheme from "../styles/freightTheme";
 
 type VerificationRecord = any;
+
+const ui = {
+  bg: "#F5F7FB",
+  card: "#FFFFFF",
+  border: "#E5E7EB",
+  text: "#111827",
+  muted: "#6B7280",
+  soft: "#F9FAFB",
+  primary: "#7C3AED",
+  primarySoft: "#EDE9FE",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  red: "#EF4444",
+};
 
 const QUEUE_KEYS = ["farm2homeVerificationQueue", "adminVerificationQueue"];
 const FARMER_KEYS = ["farm2homeFarmers", "farmers", "approvedFarmers"];
@@ -48,13 +62,11 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [adminEmail, setAdminEmail] = useState("");
   const [pendingRecords, setPendingRecords] = useState<VerificationRecord[]>([]);
-
   const [pendingCount, setPendingCount] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
   const [rejectedCount, setRejectedCount] = useState(0);
   const [farmerCount, setFarmerCount] = useState(0);
   const [freightCount, setFreightCount] = useState(0);
-
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState("");
 
@@ -71,19 +83,12 @@ export default function AdminDashboard() {
   function isApproved(item: any) {
     const status = normalizeStatus(item.status);
     const review = normalizeStatus(item.adminReviewStatus);
-
-    return (
-      item.approved === true ||
-      status === "approved" ||
-      status === "approved_verification" ||
-      review === "approved"
-    );
+    return item.approved === true || status === "approved" || status === "approved_verification" || review === "approved";
   }
 
   function isRejected(item: any) {
     const status = normalizeStatus(item.status);
     const review = normalizeStatus(item.adminReviewStatus);
-
     return item.rejected === true || status === "rejected" || review === "rejected";
   }
 
@@ -96,12 +101,7 @@ export default function AdminDashboard() {
   }
 
   function getBusinessName(record: any) {
-    return (
-      record?.businessName ||
-      record?.farmName ||
-      record?.farm_name ||
-      "Farm2Home Farm"
-    );
+    return record?.businessName || record?.farmName || record?.farm_name || "Farm2Home Farm";
   }
 
   function getOwnerName(record: any) {
@@ -118,9 +118,7 @@ export default function AdminDashboard() {
 
   async function readArray(key: string) {
     const raw = await AsyncStorage.getItem(key);
-
     if (!raw) return [];
-
     try {
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
@@ -140,12 +138,7 @@ export default function AdminDashboard() {
 
     const next = [
       record,
-      ...current.filter((item: any) => {
-        const itemId = getFarmerId(item);
-        const itemEmail = getEmail(item);
-
-        return itemId !== id && itemEmail !== email;
-      }),
+      ...current.filter((item: any) => getFarmerId(item) !== id && getEmail(item) !== email),
     ];
 
     await writeArray(key, next);
@@ -158,15 +151,7 @@ export default function AdminDashboard() {
       const next = current.map((item: any) => {
         const sameId = getFarmerId(item) === getFarmerId(updatedRecord);
         const sameEmail = getEmail(item) === getEmail(updatedRecord);
-
-        if (sameId || sameEmail) {
-          return {
-            ...item,
-            ...updatedRecord,
-          };
-        }
-
-        return item;
+        return sameId || sameEmail ? { ...item, ...updatedRecord } : item;
       });
 
       const exists = current.some(
@@ -182,14 +167,11 @@ export default function AdminDashboard() {
   async function sendFarmerApprovalEmail(record: any) {
     try {
       const email = getEmail(record);
-
       if (!email || !email.includes("@")) return;
 
       await fetch("http://10.0.0.216:4242/email/send-farmer-approval", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email,
           businessName: getBusinessName(record),
@@ -208,34 +190,27 @@ export default function AdminDashboard() {
       ...record,
       id: farmerId,
       farmerId,
-
       farmName: getBusinessName(record),
       businessName: getBusinessName(record),
       ownerName: getOwnerName(record),
       email: getEmail(record),
-
       approved: true,
       rejected: false,
       reviewed: true,
       needsMoreInfo: false,
-
       accountActive: true,
       storeUnlocked: true,
-
       complianceSubmitted: true,
       complianceStatus: "approved",
       adminReviewStatus: "approved",
       reviewDecision: "approved",
       status: "APPROVED",
-
       membershipStatus: "Active",
       subscriptionStatus: "active",
       farmerMembershipPaid: true,
       monthlyMembershipStarted: true,
-
       approvalEmailQueued: true,
       approvalEmailText: APPROVAL_EMAIL_WORDING,
-
       approvedAt,
       reviewedAt: approvedAt,
       updatedAt: approvedAt,
@@ -261,21 +236,18 @@ export default function AdminDashboard() {
     }
 
     await sendFarmerApprovalEmail(approvedFarmer);
-
     return approvedFarmer;
   }
 
   async function approveRecord(record: VerificationRecord) {
     try {
       const farmerId = getFarmerId(record);
-
       if (!farmerId) {
         Alert.alert("Missing Farmer ID", "Unable to approve this record.");
         return;
       }
 
       setActionLoadingId(farmerId);
-
       await saveApprovedFarmer(record);
 
       Alert.alert(
@@ -285,7 +257,6 @@ export default function AdminDashboard() {
 
       await loadDashboard();
     } catch (error: any) {
-      console.log("Approve farmer error:", error);
       Alert.alert("Approval Error", error?.message || "Unable to approve farmer.");
     } finally {
       setActionLoadingId("");
@@ -335,7 +306,6 @@ export default function AdminDashboard() {
       Alert.alert("Rejected", "The application was rejected.");
       await loadDashboard();
     } catch (error: any) {
-      console.log("Reject farmer error:", error);
       Alert.alert("Reject Error", error?.message || "Unable to reject farmer.");
     } finally {
       setActionLoadingId("");
@@ -347,7 +317,6 @@ export default function AdminDashboard() {
       setLoading(true);
 
       const session = await getAdminSession();
-
       if (!session) {
         router.replace("/admin/login" as any);
         return;
@@ -368,13 +337,8 @@ export default function AdminDashboard() {
       setPendingCount(finalPending.length);
       setApprovedCount(finalQueue.filter(isApproved).length);
       setRejectedCount(finalQueue.filter(isRejected).length);
-      setFarmerCount(
-        finalQueue.filter((item) => getAccountType(item) === "FARMER").length
-      );
-      setFreightCount(
-        finalQueue.filter((item) => getAccountType(item) === "FREIGHT_CARRIER")
-          .length
-      );
+      setFarmerCount(finalQueue.filter((item) => getAccountType(item) === "FARMER").length);
+      setFreightCount(finalQueue.filter((item) => getAccountType(item) === "FREIGHT_CARRIER").length);
     } catch (error) {
       console.log("Admin dashboard load error:", error);
       Alert.alert("Dashboard Error", "Unable to load admin dashboard.");
@@ -392,11 +356,8 @@ export default function AdminDashboard() {
   async function signOut() {
     try {
       await logoutAdmin();
-      router.replace("/admin/login" as any);
-    } catch (error) {
-      console.log("Logout error:", error);
-      router.replace("/admin/login" as any);
-    }
+    } catch {}
+    router.replace("/admin/login" as any);
   }
 
   const productionStatus = useMemo(() => {
@@ -406,225 +367,276 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
-        <ActivityIndicator size="large" color="#10B981" />
-        <Text style={styles.loadingText}>Loading Farm2Home Admin Dashboard...</Text>
+      <SafeAreaView style={styles.loadingScreen}>
+        <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
+        <ActivityIndicator size="large" color={ui.primary} />
+        <Text style={styles.loadingText}>Loading Farm2Home admin dashboard...</Text>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-      <ScrollView
-        style={styles.page}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />
-        }
-      >
-        <View style={styles.heroCard}>
-          <View style={styles.heroTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.badge}>Farm2Home Production Admin Portal</Text>
-              <Text style={styles.title}>Admin Dashboard</Text>
-
-              <Text style={styles.subtitle}>
-                Monitor compliance approvals, Stripe onboarding, account access,
-                marketplace operations, deliveries, freight activity, AI
-                verification, and platform oversight.
-              </Text>
+      <View style={styles.shell}>
+        <View style={styles.sidebar}>
+          <View style={styles.logoRow}>
+            <View style={styles.logoMark}>
+              <Text style={styles.logoText}>F2H</Text>
             </View>
-
-            <View style={styles.heroIcon}>
-              <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
+            <View>
+              <Text style={styles.logoTitle}>Farm2Home</Text>
+              <Text style={styles.logoSub}>Admin Portal</Text>
             </View>
           </View>
 
-          <View style={styles.adminInfoBox}>
-            <Text style={styles.adminInfo}>Logged in as</Text>
-            <Text style={styles.adminEmail}>{adminEmail || "Administrator"}</Text>
-          </View>
+          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" active />
+          <NavButton label="Control Tower" icon="radio-outline" route="/admin/control-tower" />
+          <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" />
+          <NavButton label="Live Ops" icon="navigate-outline" route="/admin/live-operations-center" />
+          <NavButton label="Revenue" icon="cash-outline" route="/admin/revenue" />
+          <NavButton label="Settings" icon="settings-outline" route="/admin/admin-settings" />
         </View>
 
-        <View style={styles.productionBanner}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.productionTitle}>Production Status</Text>
-            <Text style={styles.productionText}>{productionStatus}</Text>
-          </View>
-
-          <View style={styles.productionIcon}>
-            <Ionicons
-              name={pendingCount > 0 ? "alert-circle-outline" : "checkmark-done-outline"}
-              size={28}
-              color="#BBF7D0"
-            />
-          </View>
-        </View>
-
-        <Text style={styles.sectionTitle}>Platform Metrics</Text>
-
-        <View style={styles.metricsGrid}>
-          <MetricCard icon="time-outline" value={String(pendingCount)} label="Pending Reviews" accent />
-          <MetricCard icon="checkmark-done-outline" value={String(approvedCount)} label="Approved" accent />
-          <MetricCard icon="close-circle-outline" value={String(rejectedCount)} label="Rejected" />
-          <MetricCard icon="leaf-outline" value={String(farmerCount)} label="Farmers" />
-          <MetricCard icon="trail-sign-outline" value={String(freightCount)} label="Freight" />
-          <MetricCard icon="sparkles-outline" value="AI" label="Compliance" />
-        </View>
-
-        <Text style={styles.sectionTitle}>Account Access</Text>
-
-        <AdminActionCard
-          icon="people-outline"
-          title="Account Management"
-          description="View all current and previous accounts, usernames, passwords, active status, reset login credentials, approve farmers, unlock stores, and manually create accounts."
-          color="#0F766E"
-          onPress={() => router.push("/admin/accounts" as any)}
-        />
-
-        <Text style={styles.sectionTitle}>Pending Farmer Approvals</Text>
-
-        {pendingRecords.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Ionicons name="checkmark-done-outline" size={34} color="#10B981" />
-            <Text style={styles.emptyTitle}>No pending applications.</Text>
-            <Text style={styles.emptyText}>Approved accounts can log in now.</Text>
-          </View>
-        ) : (
-          pendingRecords.map((record) => {
-            const id = getFarmerId(record);
-            const actionLoading = actionLoadingId === id;
-
-            return (
-              <View key={id || getEmail(record)} style={styles.reviewCard}>
-                <View style={styles.reviewHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.reviewTitle}>{getBusinessName(record)}</Text>
-                    <Text style={styles.reviewText}>Owner: {getOwnerName(record)}</Text>
-                    <Text style={styles.reviewText}>Email: {getEmail(record)}</Text>
-                    <Text style={styles.reviewText}>
-                      Status: {record.status || record.complianceStatus || "Pending"}
-                    </Text>
-                  </View>
-
-                  <View style={styles.reviewBadge}>
-                    <Text style={styles.reviewBadgeText}>Pending</Text>
-                  </View>
-                </View>
-
-                <View style={styles.reviewButtonRow}>
-                  <TouchableOpacity
-                    style={[styles.approveButton, actionLoading && styles.disabled]}
-                    disabled={actionLoading}
-                    onPress={() => approveRecord(record)}
-                  >
-                    {actionLoading ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
-                        <Text style={styles.reviewButtonText}>Approve & Unlock</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.rejectButton, actionLoading && styles.disabled]}
-                    disabled={actionLoading}
-                    onPress={() => rejectRecord(record)}
-                  >
-                    <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.reviewButtonText}>Reject</Text>
-                  </TouchableOpacity>
-                </View>
+        <View style={styles.main}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.content}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />}
+          >
+            <View style={styles.topbar}>
+              <View>
+                <Text style={styles.welcome}>Welcome back, Admin</Text>
+                <Text style={styles.pageTitle}>Admin Dashboard</Text>
+                <Text style={styles.pageSub}>
+                  Monitor approvals, marketplace operations, freight activity, payouts, subscriptions, and system health.
+                </Text>
               </View>
-            );
-          })
-        )}
 
-        <Text style={styles.sectionTitle}>Compliance & Verification</Text>
+              <TouchableOpacity style={styles.refreshPill} onPress={refreshDashboard}>
+                <Ionicons name="refresh-outline" size={18} color={ui.primary} />
+                <Text style={styles.refreshPillText}>Refresh</Text>
+              </TouchableOpacity>
+            </View>
 
-        <AdminActionCard
-          icon="shield-checkmark-outline"
-          title="AI Compliance Queue"
-          description="Review farmer and freight applications, Stripe onboarding status, uploaded documents, AI findings, and final approval."
-          counter={`${pendingCount} pending review`}
-          color="#7C3AED"
-          onPress={() => router.push("/admin/documents" as any)}
-        />
+            <View style={styles.adminCard}>
+              <View style={styles.adminIcon}>
+                <Ionicons name="shield-checkmark-outline" size={24} color={ui.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.adminLabel}>Logged in as</Text>
+                <Text style={styles.adminEmail}>{adminEmail || "Administrator"}</Text>
+              </View>
+              <View style={[styles.statusBadge, { backgroundColor: pendingCount > 0 ? ui.orange : ui.green }]}>
+                <Text style={styles.statusBadgeText}>{productionStatus}</Text>
+              </View>
+            </View>
 
-        <AdminActionCard
-          icon="document-text-outline"
-          title="Compliance Review Center"
-          description="Review verification findings, missing documents, and business validation checks."
-          color="#2563EB"
-          onPress={() => router.push("/admin/compliance-review" as any)}
-        />
+            <View style={styles.heroCard}>
+              <View style={styles.heroIcon}>
+                <Ionicons name="shield-checkmark-outline" size={28} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.heroTitle}>Production Status</Text>
+                <Text style={styles.heroText}>
+                  {pendingCount > 0
+                    ? `${pendingCount} applications require admin review.`
+                    : "All core admin operations are ready."}
+                </Text>
+              </View>
+            </View>
 
-        <Text style={styles.sectionTitle}>Marketplace Operations</Text>
+            <View style={styles.statsGrid}>
+              <StatCard label="Pending Reviews" value={String(pendingCount)} icon="time-outline" warning />
+              <StatCard label="Approved" value={String(approvedCount)} icon="checkmark-circle-outline" success />
+              <StatCard label="Rejected" value={String(rejectedCount)} icon="close-circle-outline" danger />
+              <StatCard label="Farmers" value={String(farmerCount)} icon="leaf-outline" success />
+              <StatCard label="Freight" value={String(freightCount)} icon="trail-sign-outline" />
+              <StatCard label="AI Compliance" value="Ready" icon="sparkles-outline" accent />
+            </View>
 
-        <AdminActionCard
-          icon="storefront-outline"
-          title="Open Marketplace"
-          description="View customer marketplace storefronts, products, pricing, and ordering flow."
-          color="#111827"
-          onPress={() => router.push("/customer/marketplace" as any)}
-        />
+            <View style={styles.quickGrid}>
+              <QuickAction label="Accounts" icon="people-outline" route="/admin/accounts" />
+              <QuickAction label="Documents" icon="document-text-outline" route="/admin/documents" />
+              <QuickAction label="Revenue" icon="cash-outline" route="/admin/revenue" />
+              <QuickAction label="Fleet Map" icon="map-outline" route="/admin/fleet-map" />
+              <QuickAction label="System Audit" icon="shield-checkmark-outline" route="/admin/system-audit" />
+              <QuickAction label="Platform Health" icon="pulse-outline" route="/admin/platform-health" />
+            </View>
 
-        <AdminActionCard
-          icon="radio-outline"
-          title="Live Operations Center"
-          description="Monitor deliveries, drivers, routes, freight operations, and fulfillment activity."
-          color="#047857"
-          onPress={() => router.push("/admin/live-operations-center" as any)}
-        />
+            <View style={styles.dataSection}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Pending Farmer Approvals</Text>
+                <Text style={styles.sectionLink}>{pendingRecords.length} records</Text>
+              </View>
 
-        <AdminActionCard
-          icon="analytics-outline"
-          title="Analytics Center"
-          description="Review platform growth, AI metrics, operational activity, and marketplace trends."
-          color="#B45309"
-          onPress={() => router.push("/admin/analytics-center" as any)}
-        />
+              {pendingRecords.length === 0 ? (
+                <EmptyCard
+                  title="No pending applications."
+                  text="Approved accounts can log in and continue store setup."
+                />
+              ) : (
+                pendingRecords.map((record) => {
+                  const id = getFarmerId(record);
+                  const actionLoading = actionLoadingId === id;
 
-        <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
-          <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.logoutText}>Logout Admin</Text>
-        </TouchableOpacity>
-      </ScrollView>
+                  return (
+                    <View key={id || getEmail(record)} style={styles.reviewCard}>
+                      <View style={styles.reviewHeader}>
+                        <View style={styles.reviewIcon}>
+                          <Ionicons name="leaf-outline" size={22} color={ui.primary} />
+                        </View>
+
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.reviewTitle}>{getBusinessName(record)}</Text>
+                          <Text style={styles.meta}>Owner: {getOwnerName(record)}</Text>
+                          <Text style={styles.meta}>Email: {getEmail(record)}</Text>
+                          <Text style={styles.meta}>
+                            Status: {record.status || record.complianceStatus || "Pending"}
+                          </Text>
+                        </View>
+
+                        <View style={[styles.statusBadge, { backgroundColor: ui.orange }]}>
+                          <Text style={styles.statusBadgeText}>Pending</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.reviewButtonRow}>
+                        <TouchableOpacity
+                          style={[styles.approveButton, actionLoading && styles.disabled]}
+                          disabled={actionLoading}
+                          onPress={() => approveRecord(record)}
+                        >
+                          {actionLoading ? (
+                            <ActivityIndicator color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+                              <Text style={styles.reviewButtonText}>Approve & Unlock</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.rejectButton, actionLoading && styles.disabled]}
+                          disabled={actionLoading}
+                          onPress={() => rejectRecord(record)}
+                        >
+                          <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+                          <Text style={styles.reviewButtonText}>Reject</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+
+            <View style={styles.actionGrid}>
+              <AdminActionCard
+                icon="shield-checkmark-outline"
+                title="AI Compliance Queue"
+                description="Review farmer and freight applications, Stripe onboarding status, uploaded documents, and final approval."
+                route="/admin/documents"
+              />
+              <AdminActionCard
+                icon="document-text-outline"
+                title="Compliance Review"
+                description="Review verification findings, missing documents, and business validation checks."
+                route="/admin/compliance-review"
+              />
+              <AdminActionCard
+                icon="radio-outline"
+                title="Live Operations"
+                description="Monitor deliveries, drivers, routes, freight operations, and fulfillment activity."
+                route="/admin/live-operations-center"
+              />
+              <AdminActionCard
+                icon="analytics-outline"
+                title="Analytics Center"
+                description="Review platform growth, AI metrics, operational activity, and marketplace trends."
+                route="/admin/analytics-center"
+              />
+            </View>
+
+            <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
+              <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.logoutText}>Logout Admin</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
 
-function MetricCard({
-  icon,
-  value,
+function NavButton({
   label,
-  accent = false,
+  icon,
+  route,
+  active = false,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  value: string;
   label: string;
-  accent?: boolean;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+  active?: boolean;
 }) {
   return (
-    <View style={[styles.metricCard, accent && styles.metricCardAccent]}>
-      <Ionicons
-        name={icon}
-        size={22}
-        color={accent ? "#BBF7D0" : freightTheme.colors.primary}
-      />
-      <Text style={[styles.metricValue, accent && styles.metricValueAccent]}>
-        {value}
-      </Text>
-      <Text style={[styles.metricLabel, accent && styles.metricLabelAccent]}>
-        {label}
-      </Text>
+    <TouchableOpacity
+      style={[styles.navButton, active && styles.navButtonActive]}
+      onPress={() => router.push(route as any)}
+    >
+      <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
+      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  icon,
+  accent = false,
+  success = false,
+  warning = false,
+  danger = false,
+}: {
+  label: string;
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent?: boolean;
+  success?: boolean;
+  warning?: boolean;
+  danger?: boolean;
+}) {
+  const color = danger ? ui.red : warning ? ui.orange : success ? ui.green : accent ? ui.primary : ui.blue;
+
+  return (
+    <View style={styles.statCard}>
+      <View style={[styles.statIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
+  );
+}
+
+function QuickAction({
+  label,
+  icon,
+  route,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+}) {
+  return (
+    <TouchableOpacity style={styles.quickAction} onPress={() => router.push(route as any)}>
+      <Ionicons name={icon} size={18} color={ui.primary} />
+      <Text style={styles.quickText}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -632,304 +644,216 @@ function AdminActionCard({
   icon,
   title,
   description,
-  counter,
-  color,
-  onPress,
+  route,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   description: string;
-  counter?: string;
-  color: string;
-  onPress: () => void;
+  route: string;
 }) {
   return (
-    <TouchableOpacity
-      style={[styles.actionCard, { backgroundColor: color }]}
-      onPress={onPress}
-      activeOpacity={0.85}
-    >
-      <View style={styles.actionHeader}>
-        <View style={styles.actionIcon}>
-          <Ionicons name={icon} size={24} color="#FFFFFF" />
-        </View>
-        <Text style={styles.buttonTitle}>{title}</Text>
+    <TouchableOpacity style={styles.actionCard} onPress={() => router.push(route as any)}>
+      <View style={styles.actionIcon}>
+        <Ionicons name={icon} size={22} color={ui.primary} />
       </View>
-
-      <Text style={styles.buttonDescription}>{description}</Text>
-
-      {!!counter && <Text style={styles.buttonCounter}>{counter}</Text>}
+      <Text style={styles.actionTitle}>{title}</Text>
+      <Text style={styles.actionDescription}>{description}</Text>
     </TouchableOpacity>
   );
 }
 
+function EmptyCard({ title, text }: { title: string; text?: string }) {
+  return (
+    <View style={styles.emptyCard}>
+      <Ionicons name="checkmark-done-outline" size={30} color={ui.green} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      {!!text && <Text style={styles.emptyText}>{text}</Text>}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: {
+  safe: { flex: 1, backgroundColor: ui.bg },
+  loadingScreen: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  page: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 90,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: ui.bg,
     alignItems: "center",
     justifyContent: "center",
-    padding: 30,
   },
-  loadingText: {
-    marginTop: 16,
-    color: freightTheme.colors.mutedText,
-    fontWeight: "900",
-    fontSize: 16,
-    textAlign: "center",
-  },
-  heroCard: {
-    backgroundColor: "#020617",
-    paddingTop: 24,
-    paddingHorizontal: 20,
-    paddingBottom: 28,
+  loadingText: { color: ui.muted, marginTop: 10, fontWeight: "800" },
+  shell: { flex: 1, backgroundColor: ui.bg },
+  sidebar: {
+    backgroundColor: ui.card,
     borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    borderBottomColor: ui.border,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 12,
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
-  heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: "#064E3B",
-    borderWidth: 1,
-    borderColor: "#10B981",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  badge: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginBottom: 8,
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: "900",
-    color: "#FFFFFF",
-  },
-  subtitle: {
-    color: "#CBD5E1",
-    lineHeight: 24,
-    marginTop: 10,
-    fontWeight: "700",
-  },
-  adminInfoBox: {
-    marginTop: 18,
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#1E293B",
-    borderRadius: 18,
-    padding: 14,
-  },
-  adminInfo: {
-    color: "#94A3B8",
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  adminEmail: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  productionBanner: {
-    backgroundColor: "#064E3B",
-    borderRadius: 20,
-    padding: 18,
-    marginHorizontal: 18,
-    marginTop: 18,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "#10B981",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  productionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#052E2B",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  productionTitle: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 20,
-  },
-  productionText: {
-    color: "#BBF7D0",
-    marginTop: 6,
-    fontWeight: "700",
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: freightTheme.colors.text,
-    marginBottom: 14,
-    marginTop: 4,
-    paddingHorizontal: 18,
-  },
-  metricsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingHorizontal: 18,
-    marginBottom: 24,
-  },
-  metricCard: {
-    width: "31%",
-    minWidth: 100,
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    alignItems: "center",
-  },
-  metricCardAccent: {
-    backgroundColor: "#064E3B",
-    borderColor: "#064E3B",
-  },
-  metricValue: {
-    color: freightTheme.colors.primary,
-    fontSize: 25,
-    fontWeight: "900",
-    marginTop: 8,
-  },
-  metricValueAccent: {
-    color: "#FFFFFF",
-  },
-  metricLabel: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "800",
-    marginTop: 6,
-    textAlign: "center",
-    fontSize: 12,
-  },
-  metricLabelAccent: {
-    color: "#BBF7D0",
-  },
-  actionCard: {
-    borderRadius: 22,
-    padding: 20,
-    marginHorizontal: 18,
-    marginBottom: 14,
-  },
-  actionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
-  },
-  actionIcon: {
+  logoRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 },
+  logoMark: {
     width: 42,
     height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(255,255,255,0.16)",
+    borderRadius: 14,
+    backgroundColor: ui.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  buttonTitle: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 21,
-    flex: 1,
-  },
-  buttonDescription: {
-    color: "#F3F4F6",
-    lineHeight: 22,
-    fontWeight: "700",
-  },
-  buttonCounter: {
-    color: "#FFFFFF",
-    marginTop: 10,
-    fontWeight: "900",
-  },
-  emptyCard: {
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 22,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    marginHorizontal: 18,
-    marginBottom: 20,
+  logoText: { color: "#FFFFFF", fontWeight: "900", fontSize: 13 },
+  logoTitle: { color: ui.text, fontWeight: "900", fontSize: 18 },
+  logoSub: { color: ui.muted, fontWeight: "700", fontSize: 12 },
+  navButton: {
+    flexDirection: "row",
     alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+    backgroundColor: ui.soft,
   },
-  emptyTitle: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-    fontSize: 20,
-    marginTop: 10,
-  },
-  emptyText: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginTop: 6,
-    textAlign: "center",
-  },
-  reviewCard: {
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 22,
+  navButtonActive: { backgroundColor: ui.primary },
+  navText: { color: ui.muted, fontWeight: "900", fontSize: 13 },
+  navTextActive: { color: "#FFFFFF" },
+  main: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
+  content: { paddingBottom: 90 },
+  topbar: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
     padding: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    marginHorizontal: 18,
+    borderColor: ui.border,
     marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  reviewHeader: {
+  welcome: { color: ui.muted, fontWeight: "800", marginBottom: 4 },
+  pageTitle: { color: ui.text, fontSize: 26, fontWeight: "900" },
+  pageSub: { color: ui.muted, marginTop: 4, fontWeight: "700", maxWidth: 760 },
+  refreshPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  refreshPillText: { color: ui.primary, fontWeight: "900" },
+  adminCard: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: ui.border,
+    padding: 16,
     flexDirection: "row",
     gap: 12,
-    alignItems: "flex-start",
+    alignItems: "center",
+    marginBottom: 14,
   },
-  reviewTitle: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-    fontSize: 20,
-    marginBottom: 8,
+  adminIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: ui.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  reviewText: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginBottom: 5,
-  },
-  reviewBadge: {
-    backgroundColor: "#F59E0B",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
-  reviewBadgeText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 11,
-  },
-  reviewButtonRow: {
+  adminLabel: { color: ui.muted, fontWeight: "900" },
+  adminEmail: { color: ui.text, fontWeight: "900", marginTop: 3 },
+  statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  statusBadgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
+  heroCard: {
+    backgroundColor: ui.primary,
+    borderRadius: 24,
+    padding: 18,
     flexDirection: "row",
-    gap: 10,
-    marginTop: 16,
+    gap: 12,
+    alignItems: "center",
+    marginBottom: 14,
   },
+  heroIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 22 },
+  heroText: { color: "#EDE9FE", fontWeight: "700", marginTop: 5, lineHeight: 20 },
+  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 14 },
+  statCard: {
+    width: "48%",
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: ui.border,
+  },
+  statIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  statValue: { color: ui.text, fontSize: 22, fontWeight: "900" },
+  statLabel: { color: ui.muted, fontWeight: "800", marginTop: 4 },
+  quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 14 },
+  quickAction: {
+    width: "48%",
+    backgroundColor: ui.card,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: ui.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  quickText: { color: ui.text, fontWeight: "900", fontSize: 13 },
+  dataSection: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 14,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  sectionTitle: { color: ui.text, fontSize: 19, fontWeight: "900" },
+  sectionLink: { color: ui.primary, fontWeight: "900", fontSize: 12 },
+  reviewCard: {
+    backgroundColor: ui.soft,
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 12,
+  },
+  reviewHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
+  reviewIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: ui.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reviewTitle: { color: ui.text, fontWeight: "900", fontSize: 17, marginBottom: 4 },
+  meta: { color: ui.muted, fontWeight: "700", marginTop: 4, lineHeight: 18, fontSize: 12 },
+  reviewButtonRow: { flexDirection: "row", gap: 10, marginTop: 14 },
   approveButton: {
     flex: 1,
-    backgroundColor: "#047857",
+    backgroundColor: ui.green,
     borderRadius: 14,
     padding: 14,
     alignItems: "center",
@@ -939,7 +863,7 @@ const styles = StyleSheet.create({
   },
   rejectButton: {
     flex: 1,
-    backgroundColor: "#B91C1C",
+    backgroundColor: ui.red,
     borderRadius: 14,
     padding: 14,
     alignItems: "center",
@@ -947,28 +871,57 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  reviewButtonText: {
-    color: "#FFFFFF",
+  reviewButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  disabled: { opacity: 0.55 },
+  emptyCard: {
+    borderTopWidth: 1,
+    borderTopColor: ui.border,
+    padding: 18,
+    alignItems: "center",
+  },
+  emptyTitle: {
+    color: ui.text,
     fontWeight: "900",
+    fontSize: 17,
+    marginTop: 8,
+    textAlign: "center",
   },
-  disabled: {
-    opacity: 0.55,
+  emptyText: {
+    color: ui.muted,
+    fontWeight: "700",
+    lineHeight: 21,
+    textAlign: "center",
+    marginTop: 5,
   },
-  logoutButton: {
-    backgroundColor: "#DC2626",
+  actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 14 },
+  actionCard: {
+    width: "48%",
+    backgroundColor: ui.card,
+    borderRadius: 20,
     padding: 16,
-    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: ui.border,
+  },
+  actionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: ui.primarySoft,
     alignItems: "center",
     justifyContent: "center",
-    marginHorizontal: 18,
-    marginTop: 14,
-    marginBottom: 30,
+    marginBottom: 10,
+  },
+  actionTitle: { color: ui.text, fontWeight: "900", fontSize: 16 },
+  actionDescription: { color: ui.muted, fontWeight: "700", marginTop: 6, lineHeight: 20 },
+  logoutButton: {
+    backgroundColor: ui.red,
+    padding: 15,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
     flexDirection: "row",
     gap: 8,
+    marginBottom: 30,
   },
-  logoutText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
+  logoutText: { color: "#FFFFFF", fontWeight: "900" },
 });

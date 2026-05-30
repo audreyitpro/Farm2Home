@@ -352,8 +352,8 @@ export default function AdminControlTower() {
             </View>
           </View>
 
-          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" active />
-          <NavButton label="Control Tower" icon="radio-outline" route="/admin/control-tower" />
+          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
+          <NavButton label="Control Tower" icon="radio-outline" route="/admin/control-tower" active />
           <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" />
           <NavButton label="Live Ops" icon="navigate-outline" route="/admin/live-operations-center" />
           <NavButton label="Analytics" icon="analytics-outline" route="/admin/analytics-center" />
