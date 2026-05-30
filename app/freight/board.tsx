@@ -1,3 +1,5 @@
+// app/freight/board.tsx
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -5,6 +7,7 @@ import {
   FlatList,
   RefreshControl,
   SafeAreaView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -13,9 +16,11 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
+import freightTheme from "../styles/freightTheme";
 import {
   notifyDriverAcceptedLoad,
   notifyDriverArrivedPickup,
@@ -108,7 +113,10 @@ export default function FreightBoardScreen() {
   const [maxMiles, setMaxMiles] = useState("150");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const createdLoadId = String(params.createdLoadId || "");
+  const rawCreatedLoadId = params.createdLoadId;
+  const createdLoadId = Array.isArray(rawCreatedLoadId)
+    ? rawCreatedLoadId[0] || ""
+    : String(rawCreatedLoadId || "");
 
   async function getCurrentFreightUser() {
     const raw =
@@ -145,7 +153,10 @@ export default function FreightBoardScreen() {
     }
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(currentFreight));
-    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(currentFreight));
+    await AsyncStorage.setItem(
+      "currentFreightCarrier",
+      JSON.stringify(currentFreight)
+    );
     await AsyncStorage.setItem("currentUser", JSON.stringify(currentFreight));
     await AsyncStorage.setItem("userRole", "freight");
     await AsyncStorage.setItem("currentUserRole", "freight");
@@ -215,9 +226,10 @@ export default function FreightBoardScreen() {
   const filteredLoads = useMemo(() => {
     const q = query.trim().toLowerCase();
     const miles = Number(maxMiles || 9999);
+    const safeMiles = Number.isFinite(miles) && miles > 0 ? miles : 9999;
 
     return loads.filter((load) => {
-      const matchesMiles = Number(load.distance_miles || 0) <= miles;
+      const matchesMiles = Number(load.distance_miles || 0) <= safeMiles;
 
       const matchesQuery =
         !q ||
@@ -246,6 +258,16 @@ export default function FreightBoardScreen() {
     (sum, item) => sum + Number(item.distance_miles || 0),
     0
   );
+
+  const availableCount = filteredLoads.filter(
+    (item) => item.status === "available"
+  ).length;
+
+  const activeCount = filteredLoads.filter((item) =>
+    ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
+      item.status
+    )
+  ).length;
 
   function toggleSelect(load: FreightLoad) {
     if (load.status !== "available") {
@@ -345,7 +367,7 @@ export default function FreightBoardScreen() {
         }
       }
 
-      await notifyDriverAcceptedLoad(load.id);
+      await notifyDriverAcceptedLoad();
 
       Alert.alert("Load Accepted", "This freight load is now assigned to you.");
       await loadBoard();
@@ -401,7 +423,7 @@ export default function FreightBoardScreen() {
           return;
         }
 
-        await notifyDriverAcceptedLoad(load.id);
+        await notifyDriverAcceptedLoad();
       }
 
       setSelectedIds([]);
@@ -432,7 +454,7 @@ export default function FreightBoardScreen() {
           arrived_pickup_at: new Date().toISOString(),
         });
 
-        await notifyDriverArrivedPickup(load.id);
+        await notifyDriverArrivedPickup();
         return;
       }
 
@@ -450,7 +472,7 @@ export default function FreightBoardScreen() {
           arrived_dropoff_at: new Date().toISOString(),
         });
 
-        await notifyDriverArrivedDropoff(load.id);
+        await notifyDriverArrivedDropoff();
         return;
       }
 
@@ -497,10 +519,67 @@ export default function FreightBoardScreen() {
     }
   }
 
+  function statusColor(status: LoadStatus) {
+    switch (status) {
+      case "available":
+        return "#2563EB";
+      case "accepted":
+        return freightTheme.colors.primary;
+      case "arrived_pickup":
+        return "#0EA5E9";
+      case "picked_up":
+        return "#F59E0B";
+      case "in_transit":
+        return "#7C3AED";
+      case "arrived_dropoff":
+        return "#0F766E";
+      case "delivered":
+        return "#10B981";
+      case "cancelled":
+        return "#DC2626";
+      default:
+        return "#64748B";
+    }
+  }
+
+  function statusIcon(status: LoadStatus): keyof typeof Ionicons.glyphMap {
+    switch (status) {
+      case "available":
+        return "cube-outline";
+      case "accepted":
+        return "checkmark-circle-outline";
+      case "arrived_pickup":
+        return "location-outline";
+      case "picked_up":
+        return "archive-outline";
+      case "in_transit":
+        return "navigate-outline";
+      case "arrived_dropoff":
+        return "flag-outline";
+      case "delivered":
+        return "checkmark-done-outline";
+      case "cancelled":
+        return "close-circle-outline";
+      default:
+        return "ellipse-outline";
+    }
+  }
+
+  function formatStatus(status: LoadStatus) {
+    return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function ratePerMile(load: FreightLoad) {
+    const miles = Number(load.distance_miles || 0);
+    if (!miles) return 0;
+    return Number(load.rate || 0) / miles;
+  }
+
   if (loading || accessChecking) {
     return (
       <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color="#1f6f43" />
+        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <ActivityIndicator size="large" color="#10B981" />
         <Text style={styles.loadingText}>Checking Freight Access...</Text>
       </SafeAreaView>
     );
@@ -509,17 +588,126 @@ export default function FreightBoardScreen() {
   if (!accessAllowed) {
     return (
       <SafeAreaView style={styles.centered}>
+        <StatusBar barStyle="light-content" backgroundColor="#020617" />
         <Text style={styles.lockTitle}>Login Required</Text>
         <Text style={styles.loadingText}>Redirecting to freight login...</Text>
       </SafeAreaView>
     );
   }
 
+  function renderLoadCard({ item }: { item: FreightLoad }) {
+    const selected = selectedIds.includes(item.id);
+
+    return (
+      <View style={[styles.card, selected && styles.selectedCard]}>
+        <View style={styles.cardTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.loadTitle}>{item.title}</Text>
+            <Text style={styles.farmName}>{item.farmer_name}</Text>
+          </View>
+
+          <View style={styles.rateBox}>
+            <Text style={styles.rate}>${Number(item.rate || 0).toFixed(0)}</Text>
+            <Text style={styles.rateLabel}>Rate</Text>
+          </View>
+        </View>
+
+        <View style={[styles.statusPill, { backgroundColor: statusColor(item.status) }]}>
+          <Ionicons name={statusIcon(item.status)} size={14} color="#FFFFFF" />
+          <Text style={styles.statusPillText}>{formatStatus(item.status)}</Text>
+        </View>
+
+        <View style={styles.routeContainer}>
+          <View style={styles.routeStop}>
+            <Ionicons name="radio-button-on" size={18} color="#10B981" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routeText}>{item.pickup_location}</Text>
+              <Text style={styles.routeSub}>
+                {item.pickup_date} • {item.pickup_time}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.routeLine} />
+
+          <View style={styles.routeStop}>
+            <Ionicons name="location" size={18} color="#10B981" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.routeText}>{item.dropoff_location}</Text>
+              <Text style={styles.routeSub}>
+                {item.dropoff_date || "Scheduled"} • {item.dropoff_time || "TBD"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.infoGrid}>
+          <InfoBox icon="leaf-outline" label="Commodity" value={item.commodity} />
+          <InfoBox icon="car-outline" label="Equipment" value={item.equipment_type} />
+          <InfoBox
+            icon="scale-outline"
+            label="Weight"
+            value={`${Number(item.weight_lbs || 0).toLocaleString()} lbs`}
+          />
+          <InfoBox
+            icon="speedometer-outline"
+            label="Miles"
+            value={`${Number(item.distance_miles || 0).toFixed(0)} mi`}
+          />
+        </View>
+
+        <View style={styles.rateSummary}>
+          <Text style={styles.rateSummaryLabel}>Rate Per Mile</Text>
+          <Text style={styles.rateSummaryValue}>${ratePerMile(item).toFixed(2)} / mi</Text>
+        </View>
+
+        {!!item.notes && (
+          <View style={styles.notesBox}>
+            <Text style={styles.notesLabel}>Notes</Text>
+            <Text style={styles.notesText}>{item.notes}</Text>
+          </View>
+        )}
+
+        {item.status === "available" && (
+          <TouchableOpacity
+            style={selected ? styles.unselectButton : styles.selectButton}
+            onPress={() => toggleSelect(item)}
+          >
+            <Ionicons
+              name={selected ? "remove-circle-outline" : "add-circle-outline"}
+              size={18}
+              color="#FFFFFF"
+            />
+            <Text style={styles.actionButtonText}>
+              {selected ? "Remove From Batch" : "Select For Batch"}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          style={[
+            styles.actionButton,
+            item.status === "delivered" && styles.disabledButton,
+          ]}
+          onPress={() => handleLoadAction(item)}
+          disabled={item.status === "delivered"}
+        >
+          <Ionicons name={statusIcon(item.status)} size={18} color="#FFFFFF" />
+          <Text style={styles.actionButtonText}>{getButtonLabel(item.status)}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.kicker}>Farm2Home Freight</Text>
+          <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
           <Text style={styles.title}>Live Load Board</Text>
           <Text style={styles.subtitle}>
             Select one or multiple nearby loads traveling through the same area.
@@ -527,34 +715,83 @@ export default function FreightBoardScreen() {
         </View>
 
         <TouchableOpacity style={styles.postButton} onPress={goToPostFreight}>
-          <Text style={styles.postButtonText}>Post Freight</Text>
+          <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.postButtonText}>Post</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.searchContainer}>
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Search freight..."
-          placeholderTextColor="#7b8794"
-          style={styles.searchInput}
-        />
+      <View style={styles.navRow}>
+        <TouchableOpacity
+          style={styles.navButton}
+          onPress={() => router.push("/freight/dashboard" as any)}
+        >
+          <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.navText}>Dashboard</Text>
+        </TouchableOpacity>
 
-        <TextInput
-          value={maxMiles}
-          onChangeText={setMaxMiles}
-          placeholder="Max miles willing to travel"
-          placeholderTextColor="#7b8794"
-          keyboardType="numeric"
-          style={styles.searchInput}
-        />
+        <TouchableOpacity
+          style={styles.navButtonOutline}
+          onPress={() => router.push("/freight/profile" as any)}
+        >
+          <Ionicons
+            name="business-outline"
+            size={18}
+            color={freightTheme.colors.primary}
+          />
+          <Text style={styles.navTextOutline}>Profile</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{availableCount}</Text>
+          <Text style={styles.summaryLabel}>Available</Text>
+        </View>
+
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{activeCount}</Text>
+          <Text style={styles.summaryLabel}>Active</Text>
+        </View>
+
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{filteredLoads.length}</Text>
+          <Text style={styles.summaryLabel}>Visible</Text>
+        </View>
+      </View>
+
+      <View style={styles.searchContainer}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={20} color="#10B981" />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search freight, city, farmer, equipment..."
+            placeholderTextColor="#94A3B8"
+            style={styles.searchInput}
+          />
+        </View>
+
+        <View style={styles.searchBox}>
+          <Ionicons name="speedometer-outline" size={20} color="#10B981" />
+          <TextInput
+            value={maxMiles}
+            onChangeText={setMaxMiles}
+            placeholder="Max miles willing to travel"
+            placeholderTextColor="#94A3B8"
+            keyboardType="numeric"
+            style={styles.searchInput}
+          />
+        </View>
       </View>
 
       {selectedLoads.length > 0 && (
         <View style={styles.batchBar}>
-          <Text style={styles.batchTitle}>
-            Selected: {selectedLoads.length} loads
-          </Text>
+          <View style={styles.batchHeader}>
+            <Ionicons name="layers-outline" size={22} color="#BBF7D0" />
+            <Text style={styles.batchTitle}>
+              Selected: {selectedLoads.length} loads
+            </Text>
+          </View>
 
           <Text style={styles.batchText}>
             Total Rate: ${selectedTotalRate.toFixed(2)} · Total Miles:{" "}
@@ -562,11 +799,17 @@ export default function FreightBoardScreen() {
           </Text>
 
           <View style={styles.batchButtons}>
-            <TouchableOpacity style={styles.batchAcceptButton} onPress={acceptSelectedLoads}>
+            <TouchableOpacity
+              style={styles.batchAcceptButton}
+              onPress={acceptSelectedLoads}
+            >
               <Text style={styles.batchButtonText}>Accept Selected Loads</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.batchClearButton} onPress={() => setSelectedIds([])}>
+            <TouchableOpacity
+              style={styles.batchClearButton}
+              onPress={() => setSelectedIds([])}
+            >
               <Text style={styles.batchButtonText}>Clear</Text>
             </TouchableOpacity>
           </View>
@@ -578,275 +821,466 @@ export default function FreightBoardScreen() {
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => {
-          const selected = selectedIds.includes(item.id);
-
-          return (
-            <View style={[styles.card, selected && styles.selectedCard]}>
-              <View style={styles.cardTop}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.loadTitle}>{item.title}</Text>
-                  <Text style={styles.farmName}>{item.farmer_name}</Text>
-                </View>
-
-                <View style={styles.rateBox}>
-                  <Text style={styles.rate}>${item.rate}</Text>
-                  <Text style={styles.rateLabel}>Rate</Text>
-                </View>
-              </View>
-
-              <View style={styles.statusPill}>
-                <Text style={styles.statusPillText}>
-                  {item.status.replace(/_/g, " ")}
-                </Text>
-              </View>
-
-              <View style={styles.routeContainer}>
-                <Text style={styles.routeLabel}>Pickup</Text>
-                <Text style={styles.routeText}>{item.pickup_location}</Text>
-                <Text style={styles.routeSub}>
-                  {item.pickup_date} • {item.pickup_time}
-                </Text>
-
-                <View style={styles.divider} />
-
-                <Text style={styles.routeLabel}>Dropoff</Text>
-                <Text style={styles.routeText}>{item.dropoff_location}</Text>
-                <Text style={styles.routeSub}>
-                  {item.dropoff_date || "Scheduled"} • {item.dropoff_time || "TBD"}
-                </Text>
-              </View>
-
-              <View style={styles.infoGrid}>
-                <View style={styles.infoBox}>
-                  <Text style={styles.infoLabel}>Commodity</Text>
-                  <Text style={styles.infoText}>{item.commodity}</Text>
-                </View>
-
-                <View style={styles.infoBox}>
-                  <Text style={styles.infoLabel}>Equipment</Text>
-                  <Text style={styles.infoText}>{item.equipment_type}</Text>
-                </View>
-
-                <View style={styles.infoBox}>
-                  <Text style={styles.infoLabel}>Weight</Text>
-                  <Text style={styles.infoText}>{item.weight_lbs || 0} lbs</Text>
-                </View>
-
-                <View style={styles.infoBox}>
-                  <Text style={styles.infoLabel}>Miles</Text>
-                  <Text style={styles.infoText}>{item.distance_miles || 0}</Text>
-                </View>
-              </View>
-
-              {item.status === "available" && (
-                <TouchableOpacity
-                  style={selected ? styles.unselectButton : styles.selectButton}
-                  onPress={() => toggleSelect(item)}
-                >
-                  <Text style={styles.actionButtonText}>
-                    {selected ? "Remove From Batch" : "Select For Batch"}
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  item.status === "delivered" && styles.disabledButton,
-                ]}
-                onPress={() => handleLoadAction(item)}
-                disabled={item.status === "delivered"}
-              >
-                <Text style={styles.actionButtonText}>
-                  {getButtonLabel(item.status)}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          );
-        }}
+        renderItem={renderLoadCard}
+        ListEmptyComponent={
+          <View style={styles.emptyCard}>
+            <Ionicons name="cube-outline" size={38} color="#10B981" />
+            <Text style={styles.emptyTitle}>No freight loads found.</Text>
+            <Text style={styles.emptyText}>
+              Adjust your filters or refresh the board to check for new loads.
+            </Text>
+          </View>
+        }
       />
     </SafeAreaView>
   );
 }
 
+function InfoBox({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.infoBox}>
+      <Ionicons name={icon} size={17} color="#10B981" />
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoText}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
+  centered: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
     fontWeight: "700",
-    color: "#334155",
+    color: freightTheme.colors.mutedText,
     textAlign: "center",
   },
   lockTitle: {
-    color: "#991B1B",
+    color: "#DC2626",
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
-  container: { flex: 1, backgroundColor: "#f5f7f5" },
+  container: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
   header: {
-    backgroundColor: "#163b2b",
+    backgroundColor: "#020617",
     paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 18,
+    paddingTop: 22,
+    paddingBottom: 24,
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
   },
-  kicker: { color: "#9fe6b8", fontSize: 12, fontWeight: "900" },
-  title: { color: "#ffffff", fontSize: 26, fontWeight: "900", marginTop: 4 },
-  subtitle: { color: "#d7f5df", fontSize: 13, marginTop: 4 },
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 34,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  subtitle: {
+    color: "#CBD5E1",
+    fontSize: 15,
+    marginTop: 8,
+    lineHeight: 22,
+    fontWeight: "700",
+  },
   postButton: {
-    backgroundColor: "#f8c537",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  postButtonText: { fontWeight: "900", color: "#000000" },
-  searchContainer: { padding: 14, gap: 10 },
-  searchInput: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
+    backgroundColor: freightTheme.colors.primary,
     paddingHorizontal: 14,
     paddingVertical: 12,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  postButtonText: {
+    fontWeight: "900",
+    color: "#FFFFFF",
+  },
+  navRow: {
+    flexDirection: "row",
+    gap: 10,
+    padding: 18,
+  },
+  navButton: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.primary,
+    padding: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  navButtonOutline: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.card,
     borderWidth: 1,
-    borderColor: "#dce3df",
+    borderColor: freightTheme.colors.primary,
+    padding: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  navText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  navTextOutline: {
+    color: freightTheme.colors.primary,
+    fontWeight: "900",
+  },
+  summaryRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 14,
+  },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.card,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    borderRadius: 18,
+    padding: 14,
+    alignItems: "center",
+  },
+  summaryValue: {
+    color: freightTheme.colors.primary,
+    fontSize: 25,
+    fontWeight: "900",
+  },
+  summaryLabel: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "800",
+    marginTop: 4,
+    textAlign: "center",
+  },
+  searchContainer: {
+    paddingHorizontal: 18,
+    gap: 10,
+    marginBottom: 14,
+  },
+  searchBox: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: freightTheme.colors.text,
+    fontWeight: "700",
+    paddingVertical: 13,
   },
   batchBar: {
-    backgroundColor: "#0F766E",
-    marginHorizontal: 14,
-    marginBottom: 12,
-    borderRadius: 16,
-    padding: 14,
+    backgroundColor: "#064E3B",
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#10B981",
   },
-  batchTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 17 },
-  batchText: { color: "#CCFBF1", fontWeight: "800", marginTop: 5 },
-  batchButtons: { flexDirection: "row", gap: 10, marginTop: 12 },
+  batchHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  batchTitle: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 18,
+  },
+  batchText: {
+    color: "#BBF7D0",
+    fontWeight: "800",
+    marginTop: 8,
+  },
+  batchButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
   batchAcceptButton: {
     flex: 1,
-    backgroundColor: "#22C55E",
-    padding: 12,
-    borderRadius: 12,
+    backgroundColor: "#10B981",
+    padding: 13,
+    borderRadius: 14,
     alignItems: "center",
   },
   batchClearButton: {
     backgroundColor: "#DC2626",
-    padding: 12,
-    borderRadius: 12,
+    padding: 13,
+    borderRadius: 14,
     alignItems: "center",
   },
-  batchButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  listContent: { paddingHorizontal: 14, paddingBottom: 50 },
+  batchButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  listContent: {
+    paddingHorizontal: 18,
+    paddingBottom: 90,
+  },
   card: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#dde5e0",
+    borderColor: freightTheme.colors.border,
   },
   selectedCard: {
-    borderColor: "#0F766E",
-    borderWidth: 3,
-    backgroundColor: "#ECFDF5",
+    borderColor: "#10B981",
+    borderWidth: 2,
+    backgroundColor: "#052E2B",
   },
-  cardTop: { flexDirection: "row", marginBottom: 12, gap: 12 },
-  loadTitle: { fontSize: 18, fontWeight: "900", color: "#102417" },
-  farmName: { marginTop: 4, color: "#5a6c62", fontWeight: "700" },
+  cardTop: {
+    flexDirection: "row",
+    marginBottom: 12,
+    gap: 12,
+  },
+  loadTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: freightTheme.colors.text,
+  },
+  farmName: {
+    marginTop: 4,
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+  },
   rateBox: {
-    backgroundColor: "#e7f7ec",
+    backgroundColor: "#064E3B",
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#10B981",
   },
-  rate: { color: "#14703b", fontWeight: "900", fontSize: 20 },
-  rateLabel: { color: "#557062", fontSize: 11, fontWeight: "800" },
+  rate: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 20,
+  },
+  rateLabel: {
+    color: "#BBF7D0",
+    fontSize: 11,
+    fontWeight: "800",
+  },
   statusPill: {
     alignSelf: "flex-start",
-    backgroundColor: "#1f6f43",
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 999,
     marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
   },
   statusPillText: {
-    color: "#ffffff",
+    color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "capitalize",
   },
   routeContainer: {
-    backgroundColor: "#f8faf8",
-    borderRadius: 14,
-    padding: 12,
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 16,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "#e0e8e3",
+    borderColor: freightTheme.colors.border,
     marginBottom: 12,
+  },
+  routeStop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  routeLine: {
+    width: 2,
+    height: 24,
+    backgroundColor: freightTheme.colors.border,
+    marginLeft: 8,
+    marginVertical: 8,
   },
   routeLabel: {
     fontSize: 11,
-    color: "#64748b",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   routeText: {
-    fontSize: 14,
-    color: "#23352b",
+    fontSize: 15,
+    color: freightTheme.colors.text,
     marginTop: 3,
-    fontWeight: "800",
+    fontWeight: "900",
+    lineHeight: 20,
   },
   routeSub: {
     fontSize: 12,
-    color: "#52625a",
+    color: freightTheme.colors.mutedText,
     marginTop: 3,
-    fontWeight: "600",
+    fontWeight: "700",
   },
-  divider: { height: 1, backgroundColor: "#dce3df", marginVertical: 10 },
-  infoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  infoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   infoBox: {
     flexBasis: "48%",
     flexGrow: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: freightTheme.colors.surface,
     borderWidth: 1,
-    borderColor: "#e2e8e4",
-    borderRadius: 12,
-    padding: 10,
+    borderColor: freightTheme.colors.border,
+    borderRadius: 14,
+    padding: 12,
   },
   infoLabel: {
     fontSize: 11,
-    color: "#64748b",
+    color: freightTheme.colors.mutedText,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    marginTop: 6,
+  },
+  infoText: {
+    fontSize: 13,
+    color: freightTheme.colors.text,
+    fontWeight: "800",
+    marginTop: 4,
+    lineHeight: 19,
+  },
+  rateSummary: {
+    backgroundColor: "#0F172A",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#1E293B",
+    padding: 13,
+    marginTop: 12,
+  },
+  rateSummaryLabel: {
+    color: "#94A3B8",
+    fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  infoText: { fontSize: 13, color: "#102417", fontWeight: "800", marginTop: 4 },
+  rateSummaryValue: {
+    color: freightTheme.colors.primary,
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  notesBox: {
+    backgroundColor: "#0F172A",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#1E293B",
+    padding: 13,
+    marginTop: 12,
+  },
+  notesLabel: {
+    color: freightTheme.colors.primary,
+    fontWeight: "900",
+    marginBottom: 4,
+  },
+  notesText: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 20,
+  },
   selectButton: {
     backgroundColor: "#2563EB",
     paddingVertical: 13,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 14,
+    flexDirection: "row",
+    gap: 8,
   },
   unselectButton: {
     backgroundColor: "#DC2626",
     paddingVertical: 13,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 14,
+    flexDirection: "row",
+    gap: 8,
   },
   actionButton: {
-    backgroundColor: "#1f6f43",
+    backgroundColor: freightTheme.colors.primary,
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
   },
-  disabledButton: { backgroundColor: "#94a3b8" },
+  disabledButton: {
+    backgroundColor: "#64748B",
+  },
   actionButtonText: {
-    color: "#ffffff",
+    color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 14,
+  },
+  emptyCard: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 22,
+    padding: 24,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    marginTop: 20,
+  },
+  emptyTitle: {
+    color: freightTheme.colors.text,
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 10,
+  },
+  emptyText: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 8,
+    lineHeight: 22,
   },
 });

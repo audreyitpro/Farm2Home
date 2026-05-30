@@ -1,8 +1,12 @@
+// app/admin/accounts.tsx
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   Modal,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -11,6 +15,9 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+
+import freightTheme from "../styles/freightTheme";
 
 type AccountRole = "farmer" | "customer" | "freight" | "driver";
 
@@ -90,7 +97,9 @@ function readName(item: any, role: AccountRole) {
 function normalizeAccount(item: any, role: AccountRole): AccountRecord | null {
   if (!item) return null;
 
-  const id = clean(item.id || item.farmerId || item.driverId || item.customerId || item.freightId);
+  const id = clean(
+    item.id || item.farmerId || item.driverId || item.customerId || item.freightId
+  );
 
   if (!id && !item.email && !item.username) return null;
 
@@ -219,6 +228,17 @@ export default function AdminAccountsScreen() {
 
     setAccounts(merged);
   }
+
+  const counts = useMemo(() => {
+    return {
+      total: accounts.length,
+      farmers: accounts.filter((item) => item.role === "farmer").length,
+      customers: accounts.filter((item) => item.role === "customer").length,
+      freight: accounts.filter((item) => item.role === "freight").length,
+      drivers: accounts.filter((item) => item.role === "driver").length,
+      active: accounts.filter((item) => item.accountActive).length,
+    };
+  }, [accounts]);
 
   const filteredAccounts = useMemo(() => {
     const q = normalize(search);
@@ -377,6 +397,41 @@ export default function AdminAccountsScreen() {
     await loadAccounts();
   }
 
+  async function suspendAccount(account: AccountRecord) {
+    Alert.alert(
+      "Suspend Account",
+      `Suspend ${account.name}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Suspend",
+          style: "destructive",
+          onPress: async () => {
+            const updated: AccountRecord = {
+              ...account,
+              accountActive: false,
+              membershipStatus: "Suspended",
+              subscriptionStatus: "suspended",
+              updatedAt: new Date().toISOString(),
+              raw: {
+                ...(account.raw || {}),
+                accountActive: false,
+                membershipStatus: "Suspended",
+                subscriptionStatus: "suspended",
+                status: "SUSPENDED",
+                updatedAt: new Date().toISOString(),
+              },
+            };
+
+            await updateAccountEverywhere(updated);
+            Alert.alert("Suspended", "Account was suspended.");
+            await loadAccounts();
+          },
+        },
+      ]
+    );
+  }
+
   async function createManualAccount() {
     if (!newName.trim() || !newEmail.trim() || !newUsername.trim() || !newPassword.trim()) {
       Alert.alert("Missing Info", "Name, email, username, and password are required.");
@@ -447,251 +502,452 @@ export default function AdminAccountsScreen() {
     return "Driver";
   }
 
+  function roleIcon(role: AccountRole): keyof typeof Ionicons.glyphMap {
+    if (role === "farmer") return "leaf-outline";
+    if (role === "customer") return "person-outline";
+    if (role === "freight") return "trail-sign-outline";
+    return "car-outline";
+  }
+
+  function statusColor(account: AccountRecord) {
+    if (!account.accountActive) return "#F59E0B";
+    if (account.approved) return "#10B981";
+    return "#2563EB";
+  }
+
+  function statusText(account: AccountRecord) {
+    if (!account.accountActive) return "Pending";
+    if (account.approved) return "Active";
+    return "Open";
+  }
+
+  function FilterChip({
+    value,
+    label,
+  }: {
+    value: "all" | AccountRole;
+    label: string;
+  }) {
+    const active = roleFilter === value;
+
+    return (
+      <TouchableOpacity
+        style={[styles.filterChip, active && styles.filterChipActive]}
+        onPress={() => setRoleFilter(value)}
+      >
+        <Text style={[styles.filterText, active && styles.filterTextActive]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  }
+
   return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <Text style={styles.header}>Admin Accounts</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-      <Text style={styles.subheader}>
-        View usernames/passwords, reset login credentials, approve farmers, and
-        manually create accounts.
-      </Text>
-
-      <View style={styles.topRow}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.push("/admin/dashboard" as any)}
-        >
-          <Text style={styles.backText}>Back Dashboard</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.createButton}
-          onPress={() => setCreateVisible(true)}
-        >
-          <Text style={styles.createText}>Create Account</Text>
-        </TouchableOpacity>
-      </View>
-
-      <TextInput
-        style={styles.searchInput}
-        placeholder="Search name, email, username..."
-        value={search}
-        onChangeText={setSearch}
-        autoCapitalize="none"
-      />
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        {(["all", "farmer", "customer", "freight", "driver"] as const).map(
-          (role) => (
-            <TouchableOpacity
-              key={role}
-              style={[
-                styles.filterChip,
-                roleFilter === role && styles.filterChipActive,
-              ]}
-              onPress={() => setRoleFilter(role)}
-            >
-              <Text
-                style={[
-                  styles.filterText,
-                  roleFilter === role && styles.filterTextActive,
-                ]}
-              >
-                {role === "all" ? "All" : roleLabel(role)}
-              </Text>
-            </TouchableOpacity>
-          )
-        )}
-      </ScrollView>
-
-      {filteredAccounts.map((account) => (
-        <View key={`${account.role}_${account.id}_${account.email}`} style={styles.card}>
-          <View style={styles.cardTop}>
+      <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+        <View style={styles.hero}>
+          <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.accountName}>{account.name}</Text>
-              <Text style={styles.accountRole}>{roleLabel(account.role)}</Text>
-            </View>
-
-            <View
-              style={[
-                styles.statusBadge,
-                account.accountActive ? styles.activeBadge : styles.pendingBadge,
-              ]}
-            >
-              <Text style={styles.statusText}>
-                {account.accountActive ? "Active" : "Pending"}
+              <Text style={styles.kicker}>Farm2Home Admin Portal</Text>
+              <Text style={styles.header}>Admin Accounts</Text>
+              <Text style={styles.subheader}>
+                View usernames and passwords, reset login credentials, approve
+                farmers, unlock stores, suspend accounts, and manually create
+                accounts.
               </Text>
             </View>
-          </View>
 
-          <Text style={styles.infoText}>Business: {account.businessName || "N/A"}</Text>
-          <Text style={styles.infoText}>Email: {account.email || "N/A"}</Text>
-          <Text style={styles.loginText}>Username: {account.username || "NOT SAVED"}</Text>
-          <Text style={styles.loginText}>Password: {account.password || "NOT SAVED"}</Text>
-
-          <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.resetButton} onPress={() => openEdit(account)}>
-              <Text style={styles.actionText}>Reset Login</Text>
-            </TouchableOpacity>
-
-            {account.role === "farmer" && (
-              <TouchableOpacity
-                style={styles.unlockButton}
-                onPress={() => approveAndUnlock(account)}
-              >
-                <Text style={styles.actionText}>Approve/Unlock</Text>
-              </TouchableOpacity>
-            )}
+            <View style={styles.heroIcon}>
+              <Ionicons name="people-outline" size={34} color="#FFFFFF" />
+            </View>
           </View>
         </View>
-      ))}
 
-      <Modal visible={editVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Reset Login</Text>
+        <View style={styles.topRow}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.push("/admin/dashboard" as any)}
+          >
+            <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.backText}>Dashboard</Text>
+          </TouchableOpacity>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Username"
-              value={editUsername}
-              onChangeText={setEditUsername}
-              autoCapitalize="none"
-            />
+          <TouchableOpacity
+            style={styles.createButton}
+            onPress={() => setCreateVisible(true)}
+          >
+            <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.createText}>Create Account</Text>
+          </TouchableOpacity>
+        </View>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              value={editPassword}
-              onChangeText={setEditPassword}
-            />
+        <View style={styles.metricsGrid}>
+          <MetricCard icon="people-outline" value={String(counts.total)} label="Total" accent />
+          <MetricCard icon="leaf-outline" value={String(counts.farmers)} label="Farmers" />
+          <MetricCard icon="person-outline" value={String(counts.customers)} label="Customers" />
+          <MetricCard icon="trail-sign-outline" value={String(counts.freight)} label="Freight" />
+          <MetricCard icon="car-outline" value={String(counts.drivers)} label="Drivers" />
+          <MetricCard icon="checkmark-done-outline" value={String(counts.active)} label="Active" accent />
+        </View>
 
-            <TouchableOpacity style={styles.saveButton} onPress={saveReset}>
-              <Text style={styles.saveText}>Save Reset</Text>
-            </TouchableOpacity>
+        <View style={styles.searchCard}>
+          <Ionicons name="search-outline" size={20} color="#10B981" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search name, business, email, username..."
+            placeholderTextColor="#94A3B8"
+            value={search}
+            onChangeText={setSearch}
+            autoCapitalize="none"
+          />
+        </View>
 
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => setEditVisible(false)}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+        >
+          <FilterChip value="all" label="All" />
+          <FilterChip value="farmer" label="Farmers" />
+          <FilterChip value="customer" label="Customers" />
+          <FilterChip value="freight" label="Freight" />
+          <FilterChip value="driver" label="Drivers" />
+        </ScrollView>
+
+        <Text style={styles.sectionTitle}>Accounts</Text>
+
+        {filteredAccounts.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Ionicons name="file-tray-outline" size={38} color="#10B981" />
+            <Text style={styles.emptyTitle}>No accounts found.</Text>
+            <Text style={styles.emptyText}>
+              Try changing the filter or creating a manual account.
+            </Text>
+          </View>
+        ) : (
+          filteredAccounts.map((account) => (
+            <View
+              key={`${account.role}_${account.id}_${account.email}`}
+              style={styles.card}
             >
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+              <View style={styles.cardTop}>
+                <View style={styles.roleIcon}>
+                  <Ionicons name={roleIcon(account.role)} size={22} color="#10B981" />
+                </View>
 
-      <Modal visible={createVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <ScrollView>
-              <Text style={styles.modalTitle}>Create Manual Account</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.accountName}>{account.name}</Text>
+                  <Text style={styles.accountRole}>{roleLabel(account.role)}</Text>
+                </View>
 
-              <ScrollView horizontal>
-                {(["farmer", "customer", "freight", "driver"] as AccountRole[]).map(
-                  (role) => (
-                    <TouchableOpacity
-                      key={role}
-                      style={[
-                        styles.filterChip,
-                        newRole === role && styles.filterChipActive,
-                      ]}
-                      onPress={() => setNewRole(role)}
-                    >
-                      <Text
-                        style={[
-                          styles.filterText,
-                          newRole === role && styles.filterTextActive,
-                        ]}
-                      >
-                        {roleLabel(role)}
-                      </Text>
-                    </TouchableOpacity>
-                  )
+                <View
+                  style={[
+                    styles.statusBadge,
+                    { backgroundColor: statusColor(account) },
+                  ]}
+                >
+                  <Text style={styles.statusText}>{statusText(account)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.infoBox}>
+                <InfoLine label="Business" value={account.businessName || "N/A"} />
+                <InfoLine label="Email" value={account.email || "N/A"} />
+                <InfoLine label="Username" value={account.username || "NOT SAVED"} strong />
+                <InfoLine label="Password" value={account.password || "NOT SAVED"} strong />
+                <InfoLine
+                  label="Membership"
+                  value={account.membershipStatus || account.subscriptionStatus || "N/A"}
+                />
+                {account.role === "farmer" && (
+                  <InfoLine
+                    label="Store"
+                    value={account.storeUnlocked ? "Unlocked" : "Locked"}
+                  />
                 )}
+              </View>
+
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={styles.resetButton}
+                  onPress={() => openEdit(account)}
+                >
+                  <Ionicons name="key-outline" size={17} color="#FFFFFF" />
+                  <Text style={styles.actionText}>Reset Login</Text>
+                </TouchableOpacity>
+
+                {account.role === "farmer" && (
+                  <TouchableOpacity
+                    style={styles.unlockButton}
+                    onPress={() => approveAndUnlock(account)}
+                  >
+                    <Ionicons name="lock-open-outline" size={17} color="#FFFFFF" />
+                    <Text style={styles.actionText}>Approve</Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={styles.suspendButton}
+                  onPress={() => suspendAccount(account)}
+                >
+                  <Ionicons name="pause-circle-outline" size={17} color="#FFFFFF" />
+                  <Text style={styles.actionText}>Suspend</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
+        )}
+
+        <Modal visible={editVisible} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                <View style={styles.modalIcon}>
+                  <Ionicons name="key-outline" size={28} color="#FFFFFF" />
+                </View>
+
+                <Text style={styles.modalTitle}>Reset Login</Text>
+                <Text style={styles.modalSubtitle}>
+                  Update username and password for this account.
+                </Text>
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Username"
+                  placeholderTextColor="#94A3B8"
+                  value={editUsername}
+                  onChangeText={setEditUsername}
+                  autoCapitalize="none"
+                />
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#94A3B8"
+                  value={editPassword}
+                  onChangeText={setEditPassword}
+                />
+
+                <TouchableOpacity style={styles.saveButton} onPress={saveReset}>
+                  <Text style={styles.saveText}>Save Reset</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => setEditVisible(false)}
+                >
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
               </ScrollView>
-
-              <TextInput
-                style={styles.input}
-                placeholder="Name / Owner / Contact"
-                value={newName}
-                onChangeText={setNewName}
-              />
-
-              <TextInput
-                style={styles.input}
-                placeholder="Business / Farm / Company Name"
-                value={newBusinessName}
-                onChangeText={setNewBusinessName}
-              />
-
-              <TextInput
-                style={styles.input}
-                placeholder="Email"
-                value={newEmail}
-                onChangeText={setNewEmail}
-                autoCapitalize="none"
-              />
-
-              <TextInput
-                style={styles.input}
-                placeholder="Username"
-                value={newUsername}
-                onChangeText={setNewUsername}
-                autoCapitalize="none"
-              />
-
-              <TextInput
-                style={styles.input}
-                placeholder="Password"
-                value={newPassword}
-                onChangeText={setNewPassword}
-              />
-
-              <TouchableOpacity style={styles.saveButton} onPress={createManualAccount}>
-                <Text style={styles.saveText}>Create Account</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setCreateVisible(false)}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-            </ScrollView>
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      <View style={{ height: 40 }} />
-    </ScrollView>
+        <Modal visible={createVisible} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                <View style={styles.modalIcon}>
+                  <Ionicons name="person-add-outline" size={28} color="#FFFFFF" />
+                </View>
+
+                <Text style={styles.modalTitle}>Create Manual Account</Text>
+                <Text style={styles.modalSubtitle}>
+                  Create and activate a Farm2Home account manually.
+                </Text>
+
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {(["farmer", "customer", "freight", "driver"] as AccountRole[]).map(
+                    (role) => (
+                      <TouchableOpacity
+                        key={role}
+                        style={[
+                          styles.filterChip,
+                          newRole === role && styles.filterChipActive,
+                        ]}
+                        onPress={() => setNewRole(role)}
+                      >
+                        <Text
+                          style={[
+                            styles.filterText,
+                            newRole === role && styles.filterTextActive,
+                          ]}
+                        >
+                          {roleLabel(role)}
+                        </Text>
+                      </TouchableOpacity>
+                    )
+                  )}
+                </ScrollView>
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Name / Owner / Contact"
+                  placeholderTextColor="#94A3B8"
+                  value={newName}
+                  onChangeText={setNewName}
+                />
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Business / Farm / Company Name"
+                  placeholderTextColor="#94A3B8"
+                  value={newBusinessName}
+                  onChangeText={setNewBusinessName}
+                />
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Email"
+                  placeholderTextColor="#94A3B8"
+                  value={newEmail}
+                  onChangeText={setNewEmail}
+                  autoCapitalize="none"
+                />
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Username"
+                  placeholderTextColor="#94A3B8"
+                  value={newUsername}
+                  onChangeText={setNewUsername}
+                  autoCapitalize="none"
+                />
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#94A3B8"
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                />
+
+                <TouchableOpacity style={styles.saveButton} onPress={createManualAccount}>
+                  <Text style={styles.saveText}>Create Account</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => setCreateVisible(false)}
+                >
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function MetricCard({
+  icon,
+  value,
+  label,
+  accent = false,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  value: string;
+  label: string;
+  accent?: boolean;
+}) {
+  return (
+    <View style={[styles.metricCard, accent && styles.metricCardAccent]}>
+      <Ionicons
+        name={icon}
+        size={22}
+        color={accent ? "#BBF7D0" : freightTheme.colors.primary}
+      />
+      <Text style={[styles.metricValue, accent && styles.metricValueAccent]}>
+        {value}
+      </Text>
+      <Text style={[styles.metricLabel, accent && styles.metricLabelAccent]}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+function InfoLine({
+  label,
+  value,
+  strong = false,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+}) {
+  return (
+    <View style={styles.infoLine}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={[styles.infoValue, strong && styles.infoValueStrong]}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
   page: {
     flex: 1,
-    backgroundColor: "#F5F7EF",
+    backgroundColor: freightTheme.colors.background,
   },
   content: {
-    padding: 18,
-    paddingBottom: 60,
+    paddingBottom: 90,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: "#064E3B",
+    borderWidth: 1,
+    borderColor: "#10B981",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 8,
   },
   header: {
-    fontSize: 34,
+    fontSize: 36,
     fontWeight: "900",
-    color: "#14532D",
+    color: "#FFFFFF",
   },
   subheader: {
-    color: "#64745E",
+    color: "#CBD5E1",
     fontWeight: "700",
     marginTop: 8,
-    marginBottom: 18,
-    lineHeight: 22,
+    lineHeight: 23,
   },
   topRow: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 14,
+    padding: 18,
   },
   backButton: {
     flex: 1,
@@ -699,6 +955,9 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   backText: {
     color: "#FFFFFF",
@@ -706,28 +965,86 @@ const styles = StyleSheet.create({
   },
   createButton: {
     flex: 1,
-    backgroundColor: "#047857",
+    backgroundColor: freightTheme.colors.primary,
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   createText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
-  searchInput: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 16,
+  metricsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+  },
+  metricCard: {
+    width: "31%",
+    minWidth: 100,
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 18,
     padding: 14,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    alignItems: "center",
+  },
+  metricCardAccent: {
+    backgroundColor: "#064E3B",
+    borderColor: "#064E3B",
+  },
+  metricValue: {
+    color: freightTheme.colors.primary,
+    fontSize: 24,
+    fontWeight: "900",
+    marginTop: 8,
+  },
+  metricValueAccent: {
+    color: "#FFFFFF",
+  },
+  metricLabel: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "800",
+    marginTop: 6,
+    textAlign: "center",
+    fontSize: 12,
+  },
+  metricLabelAccent: {
+    color: "#BBF7D0",
+  },
+  searchCard: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    marginHorizontal: 18,
     marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: freightTheme.colors.text,
     fontWeight: "700",
+    paddingVertical: 12,
+  },
+  filterRow: {
+    paddingHorizontal: 18,
+    gap: 8,
+    paddingBottom: 16,
   },
   filterChip: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: freightTheme.colors.card,
     borderWidth: 1,
-    borderColor: "#047857",
+    borderColor: freightTheme.colors.primary,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,
@@ -735,36 +1052,74 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   filterChipActive: {
-    backgroundColor: "#047857",
+    backgroundColor: freightTheme.colors.primary,
   },
   filterText: {
-    color: "#047857",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
   },
   filterTextActive: {
     color: "#FFFFFF",
   },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 16,
+  sectionTitle: {
+    color: freightTheme.colors.text,
+    fontSize: 24,
+    fontWeight: "900",
+    paddingHorizontal: 18,
+    marginBottom: 12,
+  },
+  emptyCard: {
+    backgroundColor: freightTheme.colors.card,
+    marginHorizontal: 18,
+    padding: 24,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#DDE7DB",
+    borderColor: freightTheme.colors.border,
+    alignItems: "center",
+  },
+  emptyTitle: {
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+    fontSize: 20,
+    marginTop: 10,
+  },
+  emptyText: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 6,
+    lineHeight: 22,
+  },
+  card: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    marginHorizontal: 18,
     marginBottom: 14,
   },
   cardTop: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 10,
-    marginBottom: 10,
+    marginBottom: 12,
+  },
+  roleIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#0F172A",
+    alignItems: "center",
+    justifyContent: "center",
   },
   accountName: {
     fontSize: 20,
     fontWeight: "900",
-    color: "#14532D",
+    color: freightTheme.colors.text,
   },
   accountRole: {
-    color: "#64745E",
+    color: freightTheme.colors.mutedText,
     fontWeight: "900",
     marginTop: 4,
   },
@@ -773,45 +1128,71 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 999,
   },
-  activeBadge: {
-    backgroundColor: "#047857",
-  },
-  pendingBadge: {
-    backgroundColor: "#B45309",
-  },
   statusText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 12,
   },
-  infoText: {
-    color: "#374151",
-    fontWeight: "700",
-    marginBottom: 5,
+  infoBox: {
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
   },
-  loginText: {
-    color: "#111827",
+  infoLine: {
+    marginBottom: 8,
+  },
+  infoLabel: {
+    color: freightTheme.colors.primary,
     fontWeight: "900",
-    marginBottom: 5,
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  infoValue: {
+    color: freightTheme.colors.text,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  infoValueStrong: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
   actionRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
-    marginTop: 12,
+    marginTop: 14,
   },
   resetButton: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: "#2563EB",
     padding: 13,
     borderRadius: 13,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
   unlockButton: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: "#047857",
     padding: 13,
     borderRadius: 13,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  suspendButton: {
+    flexGrow: 1,
+    backgroundColor: "#B45309",
+    padding: 13,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
   actionText: {
     color: "#FFFFFF",
@@ -819,34 +1200,54 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
+    backgroundColor: "rgba(0,0,0,0.68)",
     justifyContent: "center",
     padding: 20,
   },
   modalCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: freightTheme.colors.card,
     borderRadius: 24,
     padding: 20,
     maxHeight: "90%",
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  modalIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    marginBottom: 14,
   },
   modalTitle: {
-    fontSize: 24,
+    fontSize: 25,
     fontWeight: "900",
-    color: "#14532D",
-    marginBottom: 16,
+    color: freightTheme.colors.text,
+    marginBottom: 8,
     textAlign: "center",
   },
+  modalSubtitle: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: 16,
+  },
   input: {
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: "#CBD5E1",
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
     fontWeight: "700",
+    color: "#111827",
   },
   saveButton: {
-    backgroundColor: "#047857",
+    backgroundColor: freightTheme.colors.primary,
     padding: 15,
     borderRadius: 14,
     alignItems: "center",
@@ -861,7 +1262,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cancelText: {
-    color: "#B91C1C",
+    color: "#DC2626",
     fontWeight: "900",
   },
 });

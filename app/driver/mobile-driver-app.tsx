@@ -1,9 +1,14 @@
-import React, { useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
+  Platform,
+  RefreshControl,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -12,6 +17,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
@@ -26,8 +32,37 @@ type DriverStats = {
   earnings: number;
 };
 
+type DriverProfile = {
+  id: string;
+  driverId: string;
+  email?: string;
+  fullName?: string;
+  name?: string;
+  driverName?: string;
+  username?: string;
+  role: "driver";
+  accountActive: boolean;
+  membershipStatus: string;
+  subscriptionStatus: string;
+};
+
+const ACTIVE_STATUSES = [
+  "ACCEPTED",
+  "BOOKED",
+  "READY",
+  "EN_ROUTE_TO_PICKUP",
+  "ARRIVED_AT_PICKUP",
+  "PICKED_UP",
+  "IN_TRANSIT",
+  "EN_ROUTE_TO_DROPOFF",
+  "ARRIVED_AT_DROPOFF",
+];
+
+const OPEN_STATUSES = ["OPEN", "NEW", "AVAILABLE"];
+
 export default function MobileDriverApp() {
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [driverId, setDriverId] = useState("");
   const [driverName, setDriverName] = useState("Farm2Home Driver");
   const [loads, setLoads] = useState<DriverLoad[]>([]);
@@ -39,12 +74,16 @@ export default function MobileDriverApp() {
   });
 
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       loadDriverDashboard();
     }, [])
   );
 
-  async function getCurrentDriver() {
+  const activeDriverLoads = useMemo(() => {
+    return loads.filter((load) => ACTIVE_STATUSES.includes(normalizeStatus(load)));
+  }, [loads]);
+
+  async function getCurrentDriver(): Promise<DriverProfile | null> {
     const raw =
       (await AsyncStorage.getItem("currentDriver")) ||
       (await AsyncStorage.getItem("currentUser"));
@@ -56,10 +95,17 @@ export default function MobileDriverApp() {
 
       if (parsed?.role && parsed.role !== "driver") return null;
 
-      const driver = {
+      const stableId =
+        parsed.id ||
+        parsed.driverId ||
+        parsed.email ||
+        parsed.username ||
+        `driver_${Date.now()}`;
+
+      const driver: DriverProfile = {
         ...parsed,
-        id: parsed.id || parsed.driverId || parsed.email || `driver_${Date.now()}`,
-        driverId: parsed.driverId || parsed.id || parsed.email || `driver_${Date.now()}`,
+        id: stableId,
+        driverId: parsed.driverId || stableId,
         role: "driver",
         accountActive: parsed.accountActive !== false,
         membershipStatus: parsed.membershipStatus || "Active",
@@ -122,7 +168,7 @@ export default function MobileDriverApp() {
               !order.assignedDriverId &&
               !order.driverId &&
               !order.assignedFreightCarrierId &&
-              ["NEW", "OPEN", "AVAILABLE"].includes(status);
+              OPEN_STATUSES.includes(status);
 
             return assignedToMe || openForDriver;
           });
@@ -133,9 +179,10 @@ export default function MobileDriverApp() {
 
       const mappedBackendOrders: DriverLoad[] = backendOrders.map((order: any) => ({
         ...order,
+        id: order.id || order.orderId || order.loadId,
         status: order.fulfillmentStatus || order.status || "OPEN",
-        title: order.title || "Farm2Home Delivery Order",
-        commodity: order.commodity || "Farm2Home Groceries",
+        title: order.title || order.orderTitle || "Farm2Home Delivery Order",
+        commodity: order.commodity || order.itemsSummary || "Farm2Home Groceries",
         pickup_city:
           order.pickup_city ||
           order.pickupCity ||
@@ -147,6 +194,11 @@ export default function MobileDriverApp() {
           order.pickup_state ||
           order.pickupState ||
           order.deliveryInfo?.pickupState ||
+          "",
+        pickupAddress:
+          order.pickupAddress ||
+          order.deliveryInfo?.pickupAddress ||
+          order.deliveryInfo?.farmAddress ||
           "",
         delivery_city:
           order.delivery_city ||
@@ -161,37 +213,44 @@ export default function MobileDriverApp() {
           order.deliveryState ||
           order.deliveryInfo?.state ||
           "",
+        dropoffAddress:
+          order.dropoffAddress ||
+          order.deliveryInfo?.address ||
+          order.deliveryInfo?.deliveryAddress ||
+          "",
         rate: Number(order.deliveryFee || order.rate || order.tip || 0),
+        customerName:
+          order.customerName ||
+          order.customer?.name ||
+          order.deliveryInfo?.name ||
+          "Farm2Home Customer",
+        customerPhone:
+          order.customerPhone ||
+          order.customer?.phone ||
+          order.deliveryInfo?.phone ||
+          "",
+        notes:
+          order.notes ||
+          order.deliveryNotes ||
+          order.deliveryInfo?.notes ||
+          order.specialInstructions ||
+          "",
       }));
 
-      const allLoads = mappedBackendOrders;
-
-      setLoads(allLoads);
-
-      const activeStatuses = ["ACCEPTED", "BOOKED", "PICKED_UP", "IN_TRANSIT"];
+      setLoads(mappedBackendOrders);
 
       setStats({
-        activeLoads: allLoads.filter((item) =>
-          activeStatuses.includes(
-            String(item.status || item.fulfillmentStatus || "").toUpperCase()
-          )
+        activeLoads: mappedBackendOrders.filter((item) =>
+          ACTIVE_STATUSES.includes(normalizeStatus(item))
         ).length,
-        completedLoads: allLoads.filter(
-          (item) =>
-            String(item.status || item.fulfillmentStatus || "").toUpperCase() ===
-            "DELIVERED"
+        completedLoads: mappedBackendOrders.filter(
+          (item) => normalizeStatus(item) === "DELIVERED"
         ).length,
-        openLoads: allLoads.filter((item) =>
-          ["OPEN", "NEW", "AVAILABLE"].includes(
-            String(item.status || item.fulfillmentStatus || "").toUpperCase()
-          )
+        openLoads: mappedBackendOrders.filter((item) =>
+          OPEN_STATUSES.includes(normalizeStatus(item))
         ).length,
-        earnings: allLoads
-          .filter(
-            (item) =>
-              String(item.status || item.fulfillmentStatus || "").toUpperCase() ===
-              "DELIVERED"
-          )
+        earnings: mappedBackendOrders
+          .filter((item) => normalizeStatus(item) === "DELIVERED")
           .reduce((sum, item) => sum + Number(item.rate || item.total || 0), 0),
       });
     } catch (error) {
@@ -200,6 +259,12 @@ export default function MobileDriverApp() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refreshDashboard() {
+    setRefreshing(true);
+    await loadDriverDashboard();
+    setRefreshing(false);
   }
 
   async function requestLocation() {
@@ -323,7 +388,7 @@ export default function MobileDriverApp() {
 
       await saveDriverGps(load.id, gpsStatus);
 
-      Alert.alert("Status Updated", `Delivery marked as ${loadStatus}.`);
+      Alert.alert("Status Updated", `Delivery marked as ${formatStatus(loadStatus)}.`);
       await loadDriverDashboard();
     } catch (error: any) {
       Alert.alert("Update Error", error.message || "Unable to update load.");
@@ -344,10 +409,16 @@ export default function MobileDriverApp() {
         return "#2563EB";
       case "BOOKED":
       case "ACCEPTED":
+      case "READY":
         return "#7C3AED";
+      case "EN_ROUTE_TO_PICKUP":
+      case "ARRIVED_AT_PICKUP":
+        return "#0EA5E9";
       case "PICKED_UP":
         return "#F59E0B";
       case "IN_TRANSIT":
+      case "EN_ROUTE_TO_DROPOFF":
+      case "ARRIVED_AT_DROPOFF":
         return "#0F766E";
       case "DELIVERED":
         return "#10B981";
@@ -358,18 +429,58 @@ export default function MobileDriverApp() {
     }
   }
 
+  function formatStatus(status?: string) {
+    return String(status || "OPEN")
+      .replace(/_/g, " ")
+      .toLowerCase()
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function openMap(address?: string) {
+    if (!address) {
+      Alert.alert("Address Missing", "No address is available for this stop.");
+      return;
+    }
+
+    const encoded = encodeURIComponent(address);
+    const url =
+      Platform.OS === "ios"
+        ? `http://maps.apple.com/?q=${encoded}`
+        : `https://www.google.com/maps/search/?api=1&query=${encoded}`;
+
+    Linking.openURL(url).catch(() => {
+      Alert.alert("Map Error", "Unable to open maps on this device.");
+    });
+  }
+
+  function callCustomer(phone?: string) {
+    if (!phone) {
+      Alert.alert("Phone Missing", "No customer phone number is available.");
+      return;
+    }
+
+    Linking.openURL(`tel:${phone}`).catch(() => {
+      Alert.alert("Call Error", "Unable to call from this device.");
+    });
+  }
+
   function renderActions(load: DriverLoad) {
     const status = normalizeStatus(load);
 
-    if (["OPEN", "NEW", "AVAILABLE"].includes(status)) {
+    if (OPEN_STATUSES.includes(status)) {
       return (
-        <TouchableOpacity style={styles.acceptButton} onPress={() => acceptLoad(load)}>
+        <TouchableOpacity
+          style={styles.acceptButton}
+          onPress={() => acceptLoad(load)}
+          disabled={loading}
+        >
+          <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
           <Text style={styles.actionText}>Accept Delivery</Text>
         </TouchableOpacity>
       );
     }
 
-    if (status === "BOOKED" || status === "ACCEPTED") {
+    if (status === "BOOKED" || status === "ACCEPTED" || status === "READY") {
       return (
         <View style={styles.actionGrid}>
           <TouchableOpacity
@@ -377,6 +488,7 @@ export default function MobileDriverApp() {
             onPress={() =>
               updateLoadStatus(load, "ACCEPTED", "EN_ROUTE_TO_PICKUP")
             }
+            disabled={loading}
           >
             <Text style={styles.actionText}>Start Pickup</Text>
           </TouchableOpacity>
@@ -386,15 +498,22 @@ export default function MobileDriverApp() {
             onPress={() =>
               updateLoadStatus(load, "ACCEPTED", "ARRIVED_AT_PICKUP")
             }
+            disabled={loading}
           >
             <Text style={styles.actionText}>Arrived Pickup</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.greenButton}
-            onPress={() => updateLoadStatus(load, "PICKED_UP", "PICKED_UP")}
+            onPress={() => {
+              router.push({
+                pathname: "/driver/proof-of-pickup",
+                params: { loadId: load.id, orderId: load.id },
+              } as any);
+            }}
+            disabled={loading}
           >
-            <Text style={styles.actionText}>Picked Up</Text>
+            <Text style={styles.actionText}>Proof Pickup</Text>
           </TouchableOpacity>
         </View>
       );
@@ -408,6 +527,7 @@ export default function MobileDriverApp() {
             onPress={() =>
               updateLoadStatus(load, "IN_TRANSIT", "EN_ROUTE_TO_DROPOFF")
             }
+            disabled={loading}
           >
             <Text style={styles.actionText}>Start Delivery</Text>
           </TouchableOpacity>
@@ -417,9 +537,10 @@ export default function MobileDriverApp() {
             onPress={() =>
               router.push({
                 pathname: "/driver/navigation-assistant",
-                params: { loadId: load.id },
+                params: { loadId: load.id, orderId: load.id },
               } as any)
             }
+            disabled={loading}
           >
             <Text style={styles.actionText}>Navigation</Text>
           </TouchableOpacity>
@@ -435,15 +556,9 @@ export default function MobileDriverApp() {
             onPress={() =>
               updateLoadStatus(load, "IN_TRANSIT", "ARRIVED_AT_DROPOFF")
             }
+            disabled={loading}
           >
             <Text style={styles.actionText}>Arrived Dropoff</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.greenButton}
-            onPress={() => updateLoadStatus(load, "DELIVERED", "DELIVERED")}
-          >
-            <Text style={styles.actionText}>Delivered</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -451,11 +566,12 @@ export default function MobileDriverApp() {
             onPress={() =>
               router.push({
                 pathname: "/driver/proof-of-delivery",
-                params: { loadId: load.id },
+                params: { loadId: load.id, orderId: load.id },
               } as any)
             }
+            disabled={loading}
           >
-            <Text style={styles.actionText}>Proof</Text>
+            <Text style={styles.actionText}>Proof Delivery</Text>
           </TouchableOpacity>
         </View>
       );
@@ -464,6 +580,7 @@ export default function MobileDriverApp() {
     if (status === "DELIVERED") {
       return (
         <View style={styles.completedBadge}>
+          <Ionicons name="checkmark-done-circle" size={18} color="#FFFFFF" />
           <Text style={styles.completedText}>Completed</Text>
         </View>
       );
@@ -472,169 +589,316 @@ export default function MobileDriverApp() {
     return null;
   }
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.eyebrow}>Farm2Home Driver</Text>
-        <Text style={styles.title}>Mobile Driver App</Text>
-        <Text style={styles.subtitle}>
-          Accept orders, update GPS, manage pickups, complete deliveries, and
-          track your driver earnings.
-        </Text>
-      </View>
+  function renderLoadCard({ item }: { item: DriverLoad }) {
+    const status = normalizeStatus(item);
+    const pickupText = `${item.pickup_city || item.pickupAddress || "Pickup"} ${
+      item.pickup_state || ""
+    }`.trim();
+    const deliveryText = `${
+      item.delivery_city ||
+      item.dropoffAddress ||
+      item.deliveryInfo?.address ||
+      "Delivery"
+    } ${item.delivery_state || ""}`.trim();
 
-      <View style={styles.navRow}>
-        <TouchableOpacity
-          style={styles.navButton}
-          onPress={() => router.push("/driver/board" as any)}
-        >
-          <Text style={styles.navText}>Driver Board</Text>
-        </TouchableOpacity>
+    return (
+      <View style={styles.loadCard}>
+        <View style={styles.loadHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.loadTitle}>
+              {item.title || "Farm2Home Delivery"}
+            </Text>
+            <Text style={styles.commodity}>{item.commodity || "Farm Goods"}</Text>
+          </View>
 
-        <TouchableOpacity
-          style={styles.navButtonOutline}
-          onPress={() => router.push("/driver/profile" as any)}
-        >
-          <Text style={styles.navTextOutline}>Profile</Text>
-        </TouchableOpacity>
-      </View>
-
-      {loading ? (
-        <View style={styles.loadingCard}>
-          <ActivityIndicator size="large" color={freightTheme.colors.primary} />
-          <Text style={styles.loadingText}>Loading driver app...</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              { backgroundColor: statusColor(status) },
+            ]}
+          >
+            <Text style={styles.statusText}>{formatStatus(status)}</Text>
+          </View>
         </View>
-      ) : (
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <View style={styles.driverCard}>
-            <Text style={styles.driverName}>🚚 {driverName}</Text>
-            <Text style={styles.driverMeta}>
-              Manage active Farm2Home orders and delivery workflow.
+
+        <View style={styles.routeBox}>
+          <TouchableOpacity
+            style={styles.routeStop}
+            onPress={() => openMap(item.pickupAddress || pickupText)}
+          >
+            <Ionicons name="radio-button-on" size={18} color="#10B981" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routeText}>{pickupText}</Text>
+              {!!item.pickupAddress && (
+                <Text style={styles.routeSubText}>{item.pickupAddress}</Text>
+              )}
+            </View>
+            <Ionicons name="open-outline" size={17} color="#94A3B8" />
+          </TouchableOpacity>
+
+          <View style={styles.routeLine} />
+
+          <TouchableOpacity
+            style={styles.routeStop}
+            onPress={() => openMap(item.dropoffAddress || deliveryText)}
+          >
+            <Ionicons name="location" size={18} color="#10B981" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.routeText}>{deliveryText}</Text>
+              {!!item.dropoffAddress && (
+                <Text style={styles.routeSubText}>{item.dropoffAddress}</Text>
+              )}
+            </View>
+            <Ionicons name="open-outline" size={17} color="#94A3B8" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.metaGrid}>
+          <View style={styles.metaPill}>
+            <Ionicons name="cash-outline" size={15} color="#10B981" />
+            <Text style={styles.metaText}>
+              ${Number(item.rate || item.deliveryFee || 0).toFixed(2)}
             </Text>
           </View>
 
-          <View style={styles.statsRow}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{stats.openLoads}</Text>
-              <Text style={styles.statLabel}>Open</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{stats.activeLoads}</Text>
-              <Text style={styles.statLabel}>Active</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{stats.completedLoads}</Text>
-              <Text style={styles.statLabel}>Done</Text>
-            </View>
-          </View>
-
-          <View style={styles.earningsCard}>
-            <Text style={styles.earningsLabel}>Completed Delivery Earnings</Text>
-            <Text style={styles.earningsValue}>${stats.earnings.toFixed(2)}</Text>
-          </View>
-
-          <TouchableOpacity style={styles.refreshButton} onPress={loadDriverDashboard}>
-            <Text style={styles.refreshText}>Refresh Deliveries</Text>
+          <TouchableOpacity
+            style={styles.metaPill}
+            onPress={() => callCustomer(item.customerPhone)}
+          >
+            <Ionicons name="call-outline" size={15} color="#10B981" />
+            <Text style={styles.metaText}>Customer</Text>
           </TouchableOpacity>
 
-          <Text style={styles.sectionTitle}>Available & Assigned Deliveries</Text>
+          <View style={styles.metaPill}>
+            <Ionicons name="cube-outline" size={15} color="#10B981" />
+            <Text style={styles.metaText}>{formatStatus(status)}</Text>
+          </View>
+        </View>
 
-          <FlatList
-            data={loads}
-            keyExtractor={(item) => String(item.id)}
-            scrollEnabled={false}
-            contentContainerStyle={{ paddingBottom: 100 }}
-            ListEmptyComponent={
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>No deliveries available.</Text>
-                <Text style={styles.emptyText}>
-                  Tap Driver Board to select available deliveries in your area.
+        {!!item.notes && (
+          <View style={styles.notesBox}>
+            <Text style={styles.notesLabel}>Notes</Text>
+            <Text style={styles.notesText}>{item.notes}</Text>
+          </View>
+        )}
+
+        <View style={styles.loadActions}>{renderActions(item)}</View>
+      </View>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+
+      <View style={styles.container}>
+        <View style={styles.hero}>
+          <View style={styles.heroTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>Farm2Home Driver</Text>
+              <Text style={styles.title}>Mobile Driver App</Text>
+              <Text style={styles.subtitle}>
+                Accept orders, update GPS, manage pickups, complete deliveries,
+                and track your driver earnings.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.profileCircle}
+              onPress={() => router.push("/driver/profile" as any)}
+            >
+              <Ionicons name="person-circle-outline" size={34} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.navRow}>
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => router.push("/driver/board" as any)}
+          >
+            <Ionicons name="list-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.navText}>Driver Board</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.navButtonOutline}
+            onPress={() => router.push("/driver/profile" as any)}
+          >
+            <Ionicons name="person-outline" size={18} color={freightTheme.colors.primary} />
+            <Text style={styles.navTextOutline}>Profile</Text>
+          </TouchableOpacity>
+        </View>
+
+        {loading && loads.length === 0 ? (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color={freightTheme.colors.primary} />
+            <Text style={styles.loadingText}>Loading driver app...</Text>
+          </View>
+        ) : (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />
+            }
+          >
+            <View style={styles.driverCard}>
+              <Text style={styles.driverName}>🚚 {driverName}</Text>
+              <Text style={styles.driverMeta}>
+                Manage active Farm2Home orders and delivery workflow.
+              </Text>
+            </View>
+
+            <View style={styles.statsRow}>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.openLoads}</Text>
+                <Text style={styles.statLabel}>Open</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.activeLoads}</Text>
+                <Text style={styles.statLabel}>Active</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.completedLoads}</Text>
+                <Text style={styles.statLabel}>Done</Text>
+              </View>
+            </View>
+
+            <View style={styles.earningsCard}>
+              <View>
+                <Text style={styles.earningsLabel}>Completed Delivery Earnings</Text>
+                <Text style={styles.earningsValue}>
+                  ${stats.earnings.toFixed(2)}
                 </Text>
               </View>
-            }
-            renderItem={({ item }) => {
-              const status = normalizeStatus(item);
+              <Ionicons name="wallet-outline" size={34} color="#BBF7D0" />
+            </View>
 
-              return (
-                <View style={styles.loadCard}>
-                  <View style={styles.loadHeader}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.loadTitle}>
-                        {item.title || "Farm2Home Delivery"}
-                      </Text>
-                      <Text style={styles.commodity}>
-                        {item.commodity || "Farm Goods"}
-                      </Text>
-                    </View>
+            {activeDriverLoads.length > 0 && (
+              <View style={styles.activeNotice}>
+                <Ionicons name="navigate-circle-outline" size={20} color="#10B981" />
+                <Text style={styles.activeNoticeText}>
+                  You have {activeDriverLoads.length} active delivery workflow
+                  {activeDriverLoads.length > 1 ? "s" : ""}.
+                </Text>
+              </View>
+            )}
 
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        { backgroundColor: statusColor(status) },
-                      ]}
-                    >
-                      <Text style={styles.statusText}>{status}</Text>
-                    </View>
-                  </View>
+            <TouchableOpacity
+              style={styles.refreshButton}
+              onPress={loadDriverDashboard}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="refresh-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.refreshText}>Refresh Deliveries</Text>
+                </>
+              )}
+            </TouchableOpacity>
 
-                  <View style={styles.routeBox}>
-                    <Text style={styles.routeText}>
-                      📍 {item.pickup_city || item.pickupAddress || "Pickup"}{" "}
-                      {item.pickup_state || ""}
-                    </Text>
+            <Text style={styles.sectionTitle}>Available & Assigned Deliveries</Text>
 
-                    <Text style={styles.arrow}>→</Text>
-
-                    <Text style={styles.routeText}>
-                      🏁{" "}
-                      {item.delivery_city ||
-                        item.dropoffAddress ||
-                        item.deliveryInfo?.address ||
-                        "Delivery"}{" "}
-                      {item.delivery_state || ""}
-                    </Text>
-                  </View>
-
-                  <Text style={styles.metaText}>
-                    Rate: ${Number(item.rate || item.deliveryFee || 0).toFixed(2)}
+            <FlatList
+              data={loads}
+              keyExtractor={(item, index) => String(item.id || index)}
+              scrollEnabled={false}
+              contentContainerStyle={{ paddingBottom: 110 }}
+              ListEmptyComponent={
+                <View style={styles.emptyCard}>
+                  <Ionicons name="leaf-outline" size={34} color="#10B981" />
+                  <Text style={styles.emptyTitle}>No deliveries available.</Text>
+                  <Text style={styles.emptyText}>
+                    Tap Driver Board to select available deliveries in your area.
                   </Text>
-
-                  <View style={styles.loadActions}>{renderActions(item)}</View>
+                  <TouchableOpacity
+                    style={styles.emptyButton}
+                    onPress={() => router.push("/driver/board" as any)}
+                  >
+                    <Text style={styles.emptyButtonText}>Open Driver Board</Text>
+                  </TouchableOpacity>
                 </View>
-              );
-            }}
-          />
-        </ScrollView>
-      )}
-    </View>
+              }
+              renderItem={renderLoadCard}
+            />
+          </ScrollView>
+        )}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: freightTheme.colors.background },
-  hero: {
-    backgroundColor: "#111827",
-    paddingTop: 62,
-    paddingHorizontal: 20,
-    paddingBottom: 26,
+  safe: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
   },
-  eyebrow: { color: "#10B981", fontWeight: "900", marginBottom: 8 },
+  container: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 18,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  profileCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#064E3B",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#10B981",
+  },
+  eyebrow: {
+    color: "#10B981",
+    fontWeight: "900",
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
   title: {
     color: "#FFFFFF",
     fontSize: 34,
     fontWeight: "900",
     marginBottom: 10,
   },
-  subtitle: { color: "#D1D5DB", lineHeight: 23, fontSize: 15 },
-  navRow: { flexDirection: "row", gap: 10, padding: 18 },
+  subtitle: {
+    color: "#D1D5DB",
+    lineHeight: 23,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  navRow: {
+    flexDirection: "row",
+    gap: 10,
+    padding: 18,
+  },
   navButton: {
     flex: 1,
     backgroundColor: freightTheme.colors.primary,
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   navButtonOutline: {
     flex: 1,
@@ -644,9 +908,18 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
-  navText: { color: "#FFFFFF", fontWeight: "900" },
-  navTextOutline: { color: freightTheme.colors.primary, fontWeight: "900" },
+  navText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  navTextOutline: {
+    color: freightTheme.colors.primary,
+    fontWeight: "900",
+  },
   loadingCard: {
     backgroundColor: freightTheme.colors.card,
     margin: 18,
@@ -712,18 +985,53 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderRadius: 20,
     padding: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  earningsLabel: { color: "#BBF7D0", fontWeight: "900", marginBottom: 6 },
-  earningsValue: { color: "#FFFFFF", fontSize: 30, fontWeight: "900" },
+  earningsLabel: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  earningsValue: {
+    color: "#FFFFFF",
+    fontSize: 30,
+    fontWeight: "900",
+  },
+  activeNotice: {
+    backgroundColor: "#052E2B",
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#0F766E",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  activeNoticeText: {
+    color: "#CCFBF1",
+    fontWeight: "800",
+    flex: 1,
+    lineHeight: 20,
+  },
   refreshButton: {
     backgroundColor: "#334155",
     marginHorizontal: 18,
     padding: 15,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: 18,
+    flexDirection: "row",
+    gap: 8,
   },
-  refreshText: { color: "#FFFFFF", fontWeight: "900" },
+  refreshText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   sectionTitle: {
     color: freightTheme.colors.text,
     fontSize: 24,
@@ -734,21 +1042,35 @@ const styles = StyleSheet.create({
   emptyCard: {
     backgroundColor: freightTheme.colors.card,
     marginHorizontal: 18,
-    padding: 20,
-    borderRadius: 18,
+    padding: 24,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
+    alignItems: "center",
   },
   emptyTitle: {
     color: freightTheme.colors.text,
     fontSize: 20,
     fontWeight: "900",
+    marginTop: 10,
     marginBottom: 6,
   },
   emptyText: {
     color: freightTheme.colors.mutedText,
     lineHeight: 22,
     fontWeight: "700",
+    textAlign: "center",
+  },
+  emptyButton: {
+    backgroundColor: freightTheme.colors.primary,
+    marginTop: 16,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+  },
+  emptyButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
   loadCard: {
     backgroundColor: freightTheme.colors.card,
@@ -779,39 +1101,103 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
+    maxWidth: 150,
   },
-  statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 11 },
+  statusText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 11,
+  },
   routeBox: {
     backgroundColor: freightTheme.colors.surface,
     padding: 14,
     borderRadius: 16,
     marginBottom: 12,
   },
+  routeStop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  routeLine: {
+    width: 2,
+    height: 24,
+    backgroundColor: freightTheme.colors.border,
+    marginLeft: 8,
+    marginVertical: 8,
+  },
+  routeLabel: {
+    color: freightTheme.colors.primary,
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
   routeText: {
     color: freightTheme.colors.text,
     fontWeight: "900",
     fontSize: 16,
   },
-  arrow: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-    fontSize: 20,
-    marginVertical: 4,
+  routeSubText: {
+    color: freightTheme.colors.mutedText,
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  metaGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 10,
+  },
+  metaPill: {
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   metaText: {
     color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginBottom: 6,
+    fontWeight: "800",
     lineHeight: 21,
   },
-  loadActions: { marginTop: 10 },
-  actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  notesBox: {
+    backgroundColor: "#0F172A",
+    borderRadius: 14,
+    padding: 13,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#1E293B",
+  },
+  notesLabel: {
+    color: freightTheme.colors.primary,
+    fontWeight: "900",
+    marginBottom: 5,
+  },
+  notesText: {
+    color: "#E5E7EB",
+    fontWeight: "700",
+    lineHeight: 21,
+  },
+  loadActions: {
+    marginTop: 10,
+  },
+  actionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   acceptButton: {
     backgroundColor: freightTheme.colors.primary,
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   blueButton: {
     backgroundColor: "#2563EB",
@@ -843,12 +1229,21 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
   },
-  actionText: { color: "#FFFFFF", fontWeight: "900" },
+  actionText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   completedBadge: {
     backgroundColor: "#10B981",
     padding: 13,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
-  completedText: { color: "#FFFFFF", fontWeight: "900" },
+  completedText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
 });

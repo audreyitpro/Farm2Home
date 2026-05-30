@@ -1,26 +1,33 @@
+// app/driver/subscription.tsx
+
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { PAYMENT_LINKS } from "../config/paymentLinks";
+import freightTheme from "../styles/freightTheme";
 
 type DriverProfile = {
   id?: string;
   name?: string;
+  driverName?: string;
+  fullName?: string;
   email?: string;
   role?: string;
   driverSubscriptionActive?: boolean;
@@ -51,7 +58,7 @@ export default function DriverSubscriptionScreen() {
       const parsed = JSON.parse(rawDriver);
 
       setDriver(parsed);
-      setName(parsed.name || parsed.driverName || "");
+      setName(parsed.name || parsed.fullName || parsed.driverName || "");
       setEmail(parsed.email || "");
     } catch (error) {
       console.log("Load driver error:", error);
@@ -65,6 +72,7 @@ export default function DriverSubscriptionScreen() {
       ...driver,
       id: driverId,
       name: name.trim(),
+      fullName: name.trim(),
       email: email.trim().toLowerCase(),
       role: "driver",
       driverSubscriptionActive: false,
@@ -77,6 +85,7 @@ export default function DriverSubscriptionScreen() {
     await AsyncStorage.setItem("currentDriver", JSON.stringify(updatedDriver));
     await AsyncStorage.setItem("currentUser", JSON.stringify(updatedDriver));
     await AsyncStorage.setItem("currentUserRole", "driver");
+    await AsyncStorage.setItem("userRole", "driver");
     await AsyncStorage.setItem(
       "pendingDriverSubscription",
       JSON.stringify(updatedDriver)
@@ -170,6 +179,7 @@ export default function DriverSubscriptionScreen() {
       await AsyncStorage.setItem("currentDriver", JSON.stringify(activatedDriver));
       await AsyncStorage.setItem("currentUser", JSON.stringify(activatedDriver));
       await AsyncStorage.setItem("currentUserRole", "driver");
+      await AsyncStorage.setItem("userRole", "driver");
       await AsyncStorage.setItem("driverSubscriptionStatus", "active");
       await AsyncStorage.removeItem("pendingDriverSubscription");
 
@@ -200,194 +210,429 @@ export default function DriverSubscriptionScreen() {
     );
   }
 
+  function membershipStatus() {
+    return driver?.membershipStatus || driver?.subscriptionStatus || "Not Started";
+  }
+
+  function statusColor() {
+    const status = String(membershipStatus()).toLowerCase();
+
+    if (status.includes("active")) return "#10B981";
+    if (status.includes("pending")) return "#F59E0B";
+    if (status.includes("cancel")) return "#DC2626";
+
+    return "#64748B";
+  }
+
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <Text style={styles.logo}>Farm2Home</Text>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.hero}>
+            <View style={styles.heroTop}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eyebrow}>Farm2Home Driver</Text>
+                <Text style={styles.title}>Driver Board Membership</Text>
+                <Text style={styles.subtitle}>
+                  Subscribe to access local Farm2Home delivery jobs, route tools,
+                  proof workflows, and driver earnings.
+                </Text>
+              </View>
 
-        <Text style={styles.title}>Driver Board Membership</Text>
+              <View style={styles.heroIcon}>
+                <Ionicons name="card-outline" size={34} color="#FFFFFF" />
+              </View>
+            </View>
+          </View>
 
-        <Text style={styles.price}>Driver Access Plan</Text>
+          <View style={styles.priceCard}>
+            <View>
+              <Text style={styles.priceLabel}>Driver Access Plan</Text>
+              <Text style={styles.price}>$4.99 / month</Text>
+              <Text style={styles.priceSub}>Access the Driver Delivery Board</Text>
+            </View>
 
-        <Text style={styles.description}>
-          Join the Farm2Home Driver Board to access available local farm delivery
-          jobs. Preferred farmer drivers receive first access, then remaining
-          jobs open to subscribed board drivers.
-        </Text>
+            <View style={styles.priceBadge}>
+              <Ionicons name="flash-outline" size={22} color="#BBF7D0" />
+            </View>
+          </View>
 
-        <View style={styles.featureBox}>
-          <Text style={styles.featureTitle}>Membership Includes:</Text>
-
-          {[
-            "Open Driver Board access",
-            "Local farm delivery opportunities",
-            "Delivery acceptance tools",
-            "Proof-of-pickup workflow",
-            "Proof-of-delivery workflow",
-            "Route and live delivery tracking",
-          ].map((item) => (
-            <Text key={item} style={styles.featureItem}>
-              {`\u2022 ${item}`}
+          <View style={styles.statusCard}>
+            <Text style={styles.statusLabel}>Current Membership Status</Text>
+            <View style={[styles.statusPill, { backgroundColor: statusColor() }]}>
+              <Text style={styles.statusPillText}>{membershipStatus()}</Text>
+            </View>
+            <Text style={styles.statusHelp}>
+              Active membership unlocks the Driver Board and local delivery
+              acceptance tools.
             </Text>
-          ))}
-        </View>
+          </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Driver Profile</Text>
+          <View style={styles.featureBox}>
+            <SectionHeader
+              icon="sparkles-outline"
+              title="Membership Includes"
+              subtitle="Everything needed to accept and complete local deliveries."
+            />
 
-          <TextInput
-            style={styles.input}
-            placeholder="Driver Name"
-            placeholderTextColor="#94A3B8"
-            value={name}
-            onChangeText={setName}
-          />
+            {[
+              "Open Driver Board access",
+              "Local farm delivery opportunities",
+              "Delivery acceptance tools",
+              "Proof-of-pickup workflow",
+              "Proof-of-delivery workflow",
+              "Route and live delivery tracking",
+            ].map((item) => (
+              <View key={item} style={styles.featureItem}>
+                <Ionicons name="checkmark-circle" size={18} color="#10B981" />
+                <Text style={styles.featureText}>{item}</Text>
+              </View>
+            ))}
+          </View>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Driver Email"
-            placeholderTextColor="#94A3B8"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoCorrect={false}
-          />
+          <View style={styles.card}>
+            <SectionHeader
+              icon="person-outline"
+              title="Driver Profile"
+              subtitle="Confirm your membership billing profile."
+            />
 
-          <TouchableOpacity
-            style={[styles.primaryButton, loading && styles.disabledButton]}
-            onPress={startDriverMembership}
-            disabled={loading}
-            activeOpacity={0.85}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.primaryButtonText}>
-                Pay Driver Membership with Stripe
-              </Text>
-            )}
-          </TouchableOpacity>
+            <Text style={styles.inputLabel}>Driver Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Driver Name"
+              placeholderTextColor="#94A3B8"
+              value={name}
+              onChangeText={setName}
+            />
 
-          <TouchableOpacity
-            style={styles.completedButton}
-            onPress={continueAfterPayment}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.completedButtonText}>I Completed Payment</Text>
-          </TouchableOpacity>
+            <Text style={styles.inputLabel}>Driver Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Driver Email"
+              placeholderTextColor="#94A3B8"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoCorrect={false}
+            />
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => router.push("/driver/board" as any)}
-          >
-            <Text style={styles.secondaryButtonText}>View Driver Board</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primaryButton, loading && styles.disabledButton]}
+              onPress={startDriverMembership}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="card-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.primaryButtonText}>
+                    Pay Driver Membership with Stripe
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.linkButton} onPress={showMembershipInfo}>
-            <Text style={styles.linkButtonText}>Why do I need a membership?</Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              style={styles.completedButton}
+              onPress={continueAfterPayment}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.completedButtonText}>I Completed Payment</Text>
+            </TouchableOpacity>
 
-        <Text style={styles.footer}>
-          Production Mode Enabled · Stripe Live Payment Link Active
-        </Text>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => router.push("/driver/board" as any)}
+            >
+              <Ionicons
+                name="list-outline"
+                size={18}
+                color={freightTheme.colors.primary}
+              />
+              <Text style={styles.secondaryButtonText}>View Driver Board</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.linkButton} onPress={showMembershipInfo}>
+              <Text style={styles.linkButtonText}>Why do I need a membership?</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.quickGrid}>
+            <QuickLink
+              icon="person-outline"
+              label="Profile"
+              route="/driver/profile"
+            />
+            <QuickLink
+              icon="phone-portrait-outline"
+              label="Driver App"
+              route="/driver/mobile-driver-app"
+            />
+            <QuickLink icon="wallet-outline" label="Earnings" route="/driver/earnings" />
+            <QuickLink
+              icon="notifications-outline"
+              label="Alerts"
+              route="/driver/notifications"
+            />
+          </View>
+
+          <Text style={styles.footer}>
+            Production Mode Enabled · Stripe Live Payment Link Active
+          </Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons name={icon} size={20} color="#FFFFFF" />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+function QuickLink({
+  icon,
+  label,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  route: string;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.quickLink}
+      onPress={() => router.push(route as any)}
+    >
+      <Ionicons name={icon} size={22} color="#10B981" />
+      <Text style={styles.quickLinkText}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
-    backgroundColor: "#0F172A",
+    backgroundColor: freightTheme.colors.background,
   },
-
+  keyboard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
   content: {
-    flexGrow: 1,
-    padding: 22,
+    paddingBottom: 90,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 22,
+    paddingHorizontal: 20,
+    paddingBottom: 26,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: "#064E3B",
+    alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#10B981",
   },
-
-  logo: {
-    color: "#22C55E",
-    fontSize: 18,
+  eyebrow: {
+    color: "#10B981",
     fontWeight: "900",
-    textAlign: "center",
     marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
-
   title: {
     color: "#FFFFFF",
-    fontSize: 30,
+    fontSize: 34,
     fontWeight: "900",
-    textAlign: "center",
+    marginBottom: 10,
   },
-
-  price: {
-    color: "#86EFAC",
-    fontSize: 30,
-    fontWeight: "900",
-    textAlign: "center",
-    marginTop: 10,
-  },
-
-  description: {
-    color: "#CBD5E1",
-    textAlign: "center",
+  subtitle: {
+    color: "#D1D5DB",
     lineHeight: 23,
+    fontSize: 15,
     fontWeight: "700",
-    marginTop: 14,
-    marginBottom: 20,
   },
-
+  priceCard: {
+    backgroundColor: "#064E3B",
+    borderRadius: 20,
+    padding: 18,
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#10B981",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  priceLabel: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+  },
+  price: {
+    color: "#FFFFFF",
+    fontSize: 32,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  priceSub: {
+    color: "#D1FAE5",
+    marginTop: 4,
+    fontWeight: "800",
+  },
+  priceBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#052E2B",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusCard: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 20,
+    padding: 18,
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  statusLabel: {
+    color: freightTheme.colors.text,
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
+  statusPill: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusPillText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    textTransform: "capitalize",
+  },
+  statusHelp: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 21,
+    marginTop: 12,
+  },
   featureBox: {
-    backgroundColor: "#1E293B",
+    backgroundColor: freightTheme.colors.card,
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: "#334155",
-    marginBottom: 18,
+    borderColor: freightTheme.colors.border,
+    marginHorizontal: 18,
+    marginBottom: 16,
   },
-
-  featureTitle: {
-    color: "#22C55E",
-    fontWeight: "900",
-    fontSize: 18,
-    marginBottom: 10,
-  },
-
-  featureItem: {
-    color: "#E5E7EB",
-    fontWeight: "700",
-    marginBottom: 7,
-    lineHeight: 20,
-  },
-
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 20,
-  },
-
-  cardTitle: {
-    color: "#111827",
-    fontSize: 20,
-    fontWeight: "900",
+  sectionHeader: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
     marginBottom: 14,
   },
-
-  input: {
-    backgroundColor: "#F9FAFB",
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionTitle: {
+    color: freightTheme.colors.text,
+    fontSize: 21,
+    fontWeight: "900",
+  },
+  sectionSubtitle: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 3,
+  },
+  featureItem: {
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 14,
+    padding: 13,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: freightTheme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  featureText: {
+    color: freightTheme.colors.text,
+    fontWeight: "800",
+    flex: 1,
+    lineHeight: 20,
+  },
+  card: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 22,
+    padding: 18,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  inputLabel: {
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+    marginBottom: 7,
+  },
+  input: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
     borderRadius: 16,
     padding: 14,
     marginBottom: 14,
@@ -395,68 +640,90 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111827",
   },
-
   primaryButton: {
-    backgroundColor: "#15803D",
+    backgroundColor: freightTheme.colors.primary,
     paddingVertical: 16,
     borderRadius: 18,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 6,
     minHeight: 56,
-    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
-
   disabledButton: {
     opacity: 0.6,
   },
-
   primaryButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 15,
   },
-
   completedButton: {
     backgroundColor: "#111827",
     paddingVertical: 16,
     borderRadius: 18,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
   },
-
   completedButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
-
   secondaryButton: {
-    backgroundColor: "#E5E7EB",
+    backgroundColor: freightTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.primary,
     paddingVertical: 15,
     borderRadius: 18,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
   },
-
   secondaryButtonText: {
-    color: "#111827",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
   },
-
   linkButton: {
     paddingVertical: 14,
     alignItems: "center",
   },
-
   linkButtonText: {
-    color: "#15803D",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
   },
-
+  quickGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+  },
+  quickLink: {
+    width: "48%",
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 18,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    alignItems: "center",
+    gap: 8,
+  },
+  quickLinkText: {
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+  },
   footer: {
-    color: "#94A3B8",
+    color: freightTheme.colors.mutedText,
     textAlign: "center",
-    marginTop: 20,
+    marginTop: 4,
     lineHeight: 21,
     fontWeight: "700",
+    paddingHorizontal: 18,
   },
 });

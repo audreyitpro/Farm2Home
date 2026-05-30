@@ -17,6 +17,21 @@ import { getApprovedFarmers } from "../data/farmerStore";
 const GREEN_VALLEY_STRIPE_ACCOUNT_ID = "acct_1TWeOKCqJp7Z8L15";
 const SUNNYBROOK_STRIPE_ACCOUNT_ID = "acct_1TWjGSE1SmOAMwkt";
 
+const COLORS = {
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  secondary: "#F9A825",
+  background: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#75806F",
+  border: "#E2E8DA",
+  softGreen: "#EAF5E6",
+  lightGreen: "#F1FAED",
+  danger: "#DC2626",
+  dark: "#111827",
+};
+
 type Product = {
   id: string;
   name: string;
@@ -123,6 +138,22 @@ function getFallbackFarmers(): Farmer[] {
   ];
 }
 
+function getProductEmoji(product: Product) {
+  const category = String(product.category || "").toLowerCase();
+  const name = String(product.name || "").toLowerCase();
+
+  if (category.includes("flower") || name.includes("flower")) return "💐";
+  if (category.includes("hay") || name.includes("hay")) return "🌾";
+  if (category.includes("egg") || name.includes("egg")) return "🥚";
+  if (category.includes("honey") || name.includes("honey")) return "🍯";
+  if (category.includes("dairy") || name.includes("milk")) return "🥛";
+  if (category.includes("meat") || category.includes("poultry")) return "🥩";
+  if (category.includes("fruit") || name.includes("apple")) return "🍎";
+  if (category.includes("vegetable") || category.includes("greens")) return "🥬";
+
+  return "🥬";
+}
+
 export default function FarmerShopScreen() {
   const params = useLocalSearchParams();
   const farmerId = String(params.farmerId || "");
@@ -180,6 +211,8 @@ export default function FarmerShopScreen() {
     }, {});
   }, [farmer]);
 
+  const productCount = farmer?.products?.length || 0;
+
   async function handleAddToCart(product: Product) {
     try {
       if (!farmer) return;
@@ -194,6 +227,7 @@ export default function FarmerShopScreen() {
 
       await addToCart({
         id: `${farmer.id}_${product.id}`,
+        productId: product.id,
         name: product.name,
         quantity: 1,
         price: Number(product.price || 0),
@@ -201,6 +235,7 @@ export default function FarmerShopScreen() {
         farmName: farmer.farmName || farmer.name || "Farm2Home Farm",
         farmerId: farmer.id,
         farmerStripeAccountId,
+        unit: product.unit || "each",
       } as any);
 
       await refreshCartCount();
@@ -215,245 +250,495 @@ export default function FarmerShopScreen() {
   if (!farmer) {
     return (
       <View style={styles.center}>
+        <Text style={styles.loadingIcon}>🚜</Text>
         <Text style={styles.loadingText}>Loading farmer storefront...</Text>
       </View>
     );
   }
 
+  const farmName = farmer.farmName || farmer.name || "Farm2Home Farm";
+  const farmLocation = farmer.location || farmer.farmLocation || "Michigan";
+
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.hero}>
-        {farmer.logoUrl ? (
-          <Image source={{ uri: farmer.logoUrl }} style={styles.logo} />
-        ) : (
-          <View style={styles.logoPlaceholder}>
-            <Text style={styles.logoEmoji}>🚜</Text>
+    <View style={styles.page}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.topBar}>
+          <Pressable
+            style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
+            onPress={() => router.push("/customer/marketplace" as any)}
+          >
+            <Text style={styles.backCircleText}>‹</Text>
+          </Pressable>
+
+          <View style={styles.topTitleBlock}>
+            <Text style={styles.title}>Farm Store</Text>
+            <Text style={styles.subtitle}>Shop directly from this farmer</Text>
           </View>
-        )}
 
-        <Text style={styles.farmName}>{farmer.farmName || farmer.name}</Text>
+          <Pressable
+            style={({ pressed }) => [styles.cartTopButton, pressed && styles.pressed]}
+            onPress={() => router.push("/customer/cart" as any)}
+          >
+            <Text style={styles.cartTopText}>🛒</Text>
+            {cartCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{cartCount}</Text>
+              </View>
+            )}
+          </Pressable>
+        </View>
 
-        <Text style={styles.location}>
-          {farmer.location || farmer.farmLocation}
-        </Text>
+        <View style={styles.heroCard}>
+          <View style={styles.logoWrap}>
+            {farmer.logoUrl ? (
+              <Image source={{ uri: farmer.logoUrl }} style={styles.logo} />
+            ) : (
+              <View style={styles.logoPlaceholder}>
+                <Text style={styles.logoEmoji}>🚜</Text>
+              </View>
+            )}
+          </View>
 
-        <Text style={styles.rating}>
-          ⭐ {Number(farmer.rating || 4.8).toFixed(1)} ·{" "}
-          {Number(farmer.distanceMiles || 5).toFixed(1)} mi away
-        </Text>
+          <View style={styles.heroContent}>
+            <Text style={styles.heroBadge}>Verified Farm</Text>
+            <Text style={styles.farmName}>{farmName}</Text>
+            <Text style={styles.location}>{farmLocation}</Text>
 
-        <Pressable
-          style={styles.cartButton}
-          onPress={() => router.push("/customer/cart" as any)}
-        >
-          <Text style={styles.cartButtonText}>View Cart ({cartCount})</Text>
-        </Pressable>
-      </View>
-
-      {Object.entries(groupedProducts).map(([category, products]) => (
-        <View key={category}>
-          <Text style={styles.categoryTitle}>{category}</Text>
-
-          {products.map((product) => (
-            <View key={product.id} style={styles.productCard}>
-              {product.image || product.imageUrl ? (
-                <Image
-                  source={{ uri: product.image || product.imageUrl }}
-                  style={styles.productImage}
-                />
-              ) : (
-                <View style={styles.imagePlaceholder}>
-                  <Text style={styles.imageEmoji}>🥬</Text>
-                </View>
-              )}
-
-              <View style={{ flex: 1 }}>
-                <Text style={styles.productName}>{product.name}</Text>
-
-                <Text style={styles.productDescription}>
-                  {product.description || "Fresh farm product"}
+            <View style={styles.metaRow}>
+              <View style={styles.metaPill}>
+                <Text style={styles.metaPillText}>
+                  ⭐ {Number(farmer.rating || 4.8).toFixed(1)}
                 </Text>
+              </View>
 
-                <Text style={styles.price}>
-                  ${Number(product.price || 0).toFixed(2)}
-                  {product.unit ? ` / ${product.unit}` : ""}
+              <View style={styles.metaPill}>
+                <Text style={styles.metaPillText}>
+                  {Number(farmer.distanceMiles || 5).toFixed(1)} mi
                 </Text>
+              </View>
 
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.addButton,
-                    pressed && styles.pressedButton,
-                  ]}
-                  onPress={() => handleAddToCart(product)}
-                >
-                  <Text style={styles.addButtonText}>Add To Cart</Text>
-                </Pressable>
+              <View style={styles.metaPill}>
+                <Text style={styles.metaPillText}>{productCount} items</Text>
               </View>
             </View>
-          ))}
+          </View>
         </View>
-      ))}
 
-      <View style={styles.bottomActions}>
+        <View style={styles.storeInfoCard}>
+          <Text style={styles.storeInfoTitle}>Fresh from {farmName}</Text>
+          <Text style={styles.storeInfoText}>
+            Browse locally sourced farm goods, seasonal products, and fresh
+            items available from this Farm2Home seller.
+          </Text>
+
+          <Pressable
+            style={({ pressed }) => [styles.viewCartButton, pressed && styles.pressed]}
+            onPress={() => router.push("/customer/cart" as any)}
+          >
+            <Text style={styles.viewCartButtonText}>View Cart ({cartCount})</Text>
+          </Pressable>
+        </View>
+
+        {Object.entries(groupedProducts).map(([category, products]) => (
+          <View key={category} style={styles.categorySection}>
+            <View style={styles.categoryHeader}>
+              <Text style={styles.categoryTitle}>{category}</Text>
+              <Text style={styles.categoryCount}>
+                {products.length} item{products.length === 1 ? "" : "s"}
+              </Text>
+            </View>
+
+            {products.map((product) => {
+              const imageSource = product.image || product.imageUrl || "";
+
+              return (
+                <View key={product.id} style={styles.productCard}>
+                  {imageSource ? (
+                    <Image
+                      source={{ uri: imageSource }}
+                      style={styles.productImage}
+                    />
+                  ) : (
+                    <View style={styles.imagePlaceholder}>
+                      <Text style={styles.imageEmoji}>
+                        {getProductEmoji(product)}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.productInfo}>
+                    <Text style={styles.productCategory}>
+                      {product.category || "Farm Goods"}
+                    </Text>
+
+                    <Text style={styles.productName} numberOfLines={2}>
+                      {product.name}
+                    </Text>
+
+                    <Text style={styles.productDescription} numberOfLines={2}>
+                      {product.description || "Fresh farm product"}
+                    </Text>
+
+                    <View style={styles.priceRow}>
+                      <View>
+                        <Text style={styles.price}>
+                          ${Number(product.price || 0).toFixed(2)}
+                        </Text>
+                        <Text style={styles.unit}>
+                          {product.unit ? `per ${product.unit}` : "each"}
+                        </Text>
+                      </View>
+
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.addCircleButton,
+                          pressed && styles.pressed,
+                        ]}
+                        onPress={() => handleAddToCart(product)}
+                      >
+                        <Text style={styles.addCircleText}>+</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ))}
+
         <Pressable
-          style={styles.goCartButton}
+          style={({ pressed }) => [styles.goCartButton, pressed && styles.pressed]}
           onPress={() => router.push("/customer/cart" as any)}
         >
           <Text style={styles.goCartButtonText}>Go To Cart ({cartCount})</Text>
         </Pressable>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  page: {
     flex: 1,
-    backgroundColor: "#F5F5F0",
+    backgroundColor: COLORS.background,
+  },
+  scrollContent: {
+    padding: 18,
+    paddingBottom: 110,
   },
   center: {
     flex: 1,
+    backgroundColor: COLORS.background,
     justifyContent: "center",
     alignItems: "center",
+    padding: 24,
+  },
+  loadingIcon: {
+    fontSize: 52,
+    marginBottom: 10,
   },
   loadingText: {
     fontSize: 18,
-    fontWeight: "800",
-    color: "#14532D",
+    fontWeight: "900",
+    color: COLORS.primary,
+    textAlign: "center",
   },
-  hero: {
-    backgroundColor: "#14532D",
-    paddingTop: 70,
-    paddingBottom: 32,
+  topBar: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 20,
+    marginBottom: 18,
+    gap: 12,
   },
-  logo: {
-    width: 120,
-    height: 120,
-    borderRadius: 30,
-    marginBottom: 16,
-  },
-  logoPlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: 30,
-    backgroundColor: "#DCFCE7",
+  backCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  backCircleText: {
+    fontSize: 34,
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: -4,
+  },
+  topTitleBlock: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: "900",
+    color: COLORS.text,
+  },
+  subtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  cartTopButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 17,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cartTopText: {
+    fontSize: 22,
+  },
+  cartBadge: {
+    position: "absolute",
+    top: -5,
+    right: -5,
+    backgroundColor: COLORS.secondary,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 999,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    borderWidth: 2,
+    borderColor: COLORS.card,
+  },
+  cartBadgeText: {
+    color: COLORS.dark,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  heroCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 32,
+    padding: 18,
     marginBottom: 16,
   },
+  logoWrap: {
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  logo: {
+    width: 112,
+    height: 112,
+    borderRadius: 32,
+    borderWidth: 4,
+    borderColor: "rgba(255,255,255,0.28)",
+  },
+  logoPlaceholder: {
+    width: 112,
+    height: 112,
+    borderRadius: 32,
+    backgroundColor: COLORS.secondary,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 4,
+    borderColor: "rgba(255,255,255,0.28)",
+  },
   logoEmoji: {
-    fontSize: 52,
+    fontSize: 50,
+  },
+  heroContent: {
+    alignItems: "center",
+  },
+  heroBadge: {
+    alignSelf: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    color: "#FFFFFF",
+    fontWeight: "900",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: "hidden",
+    marginBottom: 10,
   },
   farmName: {
     color: "#FFFFFF",
-    fontSize: 34,
+    fontSize: 30,
     fontWeight: "900",
     textAlign: "center",
   },
   location: {
-    color: "#D1FAE5",
-    marginTop: 8,
-    fontSize: 16,
-    fontWeight: "700",
+    color: "#EAF7E6",
+    marginTop: 7,
+    fontSize: 15,
+    fontWeight: "800",
+    textAlign: "center",
   },
-  rating: {
-    color: "#FEF3C7",
-    marginTop: 10,
-    fontSize: 16,
-    fontWeight: "900",
+  metaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 9,
+    marginTop: 14,
   },
-  cartButton: {
-    marginTop: 20,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 26,
-    paddingVertical: 14,
+  metaPill: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 999,
   },
-  cartButtonText: {
-    color: "#14532D",
+  metaPillText: {
+    color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 15,
+    fontSize: 12,
+  },
+  storeInfoCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  storeInfoTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  storeInfoText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+  viewCartButton: {
+    backgroundColor: COLORS.primary,
+    padding: 15,
+    borderRadius: 18,
+    alignItems: "center",
+    marginTop: 14,
+  },
+  viewCartButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  categorySection: {
+    marginTop: 8,
+  },
+  categoryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    marginBottom: 12,
   },
   categoryTitle: {
-    fontSize: 26,
+    fontSize: 23,
     fontWeight: "900",
-    color: "#111827",
-    marginHorizontal: 18,
-    marginTop: 28,
-    marginBottom: 16,
+    color: COLORS.text,
+  },
+  categoryCount: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    fontSize: 13,
   },
   productCard: {
-    backgroundColor: "#FFFFFF",
-    marginHorizontal: 18,
-    marginBottom: 16,
-    borderRadius: 24,
-    padding: 16,
+    backgroundColor: COLORS.card,
+    marginBottom: 14,
+    borderRadius: 28,
+    padding: 13,
     flexDirection: "row",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+    gap: 12,
   },
   productImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 20,
-    marginRight: 16,
+    width: 112,
+    height: 126,
+    borderRadius: 22,
+    backgroundColor: COLORS.softGreen,
   },
   imagePlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: 20,
-    backgroundColor: "#DCFCE7",
+    width: 112,
+    height: 126,
+    borderRadius: 22,
+    backgroundColor: COLORS.softGreen,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 16,
   },
   imageEmoji: {
     fontSize: 44,
   },
-  productName: {
-    fontSize: 20,
+  productInfo: {
+    flex: 1,
+  },
+  productCategory: {
+    color: COLORS.primary,
     fontWeight: "900",
-    color: "#111827",
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  productName: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: COLORS.text,
   },
   productDescription: {
-    marginTop: 8,
-    color: "#6B7280",
+    marginTop: 6,
+    color: COLORS.muted,
     fontWeight: "700",
-    lineHeight: 22,
+    lineHeight: 19,
+    fontSize: 12,
+  },
+  priceRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   price: {
-    marginTop: 10,
-    fontSize: 24,
+    fontSize: 21,
     fontWeight: "900",
-    color: "#047857",
+    color: COLORS.primary,
   },
-  addButton: {
-    backgroundColor: "#047857",
-    marginTop: 14,
-    paddingVertical: 14,
-    borderRadius: 14,
+  unit: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  addCircleButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
     alignItems: "center",
   },
-  addButtonText: {
+  addCircleText: {
     color: "#FFFFFF",
     fontWeight: "900",
-  },
-  pressedButton: {
-    opacity: 0.75,
-  },
-  bottomActions: {
-    padding: 18,
-    paddingBottom: 120,
+    fontSize: 26,
+    marginTop: -2,
   },
   goCartButton: {
-    backgroundColor: "#14532D",
-    paddingVertical: 18,
-    borderRadius: 18,
+    backgroundColor: COLORS.dark,
+    paddingVertical: 17,
+    borderRadius: 20,
     alignItems: "center",
+    marginTop: 8,
   },
   goCartButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
+  },
+  pressed: {
+    opacity: 0.75,
   },
 });

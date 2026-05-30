@@ -1,11 +1,14 @@
 // app/freight/register.tsx
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -17,8 +20,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
+import freightTheme from "../styles/freightTheme";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -82,13 +87,13 @@ export default function FreightRegister() {
   const [licensedRefrigeratedFood, setLicensedRefrigeratedFood] =
     useState(false);
 
-  function validateSecurityQuestions() {
-    const selectedQuestions = [
-      securityQuestion1,
-      securityQuestion2,
-      securityQuestion3,
-    ].filter(Boolean);
+  const selectedQuestions = useMemo(
+    () =>
+      [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
+    [securityQuestion1, securityQuestion2, securityQuestion3]
+  );
 
+  function validateSecurityQuestions() {
     if (selectedQuestions.length !== 3) {
       Alert.alert(
         "Security Questions Required",
@@ -291,8 +296,8 @@ export default function FreightRegister() {
 
         <TextInput
           style={styles.input}
-          placeholder="Answer"
-          placeholderTextColor="#8A8F98"
+          placeholder="Hidden answer"
+          placeholderTextColor="#94A3B8"
           value={answer}
           onChangeText={setAnswer}
           secureTextEntry
@@ -608,337 +613,513 @@ export default function FreightRegister() {
     }
   }
 
+  function SectionHeader({
+    icon,
+    title,
+    subtitle,
+  }: {
+    icon: keyof typeof Ionicons.glyphMap;
+    title: string;
+    subtitle?: string;
+  }) {
+    return (
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIcon}>
+          <Ionicons name={icon} size={20} color="#FFFFFF" />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.section}>{title}</Text>
+          {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="always"
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.heroCard}>
-        <Text style={styles.title}>Freight Connect</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-        <Text style={styles.subtitle}>
-          AI driver network-style carrier verification for livestock,
-          refrigerated food, and Farm2Home delivery loads.
-        </Text>
-      </View>
-
-      <View style={styles.noticeBox}>
-        <Text style={styles.noticeTitle}>Carrier Approval Required</Text>
-
-        <Text style={styles.noticeText}>
-          Your account will stay pending until Farm2Home admin reviews your
-          authority, insurance, vehicle, and compliance documents.
-        </Text>
-      </View>
-
-      <View style={styles.priceBox}>
-        <Text style={styles.price}>$9.99 / month</Text>
-        <Text style={styles.priceSub}>Access the Farm2Home Freight Board</Text>
-      </View>
-
-      <Text style={styles.section}>Company Information</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Company Name"
-        placeholderTextColor="#8A8F98"
-        value={companyName}
-        onChangeText={setCompanyName}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Contact Name"
-        placeholderTextColor="#8A8F98"
-        value={contactName}
-        onChangeText={setContactName}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        placeholderTextColor="#8A8F98"
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Phone"
-        placeholderTextColor="#8A8F98"
-        keyboardType="phone-pad"
-        value={phone}
-        onChangeText={setPhone}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Service Area (States / Cities)"
-        placeholderTextColor="#8A8F98"
-        value={serviceArea}
-        onChangeText={setServiceArea}
-      />
-
-      <Text style={styles.section}>Create Freight Login</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Create Username"
-        placeholderTextColor="#8A8F98"
-        value={username}
-        onChangeText={setUsername}
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Create Password"
-        placeholderTextColor="#8A8F98"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        autoCapitalize="none"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Confirm Password"
-        placeholderTextColor="#8A8F98"
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-        secureTextEntry
-        autoCapitalize="none"
-      />
-
-      <View style={styles.securityCard}>
-        <Text style={styles.securityTitle}>Security Questions</Text>
-
-        <Text style={styles.securityHelp}>
-          Choose 3 different questions for account verification.
-        </Text>
-
-        {renderQuestionPicker(
-          "Security Question 1",
-          securityQuestion1,
-          setSecurityQuestion1,
-          securityAnswer1,
-          setSecurityAnswer1
-        )}
-
-        {renderQuestionPicker(
-          "Security Question 2",
-          securityQuestion2,
-          setSecurityQuestion2,
-          securityAnswer2,
-          setSecurityAnswer2
-        )}
-
-        {renderQuestionPicker(
-          "Security Question 3",
-          securityQuestion3,
-          setSecurityQuestion3,
-          securityAnswer3,
-          setSecurityAnswer3
-        )}
-      </View>
-
-      <Text style={styles.section}>Business Address</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Business Address"
-        placeholderTextColor="#8A8F98"
-        value={businessAddress}
-        onChangeText={setBusinessAddress}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="City"
-        placeholderTextColor="#8A8F98"
-        value={city}
-        onChangeText={setCity}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="State"
-        placeholderTextColor="#8A8F98"
-        value={stateValue}
-        onChangeText={setStateValue}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Zip Code"
-        placeholderTextColor="#8A8F98"
-        keyboardType="numeric"
-        value={zipCode}
-        onChangeText={setZipCode}
-      />
-
-      <Text style={styles.section}>Authority & Insurance</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="MDOT Number"
-        placeholderTextColor="#8A8F98"
-        value={mdotNumber}
-        onChangeText={setMdotNumber}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="MC Number"
-        placeholderTextColor="#8A8F98"
-        value={mcNumber}
-        onChangeText={setMcNumber}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Insurance Provider"
-        placeholderTextColor="#8A8F98"
-        value={insuranceProvider}
-        onChangeText={setInsuranceProvider}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Insurance Policy Number"
-        placeholderTextColor="#8A8F98"
-        value={insurancePolicyNumber}
-        onChangeText={setInsurancePolicyNumber}
-      />
-
-      <View style={styles.switchRow}>
-        <Text style={styles.switchText}>Active MC / Operating Authority</Text>
-        <Switch value={authorityActive} onValueChange={setAuthorityActive} />
-      </View>
-
-      <View style={styles.switchRow}>
-        <Text style={styles.switchText}>Active Insurance</Text>
-        <Switch value={insuranceActive} onValueChange={setInsuranceActive} />
-      </View>
-
-      <Text style={styles.section}>Transport Authorization</Text>
-
-      <View style={styles.switchRow}>
-        <Text style={styles.switchText}>Licensed to Move Livestock</Text>
-        <Switch
-          value={licensedLivestock}
-          onValueChange={setLicensedLivestock}
-        />
-      </View>
-
-      <View style={styles.switchRow}>
-        <Text style={styles.switchText}>Licensed for Refrigerated Fresh Food</Text>
-        <Switch
-          value={licensedRefrigeratedFood}
-          onValueChange={setLicensedRefrigeratedFood}
-        />
-      </View>
-
-      <TouchableOpacity
-        style={[styles.button, loading && styles.disabledButton]}
-        onPress={submit}
-        disabled={loading}
-        activeOpacity={0.7}
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        {loading ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text style={styles.buttonText}>
-            Register + Subscribe + Start Verification
-          </Text>
-        )}
-      </TouchableOpacity>
+        <ScrollView
+          style={styles.page}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="always"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.heroCard}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
+            </View>
 
-      <TouchableOpacity
-        onPress={() => router.push("/freight/login" as any)}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.link}>Already registered? Login</Text>
-      </TouchableOpacity>
-    </ScrollView>
+            <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
+            <Text style={styles.title}>Carrier Registration</Text>
+
+            <Text style={styles.subtitle}>
+              AI driver network-style carrier verification for livestock,
+              refrigerated food, and Farm2Home delivery loads.
+            </Text>
+          </View>
+
+          <View style={styles.noticeBox}>
+            <View style={styles.noticeHeader}>
+              <Ionicons name="alert-circle-outline" size={22} color="#F59E0B" />
+              <Text style={styles.noticeTitle}>Carrier Approval Required</Text>
+            </View>
+
+            <Text style={styles.noticeText}>
+              Your account will stay pending until Farm2Home admin reviews your
+              authority, insurance, vehicle, and compliance documents.
+            </Text>
+          </View>
+
+          <View style={styles.priceBox}>
+            <View>
+              <Text style={styles.price}>$9.99 / month</Text>
+              <Text style={styles.priceSub}>Access the Farm2Home Freight Board</Text>
+            </View>
+
+            <View style={styles.priceIcon}>
+              <Ionicons name="flash-outline" size={22} color="#BBF7D0" />
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="business-outline"
+              title="Company Information"
+              subtitle="Business and primary contact information."
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Company Name"
+              placeholderTextColor="#94A3B8"
+              value={companyName}
+              onChangeText={setCompanyName}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Contact Name"
+              placeholderTextColor="#94A3B8"
+              value={contactName}
+              onChangeText={setContactName}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Phone"
+              placeholderTextColor="#94A3B8"
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Service Area (States / Cities)"
+              placeholderTextColor="#94A3B8"
+              value={serviceArea}
+              onChangeText={setServiceArea}
+            />
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="lock-closed-outline"
+              title="Create Freight Login"
+              subtitle="Create credentials for the Freight Connect portal."
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Create Username"
+              placeholderTextColor="#94A3B8"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Create Password"
+              placeholderTextColor="#94A3B8"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm Password"
+              placeholderTextColor="#94A3B8"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={styles.securityCard}>
+            <SectionHeader
+              icon="key-outline"
+              title="Security Questions"
+              subtitle="Choose 3 different questions for account verification."
+            />
+
+            {renderQuestionPicker(
+              "Security Question 1",
+              securityQuestion1,
+              setSecurityQuestion1,
+              securityAnswer1,
+              setSecurityAnswer1
+            )}
+
+            {renderQuestionPicker(
+              "Security Question 2",
+              securityQuestion2,
+              setSecurityQuestion2,
+              securityAnswer2,
+              setSecurityAnswer2
+            )}
+
+            {renderQuestionPicker(
+              "Security Question 3",
+              securityQuestion3,
+              setSecurityQuestion3,
+              securityAnswer3,
+              setSecurityAnswer3
+            )}
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="location-outline"
+              title="Business Address"
+              subtitle="Carrier business location for verification."
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Business Address"
+              placeholderTextColor="#94A3B8"
+              value={businessAddress}
+              onChangeText={setBusinessAddress}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="City"
+              placeholderTextColor="#94A3B8"
+              value={city}
+              onChangeText={setCity}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="State"
+              placeholderTextColor="#94A3B8"
+              value={stateValue}
+              onChangeText={setStateValue}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Zip Code"
+              placeholderTextColor="#94A3B8"
+              keyboardType="numeric"
+              value={zipCode}
+              onChangeText={setZipCode}
+            />
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="shield-checkmark-outline"
+              title="Authority & Insurance"
+              subtitle="Operating authority and policy verification."
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="MDOT Number"
+              placeholderTextColor="#94A3B8"
+              value={mdotNumber}
+              onChangeText={setMdotNumber}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="MC Number"
+              placeholderTextColor="#94A3B8"
+              value={mcNumber}
+              onChangeText={setMcNumber}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Insurance Provider"
+              placeholderTextColor="#94A3B8"
+              value={insuranceProvider}
+              onChangeText={setInsuranceProvider}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Insurance Policy Number"
+              placeholderTextColor="#94A3B8"
+              value={insurancePolicyNumber}
+              onChangeText={setInsurancePolicyNumber}
+            />
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>Active MC / Operating Authority</Text>
+              <Switch
+                value={authorityActive}
+                onValueChange={setAuthorityActive}
+                trackColor={{ false: "#334155", true: "#064E3B" }}
+                thumbColor={authorityActive ? "#10B981" : "#CBD5E1"}
+              />
+            </View>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>Active Insurance</Text>
+              <Switch
+                value={insuranceActive}
+                onValueChange={setInsuranceActive}
+                trackColor={{ false: "#334155", true: "#064E3B" }}
+                thumbColor={insuranceActive ? "#10B981" : "#CBD5E1"}
+              />
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="cube-outline"
+              title="Transport Authorization"
+              subtitle="Select the freight services your carrier can provide."
+            />
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>Licensed to Move Livestock</Text>
+              <Switch
+                value={licensedLivestock}
+                onValueChange={setLicensedLivestock}
+                trackColor={{ false: "#334155", true: "#064E3B" }}
+                thumbColor={licensedLivestock ? "#10B981" : "#CBD5E1"}
+              />
+            </View>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>Licensed for Refrigerated Fresh Food</Text>
+              <Switch
+                value={licensedRefrigeratedFood}
+                onValueChange={setLicensedRefrigeratedFood}
+                trackColor={{ false: "#334155", true: "#064E3B" }}
+                thumbColor={licensedRefrigeratedFood ? "#10B981" : "#CBD5E1"}
+              />
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.disabledButton]}
+            onPress={submit}
+            disabled={loading}
+            activeOpacity={0.7}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="card-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.buttonText}>
+                  Register + Subscribe + Start Verification
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => router.push("/freight/login" as any)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.link}>Already registered? Login</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  keyboard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
   page: {
     flex: 1,
-    backgroundColor: "#F7F7F2",
+    backgroundColor: freightTheme.colors.background,
   },
   content: {
-    padding: 20,
-    paddingBottom: 50,
+    paddingBottom: 90,
   },
   heroCard: {
-    backgroundColor: "#2F7D32",
-    borderRadius: 28,
-    padding: 22,
-    marginBottom: 16,
+    backgroundColor: "#020617",
+    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#064E3B",
+    borderWidth: 1,
+    borderColor: "#10B981",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: "900",
-    marginBottom: 8,
+    marginTop: 6,
     color: "#FFFFFF",
   },
   subtitle: {
-    color: "#E8F5E9",
+    color: "#CBD5E1",
     fontSize: 15,
     lineHeight: 23,
     fontWeight: "700",
+    marginTop: 8,
   },
   noticeBox: {
-    backgroundColor: "#FFF7ED",
-    borderColor: "#FED7AA",
+    backgroundColor: "#451A03",
+    borderColor: "#F59E0B",
     borderWidth: 1,
     borderRadius: 18,
     padding: 15,
-    marginBottom: 16,
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 14,
   },
-  noticeTitle: {
-    color: "#9A3412",
-    fontWeight: "900",
-    fontSize: 17,
+  noticeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     marginBottom: 6,
   },
+  noticeTitle: {
+    color: "#FCD34D",
+    fontWeight: "900",
+    fontSize: 17,
+  },
   noticeText: {
-    color: "#7C2D12",
+    color: "#FEF3C7",
     fontWeight: "700",
     lineHeight: 22,
   },
   priceBox: {
-    backgroundColor: "#EAF6EC",
-    padding: 16,
-    borderRadius: 18,
-    marginBottom: 20,
+    backgroundColor: "#064E3B",
+    padding: 18,
+    borderRadius: 20,
+    marginHorizontal: 18,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#CDE8D2",
+    borderColor: "#10B981",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   price: {
-    fontSize: 25,
+    fontSize: 27,
     fontWeight: "900",
-    color: "#1f7a3f",
+    color: "#FFFFFF",
   },
   priceSub: {
-    color: "#555555",
+    color: "#BBF7D0",
     marginTop: 4,
-    fontWeight: "700",
+    fontWeight: "800",
+  },
+  priceIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#052E2B",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  card: {
+    backgroundColor: freightTheme.colors.card,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  securityCard: {
+    backgroundColor: freightTheme.colors.card,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
   section: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "900",
-    marginBottom: 10,
-    marginTop: 8,
-    color: "#111827",
+    color: freightTheme.colors.text,
+  },
+  sectionSubtitle: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 3,
   },
   input: {
     backgroundColor: "#FFFFFF",
@@ -946,64 +1127,48 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#DDDDDD",
+    borderColor: "#CBD5E1",
     fontSize: 16,
     color: "#111827",
-  },
-  securityCard: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DDDDDD",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 16,
-  },
-  securityTitle: {
-    color: "#2F7D32",
-    fontSize: 20,
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  securityHelp: {
-    color: "#555555",
-    lineHeight: 20,
     fontWeight: "700",
-    marginBottom: 12,
   },
   securityBox: {
     marginBottom: 12,
   },
   securityLabel: {
-    color: "#111827",
+    color: freightTheme.colors.text,
     fontWeight: "900",
     marginBottom: 8,
   },
   questionChip: {
-    backgroundColor: "#E5E7EB",
+    backgroundColor: freightTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
     marginRight: 8,
     marginBottom: 10,
-    maxWidth: 260,
+    maxWidth: 280,
   },
   questionChipActive: {
-    backgroundColor: "#2F7D32",
+    backgroundColor: freightTheme.colors.primary,
+    borderColor: freightTheme.colors.primary,
   },
   questionChipText: {
-    color: "#2F7D32",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
   },
   questionChipTextActive: {
     color: "#FFFFFF",
   },
   switchRow: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: freightTheme.colors.surface,
     padding: 14,
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#DDDDDD",
+    borderColor: freightTheme.colors.border,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -1012,14 +1177,18 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: "800",
     paddingRight: 12,
-    color: "#111827",
+    color: freightTheme.colors.text,
   },
   button: {
-    backgroundColor: "#2F7D32",
+    backgroundColor: freightTheme.colors.primary,
     padding: 16,
     borderRadius: 16,
-    marginTop: 10,
+    marginHorizontal: 18,
+    marginTop: 4,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
     zIndex: 9999,
     elevation: 20,
   },
@@ -1033,7 +1202,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   link: {
-    color: "#2F7D32",
+    color: freightTheme.colors.primary,
     textAlign: "center",
     fontWeight: "900",
     marginTop: 18,

@@ -1,7 +1,11 @@
+// app/freight/live-route.tsx
+
 import React, { useState } from "react";
 import {
   Alert,
   FlatList,
+  SafeAreaView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -10,6 +14,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import {
   FreightLoad,
@@ -30,9 +35,7 @@ export default function FreightLiveRoute() {
   const [loads, setLoads] = useState<FreightLoad[]>([]);
   const [carrierId, setCarrierId] = useState("demo_carrier_1");
   const [carrierName, setCarrierName] = useState("Freight Connect Carrier");
-  const [locations, setLocations] = useState<Record<string, DriverLocation>>(
-    {}
-  );
+  const [locations, setLocations] = useState<Record<string, DriverLocation>>({});
 
   useFocusEffect(
     React.useCallback(() => {
@@ -177,7 +180,10 @@ export default function FreightLiveRoute() {
 
     await loadCarrierRoutes();
 
-    Alert.alert("Route Updated", `Status updated to ${friendlyLocationStatus(locationStatus)}.`);
+    Alert.alert(
+      "Route Updated",
+      `Status updated to ${friendlyLocationStatus(locationStatus)}.`
+    );
   }
 
   function statusColor(status?: string) {
@@ -187,16 +193,38 @@ export default function FreightLiveRoute() {
       case "EN_ROUTE_TO_PICKUP":
         return freightTheme.colors.primary;
       case "ARRIVED_AT_PICKUP":
-        return freightTheme.colors.warning;
+        return "#F59E0B";
       case "PICKED_UP":
-        return freightTheme.colors.success;
+        return "#10B981";
       case "EN_ROUTE_TO_DROPOFF":
-        return "#A855F7";
+        return "#7C3AED";
       case "ARRIVED_AT_DROPOFF":
+        return "#0F766E";
       case "DELIVERED":
-        return "#14B8A6";
+        return "#10B981";
       default:
         return "#64748B";
+    }
+  }
+
+  function statusIcon(status?: string): keyof typeof Ionicons.glyphMap {
+    switch (status) {
+      case "READY":
+        return "ellipse-outline";
+      case "EN_ROUTE_TO_PICKUP":
+        return "navigate-outline";
+      case "ARRIVED_AT_PICKUP":
+        return "location-outline";
+      case "PICKED_UP":
+        return "archive-outline";
+      case "EN_ROUTE_TO_DROPOFF":
+        return "trail-sign-outline";
+      case "ARRIVED_AT_DROPOFF":
+        return "flag-outline";
+      case "DELIVERED":
+        return "checkmark-done-outline";
+      default:
+        return "radio-outline";
     }
   }
 
@@ -238,83 +266,189 @@ export default function FreightLiveRoute() {
 
     return (
       <View style={styles.actionGrid}>
-        <TouchableOpacity
+        <MilestoneButton
+          icon="navigate-outline"
+          label="Start Route"
           style={styles.primaryAction}
-          onPress={() =>
-            changeRouteStatus(load, "EN_ROUTE_TO_PICKUP", "ACCEPTED")
-          }
-        >
-          <Text style={styles.actionText}>Start Route</Text>
-        </TouchableOpacity>
+          onPress={() => changeRouteStatus(load, "EN_ROUTE_TO_PICKUP", "ACCEPTED")}
+        />
 
-        <TouchableOpacity
+        <MilestoneButton
+          icon="location-outline"
+          label="Arrived Pickup"
           style={styles.warningAction}
           onPress={() =>
             changeRouteStatus(load, "ARRIVED_AT_PICKUP", "ACCEPTED")
           }
-        >
-          <Text style={styles.actionText}>Arrived Pickup</Text>
-        </TouchableOpacity>
+        />
 
-        <TouchableOpacity
+        <MilestoneButton
+          icon="archive-outline"
+          label="Picked Up"
           style={styles.successAction}
           onPress={() => changeRouteStatus(load, "PICKED_UP", "PICKED_UP")}
-        >
-          <Text style={styles.actionText}>Picked Up</Text>
-        </TouchableOpacity>
+        />
 
-        <TouchableOpacity
+        <MilestoneButton
+          icon="trail-sign-outline"
+          label="Start Delivery"
           style={styles.purpleAction}
           onPress={() =>
             changeRouteStatus(load, "EN_ROUTE_TO_DROPOFF", "IN_TRANSIT")
           }
-        >
-          <Text style={styles.actionText}>Start Delivery</Text>
-        </TouchableOpacity>
+        />
 
-        <TouchableOpacity
+        <MilestoneButton
+          icon="flag-outline"
+          label="Arrived Dropoff"
           style={styles.tealAction}
           onPress={() =>
             changeRouteStatus(load, "ARRIVED_AT_DROPOFF", "IN_TRANSIT")
           }
-        >
-          <Text style={styles.actionText}>Arrived Dropoff</Text>
-        </TouchableOpacity>
+        />
 
-        <TouchableOpacity
+        <MilestoneButton
+          icon="checkmark-done-outline"
+          label="Delivered"
           style={styles.deliveredAction}
           onPress={() => changeRouteStatus(load, "DELIVERED", "DELIVERED")}
-        >
-          <Text style={styles.actionText}>Delivered</Text>
-        </TouchableOpacity>
+        />
 
-        <TouchableOpacity
+        <MilestoneButton
+          icon="radio-outline"
+          label="Update GPS"
           style={styles.secondaryAction}
           onPress={() => updateLocationForLoad(load)}
-        >
-          <Text style={styles.actionText}>Update GPS</Text>
-        </TouchableOpacity>
+        />
 
-        <Text style={styles.currentStep}>
-          Current step: {friendlyLocationStatus(currentLocationStatus)}
-        </Text>
+        <View style={styles.currentStepBox}>
+          <Ionicons
+            name={statusIcon(currentLocationStatus)}
+            size={18}
+            color="#10B981"
+          />
+          <Text style={styles.currentStep}>
+            Current step: {friendlyLocationStatus(currentLocationStatus)}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  function renderRouteCard({ item }: { item: FreightLoad }) {
+    const location = locations[item.id];
+    const currentStatus = location?.status || "READY";
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.loadId}>Load #{item.id.slice(-6)}</Text>
+            <Text style={styles.carrierMeta}>Carrier: {carrierName}</Text>
+          </View>
+
+          <View
+            style={[
+              styles.statusPill,
+              {
+                backgroundColor: statusColor(currentStatus),
+              },
+            ]}
+          >
+            <Ionicons name={statusIcon(currentStatus)} size={14} color="#FFFFFF" />
+            <Text style={styles.statusText}>
+              {friendlyLocationStatus(currentStatus)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.routeBox}>
+          <View style={styles.routeStop}>
+            <Ionicons name="radio-button-on" size={18} color="#10B981" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.route}>{item.pickupLocation}</Text>
+            </View>
+          </View>
+
+          <View style={styles.routeLine} />
+
+          <View style={styles.routeStop}>
+            <Ionicons name="location" size={18} color="#10B981" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.route}>{item.dropoffLocation}</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.locationBox}>
+          <View style={styles.locationHeader}>
+            <Ionicons name="navigate-circle-outline" size={24} color="#10B981" />
+            <Text style={styles.locationTitle}>Live GPS</Text>
+          </View>
+
+          {location ? (
+            <>
+              <LocationRow label="Latitude" value={location.latitude.toFixed(5)} />
+              <LocationRow label="Longitude" value={location.longitude.toFixed(5)} />
+              <LocationRow
+                label="Accuracy"
+                value={
+                  location.accuracy
+                    ? `${location.accuracy.toFixed(1)} meters`
+                    : "Not available"
+                }
+              />
+              <LocationRow label="Updated" value={formatDateTime(location.updatedAt)} />
+            </>
+          ) : (
+            <Text style={styles.locationText}>
+              No GPS update yet. Tap Start Route or Update GPS.
+            </Text>
+          )}
+        </View>
+
+        <Text style={styles.description}>{item.description}</Text>
+
+        <View style={styles.payoutBox}>
+          <Text style={styles.payoutLabel}>Carrier Payout</Text>
+          <Text style={styles.payout}>
+            ${Number(item.payoutAmount || 0).toFixed(2)}
+          </Text>
+        </View>
+
+        {renderRouteActions(item)}
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Live Route</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-      <Text style={styles.subtitle}>
-        {carrierName} · Update GPS and route progress for active deliveries.
-      </Text>
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
+            <Text style={styles.title}>Live Route</Text>
+            <Text style={styles.subtitle}>
+              {carrierName} · Update GPS and route progress for active deliveries.
+            </Text>
+          </View>
+
+          <View style={styles.heroIcon}>
+            <Ionicons name="map-outline" size={34} color="#FFFFFF" />
+          </View>
+        </View>
+      </View>
 
       <View style={styles.navRow}>
         <TouchableOpacity
           style={styles.navButton}
           onPress={() => router.push("/freight/board" as any)}
         >
+          <Ionicons name="list-outline" size={18} color="#FFFFFF" />
           <Text style={styles.navText}>Load Board</Text>
         </TouchableOpacity>
 
@@ -322,6 +456,11 @@ export default function FreightLiveRoute() {
           style={styles.navButtonOutline}
           onPress={() => router.push("/freight/dashboard" as any)}
         >
+          <Ionicons
+            name="grid-outline"
+            size={18}
+            color={freightTheme.colors.primary}
+          />
           <Text style={styles.navTextOutline}>Dashboard</Text>
         </TouchableOpacity>
       </View>
@@ -330,9 +469,10 @@ export default function FreightLiveRoute() {
         data={loads}
         keyExtractor={(item) => item.id}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 80 }}
+        contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyCard}>
+            <Ionicons name="trail-sign-outline" size={38} color="#10B981" />
             <Text style={styles.emptyTitle}>No active routes.</Text>
             <Text style={styles.emptyText}>
               Claim a load first, then use Live Route to update GPS and delivery
@@ -343,104 +483,97 @@ export default function FreightLiveRoute() {
               style={styles.emptyButton}
               onPress={() => router.push("/freight/board" as any)}
             >
+              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
               <Text style={styles.emptyButtonText}>Open Load Board</Text>
             </TouchableOpacity>
           </View>
         }
-        renderItem={({ item }) => {
-          const location = locations[item.id];
-
-          return (
-            <View style={styles.card}>
-              <View style={styles.headerRow}>
-                <Text style={styles.loadId}>Load #{item.id.slice(-6)}</Text>
-
-                <View
-                  style={[
-                    styles.statusPill,
-                    {
-                      backgroundColor: statusColor(location?.status || "READY"),
-                    },
-                  ]}
-                >
-                  <Text style={styles.statusText}>
-                    {friendlyLocationStatus(location?.status)}
-                  </Text>
-                </View>
-              </View>
-
-              <Text style={styles.route}>{item.pickupLocation}</Text>
-              <Text style={styles.arrow}>→</Text>
-              <Text style={styles.route}>{item.dropoffLocation}</Text>
-
-              <View style={styles.locationBox}>
-                <Text style={styles.locationTitle}>Live GPS</Text>
-
-                {location ? (
-                  <>
-                    <Text style={styles.locationText}>
-                      Latitude: {location.latitude.toFixed(5)}
-                    </Text>
-
-                    <Text style={styles.locationText}>
-                      Longitude: {location.longitude.toFixed(5)}
-                    </Text>
-
-                    <Text style={styles.locationText}>
-                      Accuracy:{" "}
-                      {location.accuracy
-                        ? `${location.accuracy.toFixed(1)} meters`
-                        : "Not available"}
-                    </Text>
-
-                    <Text style={styles.locationText}>
-                      Updated: {formatDateTime(location.updatedAt)}
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={styles.locationText}>
-                    No GPS update yet. Tap Start Route or Update GPS.
-                  </Text>
-                )}
-              </View>
-
-              <Text style={styles.description}>{item.description}</Text>
-
-              <Text style={styles.payout}>
-                Payout: ${Number(item.payoutAmount || 0).toFixed(2)}
-              </Text>
-
-              {renderRouteActions(item)}
-            </View>
-          );
-        }}
+        renderItem={renderRouteCard}
       />
+    </SafeAreaView>
+  );
+}
+
+function MilestoneButton({
+  icon,
+  label,
+  style,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  style: any;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={[styles.actionButton, style]} onPress={onPress}>
+      <Ionicons name={icon} size={17} color="#FFFFFF" />
+      <Text style={styles.actionText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function LocationRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.locationRow}>
+      <Text style={styles.locationLabel}>{label}</Text>
+      <Text style={styles.locationValue}>{value}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
     backgroundColor: freightTheme.colors.background,
-    padding: 18,
-    paddingTop: 50,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 22,
+    paddingHorizontal: 20,
+    paddingBottom: 26,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: "#064E3B",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#10B981",
+  },
+  kicker: {
+    color: "#10B981",
+    fontWeight: "900",
+    fontSize: 12,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   title: {
     color: freightTheme.colors.text,
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
+    marginBottom: 10,
   },
   subtitle: {
-    color: freightTheme.colors.mutedText,
-    marginTop: 6,
-    marginBottom: 16,
+    color: "#D1D5DB",
+    marginTop: 2,
     lineHeight: 22,
+    fontWeight: "700",
   },
   navRow: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 16,
+    padding: 18,
   },
   navButton: {
     flex: 1,
@@ -448,6 +581,9 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   navButtonOutline: {
     flex: 1,
@@ -457,6 +593,9 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   navText: {
     color: "#FFFFFF",
@@ -466,29 +605,40 @@ const styles = StyleSheet.create({
     color: freightTheme.colors.primary,
     fontWeight: "900",
   },
+  listContent: {
+    paddingHorizontal: 18,
+    paddingBottom: 90,
+  },
   emptyCard: {
     backgroundColor: freightTheme.colors.card,
     borderColor: freightTheme.colors.border,
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 22,
+    borderRadius: 22,
+    padding: 24,
+    alignItems: "center",
   },
   emptyTitle: {
     color: freightTheme.colors.text,
     fontSize: 20,
     fontWeight: "900",
+    marginTop: 10,
     marginBottom: 6,
   },
   emptyText: {
     color: freightTheme.colors.mutedText,
     lineHeight: 22,
+    textAlign: "center",
+    fontWeight: "700",
   },
   emptyButton: {
     backgroundColor: freightTheme.colors.primary,
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 16,
+    flexDirection: "row",
+    gap: 8,
   },
   emptyButtonText: {
     color: "#FFFFFF",
@@ -498,128 +648,200 @@ const styles = StyleSheet.create({
     backgroundColor: freightTheme.colors.card,
     borderColor: freightTheme.colors.border,
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 18,
     marginBottom: 16,
   },
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     marginBottom: 14,
     gap: 10,
   },
   loadId: {
     color: freightTheme.colors.text,
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "900",
   },
+  carrierMeta: {
+    color: freightTheme.colors.mutedText,
+    marginTop: 4,
+    fontWeight: "700",
+  },
   statusPill: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
     paddingVertical: 7,
     borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    maxWidth: 160,
   },
   statusText: {
     color: "#FFFFFF",
     fontWeight: "900",
+    fontSize: 11,
+  },
+  routeBox: {
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    marginBottom: 14,
+  },
+  routeStop: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  routeLine: {
+    width: 2,
+    height: 24,
+    backgroundColor: freightTheme.colors.border,
+    marginLeft: 8,
+    marginVertical: 8,
+  },
+  routeLabel: {
+    color: freightTheme.colors.primary,
     fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
   route: {
     color: freightTheme.colors.text,
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: "900",
-  },
-  arrow: {
-    color: freightTheme.colors.primary,
-    fontSize: 24,
-    fontWeight: "900",
-    marginVertical: 4,
+    lineHeight: 23,
+    marginTop: 3,
   },
   locationBox: {
     backgroundColor: freightTheme.colors.surface,
     borderRadius: 16,
     padding: 14,
-    marginTop: 14,
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  locationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
   },
   locationTitle: {
-    color: freightTheme.colors.primary,
+    color: freightTheme.colors.text,
     fontWeight: "900",
+    fontSize: 18,
+  },
+  locationRow: {
+    backgroundColor: "#0F172A",
+    borderRadius: 12,
+    padding: 11,
     marginBottom: 8,
-    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#1E293B",
+  },
+  locationLabel: {
+    color: freightTheme.colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  locationValue: {
+    color: freightTheme.colors.text,
+    fontWeight: "800",
+    marginTop: 3,
   },
   locationText: {
     color: freightTheme.colors.text,
     fontWeight: "700",
-    marginBottom: 6,
     lineHeight: 20,
   },
   description: {
     color: "#CBD5E1",
     lineHeight: 22,
     marginBottom: 14,
+    fontWeight: "700",
+  },
+  payoutBox: {
+    backgroundColor: "#064E3B",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#10B981",
+    padding: 14,
+    marginBottom: 16,
+  },
+  payoutLabel: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    fontSize: 12,
   },
   payout: {
-    color: freightTheme.colors.success,
-    fontSize: 22,
+    color: "#FFFFFF",
+    fontSize: 26,
     fontWeight: "900",
-    marginBottom: 16,
+    marginTop: 4,
   },
   actionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
+  actionButton: {
+    flexGrow: 1,
+    minWidth: "47%",
+    paddingHorizontal: 12,
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
   primaryAction: {
     backgroundColor: freightTheme.colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
   },
   secondaryAction: {
     backgroundColor: "#334155",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
   },
   warningAction: {
-    backgroundColor: freightTheme.colors.warning,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: "#F59E0B",
   },
   successAction: {
-    backgroundColor: freightTheme.colors.success,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: "#10B981",
   },
   purpleAction: {
-    backgroundColor: "#A855F7",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: "#7C3AED",
   },
   tealAction: {
-    backgroundColor: "#14B8A6",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: "#0F766E",
   },
   deliveredAction: {
-    backgroundColor: "#0F766E",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: "#059669",
   },
   actionText: {
     color: "#FFFFFF",
     fontWeight: "900",
+    fontSize: 13,
+  },
+  currentStepBox: {
+    backgroundColor: "#0F172A",
+    borderWidth: 1,
+    borderColor: "#1E293B",
+    borderRadius: 14,
+    padding: 12,
+    width: "100%",
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   currentStep: {
     color: freightTheme.colors.mutedText,
     fontWeight: "800",
-    width: "100%",
-    marginTop: 8,
+    flex: 1,
   },
 });

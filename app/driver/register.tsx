@@ -4,8 +4,11 @@ import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -18,6 +21,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as DocumentPicker from "expo-document-picker";
 import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
 import freightTheme from "../styles/freightTheme";
@@ -550,7 +554,7 @@ export default function DriverRegisterScreen() {
         <TextInput
           style={styles.input}
           placeholder="Hidden answer"
-          placeholderTextColor="#8A8F98"
+          placeholderTextColor="#94A3B8"
           value={answer}
           onChangeText={setAnswer}
           secureTextEntry
@@ -559,259 +563,434 @@ export default function DriverRegisterScreen() {
     );
   }
 
+  function SectionHeader({
+    title,
+    icon,
+    subtitle,
+  }: {
+    title: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    subtitle?: string;
+  }) {
+    return (
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIcon}>
+          <Ionicons name={icon} size={20} color="#FFFFFF" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.section}>{title}</Text>
+          {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="always"
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.heroCard}>
-        <Text style={styles.title}>Driver Registration</Text>
-        <Text style={styles.subtitle}>
-          Join the Farm2Home driver board to accept local farm delivery orders.
-        </Text>
-      </View>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-      <View style={styles.priceBox}>
-        <Text style={styles.price}>$4.99 / month</Text>
-        <Text style={styles.priceSub}>Access the Driver Delivery Board</Text>
-      </View>
-
-      <Text style={styles.section}>Driver Information</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Full Name"
-        placeholderTextColor="#8A8F98"
-        value={fullName}
-        onChangeText={setFullName}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        placeholderTextColor="#8A8F98"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Phone"
-        placeholderTextColor="#8A8F98"
-        value={phone}
-        onChangeText={setPhone}
-        keyboardType="phone-pad"
-      />
-
-      <Text style={styles.section}>Create Driver Login</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Create Username"
-        placeholderTextColor="#8A8F98"
-        value={username}
-        onChangeText={setUsername}
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Create Password"
-        placeholderTextColor="#8A8F98"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        autoCapitalize="none"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Confirm Password"
-        placeholderTextColor="#8A8F98"
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-        secureTextEntry
-        autoCapitalize="none"
-      />
-
-      <Text style={styles.section}>Driver Verification</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Vehicle Type"
-        placeholderTextColor="#8A8F98"
-        value={vehicleType}
-        onChangeText={setVehicleType}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Driver License Number"
-        placeholderTextColor="#8A8F98"
-        value={licenseNumber}
-        onChangeText={setLicenseNumber}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Service Area"
-        placeholderTextColor="#8A8F98"
-        value={serviceArea}
-        onChangeText={setServiceArea}
-      />
-
-      <TouchableOpacity
-        style={styles.uploadButton}
-        onPress={() => pickDocument("license")}
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <Text style={styles.uploadText}>
-          {licenseDocument
-            ? `✅ License: ${licenseDocument.name}`
-            : "Upload Driver License"}
-        </Text>
-      </TouchableOpacity>
+        <ScrollView
+          style={styles.page}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="always"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.heroCard}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="car-outline" size={32} color="#FFFFFF" />
+            </View>
 
-      <TouchableOpacity
-        style={styles.uploadButton}
-        onPress={() => pickDocument("insurance")}
-      >
-        <Text style={styles.uploadText}>
-          {insuranceDocument
-            ? `✅ Insurance: ${insuranceDocument.name}`
-            : "Upload Insurance"}
-        </Text>
-      </TouchableOpacity>
+            <Text style={styles.kicker}>Farm2Home Driver Portal</Text>
+            <Text style={styles.title}>Driver Registration</Text>
+            <Text style={styles.subtitle}>
+              Join the Farm2Home driver board to accept local farm delivery
+              orders and earn from nearby deliveries.
+            </Text>
+          </View>
 
-      <View style={styles.switchRow}>
-        <Text style={styles.switchText}>I have active auto insurance</Text>
-        <Switch value={hasInsurance} onValueChange={setHasInsurance} />
-      </View>
+          <View style={styles.priceBox}>
+            <View>
+              <Text style={styles.price}>$4.99 / month</Text>
+              <Text style={styles.priceSub}>Access the Driver Delivery Board</Text>
+            </View>
+            <View style={styles.priceBadge}>
+              <Ionicons name="flash-outline" size={20} color="#BBF7D0" />
+            </View>
+          </View>
 
-      <View style={styles.switchRow}>
-        <Text style={styles.switchText}>I have a valid driver license</Text>
-        <Switch value={hasValidLicense} onValueChange={setHasValidLicense} />
-      </View>
+          <View style={styles.formCard}>
+            <SectionHeader
+              title="Driver Information"
+              icon="person-outline"
+              subtitle="Basic contact details for your driver profile."
+            />
 
-      <View style={styles.switchRow}>
-        <Text style={styles.switchText}>
-          I authorize Farm2Home to review driver eligibility
-        </Text>
-        <Switch
-          value={acceptsBackgroundCheck}
-          onValueChange={setAcceptsBackgroundCheck}
-        />
-      </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Full Name"
+              placeholderTextColor="#94A3B8"
+              value={fullName}
+              onChangeText={setFullName}
+            />
 
-      <View style={styles.securityCard}>
-        <Text style={styles.securityTitle}>Security Questions</Text>
-        <Text style={styles.securityHelp}>
-          Choose 3 questions for account verification.
-        </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#94A3B8"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
 
-        {renderQuestionPicker(
-          "Security Question 1",
-          securityQuestion1,
-          setSecurityQuestion1,
-          securityAnswer1,
-          setSecurityAnswer1
-        )}
+            <TextInput
+              style={styles.input}
+              placeholder="Phone"
+              placeholderTextColor="#94A3B8"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+            />
+          </View>
 
-        {renderQuestionPicker(
-          "Security Question 2",
-          securityQuestion2,
-          setSecurityQuestion2,
-          securityAnswer2,
-          setSecurityAnswer2
-        )}
+          <View style={styles.formCard}>
+            <SectionHeader
+              title="Create Driver Login"
+              icon="lock-closed-outline"
+              subtitle="Create credentials for the Driver Portal."
+            />
 
-        {renderQuestionPicker(
-          "Security Question 3",
-          securityQuestion3,
-          setSecurityQuestion3,
-          securityAnswer3,
-          setSecurityAnswer3
-        )}
-      </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Create Username"
+              placeholderTextColor="#94A3B8"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
 
-      <TouchableOpacity
-        style={[styles.button, loading && styles.disabledButton]}
-        onPress={registerDriver}
-        disabled={loading}
-        activeOpacity={0.85}
-      >
-        {loading ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text style={styles.buttonText}>Register + Subscribe</Text>
-        )}
-      </TouchableOpacity>
+            <TextInput
+              style={styles.input}
+              placeholder="Create Password"
+              placeholderTextColor="#94A3B8"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
 
-      <TouchableOpacity
-        onPress={() => router.push("/driver/login" as any)}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.link}>Already registered? Driver Login</Text>
-      </TouchableOpacity>
-    </ScrollView>
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm Password"
+              placeholderTextColor="#94A3B8"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={styles.formCard}>
+            <SectionHeader
+              title="Driver Verification"
+              icon="shield-checkmark-outline"
+              subtitle="Vehicle, license, insurance, and service area."
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Vehicle Type"
+              placeholderTextColor="#94A3B8"
+              value={vehicleType}
+              onChangeText={setVehicleType}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Driver License Number"
+              placeholderTextColor="#94A3B8"
+              value={licenseNumber}
+              onChangeText={setLicenseNumber}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Service Area"
+              placeholderTextColor="#94A3B8"
+              value={serviceArea}
+              onChangeText={setServiceArea}
+            />
+
+            <TouchableOpacity
+              style={styles.uploadButton}
+              onPress={() => pickDocument("license")}
+            >
+              <Ionicons
+                name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"}
+                size={20}
+                color={licenseDocument ? "#BBF7D0" : freightTheme.colors.primary}
+              />
+              <Text
+                style={[
+                  styles.uploadText,
+                  licenseDocument && styles.uploadTextComplete,
+                ]}
+              >
+                {licenseDocument
+                  ? `License: ${licenseDocument.name}`
+                  : "Upload Driver License"}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.uploadButton}
+              onPress={() => pickDocument("insurance")}
+            >
+              <Ionicons
+                name={
+                  insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"
+                }
+                size={20}
+                color={insuranceDocument ? "#BBF7D0" : freightTheme.colors.primary}
+              />
+              <Text
+                style={[
+                  styles.uploadText,
+                  insuranceDocument && styles.uploadTextComplete,
+                ]}
+              >
+                {insuranceDocument
+                  ? `Insurance: ${insuranceDocument.name}`
+                  : "Upload Insurance"}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>I have active auto insurance</Text>
+              <Switch
+                value={hasInsurance}
+                onValueChange={setHasInsurance}
+                trackColor={{ false: "#334155", true: "#064E3B" }}
+                thumbColor={hasInsurance ? "#10B981" : "#CBD5E1"}
+              />
+            </View>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>I have a valid driver license</Text>
+              <Switch
+                value={hasValidLicense}
+                onValueChange={setHasValidLicense}
+                trackColor={{ false: "#334155", true: "#064E3B" }}
+                thumbColor={hasValidLicense ? "#10B981" : "#CBD5E1"}
+              />
+            </View>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>
+                I authorize Farm2Home to review driver eligibility
+              </Text>
+              <Switch
+                value={acceptsBackgroundCheck}
+                onValueChange={setAcceptsBackgroundCheck}
+                trackColor={{ false: "#334155", true: "#064E3B" }}
+                thumbColor={acceptsBackgroundCheck ? "#10B981" : "#CBD5E1"}
+              />
+            </View>
+          </View>
+
+          <View style={styles.securityCard}>
+            <SectionHeader
+              title="Security Questions"
+              icon="key-outline"
+              subtitle="Choose 3 questions for account verification."
+            />
+
+            {renderQuestionPicker(
+              "Security Question 1",
+              securityQuestion1,
+              setSecurityQuestion1,
+              securityAnswer1,
+              setSecurityAnswer1
+            )}
+
+            {renderQuestionPicker(
+              "Security Question 2",
+              securityQuestion2,
+              setSecurityQuestion2,
+              securityAnswer2,
+              setSecurityAnswer2
+            )}
+
+            {renderQuestionPicker(
+              "Security Question 3",
+              securityQuestion3,
+              setSecurityQuestion3,
+              securityAnswer3,
+              setSecurityAnswer3
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.disabledButton]}
+            onPress={registerDriver}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="card-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.buttonText}>Register + Subscribe</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => router.push("/driver/login" as any)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.link}>Already registered? Driver Login</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  keyboard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
   page: {
     flex: 1,
     backgroundColor: freightTheme.colors.background,
   },
   content: {
-    padding: 20,
-    paddingBottom: 60,
+    paddingBottom: 80,
   },
   heroCard: {
-    backgroundColor: "#EA580C",
-    borderRadius: 28,
-    padding: 22,
-    marginBottom: 16,
+    backgroundColor: "#020617",
+    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: "#064E3B",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#10B981",
+    marginBottom: 14,
+  },
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: "900",
-    marginBottom: 8,
+    marginTop: 6,
     color: "#FFFFFF",
   },
   subtitle: {
-    color: "#FFF7ED",
+    color: "#CBD5E1",
     fontSize: 15,
     lineHeight: 23,
     fontWeight: "700",
+    marginTop: 8,
   },
   priceBox: {
-    backgroundColor: "#FFF7ED",
-    padding: 16,
-    borderRadius: 18,
-    marginBottom: 20,
+    backgroundColor: "#064E3B",
+    padding: 18,
+    borderRadius: 20,
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#FDBA74",
+    borderColor: "#10B981",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   price: {
-    fontSize: 25,
+    fontSize: 26,
     fontWeight: "900",
-    color: "#EA580C",
+    color: "#FFFFFF",
   },
   priceSub: {
-    color: "#555555",
+    color: "#BBF7D0",
     marginTop: 4,
-    fontWeight: "700",
+    fontWeight: "800",
+  },
+  priceBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#052E2B",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  formCard: {
+    backgroundColor: freightTheme.colors.card,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  securityCard: {
+    backgroundColor: freightTheme.colors.card,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
   section: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "900",
-    marginBottom: 10,
-    marginTop: 8,
-    color: "#FFFFFF",
+    color: freightTheme.colors.text,
+  },
+  sectionSubtitle: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 3,
   },
   input: {
     backgroundColor: "#FFFFFF",
@@ -819,31 +998,37 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#DDDDDD",
+    borderColor: "#CBD5E1",
     fontSize: 16,
     color: "#111827",
     fontWeight: "700",
   },
   uploadButton: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 2,
-    borderColor: "#EA580C",
+    backgroundColor: freightTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.primary,
     padding: 15,
     borderRadius: 14,
     marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   uploadText: {
-    color: "#EA580C",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
-    textAlign: "center",
+    flex: 1,
+  },
+  uploadTextComplete: {
+    color: "#BBF7D0",
   },
   switchRow: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: freightTheme.colors.surface,
     padding: 14,
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#DDDDDD",
+    borderColor: freightTheme.colors.border,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -852,61 +1037,48 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: "800",
     paddingRight: 12,
-    color: "#111827",
-  },
-  securityCard: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DDDDDD",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 16,
-  },
-  securityTitle: {
-    color: "#EA580C",
-    fontSize: 20,
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  securityHelp: {
-    color: "#555555",
-    lineHeight: 20,
-    fontWeight: "700",
-    marginBottom: 12,
+    color: freightTheme.colors.text,
   },
   questionBox: {
     marginBottom: 12,
   },
   questionLabel: {
-    color: "#111827",
+    color: freightTheme.colors.text,
     fontWeight: "900",
     marginBottom: 8,
   },
   questionChip: {
-    backgroundColor: "#E5E7EB",
+    backgroundColor: freightTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
     marginRight: 8,
     marginBottom: 10,
-    maxWidth: 260,
+    maxWidth: 280,
   },
   questionChipActive: {
-    backgroundColor: "#EA580C",
+    backgroundColor: freightTheme.colors.primary,
+    borderColor: freightTheme.colors.primary,
   },
   questionChipText: {
-    color: "#EA580C",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
   },
   questionChipTextActive: {
     color: "#FFFFFF",
   },
   button: {
-    backgroundColor: "#EA580C",
+    backgroundColor: freightTheme.colors.primary,
     padding: 16,
     borderRadius: 16,
-    marginTop: 10,
+    marginHorizontal: 18,
+    marginTop: 4,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   disabledButton: {
     opacity: 0.6,
@@ -918,7 +1090,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   link: {
-    color: "#FDBA74",
+    color: freightTheme.colors.primary,
     textAlign: "center",
     fontWeight: "900",
     marginTop: 18,

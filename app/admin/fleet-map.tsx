@@ -1,3 +1,5 @@
+// app/admin/fleet-map.tsx
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -5,15 +7,34 @@ import {
   FlatList,
   Platform,
   RefreshControl,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../services/supabaseClient";
+
+const ui = {
+  bg: "#F5F7FB",
+  card: "#FFFFFF",
+  border: "#E5E7EB",
+  text: "#111827",
+  muted: "#6B7280",
+  soft: "#F9FAFB",
+  primary: "#7C3AED",
+  primarySoft: "#EDE9FE",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  red: "#EF4444",
+  teal: "#14B8A6",
+};
 
 type DriverLocation = {
   id?: string;
@@ -44,11 +65,8 @@ const ACTIVE_STATUSES = [
 export default function AdminFleetMap() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [drivers, setDrivers] = useState<DriverLocation[]>([]);
-  const [selectedDriver, setSelectedDriver] = useState<DriverLocation | null>(
-    null
-  );
+  const [selectedDriver, setSelectedDriver] = useState<DriverLocation | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -58,11 +76,7 @@ export default function AdminFleetMap() {
         .channel("admin-fleet-map-realtime")
         .on(
           "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "driver_locations",
-          },
+          { event: "*", schema: "public", table: "driver_locations" },
           () => loadFleetMap(false)
         )
         .subscribe();
@@ -131,22 +145,23 @@ export default function AdminFleetMap() {
       case "available":
       case "new":
       case "open":
-        return "#2563EB";
+        return ui.blue;
       case "accepted":
       case "booked":
-        return "#7C3AED";
+        return ui.primary;
       case "arrived_pickup":
-        return "#0891B2";
+        return ui.teal;
       case "picked_up":
-        return "#F59E0B";
+        return ui.orange;
       case "in_transit":
-        return "#0F766E";
+        return ui.green;
       case "arrived_dropoff":
-        return "#14B8A6";
+        return "#EA580C";
       case "delivered":
-        return "#10B981";
+        return ui.green;
       case "cancelled":
-        return "#DC2626";
+      case "canceled":
+        return ui.red;
       default:
         return "#64748B";
     }
@@ -168,10 +183,7 @@ export default function AdminFleetMap() {
   }
 
   const activeDrivers = useMemo(
-    () =>
-      drivers.filter((item) =>
-        ACTIVE_STATUSES.includes(String(item.status || ""))
-      ),
+    () => drivers.filter((item) => ACTIVE_STATUSES.includes(String(item.status || ""))),
     [drivers]
   );
 
@@ -224,53 +236,46 @@ export default function AdminFleetMap() {
 
   function renderWebSafeMap() {
     return (
-      <View style={styles.mapFallback}>
+      <View style={styles.mapCard}>
         {loading && drivers.length === 0 ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#10B981" />
+            <ActivityIndicator size="large" color={ui.primary} />
             <Text style={styles.loadingText}>Loading fleet map...</Text>
           </View>
         ) : (
           <>
-            <Text style={styles.mapIcon}>🗺️</Text>
+            <View style={styles.mapHeader}>
+              <View style={styles.mapIconBox}>
+                <Ionicons name="map-outline" size={30} color="#FFFFFF" />
+              </View>
 
-            <Text style={styles.mapTitle}>
-              {Platform.OS === "web"
-                ? "Fleet GPS Preview"
-                : "Native Fleet Map Ready"}
-            </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.mapTitle}>
+                  {Platform.OS === "web"
+                    ? "Fleet GPS Preview"
+                    : "Native Fleet Map Ready"}
+                </Text>
+                <Text style={styles.mapSubtitle}>
+                  {Platform.OS === "web"
+                    ? "Expo Web shows a safe GPS preview. Native iOS/Android can show live map markers."
+                    : "Live GPS data is ready for native map rendering."}
+                </Text>
+              </View>
+            </View>
 
-            <Text style={styles.mapSubtitle}>
-              {Platform.OS === "web"
-                ? "Expo Web shows a safe GPS preview. Native iOS/Android can show live map markers."
-                : "Live GPS data is ready for native map rendering."}
-            </Text>
-
-            <Text style={styles.centerText}>
-              Center: {mapCenter.latitude.toFixed(5)},{" "}
-              {mapCenter.longitude.toFixed(5)}
-            </Text>
+            <View style={styles.centerBox}>
+              <Ionicons name="locate-outline" size={18} color={ui.primary} />
+              <Text style={styles.centerText}>
+                Center: {mapCenter.latitude.toFixed(5)},{" "}
+                {mapCenter.longitude.toFixed(5)}
+              </Text>
+            </View>
 
             <View style={styles.mapStatsRow}>
-              <View style={styles.mapStat}>
-                <Text style={styles.mapStatValue}>{drivers.length}</Text>
-                <Text style={styles.mapStatLabel}>GPS</Text>
-              </View>
-
-              <View style={styles.mapStat}>
-                <Text style={styles.mapStatValue}>{activeDrivers.length}</Text>
-                <Text style={styles.mapStatLabel}>Active</Text>
-              </View>
-
-              <View style={styles.mapStat}>
-                <Text style={styles.mapStatValue}>{deliveredDrivers.length}</Text>
-                <Text style={styles.mapStatLabel}>Delivered</Text>
-              </View>
-
-              <View style={styles.mapStat}>
-                <Text style={styles.mapStatValue}>{staleDrivers.length}</Text>
-                <Text style={styles.mapStatLabel}>Stale</Text>
-              </View>
+              <MapStat label="GPS" value={drivers.length} color={ui.primary} />
+              <MapStat label="Active" value={activeDrivers.length} color={ui.green} />
+              <MapStat label="Delivered" value={deliveredDrivers.length} color={ui.blue} />
+              <MapStat label="Stale" value={staleDrivers.length} color={ui.red} />
             </View>
           </>
         )}
@@ -279,340 +284,489 @@ export default function AdminFleetMap() {
   }
 
   if (loading && drivers.length === 0) {
-    return <View style={styles.container}>{renderWebSafeMap()}</View>;
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
+        <View style={styles.loadingContainer}>{renderWebSafeMap()}</View>
+      </SafeAreaView>
+    );
   }
 
   return (
-    <View style={styles.container}>
-      {renderWebSafeMap()}
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-      <ScrollView
-        style={styles.panel}
-        contentContainerStyle={styles.panelInner}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
-        <Text style={styles.eyebrow}>Farm2Home Admin</Text>
+      <View style={styles.shell}>
+        <View style={styles.sidebar}>
+          <View style={styles.logoRow}>
+            <View style={styles.logoMark}>
+              <Text style={styles.logoText}>F2H</Text>
+            </View>
 
-        <Text style={styles.title}>Fleet Command Center</Text>
+            <View>
+              <Text style={styles.logoTitle}>Farm2Home</Text>
+              <Text style={styles.logoSub}>Fleet Map</Text>
+            </View>
+          </View>
 
-        <Text style={styles.subtitle}>
-          Monitor driver GPS, active routes, delivery movement, signal
-          freshness, and dispatch operations.
-        </Text>
-
-        <View style={styles.navRow}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => router.push("/admin/live-operations-center" as any)}
-          >
-            <Text style={styles.navText}>Live Ops</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.navButtonOutline}
-            onPress={() => router.push("/freight/board" as any)}
-          >
-            <Text style={styles.navTextOutline}>Freight Board</Text>
-          </TouchableOpacity>
+          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
+          <NavButton label="Live Ops" icon="navigate-outline" route="/admin/live-operations-center" />
+          <NavButton label="Fleet Map" icon="map-outline" route="/admin/fleet-map" active />
+          <NavButton label="Drivers" icon="car-outline" route="/admin/drivers" />
+          <NavButton label="Freight Board" icon="list-outline" route="/freight/board" />
+          <NavButton label="Analytics" icon="analytics-outline" route="/admin/analytics-center" />
         </View>
 
-        <TouchableOpacity style={styles.refreshButton} onPress={() => loadFleetMap()}>
-          <Text style={styles.refreshText}>Refresh Fleet GPS</Text>
-        </TouchableOpacity>
-
-        {selectedDriver ? (
-          <View style={styles.selectedCard}>
-            <View style={styles.selectedHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.selectedTitle}>Selected Driver GPS</Text>
-
-                <Text style={styles.selectedSub}>
-                  Signal: {getFreshness(selectedDriver)}
-                </Text>
-              </View>
-
-              <View
-                style={[
-                  styles.statusBadge,
-                  {
-                    backgroundColor: statusColor(selectedDriver.status),
-                  },
-                ]}
-              >
-                <Text style={styles.statusText}>
-                  {friendlyStatus(selectedDriver.status)}
-                </Text>
-              </View>
-            </View>
-
-            <Text style={styles.metaText}>
-              Driver: {selectedDriver.driver_name || selectedDriver.driver_id || "Unknown"}
-            </Text>
-
-            <Text style={styles.metaText}>
-              Load: #{selectedDriver.load_id?.slice(-6)}
-            </Text>
-
-            <Text style={styles.metaText}>
-              GPS: {selectedDriver.latitude.toFixed(5)},{" "}
-              {selectedDriver.longitude.toFixed(5)}
-            </Text>
-
-            <Text style={styles.metaText}>
-              Speed:{" "}
-              {selectedDriver.speed !== null &&
-              selectedDriver.speed !== undefined
-                ? `${selectedDriver.speed.toFixed(1)} m/s`
-                : "Not available"}
-            </Text>
-
-            <Text style={styles.metaText}>
-              Heading:{" "}
-              {selectedDriver.heading !== null &&
-              selectedDriver.heading !== undefined
-                ? `${selectedDriver.heading.toFixed(0)}°`
-                : "Not available"}
-            </Text>
-
-            <Text style={styles.metaText}>
-              Updated:{" "}
-              {selectedDriver.updated_at
-                ? new Date(selectedDriver.updated_at).toLocaleString()
-                : "Not available"}
-            </Text>
-
-            <View style={styles.selectedActions}>
-              <TouchableOpacity
-                style={styles.chatButton}
-                onPress={() =>
-                  router.push({
-                    pathname: "/chat/chat-center" as any,
-                    params: {
-                      conversationId: `load_${selectedDriver.load_id}`,
-                      loadId: selectedDriver.load_id,
-                    },
-                  })
-                }
-              >
-                <Text style={styles.chatText}>Driver Chat</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.trackButton}
-                onPress={() =>
-                  router.push({
-                    pathname: "/driver/live-location-provider" as any,
-                    params: {
-                      loadId: selectedDriver.load_id,
-                    },
-                  })
-                }
-              >
-                <Text style={styles.trackText}>Open Tracking</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No selected driver.</Text>
-            <Text style={styles.emptyText}>
-              Start live tracking from a driver load to see GPS here.
-            </Text>
-          </View>
-        )}
-
-        <Text style={styles.sectionTitle}>Live Driver Activity</Text>
-
-        <FlatList
-          data={drivers}
-          keyExtractor={(item, index) =>
-            item.id || `${item.load_id}_${item.updated_at}_${index}`
-          }
-          scrollEnabled={false}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No live drivers yet.</Text>
-
-              <Text style={styles.emptyText}>
-                Driver GPS will appear after drivers start live tracking.
+        <View style={styles.main}>
+          <View style={styles.topbar}>
+            <View>
+              <Text style={styles.welcome}>Farm2Home Live Dispatch</Text>
+              <Text style={styles.pageTitle}>Fleet Command Center</Text>
+              <Text style={styles.pageSub}>
+                Monitor driver GPS, active routes, delivery movement, signal freshness, and dispatch operations.
               </Text>
             </View>
-          }
-          renderItem={({ item }) => {
-            const active =
-              selectedDriver?.load_id === item.load_id &&
-              selectedDriver?.updated_at === item.updated_at;
 
-            const stale = staleDrivers.some(
-              (driver) =>
-                driver.load_id === item.load_id &&
-                driver.updated_at === item.updated_at
-            );
+            <TouchableOpacity style={styles.refreshPill} onPress={() => loadFleetMap()}>
+              <Ionicons name="refresh-outline" size={18} color={ui.primary} />
+              <Text style={styles.refreshPillText}>Refresh</Text>
+            </TouchableOpacity>
+          </View>
 
-            return (
-              <TouchableOpacity
-                style={[styles.driverCard, active && styles.driverCardActive]}
-                onPress={() => setSelectedDriver(item)}
-              >
-                <View style={styles.driverHeader}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+          >
+            {renderWebSafeMap()}
+
+            <View style={styles.quickGrid}>
+              <QuickAction label="Live Ops" icon="radio-outline" route="/admin/live-operations-center" />
+              <QuickAction label="Freight Board" icon="list-outline" route="/freight/board" />
+              <QuickAction label="Drivers" icon="car-outline" route="/admin/drivers" />
+              <QuickAction label="Route AI" icon="map-outline" route="/ai/route-optimization-center" />
+            </View>
+
+            {selectedDriver ? (
+              <View style={styles.selectedCard}>
+                <View style={styles.selectedHeader}>
+                  <View style={styles.selectedIcon}>
+                    <Ionicons name="navigate-outline" size={22} color={ui.primary} />
+                  </View>
+
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.driverName}>
-                      {item.driver_name || "Driver GPS"}
-                    </Text>
-
-                    <Text style={styles.driverSub}>
-                      Load #{item.load_id?.slice(-6)}
+                    <Text style={styles.selectedTitle}>Selected Driver GPS</Text>
+                    <Text style={styles.selectedSub}>
+                      Signal: {getFreshness(selectedDriver)}
                     </Text>
                   </View>
 
                   <View
                     style={[
-                      styles.smallStatus,
-                      {
-                        backgroundColor: statusColor(item.status),
-                      },
+                      styles.statusBadge,
+                      { backgroundColor: statusColor(selectedDriver.status) },
                     ]}
                   >
-                    <Text style={styles.smallStatusText}>
-                      {friendlyStatus(item.status)}
+                    <Text style={styles.statusText}>
+                      {friendlyStatus(selectedDriver.status)}
                     </Text>
                   </View>
                 </View>
 
-                <Text style={styles.driverMeta}>
-                  GPS: {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}
-                </Text>
+                <InfoLine
+                  label="Driver"
+                  value={selectedDriver.driver_name || selectedDriver.driver_id || "Unknown"}
+                />
+                <InfoLine label="Load" value={`#${selectedDriver.load_id?.slice(-6)}`} />
+                <InfoLine
+                  label="GPS"
+                  value={`${selectedDriver.latitude.toFixed(5)}, ${selectedDriver.longitude.toFixed(5)}`}
+                />
+                <InfoLine
+                  label="Speed"
+                  value={
+                    selectedDriver.speed !== null && selectedDriver.speed !== undefined
+                      ? `${selectedDriver.speed.toFixed(1)} m/s`
+                      : "Not available"
+                  }
+                />
+                <InfoLine
+                  label="Heading"
+                  value={
+                    selectedDriver.heading !== null && selectedDriver.heading !== undefined
+                      ? `${selectedDriver.heading.toFixed(0)}°`
+                      : "Not available"
+                  }
+                />
+                <InfoLine
+                  label="Updated"
+                  value={
+                    selectedDriver.updated_at
+                      ? new Date(selectedDriver.updated_at).toLocaleString()
+                      : "Not available"
+                  }
+                />
 
-                <Text style={styles.driverMeta}>
-                  Updated:{" "}
-                  {item.updated_at
-                    ? new Date(item.updated_at).toLocaleString()
-                    : "Not available"}
-                </Text>
+                <View style={styles.selectedActions}>
+                  <TouchableOpacity
+                    style={styles.chatButton}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/chat/chat-center" as any,
+                        params: {
+                          conversationId: `load_${selectedDriver.load_id}`,
+                          loadId: selectedDriver.load_id,
+                        },
+                      })
+                    }
+                  >
+                    <Ionicons name="chatbubbles-outline" size={17} color="#FFFFFF" />
+                    <Text style={styles.chatText}>Driver Chat</Text>
+                  </TouchableOpacity>
 
-                <Text style={[styles.freshnessText, stale && styles.staleText]}>
-                  Signal: {getFreshness(item)}
-                </Text>
-              </TouchableOpacity>
-            );
-          }}
-        />
+                  <TouchableOpacity
+                    style={styles.trackButton}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/driver/live-location-provider" as any,
+                        params: { loadId: selectedDriver.load_id },
+                      })
+                    }
+                  >
+                    <Ionicons name="locate-outline" size={17} color="#FFFFFF" />
+                    <Text style={styles.trackText}>Open Tracking</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <EmptyCard
+                title="No selected driver."
+                text="Start live tracking from a driver load to see GPS here."
+              />
+            )}
 
-        <View style={{ height: 70 }} />
-      </ScrollView>
+            <View style={styles.dataSection}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Live Driver Activity</Text>
+                <Text style={styles.sectionLink}>{drivers.length} GPS records</Text>
+              </View>
+
+              <FlatList
+                data={drivers}
+                keyExtractor={(item, index) =>
+                  item.id || `${item.load_id}_${item.updated_at}_${index}`
+                }
+                scrollEnabled={false}
+                contentContainerStyle={{ paddingBottom: 80 }}
+                ListEmptyComponent={
+                  <EmptyCard
+                    title="No live drivers yet."
+                    text="Driver GPS will appear after drivers start live tracking."
+                  />
+                }
+                renderItem={({ item }) => {
+                  const active =
+                    selectedDriver?.load_id === item.load_id &&
+                    selectedDriver?.updated_at === item.updated_at;
+
+                  const stale = staleDrivers.some(
+                    (driver) =>
+                      driver.load_id === item.load_id &&
+                      driver.updated_at === item.updated_at
+                  );
+
+                  return (
+                    <TouchableOpacity
+                      style={[styles.driverCard, active && styles.driverCardActive]}
+                      onPress={() => setSelectedDriver(item)}
+                    >
+                      <View style={styles.driverHeader}>
+                        <View style={styles.driverIcon}>
+                          <Ionicons name="car-outline" size={20} color={ui.primary} />
+                        </View>
+
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.driverName}>
+                            {item.driver_name || "Driver GPS"}
+                          </Text>
+                          <Text style={styles.driverSub}>
+                            Load #{item.load_id?.slice(-6)}
+                          </Text>
+                        </View>
+
+                        <View
+                          style={[
+                            styles.smallStatus,
+                            { backgroundColor: statusColor(item.status) },
+                          ]}
+                        >
+                          <Text style={styles.smallStatusText}>
+                            {friendlyStatus(item.status)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.driverMeta}>
+                        GPS: {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}
+                      </Text>
+
+                      <Text style={styles.driverMeta}>
+                        Updated:{" "}
+                        {item.updated_at
+                          ? new Date(item.updated_at).toLocaleString()
+                          : "Not available"}
+                      </Text>
+
+                      <Text style={[styles.freshnessText, stale && styles.staleText]}>
+                        Signal: {getFreshness(item)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function NavButton({
+  label,
+  icon,
+  route,
+  active = false,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+  active?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.navButton, active && styles.navButtonActive]}
+      onPress={() => router.push(route as any)}
+    >
+      <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
+      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function MapStat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: number;
+  color: string;
+}) {
+  return (
+    <View style={styles.mapStat}>
+      <View style={[styles.mapStatDot, { backgroundColor: color }]} />
+      <Text style={styles.mapStatValue}>{value}</Text>
+      <Text style={styles.mapStatLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function QuickAction({
+  label,
+  icon,
+  route,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+}) {
+  return (
+    <TouchableOpacity style={styles.quickAction} onPress={() => router.push(route as any)}>
+      <Ionicons name={icon} size={18} color={ui.primary} />
+      <Text style={styles.quickText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function InfoLine({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoLine}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function EmptyCard({ title, text }: { title: string; text?: string }) {
+  return (
+    <View style={styles.emptyCard}>
+      <Ionicons name="map-outline" size={30} color={ui.primary} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      {!!text && <Text style={styles.emptyText}>{text}</Text>}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F3F4F6" },
-  mapFallback: {
-    height: "38%",
-    backgroundColor: "#DDEFE4",
+  safe: { flex: 1, backgroundColor: ui.bg },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: ui.bg,
+    padding: 16,
+    justifyContent: "center",
+  },
+  loadingBox: { alignItems: "center", justifyContent: "center" },
+  loadingText: { color: ui.muted, fontWeight: "800", marginTop: 10 },
+  shell: { flex: 1, backgroundColor: ui.bg },
+  sidebar: {
+    backgroundColor: ui.card,
+    borderBottomWidth: 1,
+    borderBottomColor: ui.border,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 12,
+  },
+  logoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
+  },
+  logoMark: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: ui.primary,
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
   },
-  mapIcon: { fontSize: 58, marginBottom: 12 },
-  mapTitle: {
-    color: "#111827",
-    fontSize: 28,
-    fontWeight: "900",
-    marginBottom: 10,
-    textAlign: "center",
+  logoText: { color: "#FFFFFF", fontWeight: "900", fontSize: 13 },
+  logoTitle: { color: ui.text, fontWeight: "900", fontSize: 18 },
+  logoSub: { color: ui.muted, fontWeight: "700", fontSize: 12 },
+  navButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+    backgroundColor: ui.soft,
   },
+  navButtonActive: { backgroundColor: ui.primary },
+  navText: { color: ui.muted, fontWeight: "900", fontSize: 13 },
+  navTextActive: { color: "#FFFFFF" },
+  main: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
+  topbar: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  welcome: { color: ui.muted, fontWeight: "800", marginBottom: 4 },
+  pageTitle: { color: ui.text, fontSize: 26, fontWeight: "900" },
+  pageSub: { color: ui.muted, marginTop: 4, fontWeight: "700", maxWidth: 760 },
+  refreshPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  refreshPillText: { color: ui.primary, fontWeight: "900" },
+  mapCard: {
+    backgroundColor: ui.primary,
+    borderRadius: 24,
+    padding: 18,
+    marginBottom: 14,
+  },
+  mapHeader: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  mapIconBox: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mapTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "900" },
   mapSubtitle: {
-    color: "#374151",
+    color: "#EDE9FE",
     fontWeight: "700",
-    textAlign: "center",
-    lineHeight: 23,
-    maxWidth: 520,
+    marginTop: 6,
+    lineHeight: 21,
   },
-  centerText: { color: "#064E3B", fontWeight: "900", marginTop: 10 },
+  centerBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 14,
+  },
+  centerText: { color: ui.text, fontWeight: "900" },
   mapStatsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginTop: 18,
-    justifyContent: "center",
+    marginTop: 14,
   },
   mapStat: {
-    backgroundColor: "#FFFFFF",
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    borderRadius: 18,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    minWidth: 76,
-  },
-  mapStatValue: { color: "#111827", fontSize: 22, fontWeight: "900" },
-  mapStatLabel: {
-    color: "#6B7280",
-    fontWeight: "800",
-    marginTop: 3,
-    fontSize: 12,
-  },
-  loadingBox: { alignItems: "center", justifyContent: "center" },
-  loadingText: { color: "#374151", fontWeight: "800", marginTop: 10 },
-  panel: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    marginTop: -28,
+    minWidth: "22%",
+    backgroundColor: "#FFFFFF",
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.35)",
   },
-  panelInner: { padding: 18, paddingBottom: 80 },
-  eyebrow: { color: "#10B981", fontWeight: "900", marginBottom: 5 },
-  title: {
-    color: "#111827",
-    fontSize: 31,
-    fontWeight: "900",
+  mapStatDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
     marginBottom: 8,
   },
-  subtitle: {
-    color: "#6B7280",
-    fontWeight: "700",
-    lineHeight: 22,
+  mapStatValue: { color: ui.text, fontSize: 22, fontWeight: "900" },
+  mapStatLabel: { color: ui.muted, fontWeight: "800", marginTop: 2, fontSize: 12 },
+  quickGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
     marginBottom: 14,
   },
-  navRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
-  navButton: {
-    flex: 1,
-    backgroundColor: "#10B981",
+  quickAction: {
+    width: "48%",
+    backgroundColor: ui.card,
+    borderRadius: 16,
     padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  navButtonOutline: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#10B981",
-    padding: 14,
-    borderRadius: 14,
+    borderColor: ui.border,
+    flexDirection: "row",
     alignItems: "center",
+    gap: 8,
   },
-  navText: { color: "#FFFFFF", fontWeight: "900" },
-  navTextOutline: { color: "#10B981", fontWeight: "900" },
-  refreshButton: {
-    backgroundColor: "#111827",
-    padding: 15,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  refreshText: { color: "#FFFFFF", fontWeight: "900" },
+  quickText: { color: ui.text, fontWeight: "900", fontSize: 13 },
   selectedCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: ui.card,
     borderRadius: 22,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 18,
+    borderColor: ui.border,
+    marginBottom: 14,
   },
   selectedHeader: {
     flexDirection: "row",
@@ -620,13 +774,16 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginBottom: 12,
   },
-  selectedTitle: {
-    color: "#111827",
-    fontSize: 21,
-    fontWeight: "900",
-    marginBottom: 4,
+  selectedIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    backgroundColor: ui.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  selectedSub: { color: "#10B981", fontWeight: "900" },
+  selectedTitle: { color: ui.text, fontSize: 21, fontWeight: "900", marginBottom: 4 },
+  selectedSub: { color: ui.green, fontWeight: "900" },
   statusBadge: {
     alignSelf: "flex-start",
     paddingHorizontal: 12,
@@ -639,66 +796,97 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textTransform: "capitalize",
   },
-  metaText: {
-    color: "#374151",
-    fontWeight: "700",
-    marginBottom: 6,
-    lineHeight: 21,
+  infoLine: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: ui.border,
   },
-  selectedActions: { flexDirection: "row", gap: 10, marginTop: 10 },
+  infoLabel: { color: ui.muted, fontWeight: "800", flex: 0.35 },
+  infoValue: { color: ui.text, fontWeight: "800", flex: 0.65, textAlign: "right" },
+  selectedActions: { flexDirection: "row", gap: 10, marginTop: 14 },
   chatButton: {
     flex: 1,
-    backgroundColor: "#10B981",
+    backgroundColor: ui.primary,
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
   chatText: { color: "#FFFFFF", fontWeight: "900" },
   trackButton: {
     flex: 1,
-    backgroundColor: "#111827",
+    backgroundColor: ui.text,
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
   trackText: { color: "#FFFFFF", fontWeight: "900" },
-  sectionTitle: {
-    color: "#111827",
-    fontSize: 22,
-    fontWeight: "900",
+  dataSection: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 14,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
+  sectionTitle: { color: ui.text, fontSize: 19, fontWeight: "900" },
+  sectionLink: { color: ui.primary, fontWeight: "900", fontSize: 12 },
   emptyCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: ui.card,
     padding: 18,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: ui.border,
+    marginBottom: 14,
+    alignItems: "center",
   },
   emptyTitle: {
-    color: "#111827",
+    color: ui.text,
     fontWeight: "900",
     fontSize: 18,
+    marginTop: 8,
     marginBottom: 6,
   },
-  emptyText: { color: "#6B7280", fontWeight: "700", lineHeight: 21 },
+  emptyText: { color: ui.muted, fontWeight: "700", lineHeight: 21, textAlign: "center" },
   driverCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: ui.soft,
     borderRadius: 18,
     padding: 15,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: ui.border,
     marginBottom: 12,
   },
-  driverCardActive: { borderColor: "#10B981", borderWidth: 2 },
+  driverCardActive: { borderColor: ui.primary, borderWidth: 2 },
   driverHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 10,
     marginBottom: 8,
   },
-  driverName: { color: "#111827", fontSize: 17, fontWeight: "900" },
-  driverSub: { color: "#6B7280", fontWeight: "700", marginTop: 4 },
+  driverIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: ui.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  driverName: { color: ui.text, fontSize: 17, fontWeight: "900" },
+  driverSub: { color: ui.muted, fontWeight: "700", marginTop: 4 },
   smallStatus: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
   smallStatusText: {
     color: "#FFFFFF",
@@ -706,7 +894,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textTransform: "capitalize",
   },
-  driverMeta: { color: "#374151", fontWeight: "700", marginBottom: 4 },
-  freshnessText: { color: "#10B981", fontWeight: "900", marginTop: 5 },
-  staleText: { color: "#DC2626" },
+  driverMeta: { color: ui.text, fontWeight: "700", marginBottom: 4 },
+  freshnessText: { color: ui.green, fontWeight: "900", marginTop: 5 },
+  staleText: { color: ui.red },
 });

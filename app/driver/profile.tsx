@@ -1,8 +1,13 @@
+// app/driver/profile.tsx
+
 import React, { useCallback, useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -12,8 +17,10 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
+import freightTheme from "../styles/freightTheme";
 
 export default function DriverProfile() {
   const [driver, setDriver] = useState<any>(null);
@@ -371,281 +378,661 @@ export default function DriverProfile() {
     router.replace("/driver/login" as any);
   }
 
+  function membershipColor() {
+    const value = normalize(driver?.membershipStatus || driver?.subscriptionStatus);
+
+    if (value.includes("cancel")) return "#DC2626";
+    if (value.includes("pending")) return "#F59E0B";
+    if (value.includes("past_due") || value.includes("unpaid")) return "#DC2626";
+    return "#10B981";
+  }
+
+  function getDriverName() {
+    return driver?.fullName || driver?.name || driver?.username || "Farm2Home Driver";
+  }
+
+  function getDriverInitials() {
+    const name = getDriverName();
+    const parts = name.split(" ").filter(Boolean);
+    const first = parts[0]?.[0] || "D";
+    const second = parts[1]?.[0] || "";
+    return `${first}${second}`.toUpperCase();
+  }
+
+  function documentName(type: "license" | "insurance") {
+    if (type === "license") {
+      return (
+        driver?.licenseDocument?.name ||
+        driver?.uploadedDocs?.driver_license?.name ||
+        "Not uploaded"
+      );
+    }
+
+    return (
+      driver?.insuranceDocument?.name ||
+      driver?.uploadedDocs?.insurance?.name ||
+      "Not uploaded"
+    );
+  }
+
+  function SectionHeader({
+    icon,
+    title,
+    subtitle,
+  }: {
+    icon: keyof typeof Ionicons.glyphMap;
+    title: string;
+    subtitle?: string;
+  }) {
+    return (
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIcon}>
+          <Ionicons name={icon} size={20} color="#FFFFFF" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+        </View>
+      </View>
+    );
+  }
+
   if (!driver) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Driver Profile</Text>
-        <Text style={styles.subheader}>No driver profile found.</Text>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.hero}>
+            <Text style={styles.kicker}>Farm2Home Driver</Text>
+            <Text style={styles.title}>Driver Profile</Text>
+            <Text style={styles.subtitle}>No driver profile found.</Text>
+          </View>
 
-        <TouchableOpacity
-          style={styles.greenButton}
-          onPress={() => router.replace("/driver/login" as any)}
-        >
-          <Text style={styles.buttonText}>Go to Driver Login</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <TouchableOpacity
+            style={styles.greenButton}
+            onPress={() => router.replace("/driver/login" as any)}
+          >
+            <Text style={styles.buttonText}>Go to Driver Login</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Driver Profile</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-      <View style={styles.statusCard}>
-        <Text style={styles.statusTitle}>Driver Board Membership</Text>
-        <Text style={styles.statusValue}>
-          {driver.membershipStatus || driver.subscriptionStatus || "Active"}
-        </Text>
-        <Text style={styles.statusSmall}>
-          Driver board membership gives access to available local delivery orders.
-        </Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Profile Information</Text>
-
-        <Text style={styles.label}>Full Name</Text>
-        <TextInput style={styles.input} value={fullName} onChangeText={setFullName} />
-
-        <Text style={styles.label}>Username</Text>
-        <TextInput
-          style={styles.input}
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-        />
-
-        <Text style={styles.label}>Email</Text>
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
-
-        <Text style={styles.label}>Phone</Text>
-        <TextInput
-          style={styles.input}
-          value={phone}
-          onChangeText={setPhone}
-          keyboardType="phone-pad"
-        />
-
-        <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
-          <Text style={styles.buttonText}>Save Profile</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Driver Details</Text>
-
-        <Text style={styles.label}>Vehicle Type</Text>
-        <TextInput style={styles.input} value={vehicleType} onChangeText={setVehicleType} />
-
-        <Text style={styles.label}>License Number</Text>
-        <TextInput style={styles.input} value={licenseNumber} onChangeText={setLicenseNumber} />
-
-        <Text style={styles.label}>Service Area</Text>
-        <TextInput style={styles.input} value={serviceArea} onChangeText={setServiceArea} />
-
-        <Text style={styles.label}>Uploaded License</Text>
-        <Text style={styles.documentText}>
-          {driver.licenseDocument?.name ||
-            driver.uploadedDocs?.driver_license?.name ||
-            "Not uploaded"}
-        </Text>
-
-        <Text style={styles.label}>Uploaded Insurance</Text>
-        <Text style={styles.documentText}>
-          {driver.insuranceDocument?.name ||
-            driver.uploadedDocs?.insurance?.name ||
-            "Not uploaded"}
-        </Text>
-
-        <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
-          <Text style={styles.buttonText}>Save Driver Details</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Change Password</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Current password"
-          value={currentPassword}
-          onChangeText={setCurrentPassword}
-          secureTextEntry
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="New password"
-          value={newPassword}
-          onChangeText={setNewPassword}
-          secureTextEntry
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Confirm new password"
-          value={confirmNewPassword}
-          onChangeText={setConfirmNewPassword}
-          secureTextEntry
-        />
-
-        <TouchableOpacity style={styles.blueButton} onPress={changePassword}>
-          <Text style={styles.buttonText}>Change Password</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Manage Subscription</Text>
-
-        <Text style={styles.helpText}>
-          Manage your $4.99 driver board membership, update your payment method,
-          review billing, or cancel your subscription.
-        </Text>
-
-        <TouchableOpacity style={styles.blueButton} onPress={manageSubscription}>
-          <Text style={styles.buttonText}>Manage Driver Membership</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
-          <Text style={styles.buttonText}>Cancel Driver Subscription</Text>
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity
-        style={styles.greenButton}
-        onPress={() => router.push("/driver/mobile-driver-app" as any)}
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <Text style={styles.buttonText}>Back to Driver Dashboard</Text>
-      </TouchableOpacity>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.hero}>
+            <View style={styles.heroTop}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{getDriverInitials()}</Text>
+              </View>
 
-      <TouchableOpacity
-        style={styles.darkButton}
-        onPress={() => router.push("/driver/board" as any)}
-      >
-        <Text style={styles.buttonText}>View Driver Board</Text>
-      </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.kicker}>Farm2Home Driver</Text>
+                <Text style={styles.title}>Driver Profile</Text>
+                <Text style={styles.subtitle}>
+                  Manage your account, driver details, membership, and portal access.
+                </Text>
+              </View>
+            </View>
+          </View>
 
-      <TouchableOpacity style={styles.logoutButton} onPress={logout}>
-        <Text style={styles.buttonText}>Logout</Text>
-      </TouchableOpacity>
-    </ScrollView>
+          <View style={styles.statusCard}>
+            <View style={styles.statusTop}>
+              <View>
+                <Text style={styles.statusTitle}>Driver Board Membership</Text>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    { backgroundColor: membershipColor() },
+                  ]}
+                >
+                  <Text style={styles.statusBadgeText}>
+                    {driver.membershipStatus || driver.subscriptionStatus || "Active"}
+                  </Text>
+                </View>
+              </View>
+
+              <Ionicons name="shield-checkmark-outline" size={34} color="#BBF7D0" />
+            </View>
+
+            <Text style={styles.statusSmall}>
+              Driver board membership gives access to available local delivery orders.
+            </Text>
+          </View>
+
+          <View style={styles.quickGrid}>
+            <QuickNav
+              icon="phone-portrait-outline"
+              label="Driver App"
+              onPress={() => router.push("/driver/mobile-driver-app" as any)}
+            />
+            <QuickNav
+              icon="list-outline"
+              label="Board"
+              onPress={() => router.push("/driver/board" as any)}
+            />
+            <QuickNav
+              icon="wallet-outline"
+              label="Earnings"
+              onPress={() => router.push("/driver/earnings" as any)}
+            />
+            <QuickNav
+              icon="radio-outline"
+              label="Live GPS"
+              onPress={() =>
+                router.push("/driver/live-location-provider" as any)
+              }
+            />
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="person-outline"
+              title="Profile Information"
+              subtitle="Update your driver contact information."
+            />
+
+            <Text style={styles.label}>Full Name</Text>
+            <TextInput
+              style={styles.input}
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Full Name"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              style={styles.input}
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              placeholder="Username"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              placeholder="Email"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Phone</Text>
+            <TextInput
+              style={styles.input}
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              placeholder="Phone"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
+              <Ionicons name="save-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Save Profile</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="car-outline"
+              title="Driver Details"
+              subtitle="Vehicle, license, service area, and uploaded documents."
+            />
+
+            <Text style={styles.label}>Vehicle Type</Text>
+            <TextInput
+              style={styles.input}
+              value={vehicleType}
+              onChangeText={setVehicleType}
+              placeholder="Vehicle Type"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>License Number</Text>
+            <TextInput
+              style={styles.input}
+              value={licenseNumber}
+              onChangeText={setLicenseNumber}
+              placeholder="License Number"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Service Area</Text>
+            <TextInput
+              style={styles.input}
+              value={serviceArea}
+              onChangeText={setServiceArea}
+              placeholder="Service Area"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <DocumentRow
+              icon="card-outline"
+              label="Uploaded License"
+              value={documentName("license")}
+            />
+
+            <DocumentRow
+              icon="document-text-outline"
+              label="Uploaded Insurance"
+              value={documentName("insurance")}
+            />
+
+            <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
+              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Save Driver Details</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="key-outline"
+              title="Change Password"
+              subtitle="Update your local driver password."
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Current password"
+              placeholderTextColor="#94A3B8"
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
+              secureTextEntry
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="New password"
+              placeholderTextColor="#94A3B8"
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm new password"
+              placeholderTextColor="#94A3B8"
+              value={confirmNewPassword}
+              onChangeText={setConfirmNewPassword}
+              secureTextEntry
+            />
+
+            <TouchableOpacity style={styles.blueButton} onPress={changePassword}>
+              <Ionicons name="lock-closed-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Change Password</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="card-outline"
+              title="Manage Subscription"
+              subtitle="Manage your $4.99 driver board membership."
+            />
+
+            <Text style={styles.helpText}>
+              Manage your driver board membership, update your payment method,
+              review billing, or cancel your subscription.
+            </Text>
+
+            <TouchableOpacity style={styles.blueButton} onPress={manageSubscription}>
+              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Manage Driver Membership</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
+              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Cancel Driver Subscription</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.greenButton}
+            onPress={() => router.push("/driver/mobile-driver-app" as any)}
+          >
+            <Ionicons name="phone-portrait-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>Back to Driver Dashboard</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.darkButton}
+            onPress={() => router.push("/driver/board" as any)}
+          >
+            <Ionicons name="list-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>View Driver Board</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+            <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>Logout</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function QuickNav({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.quickCard} onPress={onPress}>
+      <Ionicons name={icon} size={22} color="#10B981" />
+      <Text style={styles.quickText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function DocumentRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
+  const uploaded = value !== "Not uploaded";
+
+  return (
+    <View style={styles.documentRow}>
+      <Ionicons
+        name={uploaded ? "checkmark-circle" : icon}
+        size={20}
+        color={uploaded ? "#10B981" : "#94A3B8"}
+      />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.documentLabel}>{label}</Text>
+        <Text style={styles.documentText}>{value}</Text>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F7F7F2" },
-  content: { padding: 22, paddingBottom: 70 },
-  title: {
-    fontSize: 30,
-    fontWeight: "900",
-    color: "#1f7a3f",
-    marginBottom: 8,
+  safe: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
   },
-  subheader: { color: "#666666", marginBottom: 20, fontWeight: "700" },
-  statusCard: {
-    backgroundColor: "#E8F5E9",
-    borderRadius: 18,
-    padding: 16,
+  keyboard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  container: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  content: {
+    paddingBottom: 90,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 22,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroTop: {
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "center",
+  },
+  avatar: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: "#064E3B",
     borderWidth: 1,
-    borderColor: "#B7DFB9",
-    marginBottom: 16,
+    borderColor: "#10B981",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  title: {
+    fontSize: 34,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    marginTop: 6,
+  },
+  subtitle: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+  statusCard: {
+    backgroundColor: "#064E3B",
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#10B981",
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 14,
+  },
+  statusTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "center",
   },
   statusTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "900",
-    color: "#14532D",
-    marginBottom: 6,
+    color: "#FFFFFF",
+    marginBottom: 8,
   },
-  statusValue: { fontSize: 18, fontWeight: "900", color: "#1f7a3f" },
+  statusBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  statusBadgeText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 12,
+  },
   statusSmall: {
-    marginTop: 8,
-    color: "#14532D",
+    marginTop: 12,
+    color: "#BBF7D0",
     fontWeight: "700",
     lineHeight: 20,
   },
-  card: {
-    backgroundColor: "#FFFFFF",
-    padding: 18,
+  quickGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+  },
+  quickCard: {
+    width: "48%",
+    backgroundColor: freightTheme.colors.card,
     borderRadius: 18,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    alignItems: "center",
+    gap: 8,
+  },
+  quickText: {
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+  },
+  card: {
+    backgroundColor: freightTheme.colors.card,
+    padding: 18,
+    borderRadius: 22,
+    marginHorizontal: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: freightTheme.colors.border,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    marginBottom: 14,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: "900",
-    color: "#111827",
-    marginBottom: 12,
+    color: freightTheme.colors.text,
+  },
+  sectionSubtitle: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 3,
   },
   label: {
-    color: "#374151",
-    marginTop: 10,
+    color: freightTheme.colors.text,
+    marginTop: 8,
     marginBottom: 6,
     fontWeight: "900",
   },
   input: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: "#CBD5E1",
     borderRadius: 14,
     padding: 14,
     fontWeight: "700",
     marginBottom: 8,
+    color: "#111827",
+  },
+  documentRow: {
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 14,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+  },
+  documentLabel: {
+    color: freightTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
   documentText: {
-    backgroundColor: "#F3F4F6",
-    borderRadius: 12,
-    padding: 12,
-    color: "#111827",
+    color: freightTheme.colors.text,
     fontWeight: "800",
+    marginTop: 3,
   },
   helpText: {
-    color: "#4B5563",
+    color: freightTheme.colors.mutedText,
     fontWeight: "700",
     lineHeight: 21,
     marginBottom: 12,
   },
   greenButton: {
-    backgroundColor: "#1f7a3f",
+    backgroundColor: freightTheme.colors.primary,
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 18,
     marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
   },
   blueButton: {
-    backgroundColor: "#1565C0",
+    backgroundColor: "#2563EB",
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
   },
   darkButton: {
     backgroundColor: "#111827",
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 18,
     marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
   },
   cancelButton: {
-    backgroundColor: "#D32F2F",
+    backgroundColor: "#DC2626",
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
   },
   logoutButton: {
-    backgroundColor: "#6B7280",
+    backgroundColor: "#64748B",
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 18,
     marginTop: 10,
     marginBottom: 40,
+    flexDirection: "row",
+    gap: 8,
   },
-  buttonText: { color: "#FFFFFF", fontWeight: "900", textAlign: "center" },
+  buttonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    textAlign: "center",
+  },
 });

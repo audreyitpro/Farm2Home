@@ -4,8 +4,12 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -15,6 +19,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
+import { Ionicons } from "@expo/vector-icons";
 
 import freightTheme from "../styles/freightTheme";
 
@@ -43,35 +48,24 @@ function mapDriver(driver: any) {
     username: driver.username || "",
     phone: driver.phone || "",
 
-    accountActive:
-      driver.account_active ?? driver.accountActive ?? true,
+    accountActive: driver.account_active ?? driver.accountActive ?? true,
 
     membershipStatus:
-      driver.membership_status ||
-      driver.membershipStatus ||
-      "Active",
+      driver.membership_status || driver.membershipStatus || "Active",
 
     subscriptionStatus:
-      driver.subscription_status ||
-      driver.subscriptionStatus ||
-      "active",
+      driver.subscription_status || driver.subscriptionStatus || "active",
 
     approved: driver.approved ?? true,
     verified: driver.verified ?? true,
 
-    expoPushToken:
-      driver.expo_push_token || driver.expoPushToken || "",
+    expoPushToken: driver.expo_push_token || driver.expoPushToken || "",
 
     notificationsEnabled:
-      driver.notifications_enabled ??
-      driver.notificationsEnabled ??
-      false,
+      driver.notifications_enabled ?? driver.notificationsEnabled ?? false,
 
     createdAt: driver.created_at || driver.createdAt || "",
-    updatedAt:
-      driver.updated_at ||
-      driver.updatedAt ||
-      new Date().toISOString(),
+    updatedAt: driver.updated_at || driver.updatedAt || new Date().toISOString(),
   };
 }
 
@@ -102,14 +96,8 @@ export default function DriverLoginScreen() {
   async function saveLoggedInDriver(driver: any) {
     const normalizedDriver = mapDriver(driver);
 
-    await AsyncStorage.setItem(
-      "currentDriver",
-      JSON.stringify(normalizedDriver)
-    );
-    await AsyncStorage.setItem(
-      "currentUser",
-      JSON.stringify(normalizedDriver)
-    );
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedDriver));
     await AsyncStorage.setItem(
       "farm2homeCurrentDriver",
       JSON.stringify(normalizedDriver)
@@ -130,6 +118,14 @@ export default function DriverLoginScreen() {
 
     if (!cleanEmail || !cleanPassword) {
       Alert.alert("Missing Information", "Enter email and password.");
+      return;
+    }
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      Alert.alert(
+        "Configuration Missing",
+        "Supabase environment keys are missing. Check EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY."
+      );
       return;
     }
 
@@ -199,6 +195,14 @@ export default function DriverLoginScreen() {
       return;
     }
 
+    if (!supabaseUrl || !supabaseAnonKey) {
+      Alert.alert(
+        "Configuration Missing",
+        "Supabase environment keys are missing. Check EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY."
+      );
+      return;
+    }
+
     try {
       setResetLoading(true);
 
@@ -229,82 +233,132 @@ export default function DriverLoginScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Driver Login</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-        <Text style={styles.subtitle}>
-          Access Farm2Home delivery orders, routes, proof of delivery, and
-          earnings.
-        </Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          placeholderTextColor="#8A8F98"
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor="#8A8F98"
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={password}
-          onChangeText={setPassword}
-        />
-
-        <TouchableOpacity
-          style={[styles.loginButton, loading && styles.disabledButton]}
-          onPress={handleLogin}
-          disabled={loading}
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.loginButtonText}>Driver Login</Text>
-          )}
-        </TouchableOpacity>
+          <View style={styles.hero}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="car-outline" size={32} color="#FFFFFF" />
+            </View>
 
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => {
-            setResetEmail(email);
-            setResetVisible(true);
-          }}
-        >
-          <Text style={styles.linkText}>Forgot Password?</Text>
-        </TouchableOpacity>
+            <Text style={styles.kicker}>Farm2Home Driver Portal</Text>
+            <Text style={styles.title}>Driver Login</Text>
+            <Text style={styles.subtitle}>
+              Access delivery orders, routes, GPS tracking, proof of delivery,
+              and earnings.
+            </Text>
+          </View>
 
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => router.push("/driver/register" as any)}
-        >
-          <Text style={styles.linkText}>Register as Driver</Text>
-        </TouchableOpacity>
-      </View>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Welcome Back</Text>
+            <Text style={styles.cardSubtitle}>
+              Sign in with your approved driver account.
+            </Text>
+
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="driver@email.com"
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+
+            <Text style={styles.inputLabel}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#94A3B8"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={password}
+              onChangeText={setPassword}
+            />
+
+            <TouchableOpacity
+              style={[styles.loginButton, loading && styles.disabledButton]}
+              onPress={handleLogin}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.loginButtonText}>Driver Login</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.linkButton}
+              onPress={() => {
+                setResetEmail(email);
+                setResetVisible(true);
+              }}
+              disabled={loading}
+            >
+              <Text style={styles.linkText}>Forgot Password?</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            <TouchableOpacity
+              style={styles.registerButton}
+              onPress={() => router.push("/driver/register" as any)}
+              disabled={loading}
+            >
+              <Ionicons
+                name="person-add-outline"
+                size={18}
+                color={freightTheme.colors.primary}
+              />
+              <Text style={styles.registerButtonText}>Register as Driver</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.backHomeButton}
+              onPress={() => router.replace("/" as any)}
+              disabled={loading}
+            >
+              <Text style={styles.backHomeText}>Back To Home</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <Modal visible={resetVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
+              <View style={styles.modalIcon}>
+                <Ionicons name="key-outline" size={28} color="#FFFFFF" />
+              </View>
+
               <Text style={styles.modalTitle}>Reset Driver Password</Text>
 
               <Text style={styles.modalSubtitle}>
-                Enter your driver email. Farm2Home will send a secure reset
-                link.
+                Enter your driver email. Farm2Home will send a secure reset link.
               </Text>
 
+              <Text style={styles.inputLabelDark}>Driver Email</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Driver Email"
-                placeholderTextColor="#8A8F98"
+                placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="email-address"
@@ -313,17 +367,17 @@ export default function DriverLoginScreen() {
               />
 
               <TouchableOpacity
-                style={[
-                  styles.loginButton,
-                  resetLoading && styles.disabledButton,
-                ]}
+                style={[styles.loginButton, resetLoading && styles.disabledButton]}
                 onPress={handlePasswordReset}
                 disabled={resetLoading}
               >
                 {resetLoading ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                  <>
+                    <Ionicons name="mail-outline" size={18} color="#FFFFFF" />
+                    <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                  </>
                 )}
               </TouchableOpacity>
 
@@ -333,6 +387,7 @@ export default function DriverLoginScreen() {
                   setResetVisible(false);
                   setResetEmail("");
                 }}
+                disabled={resetLoading}
               >
                 <Text style={styles.closeText}>Close</Text>
               </TouchableOpacity>
@@ -340,95 +395,179 @@ export default function DriverLoginScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
     backgroundColor: freightTheme.colors.background,
-    justifyContent: "center",
+  },
+  keyboard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 80,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 26,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: "#064E3B",
     alignItems: "center",
-    padding: 24,
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#10B981",
+    marginBottom: 14,
   },
-
-  card: {
-    width: "100%",
-    maxWidth: 500,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 24,
-  },
-
-  title: {
-    fontSize: 32,
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
     fontWeight: "900",
-    color: freightTheme.colors.primary,
-    textAlign: "center",
-    marginBottom: 10,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
-
+  title: {
+    fontSize: 36,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    marginTop: 6,
+  },
   subtitle: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 23,
+    marginTop: 8,
+    maxWidth: 560,
+  },
+  card: {
+    backgroundColor: freightTheme.colors.card,
+    margin: 18,
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+  },
+  cardTitle: {
+    color: freightTheme.colors.text,
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  cardSubtitle: {
     textAlign: "center",
     color: freightTheme.colors.mutedText,
     lineHeight: 22,
+    marginTop: 8,
     marginBottom: 22,
     fontWeight: "700",
   },
-
+  inputLabel: {
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+    marginBottom: 7,
+  },
+  inputLabelDark: {
+    color: "#111827",
+    fontWeight: "900",
+    marginBottom: 7,
+  },
   input: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#DDDDDD",
+    borderColor: "#CBD5E1",
     borderRadius: 14,
     padding: 14,
     marginBottom: 14,
     color: "#111827",
     fontWeight: "700",
   },
-
   loginButton: {
-    backgroundColor: "#EA580C",
+    backgroundColor: freightTheme.colors.primary,
     padding: 16,
     borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
-
   disabledButton: {
     opacity: 0.6,
   },
-
   loginButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-
   linkButton: {
     marginTop: 16,
   },
-
   linkText: {
     textAlign: "center",
-    color: "#EA580C",
+    color: freightTheme.colors.primary,
     fontWeight: "900",
   },
-
+  divider: {
+    height: 1,
+    backgroundColor: freightTheme.colors.border,
+    marginVertical: 18,
+  },
+  registerButton: {
+    backgroundColor: freightTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.primary,
+    borderRadius: 16,
+    padding: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  registerButtonText: {
+    color: freightTheme.colors.primary,
+    fontWeight: "900",
+  },
+  backHomeButton: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+  backHomeText: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "900",
+  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
+    backgroundColor: "rgba(0,0,0,0.65)",
     justifyContent: "center",
     padding: 20,
   },
-
   modalCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 22,
     maxHeight: "90%",
   },
-
+  modalIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
   modalTitle: {
     fontSize: 24,
     fontWeight: "900",
@@ -436,20 +575,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     color: "#111827",
   },
-
   modalSubtitle: {
     textAlign: "center",
-    color: freightTheme.colors.mutedText,
+    color: "#64748B",
     lineHeight: 22,
     marginBottom: 18,
     fontWeight: "700",
   },
-
   closeButton: {
     marginTop: 18,
     alignItems: "center",
   },
-
   closeText: {
     color: "#B91C1C",
     fontWeight: "900",

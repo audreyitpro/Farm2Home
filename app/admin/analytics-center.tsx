@@ -1,17 +1,37 @@
+// app/admin/analytics-center.tsx
+
 import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
-import { supabase } from "../data/supabaseClient";
+import { supabase } from "../services/supabaseClient";
+
+const ui = {
+  bg: "#F5F7FB",
+  card: "#FFFFFF",
+  border: "#E5E7EB",
+  text: "#111827",
+  muted: "#6B7280",
+  soft: "#F9FAFB",
+  primary: "#7C3AED",
+  primarySoft: "#EDE9FE",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  red: "#EF4444",
+};
 
 type AnalyticsStats = {
   totalRevenue: number;
@@ -88,17 +108,13 @@ export default function AdminAnalyticsCenter() {
         `
         );
 
-      if (orderError) {
-        console.log("Analytics orders error:", orderError.message);
-      }
+      if (orderError) console.log("Analytics orders error:", orderError.message);
 
       const { data: loads, error: loadError } = await supabase
         .from("freight_loads")
         .select("*");
 
-      if (loadError) {
-        console.log("Analytics loads error:", loadError.message);
-      }
+      if (loadError) console.log("Analytics loads error:", loadError.message);
 
       const { data: verifications, error: verificationError } = await supabase
         .from("verification_records")
@@ -112,31 +128,29 @@ export default function AdminAnalyticsCenter() {
         .from("farmers")
         .select("*");
 
-      if (farmerError) {
-        console.log("Analytics farmers error:", farmerError.message);
-      }
+      if (farmerError) console.log("Analytics farmers error:", farmerError.message);
 
       const { data: carriers, error: carrierError } = await supabase
         .from("freight_carriers")
         .select("*");
 
-      if (carrierError) {
-        console.log("Analytics carriers error:", carrierError.message);
-      }
+      if (carrierError) console.log("Analytics carriers error:", carrierError.message);
 
-      const orderRows = orders || [];
-      const loadRows = loads || [];
-      const verificationRows = verifications || [];
-      const farmerRows = farmers || [];
-      const carrierRows = carriers || [];
+      const orderRows = Array.isArray(orders) ? orders : [];
+      const loadRows = Array.isArray(loads) ? loads : [];
+      const verificationRows = Array.isArray(verifications) ? verifications : [];
+      const farmerRows = Array.isArray(farmers) ? farmers : [];
+      const carrierRows = Array.isArray(carriers) ? carriers : [];
 
       const totalRevenue = orderRows.reduce(
-        (sum: number, item: any) => sum + Number(item.total || 0),
+        (sum: number, item: any) =>
+          sum + Number(item.total || item.total_amount || item.amount || 0),
         0
       );
 
       const freightRevenue = loadRows.reduce(
-        (sum: number, item: any) => sum + Number(item.rate || 0),
+        (sum: number, item: any) =>
+          sum + Number(item.rate || item.amount || item.price || 0),
         0
       );
 
@@ -148,55 +162,91 @@ export default function AdminAnalyticsCenter() {
         "PICKED_UP",
         "IN_TRANSIT",
         "PENDING_PAYMENT",
+        "paid",
+        "accepted",
+        "preparing",
+        "ready_for_pickup",
+        "picked_up",
+        "in_transit",
+        "pending_payment",
       ];
 
       const pendingVerificationStatuses = [
         "PENDING",
         "PENDING_VERIFICATION",
         "DOCUMENTS_SUBMITTED",
+        "PENDING_ADMIN_REVIEW",
+        "pending",
+        "pending_verification",
+        "documents_submitted",
+        "pending_admin_review",
       ];
 
-      const orderStatusCounts = buildStatusCounts(orderRows, "status");
-      const loadStatusCounts = buildStatusCounts(loadRows, "status");
-      const farmRevenue = buildTopFarmRevenue(orderRows);
-
-      setOrderStatuses(orderStatusCounts);
-      setLoadStatuses(loadStatusCounts);
-      setTopFarms(farmRevenue);
+      setOrderStatuses(buildStatusCounts(orderRows, "status"));
+      setLoadStatuses(buildStatusCounts(loadRows, "status"));
+      setTopFarms(buildTopFarmRevenue(orderRows));
 
       setStats({
         totalRevenue,
         totalOrders: orderRows.length,
         avgOrderValue: orderRows.length > 0 ? totalRevenue / orderRows.length : 0,
         activeOrders: orderRows.filter((item: any) =>
-          activeOrderStatuses.includes(item.status)
+          activeOrderStatuses.includes(String(item.status || ""))
         ).length,
-        deliveredOrders: orderRows.filter(
-          (item: any) => item.status === "DELIVERED"
+        deliveredOrders: orderRows.filter((item: any) =>
+          ["DELIVERED", "delivered"].includes(String(item.status || ""))
         ).length,
-        cancelledOrders: orderRows.filter(
-          (item: any) =>
-            item.status === "CANCELLED" || item.status === "REFUNDED"
+        cancelledOrders: orderRows.filter((item: any) =>
+          ["CANCELLED", "REFUNDED", "cancelled", "refunded"].includes(
+            String(item.status || "")
+          )
         ).length,
         totalLoads: loadRows.length,
-        openLoads: loadRows.filter((item: any) => item.status === "OPEN").length,
-        bookedLoads: loadRows.filter(
-          (item: any) => item.status === "BOOKED" || item.status === "ACCEPTED"
+        openLoads: loadRows.filter((item: any) =>
+          ["OPEN", "available", "AVAILABLE", "open", "pending", "PENDING"].includes(
+            String(item.status || "")
+          )
         ).length,
-        deliveredLoads: loadRows.filter(
-          (item: any) => item.status === "DELIVERED"
+        bookedLoads: loadRows.filter((item: any) =>
+          [
+            "BOOKED",
+            "ACCEPTED",
+            "accepted",
+            "ASSIGNED",
+            "assigned",
+            "arrived_pickup",
+            "PICKED_UP",
+            "picked_up",
+            "IN_TRANSIT",
+            "in_transit",
+          ].includes(String(item.status || ""))
+        ).length,
+        deliveredLoads: loadRows.filter((item: any) =>
+          ["DELIVERED", "delivered"].includes(String(item.status || ""))
         ).length,
         freightRevenue,
         pendingVerifications: verificationRows.filter((item: any) =>
-          pendingVerificationStatuses.includes(item.status)
+          pendingVerificationStatuses.includes(String(item.status || ""))
         ).length,
-        approvedFarmers: farmerRows.filter((item: any) => item.approved).length,
-        approvedCarriers: carrierRows.filter((item: any) => item.approved)
-          .length,
+        approvedFarmers: farmerRows.filter(
+          (item: any) =>
+            item.approved === true ||
+            item.status === "APPROVED" ||
+            item.status === "approved"
+        ).length,
+        approvedCarriers: carrierRows.filter(
+          (item: any) =>
+            item.approved === true ||
+            item.status === "APPROVED" ||
+            item.status === "approved"
+        ).length,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.log("Analytics load error:", error);
-      Alert.alert("Analytics Error", "Unable to load analytics data.");
+      Alert.alert(
+        "Analytics Error",
+        error?.message || "Unable to load analytics data."
+      );
     } finally {
       setLoading(false);
     }
@@ -206,15 +256,12 @@ export default function AdminAnalyticsCenter() {
     const counts: Record<string, number> = {};
 
     rows.forEach((row) => {
-      const status = row[field] || "UNKNOWN";
+      const status = String(row[field] || "UNKNOWN").toUpperCase();
       counts[status] = (counts[status] || 0) + 1;
     });
 
     return Object.entries(counts)
-      .map(([status, count]) => ({
-        status,
-        count,
-      }))
+      .map(([status, count]) => ({ status, count }))
       .sort((a, b) => b.count - a.count);
   }
 
@@ -222,8 +269,12 @@ export default function AdminAnalyticsCenter() {
     const farmMap: Record<string, TopFarm> = {};
 
     orderRows.forEach((order: any) => {
-      const farmerId = order.farmer_id || "unknown";
-      const farmName = order.farmers?.farm_name || "Unknown Farm";
+      const farmerId = String(order.farmer_id || order.farm_id || "unknown");
+      const farmName =
+        order.farmers?.farm_name ||
+        order.farm_name ||
+        order.farmer_name ||
+        "Unknown Farm";
 
       if (!farmMap[farmerId]) {
         farmMap[farmerId] = {
@@ -234,7 +285,9 @@ export default function AdminAnalyticsCenter() {
         };
       }
 
-      farmMap[farmerId].revenue += Number(order.total || 0);
+      farmMap[farmerId].revenue += Number(
+        order.total || order.total_amount || order.amount || 0
+      );
       farmMap[farmerId].orders += 1;
     });
 
@@ -247,40 +300,19 @@ export default function AdminAnalyticsCenter() {
     return `$${Number(value || 0).toFixed(2)}`;
   }
 
-  function renderStat(label: string, value: string | number, accent = false) {
-    return (
-      <View style={[styles.statCard, accent && styles.statCardAccent]}>
-        <Text style={[styles.statValue, accent && styles.statValueAccent]}>
-          {value}
-        </Text>
-        <Text style={[styles.statLabel, accent && styles.statLabelAccent]}>
-          {label}
-        </Text>
-      </View>
-    );
-  }
-
-  function renderBar(item: StatusMetric, maxCount: number, color: string) {
+  function renderBar(item: StatusMetric, maxCount: number) {
     const widthPercent =
       maxCount > 0 ? Math.max(12, (item.count / maxCount) * 100) : 12;
 
     return (
-      <View style={styles.barRow}>
+      <View style={styles.barRow} key={item.status}>
         <View style={styles.barLabelRow}>
           <Text style={styles.barLabel}>{item.status}</Text>
           <Text style={styles.barCount}>{item.count}</Text>
         </View>
 
         <View style={styles.barTrack}>
-          <View
-            style={[
-              styles.barFill,
-              {
-                width: `${widthPercent}%`,
-                backgroundColor: color,
-              },
-            ]}
-          />
+          <View style={[styles.barFill, { width: `${widthPercent}%` }]} />
         </View>
       </View>
     );
@@ -290,397 +322,514 @@ export default function AdminAnalyticsCenter() {
   const maxLoadStatus = Math.max(1, ...loadStatuses.map((item) => item.count));
 
   return (
-    <View style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.eyebrow}>Farm2Home Admin</Text>
-        <Text style={styles.title}>Analytics Center</Text>
-        <Text style={styles.subtitle}>
-          Track revenue, orders, freight performance, verification volume, farm
-          growth, and marketplace activity.
-        </Text>
-      </View>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-      <View style={styles.navRow}>
-        <TouchableOpacity
-          style={styles.navButton}
-          onPress={() => router.push("/admin/control-tower")}
-        >
-          <Text style={styles.navText}>Control Tower</Text>
-        </TouchableOpacity>
+      <View style={styles.shell}>
+        <View style={styles.sidebar}>
+          <View style={styles.logoRow}>
+            <View style={styles.logoMark}>
+              <Text style={styles.logoText}>F2H</Text>
+            </View>
+            <View>
+              <Text style={styles.logoTitle}>Farm2Home</Text>
+              <Text style={styles.logoSub}>Admin Analytics</Text>
+            </View>
+          </View>
 
-        <TouchableOpacity
-          style={styles.navButtonOutline}
-          onPress={() => router.push("/ai/dispatch-dashboard")}
-        >
-          <Text style={styles.navTextOutline}>AI Dispatch</Text>
-        </TouchableOpacity>
-      </View>
-
-      {loading ? (
-        <View style={styles.loadingCard}>
-          <ActivityIndicator size="large" color="#10B981" />
-          <Text style={styles.loadingText}>Loading analytics...</Text>
+          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
+          <NavButton label="Control Tower" icon="radio-outline" route="/admin/control-tower" />
+          <NavButton label="Live Ops" icon="navigate-outline" route="/admin/live-operations-center" />
+          <NavButton label="Analytics" icon="analytics-outline" route="/admin/analytics-center" active />
+          <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" />
+          <NavButton label="AI Dispatch" icon="sparkles-outline" route="/ai/dispatch-intelligence-center" />
         </View>
-      ) : (
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <View style={styles.statsGrid}>
-            {renderStat("Marketplace Revenue", formatMoney(stats.totalRevenue), true)}
-            {renderStat("Freight Revenue", formatMoney(stats.freightRevenue), true)}
-            {renderStat("Total Orders", stats.totalOrders)}
-            {renderStat("Avg Order Value", formatMoney(stats.avgOrderValue))}
-            {renderStat("Active Orders", stats.activeOrders)}
-            {renderStat("Delivered Orders", stats.deliveredOrders)}
-            {renderStat("Cancelled / Refunded", stats.cancelledOrders)}
-            {renderStat("Total Loads", stats.totalLoads)}
-            {renderStat("Open Loads", stats.openLoads)}
-            {renderStat("Booked Loads", stats.bookedLoads)}
-            {renderStat("Delivered Loads", stats.deliveredLoads)}
-            {renderStat("Pending Reviews", stats.pendingVerifications)}
-            {renderStat("Approved Farmers", stats.approvedFarmers)}
-            {renderStat("Approved Carriers", stats.approvedCarriers)}
+
+        <View style={styles.main}>
+          <View style={styles.topbar}>
+            <View>
+              <Text style={styles.welcome}>Welcome back, Admin</Text>
+              <Text style={styles.pageTitle}>Analytics Center</Text>
+              <Text style={styles.pageSub}>
+                Revenue, marketplace, freight, farmer, and carrier performance.
+              </Text>
+            </View>
+
+            <TouchableOpacity style={styles.refreshPill} onPress={loadAnalytics}>
+              <Ionicons name="refresh-outline" size={18} color={ui.primary} />
+              <Text style={styles.refreshPillText}>Refresh</Text>
+            </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.refreshButton} onPress={loadAnalytics}>
-            <Text style={styles.refreshText}>Refresh Analytics</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.sectionTitle}>Order Status Breakdown</Text>
-
-          <View style={styles.chartCard}>
-            {orderStatuses.length === 0 ? (
-              <Text style={styles.emptyText}>No order status data yet.</Text>
-            ) : (
-              orderStatuses.map((item) =>
-                renderBar(item, maxOrderStatus, "#10B981")
-              )
-            )}
-          </View>
-
-          <Text style={styles.sectionTitle}>Freight Load Breakdown</Text>
-
-          <View style={styles.chartCard}>
-            {loadStatuses.length === 0 ? (
-              <Text style={styles.emptyText}>No freight load data yet.</Text>
-            ) : (
-              loadStatuses.map((item) =>
-                renderBar(item, maxLoadStatus, "#2563EB")
-              )
-            )}
-          </View>
-
-          <Text style={styles.sectionTitle}>Top Farms by Revenue</Text>
-
-          <FlatList
-            data={topFarms}
-            keyExtractor={(item) => item.farmer_id}
-            scrollEnabled={false}
-            ListEmptyComponent={
-              <View style={styles.chartCard}>
-                <Text style={styles.emptyText}>No farm revenue data yet.</Text>
+          {loading ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="large" color={ui.primary} />
+              <Text style={styles.loadingText}>Loading analytics...</Text>
+            </View>
+          ) : (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.statsGrid}>
+                <StatCard label="Marketplace Revenue" value={formatMoney(stats.totalRevenue)} icon="cash-outline" accent />
+                <StatCard label="Freight Revenue" value={formatMoney(stats.freightRevenue)} icon="trail-sign-outline" accent />
+                <StatCard label="Total Orders" value={String(stats.totalOrders)} icon="receipt-outline" />
+                <StatCard label="Avg Order Value" value={formatMoney(stats.avgOrderValue)} icon="analytics-outline" />
+                <StatCard label="Active Orders" value={String(stats.activeOrders)} icon="time-outline" />
+                <StatCard label="Delivered Orders" value={String(stats.deliveredOrders)} icon="checkmark-done-outline" />
+                <StatCard label="Cancelled / Refunded" value={String(stats.cancelledOrders)} icon="close-circle-outline" danger />
+                <StatCard label="Total Loads" value={String(stats.totalLoads)} icon="cube-outline" />
+                <StatCard label="Open Loads" value={String(stats.openLoads)} icon="file-tray-outline" />
+                <StatCard label="Booked Loads" value={String(stats.bookedLoads)} icon="navigate-outline" />
+                <StatCard label="Delivered Loads" value={String(stats.deliveredLoads)} icon="flag-outline" />
+                <StatCard label="Pending Reviews" value={String(stats.pendingVerifications)} icon="shield-checkmark-outline" warning />
+                <StatCard label="Approved Farmers" value={String(stats.approvedFarmers)} icon="leaf-outline" success />
+                <StatCard label="Approved Carriers" value={String(stats.approvedCarriers)} icon="business-outline" success />
               </View>
-            }
-            renderItem={({ item, index }) => (
-              <View style={styles.farmCard}>
-                <View style={styles.rankCircle}>
-                  <Text style={styles.rankText}>{index + 1}</Text>
+
+              <View style={styles.dashboardGrid}>
+                <View style={styles.chartCard}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Order Status Breakdown</Text>
+                    <Text style={styles.sectionLink}>Orders</Text>
+                  </View>
+
+                  {orderStatuses.length === 0 ? (
+                    <Text style={styles.emptyText}>No order status data yet.</Text>
+                  ) : (
+                    orderStatuses.map((item) => renderBar(item, maxOrderStatus))
+                  )}
                 </View>
 
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.farmName}>{item.farm_name}</Text>
-                  <Text style={styles.farmMeta}>{item.orders} orders</Text>
+                <View style={styles.chartCard}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Freight Load Breakdown</Text>
+                    <Text style={styles.sectionLink}>Freight</Text>
+                  </View>
+
+                  {loadStatuses.length === 0 ? (
+                    <Text style={styles.emptyText}>No freight load data yet.</Text>
+                  ) : (
+                    loadStatuses.map((item) => renderBar(item, maxLoadStatus))
+                  )}
+                </View>
+              </View>
+
+              <View style={styles.chartCard}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Top Farms by Revenue</Text>
+                  <Text style={styles.sectionLink}>Top 10</Text>
                 </View>
 
-                <Text style={styles.farmRevenue}>
-                  {formatMoney(item.revenue)}
+                <FlatList
+                  data={topFarms}
+                  keyExtractor={(item) => item.farmer_id}
+                  scrollEnabled={false}
+                  ListEmptyComponent={
+                    <Text style={styles.emptyText}>No farm revenue data yet.</Text>
+                  }
+                  renderItem={({ item, index }) => (
+                    <View style={styles.farmRow}>
+                      <View style={styles.rankCircle}>
+                        <Text style={styles.rankText}>{index + 1}</Text>
+                      </View>
+
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.farmName}>{item.farm_name}</Text>
+                        <Text style={styles.farmMeta}>{item.orders} orders</Text>
+                      </View>
+
+                      <Text style={styles.farmRevenue}>
+                        {formatMoney(item.revenue)}
+                      </Text>
+                    </View>
+                  )}
+                />
+              </View>
+
+              <View style={styles.forecastCard}>
+                <View style={styles.forecastHeader}>
+                  <View style={styles.forecastIcon}>
+                    <Ionicons name="sparkles-outline" size={22} color={ui.primary} />
+                  </View>
+                  <Text style={styles.forecastTitle}>AI Growth Snapshot</Text>
+                </View>
+
+                <Text style={styles.forecastText}>
+                  Estimated monthly marketplace revenue at current pace:{" "}
+                  <Text style={styles.forecastStrong}>
+                    {formatMoney(stats.totalRevenue * 4)}
+                  </Text>
+                </Text>
+
+                <Text style={styles.forecastText}>
+                  Estimated monthly freight opportunity volume:{" "}
+                  <Text style={styles.forecastStrong}>
+                    {formatMoney(stats.freightRevenue * 4)}
+                  </Text>
+                </Text>
+
+                <Text style={styles.forecastText}>
+                  Recommended focus: grow approved farmers, increase recurring
+                  customer subscriptions, and convert open freight loads into booked
+                  carrier jobs.
                 </Text>
               </View>
-            )}
-          />
 
-          <View style={styles.forecastCard}>
-            <Text style={styles.forecastTitle}>AI Growth Snapshot</Text>
+              <View style={{ height: 80 }} />
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
 
-            <Text style={styles.forecastText}>
-              Estimated monthly marketplace revenue at current pace:{" "}
-              {formatMoney(stats.totalRevenue * 4)}
-            </Text>
+function NavButton({
+  label,
+  icon,
+  route,
+  active = false,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+  active?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.navButton, active && styles.navButtonActive]}
+      onPress={() => router.push(route as any)}
+    >
+      <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
+      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
 
-            <Text style={styles.forecastText}>
-              Estimated monthly freight opportunity volume:{" "}
-              {formatMoney(stats.freightRevenue * 4)}
-            </Text>
+function StatCard({
+  label,
+  value,
+  icon,
+  accent = false,
+  warning = false,
+  danger = false,
+  success = false,
+}: {
+  label: string;
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent?: boolean;
+  warning?: boolean;
+  danger?: boolean;
+  success?: boolean;
+}) {
+  const color = danger
+    ? ui.red
+    : warning
+    ? ui.orange
+    : success
+    ? ui.green
+    : accent
+    ? ui.primary
+    : ui.blue;
 
-            <Text style={styles.forecastText}>
-              Recommended focus: grow approved farmers, increase recurring
-              customer subscriptions, and convert open freight loads into booked
-              carrier jobs.
-            </Text>
-          </View>
-
-          <View style={{ height: 80 }} />
-        </ScrollView>
-      )}
+  return (
+    <View style={styles.statCard}>
+      <View style={[styles.statIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: ui.bg,
   },
-
-  hero: {
-    backgroundColor: "#111827",
-    paddingTop: 66,
-    paddingHorizontal: 20,
-    paddingBottom: 28,
+  shell: {
+    flex: 1,
+    backgroundColor: ui.bg,
   },
-
-  eyebrow: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginBottom: 8,
+  sidebar: {
+    backgroundColor: ui.card,
+    borderBottomWidth: 1,
+    borderBottomColor: ui.border,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 12,
   },
-
-  title: {
-    color: "#FFFFFF",
-    fontSize: 34,
-    fontWeight: "900",
-    marginBottom: 10,
-  },
-
-  subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 23,
-    fontSize: 15,
-  },
-
-  navRow: {
+  logoRow: {
     flexDirection: "row",
+    alignItems: "center",
     gap: 10,
-    padding: 18,
+    marginBottom: 16,
   },
-
-  navButton: {
-    flex: 1,
-    backgroundColor: "#10B981",
-    padding: 14,
+  logoMark: {
+    width: 42,
+    height: 42,
     borderRadius: 14,
+    backgroundColor: ui.primary,
     alignItems: "center",
+    justifyContent: "center",
   },
-
-  navButtonOutline: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#10B981",
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-
-  navText: {
+  logoText: {
     color: "#FFFFFF",
     fontWeight: "900",
+    fontSize: 13,
   },
-
-  navTextOutline: {
-    color: "#10B981",
+  logoTitle: {
+    color: ui.text,
+    fontWeight: "900",
+    fontSize: 18,
+  },
+  logoSub: {
+    color: ui.muted,
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  navButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+    backgroundColor: ui.soft,
+  },
+  navButtonActive: {
+    backgroundColor: ui.primary,
+  },
+  navText: {
+    color: ui.muted,
+    fontWeight: "900",
+    fontSize: 13,
+  },
+  navTextActive: {
+    color: "#FFFFFF",
+  },
+  main: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  topbar: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  welcome: {
+    color: ui.muted,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  pageTitle: {
+    color: ui.text,
+    fontSize: 26,
     fontWeight: "900",
   },
-
+  pageSub: {
+    color: ui.muted,
+    marginTop: 4,
+    fontWeight: "700",
+  },
+  refreshPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  refreshPillText: {
+    color: ui.primary,
+    fontWeight: "900",
+  },
   loadingCard: {
-    backgroundColor: "#FFFFFF",
-    margin: 18,
-    padding: 26,
+    backgroundColor: ui.card,
+    padding: 28,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: ui.border,
     alignItems: "center",
   },
-
   loadingText: {
-    color: "#6B7280",
+    color: ui.muted,
     marginTop: 10,
     fontWeight: "800",
   },
-
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
-    paddingHorizontal: 18,
+    gap: 12,
     marginBottom: 14,
   },
-
   statCard: {
     width: "48%",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-
-  statCardAccent: {
-    backgroundColor: "#064E3B",
-    borderColor: "#064E3B",
-  },
-
-  statValue: {
-    color: "#111827",
-    fontSize: 22,
-    fontWeight: "900",
-  },
-
-  statValueAccent: {
-    color: "#FFFFFF",
-  },
-
-  statLabel: {
-    color: "#6B7280",
-    fontWeight: "800",
-    marginTop: 4,
-  },
-
-  statLabelAccent: {
-    color: "#BBF7D0",
-  },
-
-  refreshButton: {
-    backgroundColor: "#111827",
-    marginHorizontal: 18,
-    padding: 15,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 18,
-  },
-
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-
-  sectionTitle: {
-    color: "#111827",
-    fontSize: 24,
-    fontWeight: "900",
-    paddingHorizontal: 18,
-    marginBottom: 12,
-    marginTop: 8,
-  },
-
-  chartCard: {
-    backgroundColor: "#FFFFFF",
-    marginHorizontal: 18,
-    marginBottom: 18,
+    backgroundColor: ui.card,
     borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: ui.border,
   },
-
+  statIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  statValue: {
+    color: ui.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  statLabel: {
+    color: ui.muted,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  dashboardGrid: {
+    gap: 12,
+    marginBottom: 14,
+  },
+  chartCard: {
+    backgroundColor: ui.card,
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 14,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  sectionTitle: {
+    color: ui.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  sectionLink: {
+    color: ui.primary,
+    fontWeight: "900",
+    fontSize: 12,
+  },
   barRow: {
     marginBottom: 14,
   },
-
   barLabelRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 6,
   },
-
   barLabel: {
-    color: "#111827",
+    color: ui.text,
     fontWeight: "900",
   },
-
   barCount: {
-    color: "#6B7280",
+    color: ui.muted,
     fontWeight: "900",
   },
-
   barTrack: {
     height: 12,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: "#EEF2FF",
     borderRadius: 999,
     overflow: "hidden",
   },
-
   barFill: {
     height: "100%",
     borderRadius: 999,
+    backgroundColor: ui.primary,
   },
-
   emptyText: {
-    color: "#6B7280",
+    color: ui.muted,
     fontWeight: "700",
     lineHeight: 22,
   },
-
-  farmCard: {
-    backgroundColor: "#FFFFFF",
-    marginHorizontal: 18,
-    marginBottom: 12,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
+  farmRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: ui.border,
   },
-
   rankCircle: {
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: "#10B981",
+    backgroundColor: ui.primarySoft,
     alignItems: "center",
     justifyContent: "center",
   },
-
   rankText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 18,
-  },
-
-  farmName: {
-    color: "#111827",
+    color: ui.primary,
     fontWeight: "900",
     fontSize: 17,
   },
-
+  farmName: {
+    color: ui.text,
+    fontWeight: "900",
+    fontSize: 16,
+  },
   farmMeta: {
-    color: "#6B7280",
+    color: ui.muted,
     fontWeight: "700",
     marginTop: 3,
   },
-
   farmRevenue: {
-    color: "#064E3B",
+    color: ui.primary,
     fontWeight: "900",
-    fontSize: 17,
+    fontSize: 16,
   },
-
   forecastCard: {
-    backgroundColor: "#064E3B",
-    margin: 18,
+    backgroundColor: ui.card,
     borderRadius: 22,
     padding: 18,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 18,
   },
-
+  forecastHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 12,
+  },
+  forecastIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: ui.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   forecastTitle: {
-    color: "#FFFFFF",
-    fontSize: 22,
+    color: ui.text,
+    fontSize: 21,
     fontWeight: "900",
-    marginBottom: 10,
   },
-
   forecastText: {
-    color: "#BBF7D0",
+    color: ui.muted,
     lineHeight: 23,
     fontWeight: "700",
     marginBottom: 8,
+  },
+  forecastStrong: {
+    color: ui.primary,
+    fontWeight: "900",
   },
 });

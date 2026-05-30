@@ -1,774 +1,895 @@
-import React, { useCallback, useMemo, useState } from "react";
+// app/ai/dispatch-intelligence-center.tsx
+
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
+  Pressable,
   RefreshControl,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
+  TextInput,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
-
+import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../services/supabaseClient";
-import { notifyAdminAlert } from "../services/notificationService";
+
+type LoadStatus =
+  | "OPEN"
+  | "PENDING"
+  | "ASSIGNED"
+  | "IN_TRANSIT"
+  | "DELIVERED"
+  | "CANCELLED"
+  | "URGENT"
+  | "available"
+  | "accepted"
+  | "assigned"
+  | "arrived_pickup"
+  | "picked_up"
+  | "in_transit"
+  | "delivered"
+  | "cancelled";
 
 type FreightLoad = {
-  id: string;
-  title?: string | null;
-  farmer_name?: string | null;
-  commodity?: string | null;
-  pickup_location?: string | null;
-  dropoff_location?: string | null;
-  rate?: number | null;
-  distance_miles?: number | null;
-  weight_lbs?: number | null;
-  status?: string | null;
-  temperature_required?: string | null;
-  created_at?: string | null;
-};
-
-type DriverLocation = {
-  id?: string;
-  load_id?: string | null;
-  latitude: number;
-  longitude: number;
-  speed?: number | null;
-  heading?: number | null;
-  status?: string | null;
-  updated_at?: string | null;
+  id?: string | number;
+  load_id?: string | number;
+  freight_load_id?: string | number;
+  title?: string;
+  loadTitle?: string;
+  pickup_city?: string;
+  pickup_state?: string;
+  pickupCity?: string;
+  pickupState?: string;
+  delivery_city?: string;
+  delivery_state?: string;
+  dropoff_city?: string;
+  dropoff_state?: string;
+  deliveryCity?: string;
+  deliveryState?: string;
+  pickup_location?: string;
+  dropoff_location?: string;
+  pickup_date?: string;
+  delivery_date?: string;
+  status?: LoadStatus | string;
+  amount?: number;
+  rate?: number;
+  price?: number;
+  miles?: number;
+  distance_miles?: number;
+  weight?: number;
+  commodity?: string;
+  equipment_type?: string;
+  equipmentType?: string;
+  priority?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | string;
+  driver_id?: string | number | null;
+  accepted_by?: string | null;
+  driver_name?: string | null;
+  carrier_name?: string | null;
+  farmer_id?: string | number | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 type DispatchRecommendation = {
   id: string;
-  score: number;
-  priority: "NORMAL" | "HIGH" | "CRITICAL";
-  eta: string;
-  reason: string;
-  driver: DriverLocation;
   load: FreightLoad;
+  score: number;
+  reason: string;
+  risk: "Low" | "Medium" | "High";
+  action: "Assign Driver" | "Review Load" | "Alert Admin" | "Monitor";
 };
 
-const ACTIVE_DRIVER_STATUSES = [
-  "accepted",
-  "arrived_pickup",
-  "picked_up",
-  "in_transit",
-  "arrived_dropoff",
-];
+function getLoadId(load?: FreightLoad | null): string {
+  if (!load) return "";
+  return String(load.id ?? load.load_id ?? load.freight_load_id ?? "");
+}
+
+function getLoadTitle(load: FreightLoad): string {
+  return load.title || load.loadTitle || `Load ${getLoadId(load) || "Unknown"}`;
+}
+
+function getPickup(load: FreightLoad): string {
+  if (load.pickup_location) return load.pickup_location;
+
+  const city = load.pickup_city || load.pickupCity || "Pickup";
+  const state = load.pickup_state || load.pickupState || "";
+
+  return state ? `${city}, ${state}` : city;
+}
+
+function getDelivery(load: FreightLoad): string {
+  if (load.dropoff_location) return load.dropoff_location;
+
+  const city =
+    load.delivery_city || load.dropoff_city || load.deliveryCity || "Delivery";
+  const state =
+    load.delivery_state || load.dropoff_state || load.deliveryState || "";
+
+  return state ? `${city}, ${state}` : city;
+}
+
+function getRate(load: FreightLoad): number {
+  return Number(load.amount ?? load.rate ?? load.price ?? 0);
+}
+
+function getMiles(load: FreightLoad): number {
+  return Number(load.miles ?? load.distance_miles ?? 0);
+}
+
+function money(value: number): string {
+  return `$${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function normalizeStatus(status?: string): string {
+  return String(status || "OPEN").toUpperCase();
+}
+
+function hasAssignedDriver(load: FreightLoad): boolean {
+  return Boolean(load.driver_id || load.accepted_by || load.driver_name);
+}
+
+function buildRecommendation(load: FreightLoad): DispatchRecommendation {
+  const status = normalizeStatus(load.status);
+  const priority = String(load.priority || "MEDIUM").toUpperCase();
+  const assignedDriver = hasAssignedDriver(load);
+  const rate = getRate(load);
+  const miles = getMiles(load);
+
+  let score = 70;
+  let risk: DispatchRecommendation["risk"] = "Low";
+  let action: DispatchRecommendation["action"] = "Monitor";
+  let reason = "Load is stable and ready for dispatch monitoring.";
+
+  if (
+    !assignedDriver &&
+    ["OPEN", "PENDING", "URGENT", "AVAILABLE"].includes(status)
+  ) {
+    score += 12;
+    action = "Assign Driver";
+    reason =
+      "No driver is assigned. Recommend matching this load to an available driver.";
+  }
+
+  if (priority === "HIGH" || priority === "CRITICAL" || status === "URGENT") {
+    score += 10;
+    risk = priority === "CRITICAL" || status === "URGENT" ? "High" : "Medium";
+    action = risk === "High" ? "Alert Admin" : action;
+    reason =
+      risk === "High"
+        ? "Critical-priority load needs admin visibility immediately."
+        : "High-priority load should be watched closely.";
+  }
+
+  if (rate <= 0) {
+    score -= 15;
+    risk = "High";
+    action = "Review Load";
+    reason =
+      "Load appears to be missing a rate or price. Review before dispatch.";
+  }
+
+  if (miles > 150 && !assignedDriver) {
+    score += 6;
+    risk = risk === "High" ? "High" : "Medium";
+    action = action === "Alert Admin" ? action : "Assign Driver";
+    reason =
+      "Long-distance open load should be assigned quickly to protect ETA.";
+  }
+
+  if (["DELIVERED", "CANCELLED"].includes(status)) {
+    score = 40;
+    risk = "Low";
+    action = "Monitor";
+    reason =
+      status === "DELIVERED"
+        ? "Load is already delivered."
+        : "Load was cancelled. Review only if needed.";
+  }
+
+  return {
+    id: `rec-${getLoadId(load) || Math.random().toString(36).slice(2)}`,
+    load,
+    score: Math.max(0, Math.min(100, score)),
+    reason,
+    risk,
+    action,
+  };
+}
 
 export default function DispatchIntelligenceCenter() {
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const router = useRouter();
 
   const [loads, setLoads] = useState<FreightLoad[]>([]);
-  const [drivers, setDrivers] = useState<DriverLocation[]>([]);
-  const [recommendations, setRecommendations] = useState<
-    DispatchRecommendation[]
-  >([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [sendingAlertId, setSendingAlertId] = useState<string | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadDispatchCenter();
-
-      const channel = supabase
-        .channel("dispatch-ai-center")
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "freight_loads" },
-          () => loadDispatchCenter()
-        )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "driver_locations" },
-          () => loadDispatchCenter()
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }, [])
-  );
-
-  async function loadDispatchCenter() {
+  const fetchLoads = useCallback(async () => {
     try {
       setLoading(true);
 
-      const { data: loadData, error: loadError } = await supabase
+      const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (loadError) {
-        Alert.alert("Load Error", loadError.message);
-        return;
-      }
+      if (error) throw error;
 
-      const { data: driverData, error: driverError } = await supabase
-        .from("driver_locations")
-        .select("*")
-        .order("updated_at", { ascending: false });
-
-      if (driverError) {
-        Alert.alert("Driver Error", driverError.message);
-        return;
-      }
-
-      const cleanLoads = Array.isArray(loadData)
-        ? (loadData as FreightLoad[])
-        : [];
-
-      const cleanDrivers = Array.isArray(driverData)
-        ? (driverData as any[]).map((item) => ({
-            ...item,
-            latitude: Number(item.latitude || 0),
-            longitude: Number(item.longitude || 0),
-            speed:
-              item.speed === null || item.speed === undefined
-                ? null
-                : Number(item.speed),
-            heading:
-              item.heading === null || item.heading === undefined
-                ? null
-                : Number(item.heading),
-          }))
-        : [];
-
-      setLoads(cleanLoads);
-      setDrivers(cleanDrivers);
-      setRecommendations(buildRecommendations(cleanLoads, cleanDrivers));
-    } catch (error) {
-      console.log("DISPATCH_AI_ERROR:", error);
-      Alert.alert("AI Dispatch Error", "Unable to load dispatch intelligence.");
+      setLoads(Array.isArray(data) ? data : []);
+    } catch (error: any) {
+      console.log("Dispatch fetch error:", error);
+      Alert.alert(
+        "Dispatch Load Error",
+        error?.message || "Unable to load freight dispatch data."
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }
+  }, []);
 
-  function onRefresh() {
-    setRefreshing(true);
-    loadDispatchCenter();
-  }
+  useEffect(() => {
+    fetchLoads();
+  }, [fetchLoads]);
 
-  function isColdChain(load: FreightLoad) {
-    const text = `${load.title || ""} ${load.commodity || ""} ${
-      load.temperature_required || ""
-    }`.toLowerCase();
+  const recommendations = useMemo(() => {
+    const q = search.trim().toLowerCase();
 
-    return (
-      text.includes("cold") ||
-      text.includes("refrigerated") ||
-      text.includes("cool") ||
-      text.includes("fresh") ||
-      text.includes("meat") ||
-      text.includes("dairy") ||
-      text.includes("eggs")
-    );
-  }
+    return loads
+      .filter((load) => {
+        const status = normalizeStatus(load.status);
 
-  function loadPriority(load: FreightLoad): "NORMAL" | "HIGH" | "CRITICAL" {
-    if (isColdChain(load)) return "CRITICAL";
-    if (Number(load.rate || 0) >= 500) return "HIGH";
-    return "NORMAL";
-  }
+        if (statusFilter !== "ALL" && status !== statusFilter) return false;
 
-  function getDriverFreshnessScore(driver: DriverLocation) {
-    if (!driver.updated_at) return 0;
+        if (!q) return true;
 
-    const minutes =
-      (Date.now() - new Date(driver.updated_at).getTime()) / 1000 / 60;
+        const haystack = [
+          getLoadId(load),
+          getLoadTitle(load),
+          getPickup(load),
+          getDelivery(load),
+          load.commodity,
+          load.equipment_type,
+          load.equipmentType,
+          load.status,
+          load.priority,
+          load.driver_name,
+          load.accepted_by,
+          load.carrier_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
 
-    if (minutes <= 5) return 20;
-    if (minutes <= 30) return 10;
-    return -10;
-  }
+        return haystack.includes(q);
+      })
+      .map(buildRecommendation)
+      .sort((a, b) => b.score - a.score);
+  }, [loads, search, statusFilter]);
 
-  function scoreDriverForLoad(load: FreightLoad, driver: DriverLocation) {
-    let score = 50;
+  const stats = useMemo(() => {
+    const open = loads.filter((x) =>
+      ["OPEN", "PENDING", "URGENT", "AVAILABLE"].includes(
+        normalizeStatus(x.status)
+      )
+    ).length;
 
-    if (!driver.load_id) score += 20;
+    const assigned = loads.filter((x) =>
+      [
+        "ASSIGNED",
+        "ACCEPTED",
+        "ARRIVED_PICKUP",
+        "PICKED_UP",
+        "IN_TRANSIT",
+      ].includes(normalizeStatus(x.status))
+    ).length;
 
-    if (ACTIVE_DRIVER_STATUSES.includes(String(driver.status || ""))) {
-      score += 10;
+    const delivered = loads.filter(
+      (x) => normalizeStatus(x.status) === "DELIVERED"
+    ).length;
+
+    const critical = loads.filter((x) => {
+      const status = normalizeStatus(x.status);
+      const priority = String(x.priority || "").toUpperCase();
+      return status === "URGENT" || priority === "CRITICAL";
+    }).length;
+
+    return { open, assigned, delivered, critical };
+  }, [loads]);
+
+  async function notifyAdminAlert(item: DispatchRecommendation) {
+    const load = item.load;
+    const loadId = getLoadId(load);
+
+    if (!loadId) {
+      Alert.alert("Missing Load ID", "This load does not have a valid ID.");
+      return;
     }
 
-    if (isColdChain(load)) score += 15;
-
-    if (Number(load.rate || 0) >= 500) score += 10;
-
-    if (driver.speed && driver.speed > 1) score += 5;
-
-    score += getDriverFreshnessScore(driver);
-
-    return Math.max(0, Math.min(score, 100));
-  }
-
-  function randomEta(score: number) {
-    if (score >= 90) return "10 - 20 min";
-    if (score >= 75) return "20 - 35 min";
-    if (score >= 60) return "35 - 50 min";
-    return "50+ min";
-  }
-
-  function buildRecommendations(
-    loadRows: FreightLoad[],
-    driverRows: DriverLocation[]
-  ) {
-    const aiResults: DispatchRecommendation[] = [];
-
-    const availableLoads = loadRows.filter((item) => item.status === "available");
-
-    const possibleDrivers = driverRows.filter(
-      (driver) => driver.status !== "delivered" && driver.status !== "cancelled"
-    );
-
-    availableLoads.forEach((load) => {
-      possibleDrivers.slice(0, 5).forEach((driver) => {
-        const score = scoreDriverForLoad(load, driver);
-        const priority = loadPriority(load);
-
-        aiResults.push({
-          id: `${load.id}_${driver.load_id || driver.id || driver.updated_at}`,
-          score,
-          priority,
-          eta: randomEta(score),
-          reason:
-            score >= 85
-              ? "Optimal match based on GPS freshness, route readiness, cold-chain priority, and payout value."
-              : score >= 70
-              ? "Strong dispatch recommendation based on current driver signal and load priority."
-              : "Moderate dispatch fit. Consider manually reviewing driver availability.",
-          driver,
-          load,
-        });
-      });
-    });
-
-    aiResults.sort((a, b) => b.score - a.score);
-
-    return aiResults;
-  }
-
-  async function autoAssignLoad(item: DispatchRecommendation) {
     try {
-      const now = new Date().toISOString();
+      setSendingAlertId(loadId);
 
+      const payload = {
+        alert_type: "DISPATCH_INTELLIGENCE_ALERT",
+        load_id: loadId,
+        title: getLoadTitle(load),
+        message: item.reason,
+        risk_level: item.risk,
+        score: item.score,
+        status: "OPEN",
+        metadata: {
+          loadId,
+          pickup: getPickup(load),
+          delivery: getDelivery(load),
+          rate: getRate(load),
+          miles: getMiles(load),
+          loadStatus: load.status,
+          priority: load.priority,
+          driverId: load.driver_id,
+          driverName: load.driver_name,
+          acceptedBy: load.accepted_by,
+          createdAt: new Date().toISOString(),
+        },
+      };
+
+      const { error } = await supabase.from("admin_alerts").insert(payload);
+
+      if (error) throw error;
+
+      Alert.alert("Admin Alert Sent", "Dispatch alert has been sent to admin.");
+    } catch (error: any) {
+      console.log("notifyAdminAlert error:", error);
+      Alert.alert(
+        "Alert Failed",
+        error?.message ||
+          "Unable to send admin dispatch alert. Make sure the admin_alerts table exists."
+      );
+    } finally {
+      setSendingAlertId(null);
+    }
+  }
+
+  async function updateLoadStatus(load: FreightLoad, nextStatus: LoadStatus) {
+    const loadId = getLoadId(load);
+
+    if (!loadId) {
+      Alert.alert("Missing Load ID", "This load cannot be updated.");
+      return;
+    }
+
+    try {
       const { error } = await supabase
         .from("freight_loads")
         .update({
-          status: "accepted",
-          accepted_at: now,
-          driver_id: item.driver.load_id || item.driver.id || "ai_assigned_driver",
+          status: nextStatus,
+          updated_at: new Date().toISOString(),
         })
-        .eq("id", item.load.id);
+        .eq("id", loadId);
 
-      if (error) {
-        Alert.alert("Assign Error", error.message);
-        return;
-      }
+      if (error) throw error;
 
-      await notifyAdminAlert(
-        `AI assigned load ${item.load.title || item.load.id} with score ${item.score}.`,
-        item.load.id
+      setLoads((prev) =>
+        prev.map((item) =>
+          getLoadId(item) === loadId
+            ? {
+                ...item,
+                status: nextStatus,
+                updated_at: new Date().toISOString(),
+              }
+            : item
+        )
       );
 
-      Alert.alert(
-        "AI Dispatch Assigned",
-        "The selected load was marked accepted and assigned by AI."
-      );
-
-      await loadDispatchCenter();
+      Alert.alert("Load Updated", `Load status changed to ${nextStatus}.`);
     } catch (error: any) {
-      Alert.alert("Assign Error", error?.message || "Unable to assign load.");
+      Alert.alert("Update Failed", error?.message || "Could not update load.");
     }
   }
 
-  function scoreColor(score: number) {
-    if (score >= 90) return "#10B981";
-    if (score >= 75) return "#2563EB";
-    if (score >= 60) return "#F59E0B";
-    return "#DC2626";
-  }
+  function renderRecommendation({ item }: { item: DispatchRecommendation }) {
+    const load = item.load;
+    const loadId = getLoadId(load);
+    const status = normalizeStatus(load.status);
+    const isSending = sendingAlertId === loadId;
 
-  function priorityColor(priority?: string) {
-    switch (priority) {
-      case "CRITICAL":
-        return "#DC2626";
-      case "HIGH":
-        return "#F59E0B";
-      default:
-        return "#2563EB";
-    }
-  }
-
-  function statusLabel(status?: string | null) {
-    return String(status || "unknown").replace(/_/g, " ");
-  }
-
-  const criticalLoads = useMemo(
-    () => loads.filter((item) => item.status === "available" && isColdChain(item)),
-    [loads]
-  );
-
-  const availableLoads = useMemo(
-    () => loads.filter((item) => item.status === "available"),
-    [loads]
-  );
-
-  const activeDrivers = useMemo(
-    () =>
-      drivers.filter((item) =>
-        ACTIVE_DRIVER_STATUSES.includes(String(item.status || ""))
-      ),
-    [drivers]
-  );
-
-  if (loading && loads.length === 0) {
     return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color="#10B981" />
-        <Text style={styles.loadingText}>
-          AI analyzing dispatch operations...
-        </Text>
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>{getLoadTitle(load)}</Text>
+            <Text style={styles.cardSub}>
+              #{loadId || "NO-ID"} • {status.replace("_", " ")}
+            </Text>
+          </View>
+
+          <View
+            style={[
+              styles.scoreBadge,
+              item.risk === "High" && styles.scoreHigh,
+              item.risk === "Medium" && styles.scoreMedium,
+            ]}
+          >
+            <Text style={styles.scoreText}>{item.score}</Text>
+          </View>
+        </View>
+
+        <View style={styles.routeBox}>
+          <View style={styles.routeItem}>
+            <Ionicons name="location" size={18} color="#4ade80" />
+            <Text style={styles.routeText}>{getPickup(load)}</Text>
+          </View>
+
+          <Ionicons name="arrow-down" size={18} color="#94a3b8" />
+
+          <View style={styles.routeItem}>
+            <Ionicons name="flag" size={18} color="#38bdf8" />
+            <Text style={styles.routeText}>{getDelivery(load)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.infoGrid}>
+          <View style={styles.infoPill}>
+            <Text style={styles.infoLabel}>Rate</Text>
+            <Text style={styles.infoValue}>{money(getRate(load))}</Text>
+          </View>
+
+          <View style={styles.infoPill}>
+            <Text style={styles.infoLabel}>Miles</Text>
+            <Text style={styles.infoValue}>{getMiles(load).toFixed(0)}</Text>
+          </View>
+
+          <View style={styles.infoPill}>
+            <Text style={styles.infoLabel}>Risk</Text>
+            <Text style={styles.infoValue}>{item.risk}</Text>
+          </View>
+        </View>
+
+        <View style={styles.aiBox}>
+          <Ionicons name="sparkles" size={18} color="#facc15" />
+          <Text style={styles.aiText}>{item.reason}</Text>
+        </View>
+
+        <View style={styles.actionRow}>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => updateLoadStatus(load, "ASSIGNED")}
+          >
+            <Ionicons name="checkmark-circle" size={17} color="#e2e8f0" />
+            <Text style={styles.secondaryButtonText}>Mark Assigned</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.alertButton}
+            onPress={() => notifyAdminAlert(item)}
+            disabled={isSending}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#111827" />
+            ) : (
+              <>
+                <Ionicons name="warning" size={17} color="#111827" />
+                <Text style={styles.alertButtonText}>Alert Admin</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
       </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#4ade80" />
+          <Text style={styles.loadingText}>Loading dispatch intelligence...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.heroIcon}>🤖</Text>
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.topBar}>
+        <Pressable style={styles.backButton} onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={22} color="#e2e8f0" />
+        </Pressable>
 
-        <Text style={styles.heroTitle}>AI Dispatch Intelligence</Text>
-
-        <Text style={styles.heroSubtitle}>
-          Smart dispatch recommendations using realtime freight loads, driver
-          GPS telemetry, cold-chain priority, and payout value.
-        </Text>
-
-        <View style={styles.heroStats}>
-          <View style={styles.heroStat}>
-            <Text style={styles.heroValue}>{availableLoads.length}</Text>
-            <Text style={styles.heroLabel}>Available</Text>
-          </View>
-
-          <View style={styles.heroStat}>
-            <Text style={styles.heroValue}>{activeDrivers.length}</Text>
-            <Text style={styles.heroLabel}>Active Drivers</Text>
-          </View>
-
-          <View style={styles.heroStat}>
-            <Text style={styles.heroValue}>{recommendations.length}</Text>
-            <Text style={styles.heroLabel}>AI Matches</Text>
-          </View>
+        <View>
+          <Text style={styles.headerTitle}>Dispatch Intelligence</Text>
+          <Text style={styles.headerSub}>AI freight load monitoring</Text>
         </View>
       </View>
 
       <ScrollView
-        style={styles.panel}
-        contentContainerStyle={styles.panelInner}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.statsRow}
       >
-        <View style={styles.navRow}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => router.push("/admin/live-operations-center" as any)}
-          >
-            <Text style={styles.navText}>Operations</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.navButtonOutline}
-            onPress={() => router.push("/admin/fleet-map" as any)}
-          >
-            <Text style={styles.navTextOutline}>Fleet Map</Text>
-          </TouchableOpacity>
-        </View>
-
-        <TouchableOpacity style={styles.refreshButton} onPress={loadDispatchCenter}>
-          <Text style={styles.refreshText}>Refresh AI Dispatch</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.sectionTitle}>Critical Freight Loads</Text>
-
-        <FlatList
-          data={criticalLoads}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No critical freight loads.</Text>
-              <Text style={styles.emptyText}>
-                Cold-chain or urgent available loads will appear here.
-              </Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <View style={styles.loadCard}>
-              <View style={styles.cardHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardTitle}>
-                    {item.title || "Farm2Home Load"}
-                  </Text>
-
-                  <Text style={styles.cardSub}>
-                    {item.pickup_location || "Pickup"} →{" "}
-                    {item.dropoff_location || "Delivery"}
-                  </Text>
-                </View>
-
-                <View
-                  style={[
-                    styles.priorityBadge,
-                    { backgroundColor: priorityColor(loadPriority(item)) },
-                  ]}
-                >
-                  <Text style={styles.priorityText}>{loadPriority(item)}</Text>
-                </View>
-              </View>
-
-              <Text style={styles.metaText}>
-                Commodity: {item.commodity || "Produce"}
-              </Text>
-
-              <Text style={styles.metaText}>
-                Rate: ${Number(item.rate || 0).toFixed(2)}
-              </Text>
-
-              <Text style={styles.metaText}>
-                Temperature: {item.temperature_required || "Not specified"}
-              </Text>
-            </View>
-          )}
+        <StatCard label="Open Loads" value={stats.open} icon="cube" />
+        <StatCard label="Assigned" value={stats.assigned} icon="car" />
+        <StatCard
+          label="Delivered"
+          value={stats.delivered}
+          icon="checkmark-done"
         />
-
-        <Text style={styles.sectionTitle}>AI Dispatch Recommendations</Text>
-
-        <FlatList
-          data={recommendations}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No AI recommendations yet.</Text>
-
-              <Text style={styles.emptyText}>
-                Recommendations appear when available loads and driver GPS
-                signals are active.
-              </Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <View style={styles.recommendationCard}>
-              <View style={styles.cardHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardTitle}>
-                    Driver GPS Match
-                  </Text>
-
-                  <Text style={styles.cardSub}>
-                    Match for {item.load.title || "Freight Load"}
-                  </Text>
-                </View>
-
-                <View
-                  style={[
-                    styles.scoreBadge,
-                    { backgroundColor: scoreColor(item.score) },
-                  ]}
-                >
-                  <Text style={styles.scoreText}>{item.score}</Text>
-                </View>
-              </View>
-
-              <Text style={styles.metaText}>
-                Load: {item.load.pickup_location || "Pickup"} →{" "}
-                {item.load.dropoff_location || "Dropoff"}
-              </Text>
-
-              <Text style={styles.metaText}>
-                Driver Status: {statusLabel(item.driver.status)}
-              </Text>
-
-              <Text style={styles.metaText}>
-                ETA to Pickup: {item.eta}
-              </Text>
-
-              <Text style={styles.metaText}>
-                Priority: {item.priority}
-              </Text>
-
-              <Text style={styles.reasonText}>{item.reason}</Text>
-
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={styles.assignButton}
-                  onPress={() => autoAssignLoad(item)}
-                >
-                  <Text style={styles.assignText}>Auto Assign</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.trackButton}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/driver/live-location-provider" as any,
-                      params: {
-                        loadId: item.load.id,
-                      },
-                    })
-                  }
-                >
-                  <Text style={styles.trackText}>Track Load</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-        />
-
-        <View style={{ height: 70 }} />
+        <StatCard label="Critical" value={stats.critical} icon="warning" />
       </ScrollView>
+
+      <View style={styles.searchWrap}>
+        <Ionicons name="search" size={18} color="#94a3b8" />
+        <TextInput
+          style={styles.searchInput}
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search load, city, state, equipment..."
+          placeholderTextColor="#64748b"
+        />
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterRow}
+      >
+        {[
+          "ALL",
+          "OPEN",
+          "PENDING",
+          "URGENT",
+          "AVAILABLE",
+          "ASSIGNED",
+          "ACCEPTED",
+          "IN_TRANSIT",
+          "DELIVERED",
+        ].map((status) => (
+          <Pressable
+            key={status}
+            style={[
+              styles.filterChip,
+              statusFilter === status && styles.filterChipActive,
+            ]}
+            onPress={() => setStatusFilter(status)}
+          >
+            <Text
+              style={[
+                styles.filterText,
+                statusFilter === status && styles.filterTextActive,
+              ]}
+            >
+              {status.replace("_", " ")}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      <FlatList
+        data={recommendations}
+        keyExtractor={(item) => item.id}
+        renderItem={renderRecommendation}
+        contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              fetchLoads();
+            }}
+            tintColor="#4ade80"
+          />
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyBox}>
+            <Ionicons name="analytics" size={42} color="#64748b" />
+            <Text style={styles.emptyTitle}>No loads found</Text>
+            <Text style={styles.emptyText}>
+              Dispatch intelligence will appear when freight loads are available.
+            </Text>
+          </View>
+        }
+      />
+    </SafeAreaView>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={styles.statCard}>
+      <Ionicons name={icon} size={21} color="#4ade80" />
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingScreen: {
+  screen: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#020617",
+  },
+  center: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    padding: 24,
   },
   loadingText: {
-    color: "#6B7280",
-    marginTop: 10,
-    fontWeight: "800",
+    color: "#cbd5e1",
+    marginTop: 12,
+    fontSize: 15,
   },
-  container: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-  },
-  hero: {
-    backgroundColor: "#111827",
-    paddingTop: 64,
-    paddingHorizontal: 20,
-    paddingBottom: 28,
-    alignItems: "center",
-  },
-  heroIcon: {
-    fontSize: 54,
-    marginBottom: 10,
-  },
-  heroTitle: {
-    color: "#FFFFFF",
-    fontSize: 31,
-    fontWeight: "900",
-    marginBottom: 10,
-    textAlign: "center",
-  },
-  heroSubtitle: {
-    color: "#D1D5DB",
-    fontWeight: "700",
-    lineHeight: 22,
-    textAlign: "center",
-    maxWidth: 600,
-  },
-  heroStats: {
+  topBar: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 22,
-  },
-  heroStat: {
-    backgroundColor: "#1F2937",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 18,
     alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === "android" ? 18 : 8,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1e293b",
   },
-  heroValue: {
-    color: "#10B981",
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "#0f172a",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#1e293b",
+  },
+  headerTitle: {
+    color: "#f8fafc",
     fontSize: 22,
     fontWeight: "900",
   },
-  heroLabel: {
-    color: "#D1D5DB",
-    fontWeight: "700",
-    marginTop: 4,
-    fontSize: 12,
+  headerSub: {
+    color: "#94a3b8",
+    fontSize: 13,
+    marginTop: 2,
   },
-  panel: {
-    flex: 1,
-    marginTop: -24,
-    backgroundColor: "#F3F4F6",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+  statsRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
   },
-  panelInner: {
-    padding: 18,
-    paddingBottom: 80,
-  },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 14,
-  },
-  navButton: {
-    flex: 1,
-    backgroundColor: "#10B981",
+  statCard: {
+    width: 132,
     padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  navButtonOutline: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#10B981",
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: "#10B981",
-    fontWeight: "900",
-  },
-  refreshButton: {
-    backgroundColor: "#111827",
-    padding: 15,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 18,
-  },
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  sectionTitle: {
-    color: "#111827",
-    fontSize: 23,
-    fontWeight: "900",
-    marginBottom: 12,
-  },
-  emptyCard: {
-    backgroundColor: "#FFFFFF",
-    padding: 18,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 14,
-  },
-  emptyTitle: {
-    color: "#111827",
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  emptyText: {
-    color: "#6B7280",
-    fontWeight: "700",
-    lineHeight: 21,
-    marginTop: 6,
-  },
-  loadCard: {
-    backgroundColor: "#FFFFFF",
     borderRadius: 20,
-    padding: 16,
+    backgroundColor: "#0f172a",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 14,
+    borderColor: "#1e293b",
   },
-  recommendationCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+  statValue: {
+    color: "#f8fafc",
+    fontSize: 25,
+    fontWeight: "900",
+    marginTop: 10,
+  },
+  statLabel: {
+    color: "#94a3b8",
+    fontSize: 12,
+    marginTop: 3,
+  },
+  searchWrap: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#1e293b",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: "#f8fafc",
+    fontSize: 14,
+  },
+  filterRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#1e293b",
+  },
+  filterChipActive: {
+    backgroundColor: "#4ade80",
+    borderColor: "#4ade80",
+  },
+  filterText: {
+    color: "#cbd5e1",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  filterTextActive: {
+    color: "#052e16",
+  },
+  listContent: {
     padding: 16,
-    borderWidth: 2,
-    borderColor: "#10B981",
+    paddingBottom: 40,
+  },
+  card: {
+    backgroundColor: "#0f172a",
+    borderRadius: 24,
+    padding: 16,
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#1e293b",
   },
   cardHeader: {
     flexDirection: "row",
-    gap: 10,
     alignItems: "flex-start",
-    marginBottom: 10,
+    gap: 12,
   },
   cardTitle: {
-    color: "#111827",
-    fontSize: 18,
+    color: "#f8fafc",
+    fontSize: 17,
     fontWeight: "900",
   },
   cardSub: {
-    color: "#6B7280",
-    fontWeight: "700",
+    color: "#94a3b8",
+    fontSize: 12,
     marginTop: 4,
-  },
-  priorityBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  priorityText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 10,
   },
   scoreBadge: {
     width: 48,
     height: 48,
-    borderRadius: 999,
+    borderRadius: 16,
+    backgroundColor: "#14532d",
     alignItems: "center",
     justifyContent: "center",
   },
+  scoreHigh: {
+    backgroundColor: "#7f1d1d",
+  },
+  scoreMedium: {
+    backgroundColor: "#78350f",
+  },
   scoreText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
+    color: "#f8fafc",
     fontSize: 16,
+    fontWeight: "900",
   },
-  metaText: {
-    color: "#374151",
-    fontWeight: "700",
-    marginBottom: 5,
+  routeBox: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "#020617",
+    borderWidth: 1,
+    borderColor: "#1e293b",
+    gap: 8,
   },
-  reasonText: {
-    color: "#111827",
+  routeItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  routeText: {
+    color: "#e2e8f0",
+    fontSize: 14,
     fontWeight: "700",
-    lineHeight: 21,
-    marginTop: 6,
+  },
+  infoGrid: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
+  },
+  infoPill: {
+    flex: 1,
+    backgroundColor: "#111827",
+    borderRadius: 16,
+    padding: 11,
+    borderWidth: 1,
+    borderColor: "#1f2937",
+  },
+  infoLabel: {
+    color: "#94a3b8",
+    fontSize: 11,
+  },
+  infoValue: {
+    color: "#f8fafc",
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  aiBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 9,
+    marginTop: 12,
+    padding: 13,
+    borderRadius: 18,
+    backgroundColor: "#172554",
+    borderWidth: 1,
+    borderColor: "#1d4ed8",
+  },
+  aiText: {
+    flex: 1,
+    color: "#dbeafe",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
   },
   actionRow: {
     flexDirection: "row",
     gap: 10,
     marginTop: 14,
   },
-  assignButton: {
+  secondaryButton: {
     flex: 1,
-    backgroundColor: "#10B981",
-    padding: 14,
-    borderRadius: 14,
+    height: 44,
+    borderRadius: 15,
+    backgroundColor: "#1e293b",
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
-  assignText: {
-    color: "#FFFFFF",
+  secondaryButtonText: {
+    color: "#e2e8f0",
     fontWeight: "900",
+    fontSize: 13,
   },
-  trackButton: {
+  alertButton: {
     flex: 1,
-    backgroundColor: "#111827",
-    padding: 14,
-    borderRadius: 14,
+    height: 44,
+    borderRadius: 15,
+    backgroundColor: "#facc15",
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
-  trackText: {
-    color: "#FFFFFF",
+  alertButtonText: {
+    color: "#111827",
     fontWeight: "900",
+    fontSize: 13,
+  },
+  emptyBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 70,
+    paddingHorizontal: 24,
+  },
+  emptyTitle: {
+    color: "#f8fafc",
+    fontSize: 18,
+    fontWeight: "900",
+    marginTop: 12,
+  },
+  emptyText: {
+    color: "#94a3b8",
+    textAlign: "center",
+    marginTop: 7,
+    lineHeight: 20,
   },
 });

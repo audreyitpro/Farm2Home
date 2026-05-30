@@ -1,8 +1,13 @@
+// app/freight/profile.tsx
+
 import React, { useCallback, useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -12,8 +17,10 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
+import freightTheme from "../styles/freightTheme";
 
 export default function FreightProfile() {
   const [carrier, setCarrier] = useState<any>(null);
@@ -57,7 +64,7 @@ export default function FreightProfile() {
         return;
       }
 
-      let current = raw ? JSON.parse(raw) : safeCarriers[safeCarriers.length - 1];
+      const current = raw ? JSON.parse(raw) : safeCarriers[safeCarriers.length - 1];
 
       if (!current) {
         router.replace("/freight/login" as never);
@@ -320,318 +327,650 @@ export default function FreightProfile() {
     router.replace("/freight/login" as never);
   }
 
+  function membershipStatus() {
+    return carrier?.membershipStatus || carrier?.subscriptionStatus || "Active";
+  }
+
+  function membershipColor() {
+    const status = String(membershipStatus()).toLowerCase();
+
+    if (status.includes("cancel")) return "#DC2626";
+    if (status.includes("pending")) return "#F59E0B";
+    if (status.includes("past_due") || status.includes("unpaid")) return "#DC2626";
+
+    return "#10B981";
+  }
+
+  function carrierInitials() {
+    const value = companyName || contactName || "Freight Carrier";
+    const parts = value.split(" ").filter(Boolean);
+    const first = parts[0]?.[0] || "F";
+    const second = parts[1]?.[0] || "";
+    return `${first}${second}`.toUpperCase();
+  }
+
+  function authorizedServices() {
+    const services = [];
+
+    if (carrier?.licensedLivestock) services.push("Livestock Transport");
+    if (carrier?.licensedRefrigeratedFood) services.push("Refrigerated Fresh Food");
+
+    return services.length > 0 ? services.join("\n") : "No services selected";
+  }
+
+  function SectionHeader({
+    icon,
+    title,
+    subtitle,
+  }: {
+    icon: keyof typeof Ionicons.glyphMap;
+    title: string;
+    subtitle?: string;
+  }) {
+    return (
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIcon}>
+          <Ionicons name={icon} size={20} color="#FFFFFF" />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+        </View>
+      </View>
+    );
+  }
+
   if (!carrier) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Freight Carrier Profile</Text>
-        <Text style={styles.subheader}>No freight carrier profile found.</Text>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.hero}>
+            <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
+            <Text style={styles.title}>Freight Carrier Profile</Text>
+            <Text style={styles.subtitle}>No freight carrier profile found.</Text>
+          </View>
 
-        <TouchableOpacity
-          style={styles.greenButton}
-          onPress={() => router.replace("/freight/login" as never)}
-        >
-          <Text style={styles.buttonText}>Go to Freight Login</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <TouchableOpacity
+            style={styles.greenButton}
+            onPress={() => router.replace("/freight/login" as never)}
+          >
+            <Text style={styles.buttonText}>Go to Freight Login</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Freight Carrier Profile</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-      <View style={styles.statusCard}>
-        <Text style={styles.statusTitle}>Membership Status</Text>
-        <Text style={styles.statusValue}>
-          {carrier.membershipStatus || carrier.subscriptionStatus || "Active"}
-        </Text>
-
-        <Text style={styles.statusSmall}>
-          Freight subscription gives access to the freight board, available
-          loads, and carrier tools.
-        </Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Profile Information</Text>
-
-        <Text style={styles.label}>Username</Text>
-        <TextInput
-          style={styles.input}
-          value={username}
-          onChangeText={setUsername}
-          placeholder="Username"
-          autoCapitalize="none"
-        />
-
-        <Text style={styles.label}>Company Name</Text>
-        <TextInput
-          style={styles.input}
-          value={companyName}
-          onChangeText={setCompanyName}
-          placeholder="Company name"
-        />
-
-        <Text style={styles.label}>Contact Name</Text>
-        <TextInput
-          style={styles.input}
-          value={contactName}
-          onChangeText={setContactName}
-          placeholder="Contact name"
-        />
-
-        <Text style={styles.label}>Email</Text>
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          placeholder="Email"
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
-
-        <Text style={styles.label}>Phone</Text>
-        <TextInput
-          style={styles.input}
-          value={phone}
-          onChangeText={setPhone}
-          placeholder="Phone"
-          keyboardType="phone-pad"
-        />
-
-        <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
-          <Text style={styles.buttonText}>Save Profile</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Carrier Details</Text>
-
-        <Text style={styles.label}>MDOT Number</Text>
-        <TextInput
-          style={styles.input}
-          value={mdotNumber}
-          onChangeText={setMdotNumber}
-          placeholder="MDOT Number"
-        />
-
-        <Text style={styles.label}>MC Number</Text>
-        <TextInput
-          style={styles.input}
-          value={mcNumber}
-          onChangeText={setMcNumber}
-          placeholder="MC Number"
-        />
-
-        <Text style={styles.label}>Insurance Provider</Text>
-        <TextInput
-          style={styles.input}
-          value={insuranceProvider}
-          onChangeText={setInsuranceProvider}
-          placeholder="Insurance provider"
-        />
-
-        <Text style={styles.label}>Policy Number</Text>
-        <TextInput
-          style={styles.input}
-          value={insurancePolicyNumber}
-          onChangeText={setInsurancePolicyNumber}
-          placeholder="Policy number"
-        />
-
-        <Text style={styles.label}>Authorized Services</Text>
-        <Text style={styles.value}>
-          {carrier.licensedLivestock ? "Livestock Transport\n" : ""}
-          {carrier.licensedRefrigeratedFood
-            ? "Refrigerated Fresh Food"
-            : ""}
-          {!carrier.licensedLivestock && !carrier.licensedRefrigeratedFood
-            ? "No services selected"
-            : ""}
-        </Text>
-
-        <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
-          <Text style={styles.buttonText}>Save Carrier Details</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Change Password</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Current password"
-          value={currentPassword}
-          onChangeText={setCurrentPassword}
-          secureTextEntry
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="New password"
-          value={newPassword}
-          onChangeText={setNewPassword}
-          secureTextEntry
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Confirm new password"
-          value={confirmNewPassword}
-          onChangeText={setConfirmNewPassword}
-          secureTextEntry
-        />
-
-        <TouchableOpacity style={styles.blueButton} onPress={changePassword}>
-          <Text style={styles.buttonText}>Change Password</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Manage Subscription</Text>
-
-        <Text style={styles.helpText}>
-          Manage your freight membership, update your card, review billing, or
-          cancel your subscription.
-        </Text>
-
-        <TouchableOpacity style={styles.blueButton} onPress={manageSubscription}>
-          <Text style={styles.buttonText}>Manage Freight Membership</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
-          <Text style={styles.buttonText}>Cancel Freight Subscription</Text>
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity
-        style={styles.greenButton}
-        onPress={() => router.push("/freight/board" as never)}
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <Text style={styles.buttonText}>Back to Freight Board</Text>
-      </TouchableOpacity>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.hero}>
+            <View style={styles.heroTop}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{carrierInitials()}</Text>
+              </View>
 
-      <TouchableOpacity style={styles.logoutButton} onPress={logout}>
-        <Text style={styles.buttonText}>Logout</Text>
-      </TouchableOpacity>
-    </ScrollView>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
+                <Text style={styles.title}>Freight Carrier Profile</Text>
+                <Text style={styles.subtitle}>
+                  Manage company details, carrier credentials, subscription, and
+                  freight access.
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.statusCard}>
+            <View style={styles.statusTop}>
+              <View>
+                <Text style={styles.statusTitle}>Membership Status</Text>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    { backgroundColor: membershipColor() },
+                  ]}
+                >
+                  <Text style={styles.statusBadgeText}>{membershipStatus()}</Text>
+                </View>
+              </View>
+
+              <Ionicons name="shield-checkmark-outline" size={34} color="#BBF7D0" />
+            </View>
+
+            <Text style={styles.statusSmall}>
+              Freight subscription gives access to the freight board, available
+              loads, and carrier tools.
+            </Text>
+          </View>
+
+          <View style={styles.quickGrid}>
+            <QuickNav
+              icon="grid-outline"
+              label="Dashboard"
+              onPress={() => router.push("/freight/dashboard" as never)}
+            />
+            <QuickNav
+              icon="list-outline"
+              label="Board"
+              onPress={() => router.push("/freight/board" as never)}
+            />
+            <QuickNav
+              icon="map-outline"
+              label="Tracking"
+              onPress={() => router.push("/freight/live-route" as never)}
+            />
+            <QuickNav
+              icon="cash-outline"
+              label="Billing"
+              onPress={manageSubscription}
+            />
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="business-outline"
+              title="Profile Information"
+              subtitle="Company and primary contact information."
+            />
+
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              style={styles.input}
+              value={username}
+              onChangeText={setUsername}
+              placeholder="Username"
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.label}>Company Name</Text>
+            <TextInput
+              style={styles.input}
+              value={companyName}
+              onChangeText={setCompanyName}
+              placeholder="Company name"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Contact Name</Text>
+            <TextInput
+              style={styles.input}
+              value={contactName}
+              onChangeText={setContactName}
+              placeholder="Contact name"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Email"
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+
+            <Text style={styles.label}>Phone</Text>
+            <TextInput
+              style={styles.input}
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="Phone"
+              placeholderTextColor="#94A3B8"
+              keyboardType="phone-pad"
+            />
+
+            <TouchableOpacity style={styles.greenButtonInner} onPress={saveProfile}>
+              <Ionicons name="save-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Save Profile</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="trail-sign-outline"
+              title="Carrier Details"
+              subtitle="DOT, MC, insurance, and authorized services."
+            />
+
+            <Text style={styles.label}>MDOT Number</Text>
+            <TextInput
+              style={styles.input}
+              value={mdotNumber}
+              onChangeText={setMdotNumber}
+              placeholder="MDOT Number"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>MC Number</Text>
+            <TextInput
+              style={styles.input}
+              value={mcNumber}
+              onChangeText={setMcNumber}
+              placeholder="MC Number"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Insurance Provider</Text>
+            <TextInput
+              style={styles.input}
+              value={insuranceProvider}
+              onChangeText={setInsuranceProvider}
+              placeholder="Insurance provider"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={styles.label}>Policy Number</Text>
+            <TextInput
+              style={styles.input}
+              value={insurancePolicyNumber}
+              onChangeText={setInsurancePolicyNumber}
+              placeholder="Policy number"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <View style={styles.valueBox}>
+              <Ionicons name="checkmark-circle-outline" size={20} color="#10B981" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.valueLabel}>Authorized Services</Text>
+                <Text style={styles.value}>{authorizedServices()}</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity style={styles.greenButtonInner} onPress={saveProfile}>
+              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Save Carrier Details</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="key-outline"
+              title="Change Password"
+              subtitle="Update your local freight account password."
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Current password"
+              placeholderTextColor="#94A3B8"
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
+              secureTextEntry
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="New password"
+              placeholderTextColor="#94A3B8"
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm new password"
+              placeholderTextColor="#94A3B8"
+              value={confirmNewPassword}
+              onChangeText={setConfirmNewPassword}
+              secureTextEntry
+            />
+
+            <TouchableOpacity style={styles.blueButton} onPress={changePassword}>
+              <Ionicons name="lock-closed-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Change Password</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="card-outline"
+              title="Manage Subscription"
+              subtitle="Manage billing, payment method, or cancellation."
+            />
+
+            <Text style={styles.helpText}>
+              Manage your freight membership, update your card, review billing,
+              or cancel your subscription.
+            </Text>
+
+            <TouchableOpacity style={styles.blueButton} onPress={manageSubscription}>
+              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Manage Freight Membership</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
+              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.buttonText}>Cancel Freight Subscription</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.greenButton}
+            onPress={() => router.push("/freight/board" as never)}
+          >
+            <Ionicons name="list-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>Back to Freight Board</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.darkButton}
+            onPress={() => router.push("/freight/dashboard" as never)}
+          >
+            <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>Freight Dashboard</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+            <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>Logout</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function QuickNav({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.quickCard} onPress={onPress}>
+      <Ionicons name={icon} size={22} color="#10B981" />
+      <Text style={styles.quickText}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  keyboard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
   container: {
     flex: 1,
-    backgroundColor: "#F7F7F2",
+    backgroundColor: freightTheme.colors.background,
   },
   content: {
-    padding: 22,
-    paddingBottom: 70,
+    paddingBottom: 90,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 22,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroTop: {
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "center",
+  },
+  avatar: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: "#064E3B",
+    borderWidth: 1,
+    borderColor: "#10B981",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   title: {
-    fontSize: 30,
+    fontSize: 34,
     fontWeight: "900",
-    color: "#1f7a3f",
-    marginBottom: 8,
+    color: "#FFFFFF",
+    marginTop: 6,
   },
-  subheader: {
-    color: "#666",
-    marginBottom: 20,
+  subtitle: {
+    color: "#CBD5E1",
     fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
   },
   statusCard: {
-    backgroundColor: "#E8F5E9",
-    borderRadius: 18,
-    padding: 16,
+    backgroundColor: "#064E3B",
+    borderRadius: 20,
+    padding: 18,
     borderWidth: 1,
-    borderColor: "#B7DFB9",
-    marginBottom: 16,
+    borderColor: "#10B981",
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 14,
+  },
+  statusTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "center",
   },
   statusTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "900",
-    color: "#14532D",
-    marginBottom: 6,
+    color: "#FFFFFF",
+    marginBottom: 8,
   },
-  statusValue: {
-    fontSize: 18,
+  statusBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  statusBadgeText: {
+    color: "#FFFFFF",
     fontWeight: "900",
-    color: "#1f7a3f",
+    fontSize: 12,
+    textTransform: "capitalize",
   },
   statusSmall: {
-    marginTop: 8,
-    color: "#14532D",
+    marginTop: 12,
+    color: "#BBF7D0",
     fontWeight: "700",
     lineHeight: 20,
   },
-  card: {
-    backgroundColor: "#FFFFFF",
-    padding: 18,
+  quickGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+  },
+  quickCard: {
+    width: "48%",
+    backgroundColor: freightTheme.colors.card,
     borderRadius: 18,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    alignItems: "center",
+    gap: 8,
+  },
+  quickText: {
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+  },
+  card: {
+    backgroundColor: freightTheme.colors.card,
+    padding: 18,
+    borderRadius: 22,
+    marginHorizontal: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: freightTheme.colors.border,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    marginBottom: 14,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: "900",
-    color: "#111827",
-    marginBottom: 12,
+    color: freightTheme.colors.text,
+  },
+  sectionSubtitle: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 3,
   },
   label: {
-    color: "#374151",
-    marginTop: 10,
+    color: freightTheme.colors.text,
+    marginTop: 8,
     marginBottom: 6,
     fontWeight: "900",
   },
   input: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: "#CBD5E1",
     borderRadius: 14,
     padding: 14,
     fontWeight: "700",
     marginBottom: 8,
+    color: "#111827",
+  },
+  valueBox: {
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 14,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+  },
+  valueLabel: {
+    color: freightTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
   value: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "800",
-    color: "#111827",
+    color: freightTheme.colors.text,
     lineHeight: 22,
+    marginTop: 3,
   },
   helpText: {
-    color: "#4B5563",
+    color: freightTheme.colors.mutedText,
     fontWeight: "700",
     lineHeight: 21,
     marginBottom: 12,
   },
-  greenButton: {
-    backgroundColor: "#1f7a3f",
+  greenButtonInner: {
+    backgroundColor: freightTheme.colors.primary,
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
+  },
+  greenButton: {
+    backgroundColor: freightTheme.colors.primary,
+    padding: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 18,
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
   },
   blueButton: {
-    backgroundColor: "#1565C0",
+    backgroundColor: "#2563EB",
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
   },
-  cancelButton: {
-    backgroundColor: "#D32F2F",
-    padding: 16,
-    borderRadius: 14,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  logoutButton: {
+  darkButton: {
     backgroundColor: "#111827",
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 18,
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
+  },
+  cancelButton: {
+    backgroundColor: "#DC2626",
+    padding: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
+  },
+  logoutButton: {
+    backgroundColor: "#64748B",
+    padding: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 18,
     marginTop: 10,
     marginBottom: 40,
+    flexDirection: "row",
+    gap: 8,
   },
   buttonText: {
     color: "#FFFFFF",

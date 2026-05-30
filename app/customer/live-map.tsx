@@ -2,11 +2,11 @@ import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -14,6 +14,21 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../services/supabaseClient";
+
+const COLORS = {
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  secondary: "#F9A825",
+  background: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#75806F",
+  border: "#E2E8DA",
+  softGreen: "#EAF5E6",
+  lightGreen: "#F1FAED",
+  danger: "#DC2626",
+  dark: "#111827",
+};
 
 type DriverLocation = {
   id?: string;
@@ -44,7 +59,6 @@ type CustomerOrder = {
 
 export default function CustomerLiveMap() {
   const params = useLocalSearchParams();
-
   const orderIdParam = String(params.orderId || params.loadId || "");
 
   const [loading, setLoading] = useState(true);
@@ -192,6 +206,17 @@ export default function CustomerLiveMap() {
     return `GPS stale · ${Math.round(minutes)} minutes ago`;
   }
 
+  function progressPercent() {
+    const status = String(selectedOrder?.fulfillmentStatus || "").toUpperCase();
+
+    if (status === "ACCEPTED") return 25;
+    if (status === "PICKED_UP") return 55;
+    if (status === "IN_TRANSIT") return 75;
+    if (status === "DELIVERED") return 100;
+
+    return driverLocation ? 35 : 10;
+  }
+
   const trackingMessage = useMemo(() => {
     const status = String(selectedOrder?.fulfillmentStatus || "").toUpperCase();
 
@@ -205,189 +230,515 @@ export default function CustomerLiveMap() {
     return "Waiting for driver assignment.";
   }, [selectedOrder, driverLocation]);
 
+  const progress = progressPercent();
+
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#1F7A3F" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.loadingText}>Loading live tracking...</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    >
-      <Text style={styles.kicker}>Farm2Home Customer</Text>
-      <Text style={styles.title}>Live Delivery Map</Text>
-      <Text style={styles.subtitle}>
-        Track your Farm2Home delivery, driver GPS, and order progress.
-      </Text>
+    <View style={styles.page}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
+        <View style={styles.topBar}>
+          <Pressable
+            style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
+            onPress={() => router.push("/customer/orders" as any)}
+          >
+            <Text style={styles.backCircleText}>‹</Text>
+          </Pressable>
 
-      <View style={styles.mapBox}>
-        <Text style={styles.mapIcon}>🗺️</Text>
-        <Text style={styles.mapTitle}>Live GPS Tracking</Text>
-        <Text style={styles.mapSubtitle}>{trackingMessage}</Text>
+          <View style={styles.topTitleBlock}>
+            <Text style={styles.title}>Live Map</Text>
+            <Text style={styles.subtitle}>Track your Farm2Home delivery</Text>
+          </View>
+        </View>
 
-        {driverLocation ? (
-          <>
-            <Text style={styles.gpsText}>
-              Driver GPS: {driverLocation.latitude.toFixed(5)},{" "}
-              {driverLocation.longitude.toFixed(5)}
+        <View style={styles.heroCard}>
+          <View style={styles.heroTextBlock}>
+            <Text style={styles.heroBadge}>Customer Tracking</Text>
+            <Text style={styles.heroTitle}>
+              {selectedOrder
+                ? friendlyStatus(selectedOrder.fulfillmentStatus)
+                : "No Active Delivery"}
             </Text>
-            <Text style={styles.gpsText}>Signal: {getFreshness()}</Text>
-          </>
+            <Text style={styles.heroText}>{trackingMessage}</Text>
+          </View>
+
+          <Text style={styles.heroEmoji}>🚚</Text>
+        </View>
+
+        <View style={styles.mapCard}>
+          <View style={styles.mapMockHeader}>
+            <Text style={styles.mapMockTitle}>Farm2Home Route</Text>
+            <Text style={styles.mapMockStatus}>{getFreshness()}</Text>
+          </View>
+
+          <View style={styles.mapCanvas}>
+            <View style={styles.routeLine} />
+
+            <View style={[styles.routePoint, styles.pickupPoint]}>
+              <Text style={styles.routePointText}>🌾</Text>
+            </View>
+
+            <View style={[styles.routePoint, styles.driverPoint]}>
+              <Text style={styles.driverEmoji}>🚚</Text>
+            </View>
+
+            <View style={[styles.routePoint, styles.dropoffPoint]}>
+              <Text style={styles.routePointText}>🏠</Text>
+            </View>
+          </View>
+
+          {driverLocation ? (
+            <View style={styles.gpsCard}>
+              <Text style={styles.gpsTitle}>Live GPS Connected</Text>
+              <Text style={styles.gpsText}>
+                {driverLocation.latitude.toFixed(5)},{" "}
+                {driverLocation.longitude.toFixed(5)}
+              </Text>
+              <Text style={styles.gpsSubtext}>
+                Speed:{" "}
+                {driverLocation.speed !== null &&
+                driverLocation.speed !== undefined
+                  ? `${Number(driverLocation.speed).toFixed(1)} m/s`
+                  : "Not available"}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.gpsCard}>
+              <Text style={styles.gpsTitle}>Waiting for Driver GPS</Text>
+              <Text style={styles.gpsSubtext}>
+                Live GPS appears after pickup begins.
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.progressCard}>
+          <View style={styles.progressHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>Delivery Progress</Text>
+              <Text style={styles.progressSubtext}>{trackingMessage}</Text>
+            </View>
+
+            <View style={styles.progressBadge}>
+              <Text style={styles.progressBadgeText}>{progress}%</Text>
+            </View>
+          </View>
+
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${progress}%` }]} />
+          </View>
+
+          <View style={styles.stepRow}>
+            <Text style={styles.stepText}>Accepted</Text>
+            <Text style={styles.stepText}>Pickup</Text>
+            <Text style={styles.stepText}>Delivery</Text>
+          </View>
+        </View>
+
+        {selectedOrder ? (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Current Order</Text>
+
+            <View style={styles.infoTile}>
+              <Text style={styles.infoLabel}>Order ID</Text>
+              <Text style={styles.infoValue}>#{selectedOrder.id}</Text>
+            </View>
+
+            <View style={styles.infoTile}>
+              <Text style={styles.infoLabel}>Status</Text>
+              <Text style={styles.infoValue}>
+                {friendlyStatus(selectedOrder.fulfillmentStatus)}
+              </Text>
+            </View>
+
+            <View style={styles.infoTile}>
+              <Text style={styles.infoLabel}>Payment</Text>
+              <Text style={styles.infoValue}>
+                {selectedOrder.paymentStatus || "Pending"}
+              </Text>
+            </View>
+
+            <View style={styles.infoTile}>
+              <Text style={styles.infoLabel}>Total</Text>
+              <Text style={styles.infoValue}>
+                ${Number(selectedOrder.total || 0).toFixed(2)}
+              </Text>
+            </View>
+
+            <View style={styles.infoTile}>
+              <Text style={styles.infoLabel}>Driver</Text>
+              <Text style={styles.infoValue}>
+                {selectedOrder.assignedDriverId || "Not assigned yet"}
+              </Text>
+            </View>
+          </View>
         ) : (
-          <Text style={styles.gpsText}>No driver GPS yet.</Text>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>No Active Order</Text>
+            <Text style={styles.infoValue}>
+              Customer: {customerEmail || "Not signed in"}
+            </Text>
+          </View>
         )}
-      </View>
 
-      {selectedOrder ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Current Order</Text>
-          <Text style={styles.metaText}>Order: #{selectedOrder.id}</Text>
-          <Text style={styles.metaText}>
-            Status: {friendlyStatus(selectedOrder.fulfillmentStatus)}
-          </Text>
-          <Text style={styles.metaText}>
-            Payment: {selectedOrder.paymentStatus || "Pending"}
-          </Text>
-          <Text style={styles.metaText}>
-            Total: ${Number(selectedOrder.total || 0).toFixed(2)}
-          </Text>
-          <Text style={styles.metaText}>
-            Driver: {selectedOrder.assignedDriverId || "Not assigned yet"}
-          </Text>
+        <View style={styles.actionGrid}>
+          <Pressable
+            style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+            onPress={() => loadLiveTracking()}
+          >
+            <Text style={styles.primaryButtonText}>Refresh Tracking</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+            onPress={() => router.push("/customer/orders" as any)}
+          >
+            <Text style={styles.secondaryButtonText}>View My Orders</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+            onPress={() => router.push("/customer/marketplace" as any)}
+          >
+            <Text style={styles.secondaryButtonText}>Back To Marketplace</Text>
+          </Pressable>
         </View>
-      ) : (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>No Active Order</Text>
-          <Text style={styles.metaText}>
-            Customer: {customerEmail || "Not signed in"}
-          </Text>
-        </View>
-      )}
-
-      <TouchableOpacity style={styles.primaryButton} onPress={() => loadLiveTracking()}>
-        <Text style={styles.primaryButtonText}>Refresh Tracking</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.secondaryButton}
-        onPress={() => router.push("/customer/orders" as any)}
-      >
-        <Text style={styles.secondaryButtonText}>View My Orders</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.secondaryButton}
-        onPress={() => router.push("/customer/marketplace" as any)}
-      >
-        <Text style={styles.secondaryButtonText}>Back To Marketplace</Text>
-      </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F7F7F2" },
-  content: { padding: 20, paddingBottom: 80 },
+  page: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  content: {
+    padding: 18,
+    paddingBottom: 80,
+  },
   centered: {
     flex: 1,
-    backgroundColor: "#F7F7F2",
+    backgroundColor: COLORS.background,
     alignItems: "center",
     justifyContent: "center",
   },
-  loadingText: { marginTop: 10, color: "#374151", fontWeight: "800" },
-  kicker: {
-    color: "#1F7A3F",
-    fontSize: 12,
+  loadingText: {
+    marginTop: 10,
+    color: COLORS.muted,
     fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 1,
+  },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 18,
+    gap: 12,
+  },
+  backCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  backCircleText: {
+    fontSize: 34,
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: -4,
+  },
+  topTitleBlock: {
+    flex: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 30,
     fontWeight: "900",
-    color: "#064E3B",
-    marginTop: 6,
+    color: COLORS.text,
   },
   subtitle: {
-    color: "#4B5563",
+    color: COLORS.muted,
     fontWeight: "700",
-    lineHeight: 22,
-    marginTop: 8,
+    marginTop: 3,
+  },
+  heroCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 30,
+    padding: 20,
     marginBottom: 18,
-  },
-  mapBox: {
-    backgroundColor: "#DDEFE4",
-    borderRadius: 24,
-    padding: 24,
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#B7DFB9",
+    justifyContent: "space-between",
   },
-  mapIcon: { fontSize: 58, marginBottom: 12 },
-  mapTitle: {
+  heroTextBlock: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    color: "#FFFFFF",
+    fontWeight: "900",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: "hidden",
+    marginBottom: 10,
+  },
+  heroTitle: {
+    color: "#FFFFFF",
     fontSize: 25,
     fontWeight: "900",
-    color: "#111827",
-    textAlign: "center",
+    lineHeight: 31,
+    textTransform: "capitalize",
   },
-  mapSubtitle: {
-    color: "#374151",
+  heroText: {
+    color: "#EAF7E6",
     fontWeight: "700",
-    lineHeight: 22,
-    textAlign: "center",
+    lineHeight: 20,
     marginTop: 8,
   },
-  gpsText: {
-    color: "#064E3B",
-    fontWeight: "900",
-    marginTop: 8,
-    textAlign: "center",
+  heroEmoji: {
+    fontSize: 56,
   },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
+  mapCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 30,
     padding: 16,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  mapMockHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    gap: 10,
+  },
+  mapMockTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  mapMockStatus: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  mapCanvas: {
+    height: 230,
+    borderRadius: 26,
+    backgroundColor: COLORS.softGreen,
+    overflow: "hidden",
+    position: "relative",
     marginBottom: 14,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#111827",
-    marginBottom: 8,
+  routeLine: {
+    position: "absolute",
+    left: 62,
+    right: 62,
+    top: 112,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary,
+    opacity: 0.8,
   },
-  metaText: {
-    color: "#374151",
+  routePoint: {
+    position: "absolute",
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 3,
+    borderColor: COLORS.primary,
+  },
+  pickupPoint: {
+    left: 34,
+    top: 86,
+  },
+  driverPoint: {
+    left: "47%",
+    top: 72,
+    backgroundColor: COLORS.secondary,
+    borderColor: COLORS.secondary,
+  },
+  dropoffPoint: {
+    right: 34,
+    top: 86,
+  },
+  routePointText: {
+    fontSize: 28,
+  },
+  driverEmoji: {
+    fontSize: 31,
+  },
+  gpsCard: {
+    backgroundColor: COLORS.lightGreen,
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  gpsTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  gpsText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  gpsSubtext: {
+    color: COLORS.muted,
     fontWeight: "700",
-    marginBottom: 6,
+    marginTop: 5,
+  },
+  progressCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 30,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  progressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
+  progressSubtext: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    maxWidth: 240,
+  },
+  progressBadge: {
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  progressBadgeText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 17,
+  },
+  progressTrack: {
+    height: 13,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 999,
+    overflow: "hidden",
+    marginTop: 16,
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: COLORS.primary,
+  },
+  stepRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+  },
+  stepText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    fontSize: 12,
+  },
+  card: {
+    backgroundColor: COLORS.card,
+    borderRadius: 30,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  infoTile: {
+    backgroundColor: COLORS.lightGreen,
+    borderRadius: 18,
+    padding: 13,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  infoLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  infoValue: {
+    color: COLORS.text,
+    fontWeight: "800",
     lineHeight: 21,
   },
+  actionGrid: {
+    gap: 10,
+  },
   primaryButton: {
-    backgroundColor: "#1F7A3F",
-    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    borderRadius: 18,
     padding: 16,
     alignItems: "center",
-    marginBottom: 10,
   },
-  primaryButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   secondaryButton: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: "#1F7A3F",
-    borderRadius: 16,
+    borderColor: COLORS.primary,
+    borderRadius: 18,
     padding: 16,
     alignItems: "center",
-    marginBottom: 10,
   },
-  secondaryButtonText: { color: "#1F7A3F", fontWeight: "900" },
+  secondaryButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+  pressed: {
+    opacity: 0.75,
+  },
 });

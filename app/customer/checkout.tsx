@@ -29,6 +29,21 @@ import farmTheme from "../styles/farmTheme";
 
 const SERVICE_FEE_RATE = 0.04;
 
+const COLORS = {
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  secondary: "#F9A825",
+  background: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#75806F",
+  border: "#E2E8DA",
+  softGreen: "#EAF5E6",
+  lightGreen: "#F1FAED",
+  danger: "#DC2626",
+  dark: "#111827",
+};
+
 type CurrentCustomer = {
   id?: string;
   email?: string;
@@ -148,6 +163,13 @@ export default function CustomerCheckout() {
     );
   }, [cart]);
 
+  const itemCount = useMemo(() => {
+    return cart.reduce(
+      (sum, item: any) => sum + Number(item.quantity || 0),
+      0
+    );
+  }, [cart]);
+
   const serviceFee = subtotal * SERVICE_FEE_RATE;
   const deliveryFee =
     deliveryOption === "Delivery" && cart.length > 0 ? 5.99 : 0;
@@ -215,13 +237,16 @@ export default function CustomerCheckout() {
           deliveryNotes: params.deliveryInfo.deliveryInstructions || "",
         };
 
-        const response = await fetch(`${API_BASE_URL}/driver/create-delivery-job`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(deliveryJobPayload),
-        });
+        const response = await fetch(
+          `${API_BASE_URL}/driver/create-delivery-job`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(deliveryJobPayload),
+          }
+        );
 
         const data = await response.json();
 
@@ -400,7 +425,7 @@ export default function CustomerCheckout() {
   if (accessChecking) {
     return (
       <View style={styles.lockContainer}>
-        <ActivityIndicator size="large" color={farmTheme.colors.primary} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.lockText}>Checking subscription access...</Text>
       </View>
     );
@@ -417,20 +442,46 @@ export default function CustomerCheckout() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={styles.page}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
       >
-        <Text style={styles.title}>Marketplace Checkout</Text>
+        <View style={styles.topBar}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.backCircle,
+              pressed && styles.pressed,
+            ]}
+            onPress={() => router.push("/customer/cart" as any)}
+          >
+            <Text style={styles.backCircleText}>‹</Text>
+          </Pressable>
 
-        <Text style={styles.subtitle}>
-          Pay once. Farm2Home keeps a 4% service fee and Stripe splits farmer
-          payouts by each farmer account. Delivery orders can route to preferred
-          farmer drivers or the open driver board.
-        </Text>
+          <View style={styles.topTitleBlock}>
+            <Text style={styles.title}>Checkout</Text>
+            <Text style={styles.subtitle}>
+              {itemCount} item{itemCount === 1 ? "" : "s"} from{" "}
+              {cartGroups.length} farm{cartGroups.length === 1 ? "" : "s"}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.heroCard}>
+          <View style={styles.heroTextBlock}>
+            <Text style={styles.heroBadge}>Secure Payment</Text>
+            <Text style={styles.heroTitle}>Complete your Farm2Home order</Text>
+            <Text style={styles.heroText}>
+              Pay once through Stripe. Farm2Home keeps a 4% service fee and farmer payouts are split by Stripe account.
+            </Text>
+          </View>
+          <Text style={styles.heroEmoji}>💳</Text>
+        </View>
+
+        <Text style={styles.sectionTitle}>Order Type</Text>
 
         <View style={styles.optionRow}>
           <Pressable
@@ -441,6 +492,7 @@ export default function CustomerCheckout() {
             ]}
             onPress={() => setDeliveryOption("Delivery")}
           >
+            <Text style={styles.optionIcon}>🚚</Text>
             <Text
               style={[
                 styles.optionText,
@@ -448,6 +500,14 @@ export default function CustomerCheckout() {
               ]}
             >
               Delivery
+            </Text>
+            <Text
+              style={[
+                styles.optionSubtext,
+                deliveryOption === "Delivery" && styles.optionSubtextActive,
+              ]}
+            >
+              Driver board eligible
             </Text>
           </Pressable>
 
@@ -459,6 +519,7 @@ export default function CustomerCheckout() {
             ]}
             onPress={() => setDeliveryOption("Pickup")}
           >
+            <Text style={styles.optionIcon}>🧺</Text>
             <Text
               style={[
                 styles.optionText,
@@ -467,14 +528,23 @@ export default function CustomerCheckout() {
             >
               Pickup
             </Text>
+            <Text
+              style={[
+                styles.optionSubtext,
+                deliveryOption === "Pickup" && styles.optionSubtextActive,
+              ]}
+            >
+              Pickup at farm
+            </Text>
           </Pressable>
         </View>
 
-        <Text style={styles.section}>Farm Orders</Text>
+        <Text style={styles.sectionTitle}>Farm Orders</Text>
 
         {cart.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Your cart is empty.</Text>
+            <Text style={styles.emptyIcon}>🌾</Text>
+            <Text style={styles.emptyTitle}>Your cart is empty</Text>
             <Text style={styles.emptyText}>
               Add items from the marketplace before checkout.
             </Text>
@@ -490,7 +560,19 @@ export default function CustomerCheckout() {
             return (
               <View key={group.farmName} style={styles.farmCard}>
                 <View style={styles.farmHeader}>
-                  <Text style={styles.farmTitle}>🚜 {group.farmName}</Text>
+                  <View style={styles.farmTitleRow}>
+                    <View style={styles.farmIconBox}>
+                      <Text style={styles.farmIcon}>🚜</Text>
+                    </View>
+
+                    <View style={styles.farmNameBlock}>
+                      <Text style={styles.farmTitle}>{group.farmName}</Text>
+                      <Text style={styles.farmMeta}>
+                        Stripe payout verified during payment
+                      </Text>
+                    </View>
+                  </View>
+
                   <Text style={styles.farmSubtotal}>
                     ${farmSubtotal.toFixed(2)}
                   </Text>
@@ -503,7 +585,8 @@ export default function CustomerCheckout() {
 
                       <Text style={styles.itemMeta}>
                         Qty {item.quantity} · $
-                        {Number(item.price || 0).toFixed(2)} each
+                        {Number(item.price || 0).toFixed(2)}
+                        {item.unit ? ` / ${item.unit}` : " each"}
                       </Text>
 
                       <Text style={styles.accountMeta} numberOfLines={1}>
@@ -527,8 +610,8 @@ export default function CustomerCheckout() {
           })
         )}
 
-        <View style={styles.totalBox}>
-          <Text style={styles.totalTitle}>Payment Summary</Text>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>Payment Summary</Text>
 
           <View style={styles.summaryLine}>
             <Text style={styles.summaryLabel}>Subtotal</Text>
@@ -550,13 +633,15 @@ export default function CustomerCheckout() {
             <Text style={styles.summaryValue}>${tipAmount.toFixed(2)}</Text>
           </View>
 
+          <View style={styles.divider} />
+
           <View style={styles.totalLine}>
             <Text style={styles.totalLabel}>Total</Text>
             <Text style={styles.totalValue}>${total.toFixed(2)}</Text>
           </View>
         </View>
 
-        <Text style={styles.section}>Add Tip</Text>
+        <Text style={styles.sectionTitle}>Add Tip</Text>
 
         <View style={styles.tipRow}>
           {[0, 2, 5, 10].map((amount) => (
@@ -584,13 +669,13 @@ export default function CustomerCheckout() {
         <TextInput
           style={styles.input}
           placeholder="Custom Tip"
-          placeholderTextColor="#8A8F98"
+          placeholderTextColor="#8A9482"
           keyboardType="numeric"
           value={tip}
           onChangeText={setTip}
         />
 
-        <Text style={styles.section}>
+        <Text style={styles.sectionTitle}>
           {deliveryOption === "Delivery"
             ? "Delivery Information"
             : "Pickup Contact"}
@@ -601,31 +686,33 @@ export default function CustomerCheckout() {
             <TextInput
               style={styles.input}
               placeholder="Delivery Address"
-              placeholderTextColor="#8A8F98"
+              placeholderTextColor="#8A9482"
               value={deliveryAddress}
               onChangeText={setDeliveryAddress}
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="City"
-              placeholderTextColor="#8A8F98"
-              value={city}
-              onChangeText={setCity}
-            />
+            <View style={styles.inputRow}>
+              <TextInput
+                style={[styles.input, styles.inputFlex]}
+                placeholder="City"
+                placeholderTextColor="#8A9482"
+                value={city}
+                onChangeText={setCity}
+              />
 
-            <TextInput
-              style={styles.input}
-              placeholder="State"
-              placeholderTextColor="#8A8F98"
-              value={stateValue}
-              onChangeText={setStateValue}
-            />
+              <TextInput
+                style={[styles.input, styles.stateInput]}
+                placeholder="State"
+                placeholderTextColor="#8A9482"
+                value={stateValue}
+                onChangeText={setStateValue}
+              />
+            </View>
 
             <TextInput
               style={styles.input}
               placeholder="Zip Code"
-              placeholderTextColor="#8A8F98"
+              placeholderTextColor="#8A9482"
               keyboardType="numeric"
               value={zipCode}
               onChangeText={setZipCode}
@@ -636,7 +723,7 @@ export default function CustomerCheckout() {
         <TextInput
           style={styles.input}
           placeholder="Phone Number"
-          placeholderTextColor="#8A8F98"
+          placeholderTextColor="#8A9482"
           keyboardType="phone-pad"
           value={phone}
           onChangeText={setPhone}
@@ -645,7 +732,7 @@ export default function CustomerCheckout() {
         <TextInput
           style={[styles.input, styles.textArea]}
           placeholder="Delivery / Pickup Instructions"
-          placeholderTextColor="#8A8F98"
+          placeholderTextColor="#8A9482"
           multiline
           value={deliveryInstructions}
           onChangeText={setDeliveryInstructions}
@@ -653,16 +740,27 @@ export default function CustomerCheckout() {
 
         <Pressable
           style={({ pressed }) => [
-            styles.button,
-            pressed && styles.pressed,
+            styles.payButton,
+            pressed && !loading && cart.length > 0 && styles.pressed,
             (loading || cart.length === 0) && styles.buttonDisabled,
           ]}
           onPress={handleStripeCheckout}
           disabled={loading || cart.length === 0}
         >
-          <Text style={styles.buttonText}>
-            {loading ? "Opening Stripe Checkout..." : "Pay Now with Card"}
-          </Text>
+          <View>
+            <Text style={styles.payButtonText}>
+              {loading ? "Opening Stripe Checkout..." : "Pay Now with Card"}
+            </Text>
+            <Text style={styles.payButtonSubtext}>
+              Secure Stripe marketplace payment
+            </Text>
+          </View>
+
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.payAmount}>${total.toFixed(2)}</Text>
+          )}
         </Pressable>
 
         <Pressable
@@ -675,136 +773,246 @@ export default function CustomerCheckout() {
         <Text style={styles.cardNote}>
           Production mode: use a real card in Stripe Live Mode.
         </Text>
-
-        <View style={styles.bottomSpace} />
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  page: {
     flex: 1,
+    backgroundColor: COLORS.background || farmTheme.colors.background,
+  },
+  scrollContent: {
     padding: 18,
-    backgroundColor: farmTheme.colors.background,
+    paddingBottom: 44,
   },
   lockContainer: {
     flex: 1,
-    backgroundColor: farmTheme.colors.background,
+    backgroundColor: COLORS.background || farmTheme.colors.background,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
   lockTitle: {
-    color: "#991B1B",
+    color: COLORS.danger,
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
   lockText: {
     marginTop: 14,
-    color: farmTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "800",
     textAlign: "center",
   },
-  title: {
-    fontSize: 32,
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 18,
+    gap: 12,
+  },
+  backCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  backCircleText: {
+    fontSize: 34,
+    color: COLORS.text,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
-    marginBottom: 8,
+    marginTop: -4,
+  },
+  topTitleBlock: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: "900",
+    color: COLORS.text,
   },
   subtitle: {
-    color: farmTheme.colors.mutedText,
-    lineHeight: 22,
-    marginBottom: 16,
+    color: COLORS.muted,
     fontWeight: "700",
+    marginTop: 3,
+  },
+  heroCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 30,
+    padding: 20,
+    marginBottom: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  heroTextBlock: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    color: "#FFFFFF",
+    fontWeight: "900",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: "hidden",
+    marginBottom: 10,
+  },
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 30,
+  },
+  heroText: {
+    color: "#EAF7E6",
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  heroEmoji: {
+    fontSize: 54,
+  },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: "900",
+    marginBottom: 11,
+    marginTop: 8,
   },
   optionRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
     marginBottom: 18,
   },
   optionButton: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     padding: 15,
-    borderRadius: 18,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
+    borderColor: COLORS.border,
     alignItems: "center",
   },
   optionActive: {
-    backgroundColor: farmTheme.colors.primary,
-    borderColor: farmTheme.colors.primary,
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  optionIcon: {
+    fontSize: 28,
+    marginBottom: 7,
   },
   optionText: {
     fontWeight: "900",
-    color: farmTheme.colors.text,
+    color: COLORS.text,
+    fontSize: 16,
   },
   optionTextActive: {
     color: "#FFFFFF",
   },
-  section: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginBottom: 10,
-    marginTop: 10,
+  optionSubtext: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 11,
+    marginTop: 4,
+    textAlign: "center",
+  },
+  optionSubtextActive: {
+    color: "#EAF7E6",
   },
   emptyCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 24,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    marginBottom: 14,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    marginBottom: 18,
     ...farmTheme.shadow,
   },
+  emptyIcon: {
+    fontSize: 44,
+    marginBottom: 10,
+  },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginBottom: 6,
+    color: COLORS.text,
   },
   emptyText: {
-    color: farmTheme.colors.mutedText,
+    color: COLORS.muted,
     lineHeight: 22,
+    textAlign: "center",
+    marginTop: 8,
+    fontWeight: "700",
   },
   farmCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     padding: 16,
-    borderRadius: 24,
+    borderRadius: 28,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
+    borderColor: COLORS.border,
     ...farmTheme.shadow,
   },
   farmHeader: {
+    marginBottom: 10,
+  },
+  farmTitleRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
-    gap: 10,
+    gap: 12,
+  },
+  farmIconBox: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  farmIcon: {
+    fontSize: 27,
+  },
+  farmNameBlock: {
+    flex: 1,
   },
   farmTitle: {
     flex: 1,
-    fontSize: 20,
-    fontWeight: "900",
-    color: farmTheme.colors.primary,
-  },
-  farmSubtotal: {
     fontSize: 18,
     fontWeight: "900",
-    color: farmTheme.colors.text,
+    color: COLORS.text,
+  },
+  farmMeta: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    fontSize: 12,
+  },
+  farmSubtotal: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: COLORS.primary,
+    marginTop: 10,
+    alignSelf: "flex-end",
   },
   itemRow: {
-    backgroundColor: farmTheme.colors.primaryLight,
+    backgroundColor: COLORS.lightGreen,
     padding: 13,
-    borderRadius: 16,
-    marginBottom: 8,
+    borderRadius: 18,
+    marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   itemInfo: {
     flex: 1,
@@ -812,12 +1020,13 @@ const styles = StyleSheet.create({
   itemName: {
     fontSize: 16,
     fontWeight: "900",
-    color: farmTheme.colors.text,
+    color: COLORS.text,
     marginBottom: 3,
   },
   itemMeta: {
-    color: farmTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
+    fontSize: 12,
   },
   accountMeta: {
     color: "#6B7280",
@@ -826,57 +1035,59 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   itemTotal: {
-    color: farmTheme.colors.primary,
+    color: COLORS.primary,
     fontWeight: "900",
     fontSize: 15,
   },
-  totalBox: {
-    backgroundColor: "#FFFFFF",
-    padding: 16,
-    borderRadius: 24,
+  summaryCard: {
+    backgroundColor: COLORS.card,
+    padding: 18,
+    borderRadius: 28,
     marginVertical: 14,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
+    borderColor: COLORS.border,
+    ...farmTheme.shadow,
   },
-  totalTitle: {
-    fontSize: 21,
+  summaryTitle: {
+    fontSize: 22,
     fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginBottom: 12,
+    color: COLORS.text,
+    marginBottom: 14,
   },
   summaryLine: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 8,
+    marginBottom: 11,
     gap: 12,
   },
   summaryLabel: {
-    color: farmTheme.colors.mutedText,
-    fontWeight: "700",
+    color: COLORS.muted,
+    fontWeight: "800",
     flex: 1,
   },
   summaryValue: {
-    color: farmTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 8,
   },
   totalLine: {
     flexDirection: "row",
     justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: farmTheme.colors.border,
-    paddingTop: 12,
-    marginTop: 8,
     gap: 12,
   },
   totalLabel: {
     fontSize: 18,
     fontWeight: "900",
-    color: farmTheme.colors.text,
+    color: COLORS.text,
   },
   totalValue: {
-    fontSize: 22,
+    fontSize: 23,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
+    color: COLORS.primary,
   },
   tipRow: {
     flexDirection: "row",
@@ -885,75 +1096,96 @@ const styles = StyleSheet.create({
   },
   tipButton: {
     flex: 1,
-    backgroundColor: farmTheme.colors.primaryLight,
+    backgroundColor: COLORS.card,
     padding: 13,
-    borderRadius: 14,
+    borderRadius: 16,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#CDE8D2",
+    borderColor: COLORS.border,
   },
   tipButtonActive: {
-    backgroundColor: farmTheme.colors.primary,
-    borderColor: farmTheme.colors.primary,
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
   tipText: {
-    color: farmTheme.colors.primary,
+    color: COLORS.primary,
     fontWeight: "900",
   },
   tipTextActive: {
     color: "#FFFFFF",
   },
+  inputRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  inputFlex: {
+    flex: 1,
+  },
+  stateInput: {
+    width: 92,
+  },
   input: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    borderRadius: 16,
-    padding: 14,
-    color: farmTheme.colors.text,
-    fontWeight: "700",
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 15,
+    color: COLORS.text,
+    fontWeight: "800",
     marginBottom: 12,
   },
   textArea: {
-    minHeight: 90,
+    minHeight: 94,
     textAlignVertical: "top",
   },
-  button: {
-    backgroundColor: farmTheme.colors.primary,
-    padding: 18,
-    borderRadius: 18,
-    alignItems: "center",
+  payButton: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 17,
+    borderRadius: 22,
     marginTop: 8,
-    minHeight: 58,
-    justifyContent: "center",
+    minHeight: 68,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   buttonDisabled: {
-    backgroundColor: "#9CA3AF",
+    backgroundColor: "#A7B8A2",
   },
-  buttonText: {
+  payButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
+  payButtonSubtext: {
+    color: "#EAF7E6",
+    fontWeight: "700",
+    marginTop: 3,
+    fontSize: 12,
+  },
+  payAmount: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 18,
+  },
   backButton: {
-    padding: 12,
+    padding: 14,
   },
   backText: {
-    marginTop: 8,
+    marginTop: 6,
     textAlign: "center",
-    color: farmTheme.colors.primary,
+    color: COLORS.primary,
     fontWeight: "900",
   },
   cardNote: {
     textAlign: "center",
-    color: farmTheme.colors.mutedText,
-    marginTop: 12,
+    color: COLORS.muted,
+    marginTop: 8,
     marginBottom: 30,
     fontWeight: "700",
+    lineHeight: 20,
   },
   pressed: {
     opacity: 0.75,
-  },
-  bottomSpace: {
-    height: 40,
   },
 });

@@ -1,9 +1,13 @@
+// app/admin/dashboard.tsx
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -11,6 +15,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import {
   getAdminSession,
@@ -21,11 +26,11 @@ import {
 } from "../data/adminStore";
 
 import { updateFarmerStore } from "../data/farmerStore";
+import freightTheme from "../styles/freightTheme";
 
 type VerificationRecord = any;
 
 const QUEUE_KEYS = ["farm2homeVerificationQueue", "adminVerificationQueue"];
-
 const FARMER_KEYS = ["farm2homeFarmers", "farmers", "approvedFarmers"];
 
 const APPROVAL_EMAIL_WORDING = `Congratulations!
@@ -42,7 +47,6 @@ Thank you for joining Farm2Home.`;
 export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [adminEmail, setAdminEmail] = useState("");
-
   const [pendingRecords, setPendingRecords] = useState<VerificationRecord[]>([]);
 
   const [pendingCount, setPendingCount] = useState(0);
@@ -80,11 +84,7 @@ export default function AdminDashboard() {
     const status = normalizeStatus(item.status);
     const review = normalizeStatus(item.adminReviewStatus);
 
-    return (
-      item.rejected === true ||
-      status === "rejected" ||
-      review === "rejected"
-    );
+    return item.rejected === true || status === "rejected" || review === "rejected";
   }
 
   function isPending(item: any) {
@@ -136,7 +136,6 @@ export default function AdminDashboard() {
   async function upsertInArrayStorage(key: string, record: any) {
     const id = getFarmerId(record);
     const email = getEmail(record);
-
     const current = await readArray(key);
 
     const next = [
@@ -407,330 +406,526 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#14532D" />
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <ActivityIndicator size="large" color="#10B981" />
         <Text style={styles.loadingText}>Loading Farm2Home Admin Dashboard...</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={styles.content}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />
-      }
-    >
-      <View style={styles.heroCard}>
-        <Text style={styles.badge}>🛡️ Farm2Home Production Admin Portal</Text>
-        <Text style={styles.title}>Admin Dashboard</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-        <Text style={styles.subtitle}>
-          Monitor compliance approvals, Stripe onboarding, account access,
-          marketplace operations, deliveries, freight activity, AI verification,
-          and platform oversight.
-        </Text>
-
-        <View style={styles.adminInfoBox}>
-          <Text style={styles.adminInfo}>Logged in as:</Text>
-          <Text style={styles.adminEmail}>{adminEmail || "Administrator"}</Text>
-        </View>
-      </View>
-
-      <View style={styles.productionBanner}>
-        <Text style={styles.productionTitle}>🚀 Production Status</Text>
-        <Text style={styles.productionText}>{productionStatus}</Text>
-      </View>
-
-      <Text style={styles.sectionTitle}>Platform Metrics</Text>
-
-      <View style={styles.metricsGrid}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{pendingCount}</Text>
-          <Text style={styles.metricLabel}>Pending Reviews</Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{approvedCount}</Text>
-          <Text style={styles.metricLabel}>Approved</Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{rejectedCount}</Text>
-          <Text style={styles.metricLabel}>Rejected</Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{farmerCount}</Text>
-          <Text style={styles.metricLabel}>Farmers</Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{freightCount}</Text>
-          <Text style={styles.metricLabel}>Freight</Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>AI</Text>
-          <Text style={styles.metricLabel}>Compliance</Text>
-        </View>
-      </View>
-
-      <Text style={styles.sectionTitle}>Account Access</Text>
-
-      <TouchableOpacity
-        style={styles.accountsButton}
-        onPress={() => router.push("/admin/accounts" as any)}
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />
+        }
       >
-        <Text style={styles.buttonTitle}>👥 Account Management</Text>
-        <Text style={styles.buttonDescription}>
-          View all current and previous accounts, usernames, passwords, active
-          status, reset login credentials, approve farmers, unlock stores, and
-          manually create accounts.
-        </Text>
-      </TouchableOpacity>
+        <View style={styles.heroCard}>
+          <View style={styles.heroTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.badge}>Farm2Home Production Admin Portal</Text>
+              <Text style={styles.title}>Admin Dashboard</Text>
 
-      <Text style={styles.sectionTitle}>Pending Farmer Approvals</Text>
-
-      {pendingRecords.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No pending applications.</Text>
-          <Text style={styles.emptyText}>Approved accounts can log in now.</Text>
-        </View>
-      ) : (
-        pendingRecords.map((record) => {
-          const id = getFarmerId(record);
-          const actionLoading = actionLoadingId === id;
-
-          return (
-            <View key={id || getEmail(record)} style={styles.reviewCard}>
-              <Text style={styles.reviewTitle}>{getBusinessName(record)}</Text>
-              <Text style={styles.reviewText}>Owner: {getOwnerName(record)}</Text>
-              <Text style={styles.reviewText}>Email: {getEmail(record)}</Text>
-              <Text style={styles.reviewText}>
-                Status: {record.status || record.complianceStatus || "Pending"}
+              <Text style={styles.subtitle}>
+                Monitor compliance approvals, Stripe onboarding, account access,
+                marketplace operations, deliveries, freight activity, AI
+                verification, and platform oversight.
               </Text>
-
-              <View style={styles.reviewButtonRow}>
-                <TouchableOpacity
-                  style={[styles.approveButton, actionLoading && styles.disabled]}
-                  disabled={actionLoading}
-                  onPress={() => approveRecord(record)}
-                >
-                  <Text style={styles.reviewButtonText}>
-                    {actionLoading ? "Saving..." : "Approve & Unlock"}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.rejectButton, actionLoading && styles.disabled]}
-                  disabled={actionLoading}
-                  onPress={() => rejectRecord(record)}
-                >
-                  <Text style={styles.reviewButtonText}>Reject</Text>
-                </TouchableOpacity>
-              </View>
             </View>
-          );
-        })
-      )}
 
-      <Text style={styles.sectionTitle}>Compliance & Verification</Text>
+            <View style={styles.heroIcon}>
+              <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
+            </View>
+          </View>
 
-      <TouchableOpacity
-        style={styles.complianceButton}
-        onPress={() => router.push("/admin/documents" as any)}
-      >
-        <Text style={styles.buttonTitle}>🛡️ AI Compliance Queue</Text>
-        <Text style={styles.buttonDescription}>
-          Review farmer and freight applications, Stripe onboarding status,
-          uploaded documents, AI findings, and final approval.
-        </Text>
-        <Text style={styles.buttonCounter}>{pendingCount} pending review</Text>
-      </TouchableOpacity>
+          <View style={styles.adminInfoBox}>
+            <Text style={styles.adminInfo}>Logged in as</Text>
+            <Text style={styles.adminEmail}>{adminEmail || "Administrator"}</Text>
+          </View>
+        </View>
 
-      <TouchableOpacity
-        style={styles.documentsButton}
-        onPress={() => router.push("/admin/compliance-review" as any)}
-      >
-        <Text style={styles.buttonTitle}>📄 Compliance Review Center</Text>
-        <Text style={styles.buttonDescription}>
-          Review verification findings, missing documents, and business
-          validation checks.
-        </Text>
-      </TouchableOpacity>
+        <View style={styles.productionBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.productionTitle}>Production Status</Text>
+            <Text style={styles.productionText}>{productionStatus}</Text>
+          </View>
 
-      <Text style={styles.sectionTitle}>Marketplace Operations</Text>
+          <View style={styles.productionIcon}>
+            <Ionicons
+              name={pendingCount > 0 ? "alert-circle-outline" : "checkmark-done-outline"}
+              size={28}
+              color="#BBF7D0"
+            />
+          </View>
+        </View>
 
-      <TouchableOpacity
-        style={styles.marketplaceButton}
-        onPress={() => router.push("/customer/marketplace" as any)}
-      >
-        <Text style={styles.buttonTitle}>🛒 Open Marketplace</Text>
-        <Text style={styles.buttonDescription}>
-          View customer marketplace storefronts, products, pricing, and ordering
-          flow.
-        </Text>
-      </TouchableOpacity>
+        <Text style={styles.sectionTitle}>Platform Metrics</Text>
 
-      <TouchableOpacity
-        style={styles.operationsButton}
-        onPress={() => router.push("/admin/live-operations-center" as any)}
-      >
-        <Text style={styles.buttonTitle}>📡 Live Operations Center</Text>
-        <Text style={styles.buttonDescription}>
-          Monitor deliveries, drivers, routes, freight operations, and
-          fulfillment activity.
-        </Text>
-      </TouchableOpacity>
+        <View style={styles.metricsGrid}>
+          <MetricCard icon="time-outline" value={String(pendingCount)} label="Pending Reviews" accent />
+          <MetricCard icon="checkmark-done-outline" value={String(approvedCount)} label="Approved" accent />
+          <MetricCard icon="close-circle-outline" value={String(rejectedCount)} label="Rejected" />
+          <MetricCard icon="leaf-outline" value={String(farmerCount)} label="Farmers" />
+          <MetricCard icon="trail-sign-outline" value={String(freightCount)} label="Freight" />
+          <MetricCard icon="sparkles-outline" value="AI" label="Compliance" />
+        </View>
 
-      <TouchableOpacity
-        style={styles.analyticsButton}
-        onPress={() => router.push("/admin/analytics-center" as any)}
-      >
-        <Text style={styles.buttonTitle}>📊 Analytics Center</Text>
-        <Text style={styles.buttonDescription}>
-          Review platform growth, AI metrics, operational activity, and
-          marketplace trends.
-        </Text>
-      </TouchableOpacity>
+        <Text style={styles.sectionTitle}>Account Access</Text>
 
-      <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
-        <Text style={styles.logoutText}>Logout Admin</Text>
-      </TouchableOpacity>
+        <AdminActionCard
+          icon="people-outline"
+          title="Account Management"
+          description="View all current and previous accounts, usernames, passwords, active status, reset login credentials, approve farmers, unlock stores, and manually create accounts."
+          color="#0F766E"
+          onPress={() => router.push("/admin/accounts" as any)}
+        />
 
-      <View style={{ height: 40 }} />
-    </ScrollView>
+        <Text style={styles.sectionTitle}>Pending Farmer Approvals</Text>
+
+        {pendingRecords.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Ionicons name="checkmark-done-outline" size={34} color="#10B981" />
+            <Text style={styles.emptyTitle}>No pending applications.</Text>
+            <Text style={styles.emptyText}>Approved accounts can log in now.</Text>
+          </View>
+        ) : (
+          pendingRecords.map((record) => {
+            const id = getFarmerId(record);
+            const actionLoading = actionLoadingId === id;
+
+            return (
+              <View key={id || getEmail(record)} style={styles.reviewCard}>
+                <View style={styles.reviewHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.reviewTitle}>{getBusinessName(record)}</Text>
+                    <Text style={styles.reviewText}>Owner: {getOwnerName(record)}</Text>
+                    <Text style={styles.reviewText}>Email: {getEmail(record)}</Text>
+                    <Text style={styles.reviewText}>
+                      Status: {record.status || record.complianceStatus || "Pending"}
+                    </Text>
+                  </View>
+
+                  <View style={styles.reviewBadge}>
+                    <Text style={styles.reviewBadgeText}>Pending</Text>
+                  </View>
+                </View>
+
+                <View style={styles.reviewButtonRow}>
+                  <TouchableOpacity
+                    style={[styles.approveButton, actionLoading && styles.disabled]}
+                    disabled={actionLoading}
+                    onPress={() => approveRecord(record)}
+                  >
+                    {actionLoading ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+                        <Text style={styles.reviewButtonText}>Approve & Unlock</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.rejectButton, actionLoading && styles.disabled]}
+                    disabled={actionLoading}
+                    onPress={() => rejectRecord(record)}
+                  >
+                    <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+                    <Text style={styles.reviewButtonText}>Reject</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })
+        )}
+
+        <Text style={styles.sectionTitle}>Compliance & Verification</Text>
+
+        <AdminActionCard
+          icon="shield-checkmark-outline"
+          title="AI Compliance Queue"
+          description="Review farmer and freight applications, Stripe onboarding status, uploaded documents, AI findings, and final approval."
+          counter={`${pendingCount} pending review`}
+          color="#7C3AED"
+          onPress={() => router.push("/admin/documents" as any)}
+        />
+
+        <AdminActionCard
+          icon="document-text-outline"
+          title="Compliance Review Center"
+          description="Review verification findings, missing documents, and business validation checks."
+          color="#2563EB"
+          onPress={() => router.push("/admin/compliance-review" as any)}
+        />
+
+        <Text style={styles.sectionTitle}>Marketplace Operations</Text>
+
+        <AdminActionCard
+          icon="storefront-outline"
+          title="Open Marketplace"
+          description="View customer marketplace storefronts, products, pricing, and ordering flow."
+          color="#111827"
+          onPress={() => router.push("/customer/marketplace" as any)}
+        />
+
+        <AdminActionCard
+          icon="radio-outline"
+          title="Live Operations Center"
+          description="Monitor deliveries, drivers, routes, freight operations, and fulfillment activity."
+          color="#047857"
+          onPress={() => router.push("/admin/live-operations-center" as any)}
+        />
+
+        <AdminActionCard
+          icon="analytics-outline"
+          title="Analytics Center"
+          description="Review platform growth, AI metrics, operational activity, and marketplace trends."
+          color="#B45309"
+          onPress={() => router.push("/admin/analytics-center" as any)}
+        />
+
+        <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
+          <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.logoutText}>Logout Admin</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function MetricCard({
+  icon,
+  value,
+  label,
+  accent = false,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  value: string;
+  label: string;
+  accent?: boolean;
+}) {
+  return (
+    <View style={[styles.metricCard, accent && styles.metricCardAccent]}>
+      <Ionicons
+        name={icon}
+        size={22}
+        color={accent ? "#BBF7D0" : freightTheme.colors.primary}
+      />
+      <Text style={[styles.metricValue, accent && styles.metricValueAccent]}>
+        {value}
+      </Text>
+      <Text style={[styles.metricLabel, accent && styles.metricLabelAccent]}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+function AdminActionCard({
+  icon,
+  title,
+  description,
+  counter,
+  color,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  description: string;
+  counter?: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.actionCard, { backgroundColor: color }]}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
+      <View style={styles.actionHeader}>
+        <View style={styles.actionIcon}>
+          <Ionicons name={icon} size={24} color="#FFFFFF" />
+        </View>
+        <Text style={styles.buttonTitle}>{title}</Text>
+      </View>
+
+      <Text style={styles.buttonDescription}>{description}</Text>
+
+      {!!counter && <Text style={styles.buttonCounter}>{counter}</Text>}
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#F5F7EF" },
-  content: { padding: 20, paddingBottom: 60 },
-
+  safe: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  page: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  content: {
+    paddingBottom: 90,
+  },
   loadingContainer: {
     flex: 1,
-    backgroundColor: "#F5F7EF",
+    backgroundColor: freightTheme.colors.background,
     alignItems: "center",
     justifyContent: "center",
     padding: 30,
   },
   loadingText: {
     marginTop: 16,
-    color: "#14532D",
+    color: freightTheme.colors.mutedText,
     fontWeight: "900",
     fontSize: 16,
     textAlign: "center",
   },
-
   heroCard: {
-    backgroundColor: "#14532D",
-    borderRadius: 30,
-    padding: 24,
-    marginTop: 18,
-    marginBottom: 20,
+    backgroundColor: "#020617",
+    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
   },
-  badge: { color: "#DCFCE7", fontWeight: "900", marginBottom: 10, fontSize: 14 },
-  title: { fontSize: 36, fontWeight: "900", color: "#FFFFFF" },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: "#064E3B",
+    borderWidth: 1,
+    borderColor: "#10B981",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badge: {
+    color: "#10B981",
+    fontWeight: "900",
+    marginBottom: 8,
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  title: {
+    fontSize: 36,
+    fontWeight: "900",
+    color: "#FFFFFF",
+  },
   subtitle: {
-    color: "#E7F4DE",
+    color: "#CBD5E1",
     lineHeight: 24,
     marginTop: 10,
     fontWeight: "700",
   },
   adminInfoBox: {
     marginTop: 18,
-    backgroundColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "#0F172A",
+    borderWidth: 1,
+    borderColor: "#1E293B",
     borderRadius: 18,
     padding: 14,
   },
-  adminInfo: { color: "#DCFCE7", fontWeight: "700", marginBottom: 4 },
-  adminEmail: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
-
-  productionBanner: {
-    backgroundColor: "#DCFCE7",
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 24,
+  adminInfo: {
+    color: "#94A3B8",
+    fontWeight: "700",
+    marginBottom: 4,
   },
-  productionTitle: { color: "#14532D", fontWeight: "900", fontSize: 18 },
-  productionText: { color: "#166534", marginTop: 6, fontWeight: "700" },
-
+  adminEmail: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  productionBanner: {
+    backgroundColor: "#064E3B",
+    borderRadius: 20,
+    padding: 18,
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#10B981",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  productionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#052E2B",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  productionTitle: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 20,
+  },
+  productionText: {
+    color: "#BBF7D0",
+    marginTop: 6,
+    fontWeight: "700",
+  },
   sectionTitle: {
     fontSize: 24,
     fontWeight: "900",
-    color: "#14532D",
+    color: freightTheme.colors.text,
     marginBottom: 14,
     marginTop: 4,
+    paddingHorizontal: 18,
   },
-
   metricsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
-    marginBottom: 26,
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 24,
   },
   metricCard: {
-    width: "30%",
+    width: "31%",
     minWidth: 100,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 18,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "#DDE7DB",
+    borderColor: freightTheme.colors.border,
     alignItems: "center",
   },
-  metricValue: { color: "#14532D", fontSize: 26, fontWeight: "900" },
+  metricCardAccent: {
+    backgroundColor: "#064E3B",
+    borderColor: "#064E3B",
+  },
+  metricValue: {
+    color: freightTheme.colors.primary,
+    fontSize: 25,
+    fontWeight: "900",
+    marginTop: 8,
+  },
+  metricValueAccent: {
+    color: "#FFFFFF",
+  },
   metricLabel: {
-    color: "#64745E",
+    color: freightTheme.colors.mutedText,
     fontWeight: "800",
     marginTop: 6,
     textAlign: "center",
+    fontSize: 12,
   },
-
-  accountsButton: {
-    backgroundColor: "#0F766E",
-    borderRadius: 22,
-    padding: 22,
-    marginBottom: 24,
+  metricLabelAccent: {
+    color: "#BBF7D0",
   },
-
-  emptyCard: {
-    backgroundColor: "#FFFFFF",
+  actionCard: {
     borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "#DDE7DB",
-    marginBottom: 20,
-  },
-  emptyTitle: { color: "#14532D", fontWeight: "900", fontSize: 18 },
-  emptyText: { color: "#64745E", fontWeight: "700", marginTop: 6 },
-
-  reviewCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "#DDE7DB",
+    padding: 20,
+    marginHorizontal: 18,
     marginBottom: 14,
   },
+  actionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  actionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buttonTitle: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 21,
+    flex: 1,
+  },
+  buttonDescription: {
+    color: "#F3F4F6",
+    lineHeight: 22,
+    fontWeight: "700",
+  },
+  buttonCounter: {
+    color: "#FFFFFF",
+    marginTop: 10,
+    fontWeight: "900",
+  },
+  emptyCard: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 22,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    marginHorizontal: 18,
+    marginBottom: 20,
+    alignItems: "center",
+  },
+  emptyTitle: {
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+    fontSize: 20,
+    marginTop: 10,
+  },
+  emptyText: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "700",
+    marginTop: 6,
+    textAlign: "center",
+  },
+  reviewCard: {
+    backgroundColor: freightTheme.colors.card,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    marginHorizontal: 18,
+    marginBottom: 14,
+  },
+  reviewHeader: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
   reviewTitle: {
-    color: "#14532D",
+    color: freightTheme.colors.text,
     fontWeight: "900",
     fontSize: 20,
     marginBottom: 8,
   },
   reviewText: {
-    color: "#111827",
+    color: freightTheme.colors.mutedText,
     fontWeight: "700",
     marginBottom: 5,
+  },
+  reviewBadge: {
+    backgroundColor: "#F59E0B",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  reviewBadgeText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 11,
   },
   reviewButtonRow: {
     flexDirection: "row",
     gap: 10,
-    marginTop: 14,
+    marginTop: 16,
   },
   approveButton: {
     flex: 1,
@@ -738,6 +933,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
   rejectButton: {
     flex: 1,
@@ -745,60 +943,32 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
-  reviewButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  disabled: { opacity: 0.55 },
-
-  complianceButton: {
-    backgroundColor: "#7C3AED",
-    borderRadius: 22,
-    padding: 22,
-    marginBottom: 14,
-  },
-  documentsButton: {
-    backgroundColor: "#2563EB",
-    borderRadius: 22,
-    padding: 22,
-    marginBottom: 24,
-  },
-  marketplaceButton: {
-    backgroundColor: "#111827",
-    borderRadius: 22,
-    padding: 22,
-    marginBottom: 14,
-  },
-  operationsButton: {
-    backgroundColor: "#047857",
-    borderRadius: 22,
-    padding: 22,
-    marginBottom: 14,
-  },
-  analyticsButton: {
-    backgroundColor: "#B45309",
-    borderRadius: 22,
-    padding: 22,
-    marginBottom: 28,
-  },
-  buttonTitle: {
+  reviewButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 22,
-    marginBottom: 8,
   },
-  buttonDescription: {
-    color: "#F3F4F6",
-    lineHeight: 22,
-    fontWeight: "700",
+  disabled: {
+    opacity: 0.55,
   },
-  buttonCounter: { color: "#FFFFFF", marginTop: 10, fontWeight: "900" },
-
   logoutButton: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#111827",
-    padding: 18,
-    borderRadius: 18,
+    backgroundColor: "#DC2626",
+    padding: 16,
+    borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 18,
+    marginTop: 14,
+    marginBottom: 30,
+    flexDirection: "row",
+    gap: 8,
   },
-  logoutText: { color: "#111827", fontWeight: "900", fontSize: 16 },
+  logoutText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 16,
+  },
 });

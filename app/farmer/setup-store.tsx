@@ -4,12 +4,12 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -25,22 +25,32 @@ import {
 
 import { checkSubscriptionAccess } from "../services/subscriptionService";
 
+const COLORS = {
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  secondary: "#F9A825",
+  background: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#75806F",
+  border: "#E2E8DA",
+  softGreen: "#EAF5E6",
+  lightGreen: "#F1FAED",
+  danger: "#DC2626",
+  dark: "#111827",
+  blue: "#2563EB",
+};
+
 export default function FarmerSetupStoreScreen() {
   const params = useLocalSearchParams();
 
   const farmerIdFromParams = useMemo(() => {
     const value = params.farmerId || params.id;
-
-    return Array.isArray(value)
-      ? value[0]
-      : value
-      ? String(value)
-      : "";
+    return Array.isArray(value) ? value[0] : value ? String(value) : "";
   }, [params]);
 
   const [loading, setLoading] = useState(false);
-  const [currentFarmer, setCurrentFarmer] =
-    useState<Farmer | null>(null);
+  const [currentFarmer, setCurrentFarmer] = useState<Farmer | null>(null);
 
   const [ownerName, setOwnerName] = useState("");
   const [farmName, setFarmName] = useState("");
@@ -58,15 +68,10 @@ export default function FarmerSetupStoreScreen() {
 
   async function initializeScreen() {
     try {
-      const saved =
-        await AsyncStorage.getItem("currentFarmer");
+      const saved = await AsyncStorage.getItem("currentFarmer");
 
       if (!saved) {
-        Alert.alert(
-          "Session Needed",
-          "Please login again."
-        );
-
+        Alert.alert("Session Needed", "Please login again.");
         router.replace("/farmer/login" as any);
         return;
       }
@@ -82,15 +87,11 @@ export default function FarmerSetupStoreScreen() {
       if (!access.allowed) {
         Alert.alert(
           "Farmer Membership Required",
-          access.reason ||
-            "Your farmer subscription is inactive.",
+          access.reason || "Your farmer subscription is inactive.",
           [
             {
               text: "Manage Subscription",
-              onPress: () =>
-                router.push(
-                  "/farmer/compliance-upload" as any
-                ),
+              onPress: () => router.push("/farmer/compliance-upload" as any),
             },
           ]
         );
@@ -102,11 +103,7 @@ export default function FarmerSetupStoreScreen() {
       await loadFarmer();
     } catch (error) {
       console.log("Initialize setup store error:", error);
-
-      Alert.alert(
-        "Access Error",
-        "Unable to verify farmer membership."
-      );
+      Alert.alert("Access Error", "Unable to verify farmer membership.");
     }
   }
 
@@ -115,18 +112,14 @@ export default function FarmerSetupStoreScreen() {
       let farmer: Farmer | undefined;
 
       if (farmerIdFromParams) {
-        farmer = await getFarmerById(
-          farmerIdFromParams
-        );
+        farmer = await getFarmerById(farmerIdFromParams);
       }
 
       if (!farmer) {
-        const saved =
-          await AsyncStorage.getItem("currentFarmer");
+        const saved = await AsyncStorage.getItem("currentFarmer");
 
         if (saved) {
           const parsed = JSON.parse(saved);
-
           farmer = await getFarmerById(parsed.id);
         }
       }
@@ -136,9 +129,7 @@ export default function FarmerSetupStoreScreen() {
 
         farmer =
           farmers.find(
-            (item) =>
-              item.approved === true ||
-              item.complianceStatus === "approved"
+            (item) => item.approved === true || item.complianceStatus === "approved"
           ) || farmers[0];
       }
 
@@ -148,16 +139,12 @@ export default function FarmerSetupStoreScreen() {
           "Please complete farmer compliance first."
         );
 
-        router.replace(
-          "/farmer/compliance-upload" as any
-        );
-
+        router.replace("/farmer/compliance-upload" as any);
         return;
       }
 
       const approved =
-        farmer.approved === true ||
-        farmer.complianceStatus === "approved";
+        farmer.approved === true || farmer.complianceStatus === "approved";
 
       if (!approved) {
         Alert.alert(
@@ -165,75 +152,47 @@ export default function FarmerSetupStoreScreen() {
           "Your compliance review must be approved before setting up your store."
         );
 
-        router.replace(
-          "/farmer/compliance-upload" as any
-        );
-
+        router.replace("/farmer/compliance-upload" as any);
         return;
       }
 
       setCurrentFarmer(farmer);
 
-      await AsyncStorage.setItem(
-        "currentFarmer",
-        JSON.stringify(farmer)
-      );
+      await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
 
       setOwnerName(farmer.ownerName || "");
       setFarmName(farmer.farmName || "");
       setEmail(farmer.email || "");
       setPhone(farmer.phone || "");
-      setFarmLocation(
-        farmer.farmLocation || farmer.location || ""
-      );
+      setFarmLocation(farmer.farmLocation || farmer.location || "");
       setAbout(farmer.about || "");
 
       setPickup(farmer.pickup !== false);
       setDelivery(farmer.delivery !== false);
     } catch (error) {
       console.log("Load farmer error:", error);
-
-      Alert.alert(
-        "Error",
-        "Unable to load farmer setup."
-      );
+      Alert.alert("Error", "Unable to load farmer setup.");
     }
   }
 
   function validateRequiredFields() {
     if (!ownerName.trim()) {
-      Alert.alert(
-        "Missing Owner Name",
-        "Please enter the owner name."
-      );
-
+      Alert.alert("Missing Owner Name", "Please enter the owner name.");
       return false;
     }
 
     if (!farmName.trim()) {
-      Alert.alert(
-        "Missing Farm Name",
-        "Please enter the farm name."
-      );
-
+      Alert.alert("Missing Farm Name", "Please enter the farm name.");
       return false;
     }
 
     if (!email.trim()) {
-      Alert.alert(
-        "Missing Email",
-        "Please enter the farmer email."
-      );
-
+      Alert.alert("Missing Email", "Please enter the farmer email.");
       return false;
     }
 
     if (!farmLocation.trim()) {
-      Alert.alert(
-        "Missing Location",
-        "Please enter your farm location."
-      );
-
+      Alert.alert("Missing Location", "Please enter your farm location.");
       return false;
     }
 
@@ -242,16 +201,10 @@ export default function FarmerSetupStoreScreen() {
 
   async function saveFarmerProfile(): Promise<Farmer | null> {
     try {
-      if (!validateRequiredFields()) {
-        return null;
-      }
+      if (!validateRequiredFields()) return null;
 
       if (!currentFarmer?.id) {
-        Alert.alert(
-          "Session Error",
-          "Please login again."
-        );
-
+        Alert.alert("Session Error", "Please login again.");
         return null;
       }
 
@@ -264,8 +217,7 @@ export default function FarmerSetupStoreScreen() {
       if (!access.allowed) {
         Alert.alert(
           "Subscription Required",
-          access.reason ||
-            "Farmer subscription inactive."
+          access.reason || "Farmer subscription inactive."
         );
 
         return null;
@@ -274,150 +226,76 @@ export default function FarmerSetupStoreScreen() {
       setLoading(true);
 
       const farmerPayload: Farmer = {
-        id:
-          currentFarmer?.id ||
-          farmerIdFromParams ||
-          `farmer-${Date.now()}`,
+        id: currentFarmer?.id || farmerIdFromParams || `farmer-${Date.now()}`,
 
         ownerName: ownerName.trim(),
         farmName: farmName.trim(),
         email: email.trim(),
         phone: phone.trim(),
 
-        username:
-          currentFarmer?.username || email.trim(),
-
+        username: currentFarmer?.username || email.trim(),
         password: currentFarmer?.password || "",
 
         accountActive: true,
         approved: true,
         complianceStatus: "approved",
 
-        securityQuestion1:
-          currentFarmer?.securityQuestion1 || "",
-
-        securityAnswer1:
-          currentFarmer?.securityAnswer1 || "",
-
-        securityQuestion2:
-          currentFarmer?.securityQuestion2 || "",
-
-        securityAnswer2:
-          currentFarmer?.securityAnswer2 || "",
-
-        securityQuestion3:
-          currentFarmer?.securityQuestion3 || "",
-
-        securityAnswer3:
-          currentFarmer?.securityAnswer3 || "",
+        securityQuestion1: currentFarmer?.securityQuestion1 || "",
+        securityAnswer1: currentFarmer?.securityAnswer1 || "",
+        securityQuestion2: currentFarmer?.securityQuestion2 || "",
+        securityAnswer2: currentFarmer?.securityAnswer2 || "",
+        securityQuestion3: currentFarmer?.securityQuestion3 || "",
+        securityAnswer3: currentFarmer?.securityAnswer3 || "",
 
         farmLocation: farmLocation.trim(),
         location: farmLocation.trim(),
-
         about: about.trim(),
 
         pickup,
         delivery,
 
-        stripeAccountId:
-          currentFarmer?.stripeAccountId || "",
-
-        farmerStripeAccountId:
-          currentFarmer?.farmerStripeAccountId || "",
-
-        stripePayoutAccount:
-          currentFarmer?.stripePayoutAccount || "",
-
-        stripePayoutAccountLast4:
-          currentFarmer?.stripePayoutAccountLast4 ||
-          "",
-
-        stripePayoutBankName:
-          currentFarmer?.stripePayoutBankName || "",
-
-        stripeOnboardingComplete:
-          currentFarmer?.stripeOnboardingComplete ||
-          false,
-
-        stripeChargesEnabled:
-          currentFarmer?.stripeChargesEnabled ||
-          false,
-
-        stripePayoutsEnabled:
-          currentFarmer?.stripePayoutsEnabled ||
-          false,
+        stripeAccountId: currentFarmer?.stripeAccountId || "",
+        farmerStripeAccountId: currentFarmer?.farmerStripeAccountId || "",
+        stripePayoutAccount: currentFarmer?.stripePayoutAccount || "",
+        stripePayoutAccountLast4: currentFarmer?.stripePayoutAccountLast4 || "",
+        stripePayoutBankName: currentFarmer?.stripePayoutBankName || "",
+        stripeOnboardingComplete: currentFarmer?.stripeOnboardingComplete || false,
+        stripeChargesEnabled: currentFarmer?.stripeChargesEnabled || false,
+        stripePayoutsEnabled: currentFarmer?.stripePayoutsEnabled || false,
 
         products: currentFarmer?.products || [],
-
         reviews: currentFarmer?.reviews || 0,
-
         rating: currentFarmer?.rating || 4.8,
-
-        distanceMiles:
-          currentFarmer?.distanceMiles || 5,
-
+        distanceMiles: currentFarmer?.distanceMiles || 5,
         itemsSold: currentFarmer?.itemsSold || 0,
-
         revenue: currentFarmer?.revenue || 0,
 
-        createdAt:
-          currentFarmer?.createdAt ||
-          new Date().toISOString(),
-
+        createdAt: currentFarmer?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
       let savedFarmer = farmerPayload;
 
       if (currentFarmer?.id) {
-        const updated =
-          await updateFarmerStore(
-            currentFarmer.id,
-            farmerPayload
-          );
-
+        const updated = await updateFarmerStore(currentFarmer.id, farmerPayload);
         savedFarmer =
-          updated.find(
-            (item) =>
-              item.id === currentFarmer.id
-          ) || farmerPayload;
+          updated.find((item) => item.id === currentFarmer.id) || farmerPayload;
       } else {
-        const updated = await addFarmer(
-          farmerPayload
-        );
-
+        const updated = await addFarmer(farmerPayload);
         savedFarmer =
-          updated.find(
-            (item) =>
-              item.id === farmerPayload.id
-          ) || farmerPayload;
+          updated.find((item) => item.id === farmerPayload.id) || farmerPayload;
       }
 
       setCurrentFarmer(savedFarmer);
 
-      await AsyncStorage.setItem(
-        "currentFarmer",
-        JSON.stringify(savedFarmer)
-      );
+      await AsyncStorage.setItem("currentFarmer", JSON.stringify(savedFarmer));
 
-      Alert.alert(
-        "Saved",
-        "Farmer store setup saved."
-      );
+      Alert.alert("Saved", "Farmer store setup saved.");
 
       return savedFarmer;
     } catch (error: any) {
-      console.log(
-        "Save farmer profile error:",
-        error
-      );
-
-      Alert.alert(
-        "Save Error",
-        error?.message ||
-          "Unable to save farmer."
-      );
-
+      console.log("Save farmer profile error:", error);
+      Alert.alert("Save Error", error?.message || "Unable to save farmer.");
       return null;
     } finally {
       setLoading(false);
@@ -426,7 +304,6 @@ export default function FarmerSetupStoreScreen() {
 
   async function saveAndGoToProduce() {
     const farmer = await saveFarmerProfile();
-
     if (!farmer?.id) return;
 
     router.push({
@@ -437,7 +314,6 @@ export default function FarmerSetupStoreScreen() {
 
   async function saveAndGoToDashboard() {
     const farmer = await saveFarmerProfile();
-
     if (!farmer?.id) return;
 
     router.push({
@@ -447,204 +323,209 @@ export default function FarmerSetupStoreScreen() {
   }
 
   const stripeConnected = Boolean(
-    currentFarmer?.stripeAccountId ||
-      currentFarmer?.farmerStripeAccountId
+    currentFarmer?.stripeAccountId || currentFarmer?.farmerStripeAccountId
   );
 
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={
-        Platform.OS === "ios"
-          ? "padding"
-          : undefined
-      }
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.container}
       >
-        <Text style={styles.title}>
-          Farmer Store Setup
-        </Text>
+        <View style={styles.topBar}>
+          <Pressable
+            style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.backCircleText}>‹</Text>
+          </Pressable>
 
-        <Text style={styles.subtitle}>
-          Your compliance review is approved.
-          Complete your farm profile and start
-          uploading produce.
-        </Text>
+          <View style={styles.topTitleBlock}>
+            <Text style={styles.title}>Store Setup</Text>
+            <Text style={styles.subtitle}>Build your Farm2Home storefront</Text>
+          </View>
+        </View>
+
+        <View style={styles.heroCard}>
+          <View style={styles.heroIcon}>
+            <Text style={styles.heroIconText}>🏪</Text>
+          </View>
+
+          <View style={styles.heroTextBlock}>
+            <Text style={styles.heroBadge}>Approved Farmer</Text>
+            <Text style={styles.heroTitle}>
+              Complete your farm profile
+            </Text>
+            <Text style={styles.heroText}>
+              Your compliance review is approved. Set your public store details
+              and start uploading produce.
+            </Text>
+          </View>
+        </View>
 
         <View style={styles.statusCard}>
-          <Text style={styles.statusTitle}>
-            Compliance Approved
-          </Text>
+          <View style={styles.statusHeader}>
+            <View style={styles.statusIcon}>
+              <Text style={styles.statusIconText}>✅</Text>
+            </View>
 
-          <Text style={styles.statusText}>
-            Stripe:{" "}
-            {stripeConnected
-              ? "Connected"
-              : "Pending"}
-          </Text>
-
-          <Text style={styles.statusText}>
-            Status:{" "}
-            {currentFarmer?.complianceStatus ||
-              "approved"}
-          </Text>
+            <View style={styles.statusBody}>
+              <Text style={styles.statusTitle}>Compliance Approved</Text>
+              <Text style={styles.statusText}>
+                Stripe: {stripeConnected ? "Connected" : "Pending"}
+              </Text>
+              <Text style={styles.statusText}>
+                Status: {currentFarmer?.complianceStatus || "approved"}
+              </Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>
-            Farm Profile
-          </Text>
+          <Text style={styles.sectionTitle}>Farm Profile</Text>
 
-          <Text style={styles.label}>
-            Owner Name
-          </Text>
-
+          <Text style={styles.label}>Owner Name</Text>
           <TextInput
             style={styles.input}
             value={ownerName}
             onChangeText={setOwnerName}
             placeholder="Owner name"
+            placeholderTextColor="#8A9482"
           />
 
-          <Text style={styles.label}>
-            Farm Name
-          </Text>
-
+          <Text style={styles.label}>Farm Name</Text>
           <TextInput
             style={styles.input}
             value={farmName}
             onChangeText={setFarmName}
             placeholder="Farm name"
+            placeholderTextColor="#8A9482"
           />
 
-          <Text style={styles.label}>
-            Email
-          </Text>
-
+          <Text style={styles.label}>Email</Text>
           <TextInput
             style={styles.input}
             value={email}
             onChangeText={setEmail}
             placeholder="farmer@email.com"
+            placeholderTextColor="#8A9482"
             autoCapitalize="none"
             keyboardType="email-address"
           />
 
-          <Text style={styles.label}>
-            Phone
-          </Text>
-
+          <Text style={styles.label}>Phone</Text>
           <TextInput
             style={styles.input}
             value={phone}
             onChangeText={setPhone}
             placeholder="Phone number"
+            placeholderTextColor="#8A9482"
             keyboardType="phone-pad"
           />
 
-          <Text style={styles.label}>
-            Farm Location
-          </Text>
-
+          <Text style={styles.label}>Farm Location</Text>
           <TextInput
             style={styles.input}
             value={farmLocation}
             onChangeText={setFarmLocation}
             placeholder="City, State"
+            placeholderTextColor="#8A9482"
           />
 
-          <Text style={styles.label}>
-            About Farm
-          </Text>
-
+          <Text style={styles.label}>About Farm</Text>
           <TextInput
-            style={[
-              styles.input,
-              styles.textArea,
-            ]}
+            style={[styles.input, styles.textArea]}
             value={about}
             onChangeText={setAbout}
             placeholder="Tell customers about your farm"
+            placeholderTextColor="#8A9482"
             multiline
           />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>
-            Pickup / Delivery Options
-          </Text>
+          <Text style={styles.sectionTitle}>Pickup / Delivery Options</Text>
 
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>
-              Allow Pickup
-            </Text>
+          <View style={styles.optionCard}>
+            <View style={styles.optionIcon}>
+              <Text style={styles.optionIconText}>🧺</Text>
+            </View>
 
-            <Switch
-              value={pickup}
-              onValueChange={setPickup}
-            />
+            <View style={styles.optionTextBlock}>
+              <Text style={styles.optionTitle}>Allow Pickup</Text>
+              <Text style={styles.optionSubtitle}>
+                Customers can pick up directly from your farm.
+              </Text>
+            </View>
+
+            <Switch value={pickup} onValueChange={setPickup} />
           </View>
 
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>
-              Allow Delivery
-            </Text>
+          <View style={styles.optionCard}>
+            <View style={styles.optionIcon}>
+              <Text style={styles.optionIconText}>🚚</Text>
+            </View>
 
-            <Switch
-              value={delivery}
-              onValueChange={setDelivery}
-            />
+            <View style={styles.optionTextBlock}>
+              <Text style={styles.optionTitle}>Allow Delivery</Text>
+              <Text style={styles.optionSubtitle}>
+                Orders can be routed to drivers or delivery partners.
+              </Text>
+            </View>
+
+            <Switch value={delivery} onValueChange={setDelivery} />
           </View>
         </View>
 
-        <TouchableOpacity
-          style={styles.saveButton}
+        <Pressable
+          style={({ pressed }) => [
+            styles.saveButton,
+            pressed && styles.pressed,
+            loading && styles.disabledButton,
+          ]}
           onPress={saveFarmerProfile}
           disabled={loading}
         >
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.saveButtonText}>
-              Save Farmer Store Setup
-            </Text>
+            <Text style={styles.saveButtonText}>Save Farmer Store Setup</Text>
           )}
-        </TouchableOpacity>
+        </Pressable>
 
-        <TouchableOpacity
-          style={styles.primaryButton}
+        <Pressable
+          style={({ pressed }) => [
+            styles.primaryButton,
+            pressed && styles.pressed,
+            loading && styles.disabledButton,
+          ]}
           onPress={saveAndGoToProduce}
           disabled={loading}
         >
-          <Text style={styles.primaryButtonText}>
-            Add / Upload Produce
-          </Text>
-        </TouchableOpacity>
+          <Text style={styles.primaryButtonText}>Add / Upload Produce</Text>
+        </Pressable>
 
-        <TouchableOpacity
-          style={styles.dashboardButton}
+        <Pressable
+          style={({ pressed }) => [
+            styles.dashboardButton,
+            pressed && styles.pressed,
+            loading && styles.disabledButton,
+          ]}
           onPress={saveAndGoToDashboard}
           disabled={loading}
         >
-          <Text
-            style={styles.dashboardButtonText}
-          >
-            Go to Farmer Dashboard
-          </Text>
-        </TouchableOpacity>
+          <Text style={styles.dashboardButtonText}>Go to Farmer Dashboard</Text>
+        </Pressable>
 
-        <TouchableOpacity
-          style={styles.secondaryButton}
+        <Pressable
+          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
           onPress={() => router.back()}
         >
-          <Text
-            style={styles.secondaryButtonText}
-          >
-            Go Back
-          </Text>
-        </TouchableOpacity>
+          <Text style={styles.secondaryButtonText}>Go Back</Text>
+        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -653,161 +534,264 @@ export default function FarmerSetupStoreScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F5F7F2",
+    backgroundColor: COLORS.background,
   },
-
   container: {
     padding: 18,
-    paddingBottom: 40,
+    paddingBottom: 44,
   },
-
-  title: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: "#1F3D2B",
-    marginBottom: 6,
-  },
-
-  subtitle: {
-    fontSize: 15,
-    color: "#5E6D61",
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 18,
-    lineHeight: 21,
+    gap: 12,
   },
-
-  statusCard: {
-    backgroundColor: "#EAF7EA",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 16,
+  backCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: "#B7DDB8",
+    borderColor: COLORS.border,
   },
-
-  statusTitle: {
-    fontSize: 20,
+  backCircleText: {
+    fontSize: 34,
+    color: COLORS.text,
     fontWeight: "900",
-    color: "#1B5E20",
-    marginBottom: 6,
+    marginTop: -4,
   },
-
-  statusText: {
-    fontSize: 14,
-    color: "#24552B",
+  topTitleBlock: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: "900",
+    color: COLORS.text,
+  },
+  subtitle: {
+    color: COLORS.muted,
     fontWeight: "700",
     marginTop: 3,
   },
-
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 16,
+  heroCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 32,
+    padding: 20,
     marginBottom: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: {
-      width: 0,
-      height: 3,
-    },
-    elevation: 3,
+    flexDirection: "row",
+    gap: 14,
   },
-
-  sectionTitle: {
-    fontSize: 19,
-    fontWeight: "800",
-    color: "#224B32",
-    marginBottom: 14,
+  heroIcon: {
+    width: 70,
+    height: 70,
+    borderRadius: 24,
+    backgroundColor: COLORS.secondary,
+    justifyContent: "center",
+    alignItems: "center",
   },
-
-  label: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#2E4735",
-    marginBottom: 6,
-    marginTop: 6,
+  heroIconText: {
+    fontSize: 34,
   },
-
-  input: {
-    borderWidth: 1,
-    borderColor: "#D8E2D3",
-    backgroundColor: "#FAFCF8",
-    borderRadius: 12,
+  heroTextBlock: {
+    flex: 1,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    color: "#FFFFFF",
+    fontWeight: "900",
     paddingHorizontal: 12,
-    paddingVertical: 11,
-    fontSize: 15,
-    color: "#1F2F23",
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: "hidden",
     marginBottom: 10,
   },
-
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 25,
+    fontWeight: "900",
+    lineHeight: 31,
+  },
+  heroText: {
+    color: "#EAF7E6",
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  statusCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
+  },
+  statusHeader: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  statusIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  statusIconText: {
+    fontSize: 27,
+  },
+  statusBody: {
+    flex: 1,
+  },
+  statusTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: COLORS.text,
+    marginBottom: 4,
+  },
+  statusText: {
+    fontSize: 14,
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  card: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
+  },
+  sectionTitle: {
+    fontSize: 21,
+    fontWeight: "900",
+    color: COLORS.text,
+    marginBottom: 14,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: COLORS.muted,
+    marginBottom: 7,
+    marginTop: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.lightGreen,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: COLORS.text,
+    marginBottom: 10,
+    fontWeight: "800",
+  },
   textArea: {
-    height: 90,
+    height: 100,
     textAlignVertical: "top",
   },
-
-  switchRow: {
+  optionCard: {
+    backgroundColor: COLORS.lightGreen,
+    borderRadius: 22,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 8,
+    gap: 12,
   },
-
-  switchLabel: {
-    fontSize: 15,
+  optionIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 17,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  optionIconText: {
+    fontSize: 25,
+  },
+  optionTextBlock: {
+    flex: 1,
+  },
+  optionTitle: {
+    fontSize: 16,
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  optionSubtitle: {
+    color: COLORS.muted,
     fontWeight: "700",
-    color: "#2E4735",
+    lineHeight: 18,
+    marginTop: 3,
+    fontSize: 12,
   },
-
   saveButton: {
-    backgroundColor: "#2E7D32",
-    borderRadius: 16,
-    paddingVertical: 16,
+    backgroundColor: COLORS.primary,
+    borderRadius: 20,
+    paddingVertical: 17,
     alignItems: "center",
     marginTop: 4,
   },
-
   saveButtonText: {
     color: "#FFFFFF",
     fontSize: 17,
-    fontWeight: "800",
+    fontWeight: "900",
   },
-
   primaryButton: {
-    backgroundColor: "#14532D",
-    borderRadius: 16,
-    paddingVertical: 16,
+    backgroundColor: COLORS.primaryDark,
+    borderRadius: 20,
+    paddingVertical: 17,
     alignItems: "center",
     marginTop: 12,
   },
-
   primaryButtonText: {
     color: "#FFFFFF",
     fontSize: 17,
     fontWeight: "900",
   },
-
   dashboardButton: {
-    backgroundColor: "#2563EB",
-    borderRadius: 16,
-    paddingVertical: 16,
+    backgroundColor: COLORS.blue,
+    borderRadius: 20,
+    paddingVertical: 17,
     alignItems: "center",
     marginTop: 12,
   },
-
   dashboardButtonText: {
     color: "#FFFFFF",
     fontSize: 17,
     fontWeight: "900",
   },
-
   secondaryButton: {
     paddingVertical: 16,
     alignItems: "center",
   },
-
   secondaryButtonText: {
-    color: "#2E7D32",
+    color: COLORS.primary,
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: "900",
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  pressed: {
+    opacity: 0.75,
   },
 });

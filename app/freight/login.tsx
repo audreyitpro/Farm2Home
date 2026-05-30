@@ -4,8 +4,12 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -15,6 +19,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
+import { Ionicons } from "@expo/vector-icons";
 
 import freightTheme from "../styles/freightTheme";
 
@@ -236,70 +241,118 @@ export default function FreightLoginScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.loginCard}>
-        <Text style={styles.title}>Freight Connect Login</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
-        <Text style={styles.subtitle}>
-          Access livestock and refrigerated fresh food freight loads.
-        </Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          placeholderTextColor={freightTheme.colors.mutedText}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor={freightTheme.colors.mutedText}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={password}
-          onChangeText={setPassword}
-        />
-
-        <TouchableOpacity
-          style={[styles.loginButton, loginLoading && styles.disabledButton]}
-          onPress={handleLogin}
-          disabled={loginLoading}
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {loginLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.loginButtonText}>Login</Text>
-          )}
-        </TouchableOpacity>
+          <View style={styles.hero}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
+            </View>
 
-        <TouchableOpacity
-          style={styles.forgotButton}
-          onPress={() => {
-            setResetEmail(email);
-            setResetVisible(true);
-          }}
-        >
-          <Text style={styles.forgotText}>Forgot Password?</Text>
-        </TouchableOpacity>
+            <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
+            <Text style={styles.title}>Freight Login</Text>
+            <Text style={styles.subtitle}>
+              Access livestock, refrigerated fresh food freight loads, carrier
+              routes, live tracking, and earnings.
+            </Text>
+          </View>
 
-        <TouchableOpacity
-          style={styles.registerButton}
-          onPress={() => router.push("/freight/register" as any)}
-        >
-          <Text style={styles.registerText}>Register for Freight Connect</Text>
-        </TouchableOpacity>
-      </View>
+          <View style={styles.loginCard}>
+            <Text style={styles.cardTitle}>Carrier Access</Text>
+            <Text style={styles.cardSubtitle}>
+              Sign in with your approved Freight Connect account.
+            </Text>
+
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="carrier@email.com"
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+
+            <Text style={styles.inputLabel}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#94A3B8"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={password}
+              onChangeText={setPassword}
+            />
+
+            <TouchableOpacity
+              style={[styles.loginButton, loginLoading && styles.disabledButton]}
+              onPress={handleLogin}
+              disabled={loginLoading}
+            >
+              {loginLoading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.loginButtonText}>Login</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.forgotButton}
+              onPress={() => {
+                setResetEmail(email);
+                setResetVisible(true);
+              }}
+            >
+              <Text style={styles.forgotText}>Forgot Password?</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            <TouchableOpacity
+              style={styles.registerButton}
+              onPress={() => router.push("/freight/register" as any)}
+            >
+              <Ionicons
+                name="business-outline"
+                size={18}
+                color={freightTheme.colors.primary}
+              />
+              <Text style={styles.registerText}>Register for Freight Connect</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.homeButton}
+              onPress={() => router.replace("/" as any)}
+            >
+              <Text style={styles.homeText}>Back To Home</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <Modal visible={resetVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
+              <View style={styles.modalIcon}>
+                <Ionicons name="key-outline" size={28} color="#FFFFFF" />
+              </View>
+
               <Text style={styles.modalTitle}>Reset Freight Password</Text>
 
               <Text style={styles.modalSubtitle}>
@@ -307,10 +360,11 @@ export default function FreightLoginScreen() {
                 reset link.
               </Text>
 
+              <Text style={styles.modalInputLabel}>Freight Email</Text>
               <TextInput
-                style={styles.input}
+                style={styles.modalInput}
                 placeholder="Freight Email"
-                placeholderTextColor={freightTheme.colors.mutedText}
+                placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="email-address"
@@ -319,17 +373,17 @@ export default function FreightLoginScreen() {
               />
 
               <TouchableOpacity
-                style={[
-                  styles.loginButton,
-                  resetLoading && styles.disabledButton,
-                ]}
+                style={[styles.loginButton, resetLoading && styles.disabledButton]}
                 onPress={handlePasswordReset}
                 disabled={resetLoading}
               >
                 {resetLoading ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                  <>
+                    <Ionicons name="mail-outline" size={18} color="#FFFFFF" />
+                    <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                  </>
                 )}
               </TouchableOpacity>
 
@@ -346,131 +400,211 @@ export default function FreightLoginScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
     backgroundColor: freightTheme.colors.background,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
   },
-
+  keyboard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+  },
+  content: {
+    flexGrow: 1,
+    paddingBottom: 90,
+  },
+  hero: {
+    backgroundColor: "#020617",
+    paddingTop: 28,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1E293B",
+  },
+  heroIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#064E3B",
+    borderWidth: 1,
+    borderColor: "#10B981",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  kicker: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 36,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  subtitle: {
+    color: "#CBD5E1",
+    marginTop: 8,
+    lineHeight: 23,
+    fontWeight: "700",
+    maxWidth: 620,
+  },
   loginCard: {
-    width: "100%",
-    maxWidth: 520,
+    width: "auto",
     backgroundColor: freightTheme.colors.card,
-    borderRadius: 28,
-    padding: 28,
+    borderRadius: 24,
+    padding: 22,
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
-    ...freightTheme.shadow,
+    margin: 18,
   },
-
-  title: {
+  cardTitle: {
     color: freightTheme.colors.text,
-    fontSize: 34,
+    fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
-
-  subtitle: {
+  cardSubtitle: {
     color: freightTheme.colors.mutedText,
     textAlign: "center",
-    marginTop: 10,
-    marginBottom: 28,
+    marginTop: 8,
+    marginBottom: 22,
     lineHeight: 22,
     fontWeight: "700",
   },
-
-  input: {
-    backgroundColor: freightTheme.colors.surface,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+  inputLabel: {
     color: freightTheme.colors.text,
-    fontWeight: "700",
-    marginBottom: 16,
+    fontWeight: "900",
+    marginBottom: 7,
   },
-
+  input: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    color: "#111827",
+    fontWeight: "700",
+    marginBottom: 14,
+  },
   loginButton: {
     backgroundColor: freightTheme.colors.primary,
     paddingVertical: 16,
     borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 6,
+    flexDirection: "row",
+    gap: 8,
   },
-
   disabledButton: {
     opacity: 0.6,
   },
-
   loginButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-
   forgotButton: {
     alignItems: "center",
     marginTop: 16,
   },
-
   forgotText: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
   },
-
-  registerButton: {
-    alignItems: "center",
-    marginTop: 18,
+  divider: {
+    height: 1,
+    backgroundColor: freightTheme.colors.border,
+    marginVertical: 18,
   },
-
+  registerButton: {
+    backgroundColor: freightTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.primary,
+    borderRadius: 16,
+    padding: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
   registerText: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
   },
-
+  homeButton: {
+    alignItems: "center",
+    marginTop: 16,
+  },
+  homeText: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "900",
+  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
+    backgroundColor: "rgba(0,0,0,0.65)",
     justifyContent: "center",
     padding: 22,
   },
-
   modalCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
     padding: 22,
     maxHeight: "90%",
   },
-
+  modalIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: freightTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
   modalTitle: {
-    color: freightTheme.colors.text,
+    color: "#111827",
     fontSize: 26,
     fontWeight: "900",
     marginBottom: 8,
     textAlign: "center",
   },
-
   modalSubtitle: {
-    color: freightTheme.colors.mutedText,
+    color: "#64748B",
     textAlign: "center",
     lineHeight: 22,
     marginBottom: 18,
     fontWeight: "700",
   },
-
+  modalInputLabel: {
+    color: "#111827",
+    fontWeight: "900",
+    marginBottom: 7,
+  },
+  modalInput: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    color: "#111827",
+    fontWeight: "700",
+    marginBottom: 14,
+  },
   closeButton: {
     marginTop: 16,
     alignItems: "center",
   },
-
   closeText: {
     color: "#B91C1C",
     fontWeight: "900",

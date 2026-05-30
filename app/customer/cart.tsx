@@ -19,6 +19,21 @@ import {
 } from "../data/cartStore";
 import farmTheme from "../styles/farmTheme";
 
+const COLORS = {
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  secondary: "#F9A825",
+  background: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#75806F",
+  border: "#E2E8DA",
+  softGreen: "#EAF5E6",
+  lightGreen: "#F1FAED",
+  danger: "#DC2626",
+  dark: "#111827",
+};
+
 type CartGroup = {
   farmName: string;
   items: CartItem[];
@@ -74,8 +89,19 @@ export default function CustomerCart() {
   }
 
   async function handleClear() {
-    await clearCart();
-    setCart([]);
+    if (cart.length === 0) return;
+
+    Alert.alert("Clear Cart", "Remove all items from your cart?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear",
+        style: "destructive",
+        onPress: async () => {
+          await clearCart();
+          setCart([]);
+        },
+      },
+    ]);
   }
 
   function goToCheckout() {
@@ -97,25 +123,77 @@ export default function CustomerCart() {
     );
   }, [cart]);
 
+  const itemCount = useMemo(() => {
+    return cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  }, [cart]);
+
   const serviceFee = subtotal * 0.08;
   const estimatedTotal = subtotal + serviceFee;
 
   return (
-    <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Your Farm2Home Cart</Text>
+    <View style={styles.page}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.topBar}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.backCircle,
+              pressed && styles.pressed,
+            ]}
+            onPress={() => router.push("/customer/marketplace" as any)}
+          >
+            <Text style={styles.backCircleText}>‹</Text>
+          </Pressable>
 
-        <Text style={styles.subtitle}>
-          Items are grouped by farm so pickup, delivery, and inventory stay
-          organized by seller.
-        </Text>
+          <View style={styles.topTitleBlock}>
+            <Text style={styles.title}>My Cart</Text>
+            <Text style={styles.subtitle}>
+              {itemCount} item{itemCount === 1 ? "" : "s"} from{" "}
+              {cartGroups.length} farm{cartGroups.length === 1 ? "" : "s"}
+            </Text>
+          </View>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.clearTopButton,
+              pressed && styles.pressed,
+            ]}
+            onPress={handleClear}
+          >
+            <Text style={styles.clearTopText}>Clear</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.heroCard}>
+          <View>
+            <Text style={styles.heroBadge}>Fresh Checkout</Text>
+            <Text style={styles.heroTitle}>Review your farm goods</Text>
+            <Text style={styles.heroText}>
+              Items stay grouped by farm for pickup, delivery, inventory, and farmer payouts.
+            </Text>
+          </View>
+          <Text style={styles.heroEmoji}>🧺</Text>
+        </View>
 
         {cart.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Your cart is empty.</Text>
+            <Text style={styles.emptyIcon}>🌾</Text>
+            <Text style={styles.emptyTitle}>Your cart is empty</Text>
             <Text style={styles.emptyText}>
-              Add fresh products from local farms to begin checkout.
+              Add fresh produce, eggs, honey, dairy, flowers, hay, or farm supplies to begin checkout.
             </Text>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.shopButton,
+                pressed && styles.pressed,
+              ]}
+              onPress={() => router.push("/customer/marketplace" as any)}
+            >
+              <Text style={styles.shopButtonText}>Shop Marketplace</Text>
+            </Pressable>
           </View>
         ) : (
           cartGroups.map((group) => {
@@ -128,36 +206,60 @@ export default function CustomerCart() {
             return (
               <View key={group.farmName} style={styles.farmCard}>
                 <View style={styles.farmHeader}>
-                  <Text style={styles.farmTitle}>🚜 {group.farmName}</Text>
+                  <View style={styles.farmTitleRow}>
+                    <View style={styles.farmIconBox}>
+                      <Text style={styles.farmIcon}>🚜</Text>
+                    </View>
+
+                    <View style={styles.farmNameBlock}>
+                      <Text style={styles.farmTitle}>{group.farmName}</Text>
+                      <Text style={styles.farmMeta}>
+                        Pickup or delivery confirmed during checkout
+                      </Text>
+                    </View>
+                  </View>
+
                   <Text style={styles.farmSubtotal}>
                     ${farmSubtotal.toFixed(2)}
                   </Text>
                 </View>
-
-                <Text style={styles.farmMeta}>
-                  Pickup / delivery will be confirmed for this farm during
-                  checkout.
-                </Text>
 
                 {group.items.map((item) => {
                   const lineTotal =
                     Number(item.price || 0) * Number(item.quantity || 0);
 
                   return (
-                    <View key={item.id} style={styles.itemRow}>
-                      <View style={styles.itemInfo}>
-                        <Text style={styles.name}>{item.name}</Text>
+                    <View key={item.id} style={styles.itemCard}>
+                      <View style={styles.productIcon}>
+                        <Text style={styles.productIconText}>🥬</Text>
+                      </View>
 
-                        <Text style={styles.meta}>
-                          ${Number(item.price || 0).toFixed(2)} each
+                      <View style={styles.itemInfo}>
+                        <Text style={styles.itemName} numberOfLines={2}>
+                          {item.name}
+                        </Text>
+
+                        <Text style={styles.itemMeta}>
+                          ${Number(item.price || 0).toFixed(2)}
+                          {item.unit ? ` / ${item.unit}` : " each"}
                         </Text>
 
                         <Text style={styles.lineTotal}>
-                          Line Total: ${lineTotal.toFixed(2)}
+                          Line total: ${lineTotal.toFixed(2)}
                         </Text>
+
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.removeButton,
+                            pressed && styles.pressed,
+                          ]}
+                          onPress={() => handleRemove(item.id)}
+                        >
+                          <Text style={styles.removeText}>Remove</Text>
+                        </Pressable>
                       </View>
 
-                      <View style={styles.controls}>
+                      <View style={styles.qtyPill}>
                         <Pressable
                           style={({ pressed }) => [
                             styles.qtyButton,
@@ -165,10 +267,10 @@ export default function CustomerCart() {
                           ]}
                           onPress={() => handleDecrease(item.id)}
                         >
-                          <Text style={styles.qtyText}>−</Text>
+                          <Text style={styles.qtyButtonText}>−</Text>
                         </Pressable>
 
-                        <Text style={styles.qty}>{item.quantity}</Text>
+                        <Text style={styles.qtyText}>{item.quantity}</Text>
 
                         <Pressable
                           style={({ pressed }) => [
@@ -177,17 +279,7 @@ export default function CustomerCart() {
                           ]}
                           onPress={() => handleIncrease(item.id)}
                         >
-                          <Text style={styles.qtyText}>+</Text>
-                        </Pressable>
-
-                        <Pressable
-                          style={({ pressed }) => [
-                            styles.trashButton,
-                            pressed && styles.pressed,
-                          ]}
-                          onPress={() => handleRemove(item.id)}
-                        >
-                          <Text style={styles.trashText}>Remove</Text>
+                          <Text style={styles.qtyButtonText}>+</Text>
                         </Pressable>
                       </View>
                     </View>
@@ -211,254 +303,398 @@ export default function CustomerCart() {
             <Text style={styles.summaryValue}>${serviceFee.toFixed(2)}</Text>
           </View>
 
+          <View style={styles.divider} />
+
           <View style={styles.totalLine}>
             <Text style={styles.totalLabel}>Estimated Total</Text>
             <Text style={styles.totalValue}>${estimatedTotal.toFixed(2)}</Text>
           </View>
+
+          <Text style={styles.summaryNote}>
+            Delivery fee, pickup options, and final payment details are confirmed on the next screen.
+          </Text>
         </View>
 
         <Pressable
           style={({ pressed }) => [
             styles.checkoutButton,
-            pressed && styles.pressed,
+            cart.length === 0 && styles.disabledButton,
+            pressed && cart.length > 0 && styles.pressed,
           ]}
           onPress={goToCheckout}
         >
-          <Text style={styles.buttonText}>Continue to Checkout</Text>
+          <Text style={styles.checkoutButtonText}>Continue to Checkout</Text>
+          <Text style={styles.checkoutAmount}>
+            ${estimatedTotal.toFixed(2)}
+          </Text>
         </Pressable>
 
         <Pressable
           style={({ pressed }) => [
-            styles.clearButton,
+            styles.backToMarketButton,
             pressed && styles.pressed,
           ]}
-          onPress={handleClear}
+          onPress={() => router.push("/customer/marketplace" as any)}
         >
-          <Text style={styles.clearText}>Clear Cart</Text>
+          <Text style={styles.backToMarketText}>Back to Marketplace</Text>
         </Pressable>
-
-        <Pressable onPress={() => router.push("/customer/marketplace" as any)}>
-          <Text style={styles.backText}>Back to Marketplace</Text>
-        </Pressable>
-
-        <View style={styles.bottomSpace} />
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  page: {
     flex: 1,
+    backgroundColor: COLORS.background || farmTheme.colors.background,
+  },
+  scrollContent: {
     padding: 18,
-    backgroundColor: farmTheme.colors.background,
+    paddingBottom: 44,
+  },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 18,
+    gap: 12,
+  },
+  backCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  backCircleText: {
+    fontSize: 34,
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: -4,
+  },
+  topTitleBlock: {
+    flex: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 30,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
-    marginBottom: 8,
+    color: COLORS.text,
   },
   subtitle: {
-    color: farmTheme.colors.mutedText,
-    lineHeight: 22,
-    marginBottom: 18,
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
   },
-  emptyCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    marginBottom: 16,
-    ...farmTheme.shadow,
+  clearTopButton: {
+    backgroundColor: "#FEE2E2",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
   },
-  emptyTitle: {
-    fontSize: 20,
+  clearTopText: {
+    color: COLORS.danger,
     fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginBottom: 6,
   },
-  emptyText: {
-    color: farmTheme.colors.mutedText,
-    lineHeight: 22,
-  },
-  farmCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    ...farmTheme.shadow,
-  },
-  farmHeader: {
+  heroCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 30,
+    padding: 20,
+    marginBottom: 18,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 6,
-    gap: 12,
   },
-  farmTitle: {
-    fontSize: 20,
+  heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    color: "#FFFFFF",
     fontWeight: "900",
-    color: farmTheme.colors.primary,
-    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: "hidden",
+    marginBottom: 10,
   },
-  farmSubtotal: {
-    fontSize: 18,
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 24,
     fontWeight: "900",
-    color: farmTheme.colors.text,
+    maxWidth: 230,
   },
-  farmMeta: {
-    color: farmTheme.colors.mutedText,
-    marginBottom: 12,
+  heroText: {
+    color: "#EAF7E6",
+    fontWeight: "700",
     lineHeight: 20,
+    marginTop: 8,
+    maxWidth: 250,
   },
-  itemRow: {
+  heroEmoji: {
+    fontSize: 58,
+  },
+  emptyCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 26,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    marginBottom: 18,
+    ...farmTheme.shadow,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 10,
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: COLORS.text,
+    textAlign: "center",
+  },
+  emptyText: {
+    color: COLORS.muted,
+    lineHeight: 22,
+    textAlign: "center",
+    marginTop: 8,
+    fontWeight: "700",
+  },
+  shopButton: {
+    marginTop: 18,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    borderRadius: 999,
+  },
+  shopButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  farmCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...farmTheme.shadow,
+  },
+  farmHeader: {
+    marginBottom: 12,
+  },
+  farmTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: farmTheme.colors.border,
-    minHeight: 110,
+  },
+  farmIconBox: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  farmIcon: {
+    fontSize: 27,
+  },
+  farmNameBlock: {
+    flex: 1,
+  },
+  farmTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  farmMeta: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  farmSubtotal: {
+    color: COLORS.primary,
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 10,
+    alignSelf: "flex-end",
+  },
+  itemCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.lightGreen,
+    borderRadius: 22,
+    padding: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 12,
+  },
+  productIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  productIconText: {
+    fontSize: 30,
   },
   itemInfo: {
     flex: 1,
   },
-  name: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginBottom: 2,
-  },
-  meta: {
-    color: farmTheme.colors.mutedText,
-    marginBottom: 2,
-    fontSize: 13,
-  },
-  lineTotal: {
-    fontWeight: "900",
-    color: farmTheme.colors.primary,
-    marginTop: 2,
-    fontSize: 14,
-  },
-  controls: {
-    width: 52,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  qtyButton: {
-    backgroundColor: farmTheme.colors.primary,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  qtyText: {
-    color: "#FFFFFF",
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  qty: {
+  itemName: {
+    color: COLORS.text,
     fontSize: 16,
     fontWeight: "900",
-    marginVertical: 5,
-    color: farmTheme.colors.text,
   },
-  trashButton: {
-    backgroundColor: "#DC2626",
+  itemMeta: {
+    color: COLORS.muted,
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  lineTotal: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    marginTop: 5,
+    fontSize: 13,
+  },
+  removeButton: {
+    alignSelf: "flex-start",
+    marginTop: 7,
+    backgroundColor: "#FEE2E2",
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 999,
-    marginTop: 6,
   },
-  trashText: {
-    color: "#FFFFFF",
+  removeText: {
+    color: COLORS.danger,
     fontWeight: "900",
     fontSize: 12,
   },
+  qtyPill: {
+    backgroundColor: COLORS.card,
+    borderRadius: 999,
+    padding: 5,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  qtyButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  qtyButtonText: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: -2,
+  },
+  qtyText: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+    marginVertical: 7,
+  },
   summaryCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 16,
-    marginTop: 4,
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 18,
+    marginTop: 2,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
+    borderColor: COLORS.border,
+    ...farmTheme.shadow,
   },
   summaryTitle: {
-    fontSize: 21,
+    color: COLORS.text,
+    fontSize: 22,
     fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   summaryLine: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 8,
+    marginBottom: 11,
     gap: 12,
   },
   summaryLabel: {
-    color: farmTheme.colors.mutedText,
-    fontWeight: "700",
+    color: COLORS.muted,
+    fontWeight: "800",
     flex: 1,
   },
   summaryValue: {
-    color: farmTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 8,
   },
   totalLine: {
     flexDirection: "row",
     justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: farmTheme.colors.border,
-    paddingTop: 12,
-    marginTop: 8,
     gap: 12,
   },
   totalLabel: {
-    color: farmTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
-    fontSize: 17,
+    fontSize: 18,
     flex: 1,
   },
   totalValue: {
-    color: farmTheme.colors.primary,
+    color: COLORS.primary,
     fontWeight: "900",
-    fontSize: 20,
+    fontSize: 22,
+  },
+  summaryNote: {
+    marginTop: 12,
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    fontSize: 12,
   },
   checkoutButton: {
-    backgroundColor: farmTheme.colors.primary,
-    padding: 16,
-    borderRadius: 18,
+    backgroundColor: COLORS.primary,
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 17,
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
   },
-  buttonText: {
+  disabledButton: {
+    backgroundColor: "#A7B8A2",
+  },
+  checkoutButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-  clearButton: {
-    marginTop: 14,
+  checkoutAmount: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 17,
+  },
+  backToMarketButton: {
     alignItems: "center",
+    paddingVertical: 18,
   },
-  clearText: {
-    color: "#DC2626",
+  backToMarketText: {
+    color: COLORS.primary,
     fontWeight: "900",
-  },
-  backText: {
-    marginTop: 18,
-    textAlign: "center",
-    color: farmTheme.colors.primary,
-    fontWeight: "900",
+    fontSize: 15,
   },
   pressed: {
     opacity: 0.75,
-  },
-  bottomSpace: {
-    height: 40,
   },
 });

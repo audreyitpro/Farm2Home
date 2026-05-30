@@ -3,11 +3,11 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -19,7 +19,24 @@ import {
   updateFarmerProductStock,
 } from "../data/farmerStore";
 
-import farmTheme from "../styles/farmTheme";
+const COLORS = {
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  secondary: "#F9A825",
+  background: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#75806F",
+  border: "#E2E8DA",
+  softGreen: "#EAF5E6",
+  lightGreen: "#F1FAED",
+  danger: "#DC2626",
+  dark: "#111827",
+  blue: "#1565C0",
+  purple: "#7C3AED",
+  orange: "#EF6C00",
+  stripe: "#635BFF",
+};
 
 const reviews = [
   { id: 1, customer: "Angela", rating: 5, text: "Fresh eggs and fast pickup!" },
@@ -171,563 +188,667 @@ export default function FarmerDashboard() {
   if (loading) {
     return (
       <View style={styles.lockContainer}>
-        <ActivityIndicator size="large" color={farmTheme.colors.primary} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.lockText}>Loading farmer dashboard...</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <View style={styles.heroCard}>
-        <Text style={styles.header}>Farmer Dashboard</Text>
+    <View style={styles.page}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+      >
+        <View style={styles.heroCard}>
+          <View style={styles.heroTopRow}>
+            <View style={styles.farmAvatar}>
+              <Text style={styles.farmAvatarText}>🚜</Text>
+            </View>
 
-        <Text style={styles.subheader}>
-          {farmName} · Manage your Farm2Home storefront, products, inventory,
-          and customer activity.
-        </Text>
+            <Pressable
+              style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
+              onPress={logoutFarmer}
+            >
+              <Text style={styles.logoutText}>Logout</Text>
+            </Pressable>
+          </View>
 
-        <View style={styles.storeMetaRow}>
-          <Text style={styles.storeMeta}>Products: {products.length}</Text>
-          <Text style={styles.storeMeta}>Stock: {totalStock}</Text>
-          <Text style={styles.storeMeta}>Sales: ${totalGrossSales.toFixed(2)}</Text>
-        </View>
+          <Text style={styles.header}>Farmer Dashboard</Text>
 
-        <TouchableOpacity
-          style={styles.setupStoreButton}
-          onPress={() => goTo("/farmer/setup-store")}
-        >
-          <Text style={styles.setupStoreText}>🏪 Edit Store Setup</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.logoutButton} onPress={logoutFarmer}>
-          <Text style={styles.logoutText}>Logout</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.actionGrid}>
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => goTo("/farmer/add-product")}
-        >
-          <Text style={styles.actionText}>➕ Add Product</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.storeButton}
-          onPress={() => goTo("/farmer/setup-store")}
-        >
-          <Text style={styles.actionText}>🏪 Customize Store</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.complianceButton}
-          onPress={() => goTo("/farmer/compliance-upload")}
-        >
-          <Text style={styles.actionText}>🛡️ Compliance Record</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.ordersButton}
-          onPress={() => goTo("/farmer/orders")}
-        >
-          <Text style={styles.actionText}>📦 Orders</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.deliveryButton}
-          onPress={() => goTo("/farmer/delivery-orders")}
-        >
-          <Text style={styles.actionText}>🚚 Delivery</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.stripeButton}
-          onPress={() => goTo("/farmer/connect-bank")}
-        >
-          <Text style={styles.actionText}>💳 Payout Status</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.marketplaceButton}
-          onPress={() => goTo("/customer/marketplace")}
-        >
-          <Text style={styles.actionText}>🛒 Preview Marketplace</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.notice}>
-        <Text style={styles.noticeTitle}>Store Ready</Text>
-
-        <Text style={styles.noticeText}>
-          Add products, manage inventory, restock items, and monitor your
-          Farm2Home storefront.
-        </Text>
-
-        <TouchableOpacity
-          style={styles.previewButton}
-          onPress={() => goTo("/farmer/add-product")}
-        >
-          <Text style={styles.previewButtonText}>Add / Manage Produce</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{products.length}</Text>
-          <Text style={styles.statLabel}>Products</Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{totalStock}</Text>
-          <Text style={styles.statLabel}>In Stock</Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{totalSold}</Text>
-          <Text style={styles.statLabel}>Sold</Text>
-        </View>
-      </View>
-
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>${totalGrossSales.toFixed(2)}</Text>
-          <Text style={styles.statLabel}>Gross Sales</Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{lowStockProducts.length}</Text>
-          <Text style={styles.statLabel}>Low Stock</Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{soldOutProducts.length}</Text>
-          <Text style={styles.statLabel}>Sold Out</Text>
-        </View>
-      </View>
-
-      {(lowStockProducts.length > 0 || soldOutProducts.length > 0) && (
-        <View style={styles.alertBox}>
-          <Text style={styles.alertTitle}>Action Needed</Text>
-
-          {lowStockProducts.map((item) => (
-            <Text key={`low-${item.id}`} style={styles.alertText}>
-              ⚠️ {item.name} is low: {getStock(item)} {item.unit || "each"} left.
-            </Text>
-          ))}
-
-          {soldOutProducts.map((item) => (
-            <Text key={`sold-${item.id}`} style={styles.alertText}>
-              🔴 {item.name} is sold out. Restock to show it available again.
-            </Text>
-          ))}
-        </View>
-      )}
-
-      <Text style={styles.sectionTitle}>Inventory / Restock</Text>
-
-      {products.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No products yet.</Text>
-
-          <Text style={styles.meta}>
-            Add products to your store so customers can shop your produce, meat,
-            dairy, eggs, flowers, and farm goods.
+          <Text style={styles.subheader}>
+            {farmName} · Manage your Farm2Home storefront, products, inventory,
+            and customer activity.
           </Text>
 
-          <TouchableOpacity
-            style={styles.emptyActionButton}
-            onPress={() => goTo("/farmer/add-product")}
+          <View style={styles.storeMetaRow}>
+            <View style={styles.storeMeta}>
+              <Text style={styles.storeMetaValue}>{products.length}</Text>
+              <Text style={styles.storeMetaLabel}>Products</Text>
+            </View>
+
+            <View style={styles.storeMeta}>
+              <Text style={styles.storeMetaValue}>{totalStock}</Text>
+              <Text style={styles.storeMetaLabel}>Stock</Text>
+            </View>
+
+            <View style={styles.storeMeta}>
+              <Text style={styles.storeMetaValue}>
+                ${totalGrossSales.toFixed(2)}
+              </Text>
+              <Text style={styles.storeMetaLabel}>Sales</Text>
+            </View>
+          </View>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.setupStoreButton,
+              pressed && styles.pressed,
+            ]}
+            onPress={() => goTo("/farmer/setup-store")}
           >
-            <Text style={styles.emptyActionText}>Add Your First Product</Text>
-          </TouchableOpacity>
+            <Text style={styles.setupStoreText}>🏪 Edit Store Setup</Text>
+          </Pressable>
         </View>
-      ) : (
-        products.map((item) => {
-          const stock = getStock(item);
-          const threshold = getThreshold(item);
-          const isSoldOut = stock <= 0;
-          const isLowStock = stock > 0 && stock <= threshold;
 
-          return (
-            <View key={item.id} style={styles.productCard}>
-              <Image
-                source={{ uri: getProductImage(item) }}
-                style={styles.productImage}
-              />
+        <View style={styles.actionGrid}>
+          <ActionButton
+            label="Add Product"
+            icon="➕"
+            color={COLORS.primary}
+            onPress={() => goTo("/farmer/add-product")}
+          />
+          <ActionButton
+            label="Customize Store"
+            icon="🏪"
+            color={COLORS.primaryDark}
+            onPress={() => goTo("/farmer/setup-store")}
+          />
+          <ActionButton
+            label="Compliance"
+            icon="🛡️"
+            color={COLORS.purple}
+            onPress={() => goTo("/farmer/compliance-upload")}
+          />
+          <ActionButton
+            label="Orders"
+            icon="📦"
+            color={COLORS.blue}
+            onPress={() => goTo("/farmer/orders")}
+          />
+          <ActionButton
+            label="Delivery"
+            icon="🚚"
+            color={COLORS.orange}
+            onPress={() => goTo("/farmer/delivery-orders")}
+          />
+          <ActionButton
+            label="Payout Status"
+            icon="💳"
+            color={COLORS.stripe}
+            onPress={() => goTo("/farmer/connect-bank")}
+          />
+          <ActionButton
+            label="Preview Market"
+            icon="🛒"
+            color={COLORS.dark}
+            onPress={() => goTo("/customer/marketplace")}
+          />
+        </View>
 
-              <View style={styles.productBody}>
-                <View style={styles.productHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.productName}>{item.name}</Text>
-                    <Text style={styles.meta}>{item.category}</Text>
-                  </View>
+        <View style={styles.notice}>
+          <View style={styles.noticeIconBox}>
+            <Text style={styles.noticeIcon}>✅</Text>
+          </View>
 
-                  {isSoldOut ? (
-                    <Text style={styles.soldOutBadge}>Sold Out</Text>
-                  ) : isLowStock ? (
-                    <Text style={styles.lowStockBadge}>Low Stock</Text>
-                  ) : (
-                    <Text style={styles.availableBadge}>Available</Text>
-                  )}
-                </View>
+          <View style={styles.noticeTextBlock}>
+            <Text style={styles.noticeTitle}>Store Ready</Text>
+            <Text style={styles.noticeText}>
+              Add products, manage inventory, restock items, and monitor your
+              Farm2Home storefront.
+            </Text>
 
-                <View style={styles.detailGrid}>
-                  <Text style={styles.detail}>
-                    Price: ${Number(item.price || 0).toFixed(2)} /{" "}
-                    {item.unit || "each"}
-                  </Text>
+            <Pressable
+              style={({ pressed }) => [styles.previewButton, pressed && styles.pressed]}
+              onPress={() => goTo("/farmer/add-product")}
+            >
+              <Text style={styles.previewButtonText}>Add / Manage Produce</Text>
+            </Pressable>
+          </View>
+        </View>
 
-                  <Text style={styles.detail}>
-                    Stock: {stock} {item.unit || "each"}
-                  </Text>
+        <View style={styles.statsGrid}>
+          <StatCard label="Products" value={String(products.length)} />
+          <StatCard label="In Stock" value={String(totalStock)} />
+          <StatCard label="Sold" value={String(totalSold)} />
+          <StatCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} />
+          <StatCard label="Low Stock" value={String(lowStockProducts.length)} />
+          <StatCard label="Sold Out" value={String(soldOutProducts.length)} />
+        </View>
 
-                  <Text style={styles.detail}>Low Alert: {threshold}</Text>
-                  <Text style={styles.detail}>Sold: {Number(item.sold || 0)}</Text>
+        {(lowStockProducts.length > 0 || soldOutProducts.length > 0) && (
+          <View style={styles.alertBox}>
+            <Text style={styles.alertTitle}>Action Needed</Text>
 
-                  <Text style={styles.detail}>
-                    Gross: ${Number(item.grossSales || 0).toFixed(2)}
-                  </Text>
+            {lowStockProducts.map((item) => (
+              <Text key={`low-${item.id}`} style={styles.alertText}>
+                ⚠️ {item.name} is low: {getStock(item)} {item.unit || "each"} left.
+              </Text>
+            ))}
 
-                  <Text style={styles.detail}>
-                    Delivery: {item.deliveryOption || "Not set"}
-                  </Text>
-                </View>
+            {soldOutProducts.map((item) => (
+              <Text key={`sold-${item.id}`} style={styles.alertText}>
+                🔴 {item.name} is sold out. Restock to show it available again.
+              </Text>
+            ))}
+          </View>
+        )}
 
-                <TextInput
-                  style={styles.input}
-                  placeholder="Restock amount"
-                  placeholderTextColor="#8A8F98"
-                  keyboardType="numeric"
-                  value={restockAmounts[item.id] || ""}
-                  onChangeText={(text) =>
-                    setRestockAmounts((prev) => ({
-                      ...prev,
-                      [item.id]: text,
-                    }))
-                  }
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Inventory / Restock</Text>
+          <Text style={styles.sectionSubtitle}>
+            Update stock counts and product availability
+          </Text>
+        </View>
+
+        {products.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyIcon}>🥬</Text>
+            <Text style={styles.emptyTitle}>No products yet</Text>
+
+            <Text style={styles.meta}>
+              Add products to your store so customers can shop your produce,
+              meat, dairy, eggs, flowers, and farm goods.
+            </Text>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.emptyActionButton,
+                pressed && styles.pressed,
+              ]}
+              onPress={() => goTo("/farmer/add-product")}
+            >
+              <Text style={styles.emptyActionText}>Add Your First Product</Text>
+            </Pressable>
+          </View>
+        ) : (
+          products.map((item) => {
+            const stock = getStock(item);
+            const threshold = getThreshold(item);
+            const isSoldOut = stock <= 0;
+            const isLowStock = stock > 0 && stock <= threshold;
+
+            return (
+              <View key={item.id} style={styles.productCard}>
+                <Image
+                  source={{ uri: getProductImage(item) }}
+                  style={styles.productImage}
                 />
 
-                <TouchableOpacity
-                  style={styles.restockButton}
-                  onPress={() => restockProduct(item.id)}
-                >
-                  <Text style={styles.restockText}>
-                    Restock / Update Inventory
-                  </Text>
-                </TouchableOpacity>
+                <View style={styles.productBody}>
+                  <View style={styles.productHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.productName}>{item.name}</Text>
+                      <Text style={styles.meta}>{item.category}</Text>
+                    </View>
+
+                    {isSoldOut ? (
+                      <Text style={styles.soldOutBadge}>Sold Out</Text>
+                    ) : isLowStock ? (
+                      <Text style={styles.lowStockBadge}>Low Stock</Text>
+                    ) : (
+                      <Text style={styles.availableBadge}>Available</Text>
+                    )}
+                  </View>
+
+                  <View style={styles.detailGrid}>
+                    <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)} / ${item.unit || "each"}`} />
+                    <Detail label="Stock" value={`${stock} ${item.unit || "each"}`} />
+                    <Detail label="Low Alert" value={String(threshold)} />
+                    <Detail label="Sold" value={String(Number(item.sold || 0))} />
+                    <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
+                    <Detail label="Delivery" value={item.deliveryOption || "Not set"} />
+                  </View>
+
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Restock amount"
+                    placeholderTextColor="#8A9482"
+                    keyboardType="numeric"
+                    value={restockAmounts[item.id] || ""}
+                    onChangeText={(text) =>
+                      setRestockAmounts((prev) => ({
+                        ...prev,
+                        [item.id]: text,
+                      }))
+                    }
+                  />
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.restockButton,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => restockProduct(item.id)}
+                  >
+                    <Text style={styles.restockText}>
+                      Restock / Update Inventory
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
-            </View>
-          );
-        })
-      )}
+            );
+          })
+        )}
 
-      <Text style={styles.sectionTitle}>Customer Reviews</Text>
-
-      {reviews.map((review) => (
-        <View key={review.id} style={styles.reviewCard}>
-          <Text style={styles.reviewName}>{review.customer}</Text>
-          <Text style={styles.reviewRating}>⭐ {review.rating}</Text>
-          <Text style={styles.reviewText}>{review.text}</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Customer Reviews</Text>
+          <Text style={styles.sectionSubtitle}>Recent customer feedback</Text>
         </View>
-      ))}
 
-      <View style={{ height: 30 }} />
-    </ScrollView>
+        {reviews.map((review) => (
+          <View key={review.id} style={styles.reviewCard}>
+            <View style={styles.reviewAvatar}>
+              <Text style={styles.reviewAvatarText}>
+                {review.customer.slice(0, 1)}
+              </Text>
+            </View>
+
+            <View style={styles.reviewBody}>
+              <View style={styles.reviewHeader}>
+                <Text style={styles.reviewName}>{review.customer}</Text>
+                <Text style={styles.reviewRating}>⭐ {review.rating}</Text>
+              </View>
+
+              <Text style={styles.reviewText}>{review.text}</Text>
+            </View>
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  color,
+  onPress,
+}: {
+  label: string;
+  icon: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.actionButton,
+        { backgroundColor: color },
+        pressed && styles.pressed,
+      ]}
+      onPress={onPress}
+    >
+      <Text style={styles.actionIcon}>{icon}</Text>
+      <Text style={styles.actionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detailTile}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: farmTheme.colors.background },
-
+  page: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
   lockContainer: {
     flex: 1,
-    backgroundColor: farmTheme.colors.background,
+    backgroundColor: COLORS.background,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
-
   lockText: {
     marginTop: 14,
-    color: farmTheme.colors.mutedText,
-    fontWeight: "800",
+    color: COLORS.muted,
+    fontWeight: "900",
     textAlign: "center",
   },
-
-  content: { padding: 18, paddingBottom: 40 },
-
+  content: {
+    padding: 18,
+    paddingBottom: 44,
+  },
   heroCard: {
-    backgroundColor: farmTheme.colors.primary,
-    borderRadius: 28,
-    padding: 22,
+    backgroundColor: COLORS.primary,
+    borderRadius: 32,
+    padding: 20,
     marginBottom: 16,
   },
-
-  header: { fontSize: 32, fontWeight: "900", color: "#FFFFFF" },
-
-  subheader: { color: "#E8F5E9", marginTop: 8, lineHeight: 22 },
-
+  heroTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  farmAvatar: {
+    width: 66,
+    height: 66,
+    borderRadius: 22,
+    backgroundColor: COLORS.secondary,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  farmAvatarText: {
+    fontSize: 35,
+  },
+  header: {
+    fontSize: 31,
+    fontWeight: "900",
+    color: "#FFFFFF",
+  },
+  subheader: {
+    color: "#EAF7E6",
+    marginTop: 8,
+    lineHeight: 22,
+    fontWeight: "700",
+  },
   storeMetaRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginTop: 12,
+    marginTop: 16,
   },
-
   storeMeta: {
-    backgroundColor: "rgba(255,255,255,0.15)",
-    color: "#FFFFFF",
+    flexGrow: 1,
+    backgroundColor: "rgba(255,255,255,0.18)",
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    overflow: "hidden",
-    fontWeight: "900",
+    paddingVertical: 12,
+    borderRadius: 20,
+    minWidth: 94,
   },
-
+  storeMetaValue: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 18,
+  },
+  storeMetaLabel: {
+    color: "#EAF7E6",
+    fontWeight: "800",
+    fontSize: 11,
+    marginTop: 2,
+  },
   setupStoreButton: {
     backgroundColor: "#FFFFFF",
-    paddingVertical: 14,
-    borderRadius: 18,
+    paddingVertical: 15,
+    borderRadius: 20,
     alignItems: "center",
     marginTop: 18,
   },
-
   setupStoreText: {
-    color: farmTheme.colors.primary,
+    color: COLORS.primary,
     fontWeight: "900",
     fontSize: 16,
   },
-
   logoutButton: {
-    backgroundColor: "#FFFFFF",
-    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,
-    marginTop: 14,
   },
-
-  logoutText: { color: farmTheme.colors.primary, fontWeight: "900" },
-
+  logoutText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   actionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
     marginBottom: 16,
   },
-
-  complianceButton: {
-    backgroundColor: "#7C3AED",
-    padding: 16,
-    borderRadius: 18,
-    flexGrow: 1,
+  actionButton: {
+    width: "48%",
+    minHeight: 86,
+    padding: 14,
+    borderRadius: 22,
+    justifyContent: "center",
   },
-
-  addButton: {
-    backgroundColor: farmTheme.colors.primary,
-    padding: 16,
-    borderRadius: 18,
-    flexGrow: 1,
+  actionIcon: {
+    fontSize: 24,
+    marginBottom: 7,
   },
-
-  storeButton: {
-    backgroundColor: "#047857",
-    padding: 16,
-    borderRadius: 18,
-    flexGrow: 1,
-  },
-
-  ordersButton: {
-    backgroundColor: "#1565C0",
-    padding: 16,
-    borderRadius: 18,
-    flexGrow: 1,
-  },
-
-  deliveryButton: {
-    backgroundColor: "#EF6C00",
-    padding: 16,
-    borderRadius: 18,
-    flexGrow: 1,
-  },
-
-  stripeButton: {
-    backgroundColor: "#635BFF",
-    padding: 16,
-    borderRadius: 18,
-    flexGrow: 1,
-  },
-
-  marketplaceButton: {
-    backgroundColor: "#0F172A",
-    padding: 16,
-    borderRadius: 18,
-    flexGrow: 1,
-  },
-
   actionText: {
     color: "#FFFFFF",
-    textAlign: "center",
     fontWeight: "900",
-    fontSize: 15,
+    fontSize: 14,
   },
-
   notice: {
-    backgroundColor: farmTheme.colors.primaryLight,
+    backgroundColor: COLORS.card,
     padding: 16,
-    borderRadius: 18,
+    borderRadius: 28,
     marginBottom: 16,
-    borderLeftWidth: 5,
-    borderLeftColor: farmTheme.colors.primary,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    gap: 13,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
   },
-
+  noticeIconBox: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  noticeIcon: {
+    fontSize: 27,
+  },
+  noticeTextBlock: {
+    flex: 1,
+  },
   noticeTitle: {
     fontWeight: "900",
-    color: farmTheme.colors.primary,
+    color: COLORS.text,
     marginBottom: 5,
-    fontSize: 16,
+    fontSize: 18,
   },
-
-  noticeText: { color: farmTheme.colors.text, lineHeight: 22 },
-
+  noticeText: {
+    color: COLORS.muted,
+    lineHeight: 22,
+    fontWeight: "700",
+  },
   previewButton: {
-    backgroundColor: "#14532D",
-    padding: 15,
+    backgroundColor: COLORS.primaryDark,
+    padding: 14,
     borderRadius: 18,
     marginTop: 14,
   },
-
   previewButtonText: {
     color: "#FFFFFF",
     textAlign: "center",
     fontWeight: "900",
     fontSize: 15,
   },
-
-  statsRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
-
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 16,
+  },
   statCard: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    padding: 14,
-    borderRadius: 20,
+    width: "48%",
+    backgroundColor: COLORS.card,
+    padding: 16,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-
   statValue: {
-    fontSize: 22,
+    fontSize: 23,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
+    color: COLORS.primary,
   },
-
   statLabel: {
-    color: farmTheme.colors.mutedText,
+    color: COLORS.muted,
     marginTop: 4,
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "800",
   },
-
   alertBox: {
     backgroundColor: "#FFF7ED",
     borderColor: "#FDBA74",
     borderWidth: 1,
     padding: 16,
-    borderRadius: 20,
+    borderRadius: 24,
     marginBottom: 18,
   },
-
   alertTitle: {
     color: "#9A3412",
     fontWeight: "900",
     fontSize: 18,
     marginBottom: 8,
   },
-
   alertText: {
     color: "#7C2D12",
     fontWeight: "700",
     marginBottom: 6,
     lineHeight: 20,
   },
-
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginTop: 10,
+  sectionHeader: {
+    marginTop: 6,
     marginBottom: 12,
   },
-
-  emptyCard: {
-    ...farmTheme.cards.default,
-    marginBottom: 14,
-  },
-
-  emptyTitle: {
-    fontSize: 20,
+  sectionTitle: {
+    fontSize: 23,
     fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginBottom: 4,
+    color: COLORS.text,
   },
-
-  emptyActionButton: {
-    backgroundColor: farmTheme.colors.primary,
-    padding: 14,
-    borderRadius: 16,
-    marginTop: 12,
+  sectionSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  emptyCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 24,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
   },
-
-  emptyActionText: { color: "#FFFFFF", fontWeight: "900" },
-
+  emptyIcon: {
+    fontSize: 46,
+    marginBottom: 10,
+  },
+  emptyTitle: {
+    fontSize: 21,
+    fontWeight: "900",
+    color: COLORS.text,
+    marginBottom: 6,
+  },
+  emptyActionButton: {
+    backgroundColor: COLORS.primary,
+    padding: 15,
+    borderRadius: 18,
+    marginTop: 12,
+    alignItems: "center",
+    alignSelf: "stretch",
+  },
+  emptyActionText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   productCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
+    backgroundColor: COLORS.card,
+    borderRadius: 30,
     marginBottom: 16,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    ...farmTheme.shadow,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
-
-  productImage: { width: "100%", height: 210 },
-
-  productBody: { padding: 16 },
-
+  productImage: {
+    width: "100%",
+    height: 210,
+    backgroundColor: COLORS.softGreen,
+  },
+  productBody: {
+    padding: 16,
+  },
   productHeader: {
     flexDirection: "row",
     gap: 10,
     alignItems: "flex-start",
     marginBottom: 12,
   },
-
   productName: {
     fontSize: 22,
     fontWeight: "900",
-    color: farmTheme.colors.text,
+    color: COLORS.text,
   },
-
   meta: {
-    color: farmTheme.colors.mutedText,
+    color: COLORS.muted,
     marginBottom: 5,
     lineHeight: 20,
+    fontWeight: "700",
+    textAlign: "center",
   },
-
   detailGrid: {
-    backgroundColor: farmTheme.colors.primaryLight,
-    padding: 12,
-    borderRadius: 16,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
     marginBottom: 12,
   },
-
-  detail: {
-    color: farmTheme.colors.text,
-    fontWeight: "700",
-    marginBottom: 5,
+  detailTile: {
+    width: "48%",
+    backgroundColor: COLORS.lightGreen,
+    padding: 11,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-
+  detailLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  detailValue: {
+    color: COLORS.text,
+    fontWeight: "800",
+    fontSize: 12,
+  },
   soldOutBadge: {
     backgroundColor: "#FEE2E2",
     color: "#991B1B",
@@ -737,7 +858,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: "hidden",
   },
-
   lowStockBadge: {
     backgroundColor: "#FEF3C7",
     color: "#92400E",
@@ -747,7 +867,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: "hidden",
   },
-
   availableBadge: {
     backgroundColor: "#DCFCE7",
     color: "#166534",
@@ -757,34 +876,74 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: "hidden",
   },
-
-  input: { ...farmTheme.inputs.input, marginTop: 10 },
-
+  input: {
+    backgroundColor: COLORS.lightGreen,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 15,
+    marginTop: 10,
+    color: COLORS.text,
+    fontWeight: "800",
+  },
   restockButton: {
-    backgroundColor: farmTheme.colors.text,
-    padding: 14,
-    borderRadius: 16,
+    backgroundColor: COLORS.dark,
+    padding: 15,
+    borderRadius: 18,
     marginTop: 10,
   },
-
   restockText: {
     color: "#FFFFFF",
     textAlign: "center",
     fontWeight: "900",
   },
-
   reviewCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     padding: 14,
-    borderRadius: 18,
+    borderRadius: 22,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    gap: 12,
   },
-
-  reviewName: { fontWeight: "900", fontSize: 16 },
-
-  reviewRating: { marginTop: 3, fontWeight: "bold" },
-
-  reviewText: { marginTop: 5, color: farmTheme.colors.mutedText },
+  reviewAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  reviewAvatarText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 18,
+  },
+  reviewBody: {
+    flex: 1,
+  },
+  reviewHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  reviewName: {
+    fontWeight: "900",
+    fontSize: 16,
+    color: COLORS.text,
+  },
+  reviewRating: {
+    fontWeight: "900",
+    color: COLORS.primary,
+  },
+  reviewText: {
+    marginTop: 5,
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  pressed: {
+    opacity: 0.75,
+  },
 });

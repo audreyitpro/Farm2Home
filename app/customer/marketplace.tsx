@@ -22,6 +22,21 @@ import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 const GREEN_VALLEY_STRIPE_ACCOUNT_ID = "acct_1TWeOKCqJp7Z8L15";
 const SUNNYBROOK_STRIPE_ACCOUNT_ID = "acct_1TWjGSE1SmOAMwkt";
 
+const COLORS = {
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  secondary: "#F9A825",
+  background: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#75806F",
+  border: "#E2E8DA",
+  softGreen: "#EAF5E6",
+  lightGreen: "#F1FAED",
+  danger: "#B91C1C",
+  dark: "#111827",
+};
+
 const DEFAULT_CATEGORIES = [
   "All",
   "Fresh Produce",
@@ -271,6 +286,18 @@ export default function MarketplaceScreen() {
     return Array.from(new Set([...DEFAULT_CATEGORIES, ...Array.from(categorySet)]));
   }, [farmers]);
 
+  const featuredProducts = useMemo(() => {
+    const allProducts: Array<{ farmer: Farmer; product: Product }> = [];
+
+    farmers.forEach((farmer) => {
+      (farmer.products || []).forEach((product) => {
+        allProducts.push({ farmer, product });
+      });
+    });
+
+    return allProducts.slice(0, 8);
+  }, [farmers]);
+
   const filteredFarmers = useMemo(() => {
     const search = searchText.trim().toLowerCase();
 
@@ -348,75 +375,102 @@ export default function MarketplaceScreen() {
     } as any);
   }
 
-  function renderProduct(farmer: Farmer, product: Product) {
+  function renderProductCard(farmer: Farmer, product: Product, compact = false) {
     const imageSource = product.image || product.imageUrl || "";
 
     return (
-      <View key={product.id} style={styles.productCard}>
-        {imageSource ? (
-          <Image source={{ uri: imageSource }} style={styles.productImage} />
-        ) : (
-          <View style={styles.productPlaceholder}>
-            <Text style={styles.productEmoji}>{getProductEmoji(product)}</Text>
+      <View
+        key={`${farmer.id}_${product.id}_${compact ? "compact" : "regular"}`}
+        style={[styles.productCard, compact && styles.featuredProductCard]}
+      >
+        <Pressable
+          style={({ pressed }) => [
+            styles.productImageWrap,
+            pressed && styles.pressedButton,
+          ]}
+          onPress={() => handleAddToCart(farmer, product)}
+        >
+          {imageSource ? (
+            <Image source={{ uri: imageSource }} style={styles.productImage} />
+          ) : (
+            <View style={styles.productPlaceholder}>
+              <Text style={styles.productEmoji}>{getProductEmoji(product)}</Text>
+            </View>
+          )}
+
+          <View style={styles.organicBadge}>
+            <Text style={styles.organicBadgeText}>
+              {product.category || "Farm Goods"}
+            </Text>
           </View>
-        )}
+        </Pressable>
 
         <Text style={styles.productName} numberOfLines={1}>
           {product.name}
         </Text>
 
-        <Text style={styles.productCategory}>
-          {product.category || "Farm Goods"}
+        <Text style={styles.productFarmName} numberOfLines={1}>
+          {getFarmerName(farmer)}
         </Text>
 
-        <Text style={styles.productPrice}>
-          ${Number(product.price || 0).toFixed(2)}
-          {product.unit ? ` / ${product.unit}` : ""}
-        </Text>
+        <View style={styles.priceRow}>
+          <View>
+            <Text style={styles.productPrice}>
+              ${Number(product.price || 0).toFixed(2)}
+            </Text>
+            <Text style={styles.productUnit}>
+              {product.unit ? `per ${product.unit}` : "each"}
+            </Text>
+          </View>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.addButton,
-            pressed && styles.pressedButton,
-          ]}
-          onPress={() => handleAddToCart(farmer, product)}
-        >
-          <Text style={styles.addButtonText}>Add</Text>
-        </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.addCircleButton,
+              pressed && styles.pressedButton,
+            ]}
+            onPress={() => handleAddToCart(farmer, product)}
+          >
+            <Text style={styles.addCircleButtonText}>+</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
 
   function renderFarmerRow({ item }: { item: Farmer }) {
     return (
-      <View style={styles.farmRow}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.leftFarmColumn,
-            pressed && styles.pressedButton,
-          ]}
-          onPress={() => openFarmerShop(item)}
-        >
-          {item.logoUrl ? (
-            <Image source={{ uri: item.logoUrl }} style={styles.farmLogo} />
-          ) : (
-            <View style={styles.logoPlaceholder}>
-              <Text style={styles.logoPlaceholderText}>🚜</Text>
+      <View style={styles.farmSection}>
+        <View style={styles.farmHeader}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.farmIdentity,
+              pressed && styles.pressedButton,
+            ]}
+            onPress={() => openFarmerShop(item)}
+          >
+            {item.logoUrl ? (
+              <Image source={{ uri: item.logoUrl }} style={styles.farmLogo} />
+            ) : (
+              <View style={styles.logoPlaceholder}>
+                <Text style={styles.logoPlaceholderText}>🚜</Text>
+              </View>
+            )}
+
+            <View style={styles.farmTitleBlock}>
+              <Text style={styles.farmName}>{getFarmerName(item)}</Text>
+              <Text style={styles.farmLocation}>{getFarmerLocation(item)}</Text>
+
+              <View style={styles.farmMetaRow}>
+                <Text style={styles.ratingText}>
+                  ⭐ {Number(item.rating || 4.8).toFixed(1)}
+                </Text>
+                <Text style={styles.dot}>•</Text>
+                <Text style={styles.distanceText}>
+                  {Number(item.distanceMiles || 5).toFixed(1)} mi
+                </Text>
+              </View>
             </View>
-          )}
-
-          <Text style={styles.farmName}>{getFarmerName(item)}</Text>
-          <Text style={styles.farmLocation}>{getFarmerLocation(item)}</Text>
-
-          <View style={styles.ratingBox}>
-            <Text style={styles.ratingText}>
-              ⭐ {Number(item.rating || 4.8).toFixed(1)}
-            </Text>
-          </View>
-
-          <Text style={styles.distanceText}>
-            {Number(item.distanceMiles || 5).toFixed(1)} mi away
-          </Text>
+          </Pressable>
 
           <Pressable
             style={({ pressed }) => [
@@ -425,17 +479,143 @@ export default function MarketplaceScreen() {
             ]}
             onPress={() => openFarmerShop(item)}
           >
-            <Text style={styles.visitFarmButtonText}>Visit Farm</Text>
+            <Text style={styles.visitFarmButtonText}>View</Text>
           </Pressable>
-        </Pressable>
+        </View>
 
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.productsRow}
         >
-          {(item.products || []).map((product) => renderProduct(item, product))}
+          {(item.products || []).map((product) => renderProductCard(item, product))}
         </ScrollView>
+      </View>
+    );
+  }
+
+  function renderHeader() {
+    return (
+      <View>
+        <View style={styles.topBar}>
+          <View>
+            <Text style={styles.greeting}>Welcome to Farm2Home</Text>
+            <Text style={styles.locationLine}>Fresh local farm goods near you</Text>
+          </View>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.cartTopButton,
+              pressed && styles.pressedButton,
+            ]}
+            onPress={() => router.push("/customer/cart" as any)}
+          >
+            <Text style={styles.cartTopIcon}>🛒</Text>
+            {cartCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{cartCount}</Text>
+              </View>
+            )}
+          </Pressable>
+        </View>
+
+        <View style={styles.heroCard}>
+          <View style={styles.heroTextBlock}>
+            <Text style={styles.heroBadge}>Fresh Harvest</Text>
+            <Text style={styles.heroTitle}>Farm goods delivered to your door</Text>
+            <Text style={styles.heroSubtitle}>
+              Shop produce, eggs, dairy, honey, flowers, hay, and supplies from trusted local farmers.
+            </Text>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.heroButton,
+                pressed && styles.pressedButton,
+              ]}
+              onPress={() => router.push("/customer/cart" as any)}
+            >
+              <Text style={styles.heroButtonText}>View Cart ({cartCount})</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.heroArt}>
+            <Text style={styles.heroArtEmoji}>🥬</Text>
+            <Text style={styles.heroArtEmojiSmall}>🍯 🥚 🌽</Text>
+          </View>
+        </View>
+
+        <View style={styles.searchBox}>
+          <Text style={styles.searchIcon}>🔎</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search produce, farm, flowers, hay..."
+            placeholderTextColor="#8A9482"
+            value={searchText}
+            onChangeText={setSearchText}
+          />
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoryRow}
+        >
+          {categories.map((category) => {
+            const active = category === selectedCategory;
+
+            return (
+              <Pressable
+                key={category}
+                style={[
+                  styles.categoryChip,
+                  active && styles.categoryChipActive,
+                ]}
+                onPress={() => setSelectedCategory(category)}
+              >
+                <Text
+                  style={[
+                    styles.categoryChipText,
+                    active && styles.categoryChipTextActive,
+                  ]}
+                >
+                  {category}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        {featuredProducts.length > 0 && selectedCategory === "All" && !searchText.trim() && (
+          <View style={styles.featuredSection}>
+            <View style={styles.sectionTitleRow}>
+              <View>
+                <Text style={styles.sectionTitle}>Featured Fresh Picks</Text>
+                <Text style={styles.sectionSubtitle}>Popular products from nearby farms</Text>
+              </View>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.featuredRow}
+            >
+              {featuredProducts.map(({ farmer, product }) =>
+                renderProductCard(farmer, product, true)
+              )}
+            </ScrollView>
+          </View>
+        )}
+
+        <View style={styles.sectionTitleRowMain}>
+          <View>
+            <Text style={styles.sectionTitle}>Nearby Farms</Text>
+            <Text style={styles.sectionSubtitle}>
+              {filteredFarmers.length} farm{filteredFarmers.length === 1 ? "" : "s"} available
+            </Text>
+          </View>
+
+          {loading && <ActivityIndicator size="small" color={COLORS.primary} />}
+        </View>
       </View>
     );
   }
@@ -443,7 +623,7 @@ export default function MarketplaceScreen() {
   if (accessChecking) {
     return (
       <View style={styles.loadingPage}>
-        <ActivityIndicator size="large" color="#047857" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.loadingText}>Checking subscription access...</Text>
       </View>
     );
@@ -465,80 +645,15 @@ export default function MarketplaceScreen() {
         keyExtractor={(item) => item.id}
         renderItem={renderFarmerRow}
         contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <View>
-            <View style={styles.hero}>
-              <Image
-                source={require("../../assets/images/farm-marketplace-hero.png")}
-                style={styles.heroImage}
-              />
-
-              <View style={styles.heroOverlay}>
-                <Text style={styles.heroBadge}>🌾 Farm2Home</Text>
-                <Text style={styles.heroTitle}>Shop Fresh Farm Goods</Text>
-                <Text style={styles.heroSubtitle}>
-                  Fresh produce, flowers, hay, feed, dairy, eggs, and local farm
-                  products from trusted Farm2Home sellers.
-                </Text>
-
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.heroCartButton,
-                    pressed && styles.pressedButton,
-                  ]}
-                  onPress={() => router.push("/customer/cart" as any)}
-                >
-                  <Text style={styles.heroCartText}>View Cart ({cartCount})</Text>
-                </Pressable>
-              </View>
-            </View>
-
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search produce, flowers, hay, farm, or category"
-              placeholderTextColor="#6B7280"
-              value={searchText}
-              onChangeText={setSearchText}
-            />
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.categoryRow}
-            >
-              {categories.map((category) => {
-                const active = category === selectedCategory;
-
-                return (
-                  <Pressable
-                    key={category}
-                    style={[
-                      styles.categoryChip,
-                      active && styles.categoryChipActive,
-                    ]}
-                    onPress={() => setSelectedCategory(category)}
-                  >
-                    <Text
-                      style={[
-                        styles.categoryChipText,
-                        active && styles.categoryChipTextActive,
-                      ]}
-                    >
-                      {category}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
-        }
+        ListHeaderComponent={renderHeader}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
+            <Text style={styles.emptyIcon}>🌾</Text>
             <Text style={styles.emptyTitle}>
               {loading ? "Loading marketplace..." : "No farmers found"}
             </Text>
             <Text style={styles.emptySubtitle}>
-              Try another search or check back later.
+              Try another search, select a different category, or check back later.
             </Text>
           </View>
         }
@@ -551,7 +666,7 @@ export default function MarketplaceScreen() {
         ]}
         onPress={() => router.push("/customer/cart" as any)}
       >
-        <Text style={styles.cartFloatingText}>Cart ({cartCount})</Text>
+        <Text style={styles.cartFloatingText}>🛒 Cart ({cartCount})</Text>
       </Pressable>
     </View>
   );
@@ -560,23 +675,23 @@ export default function MarketplaceScreen() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: "#F7F7F2",
+    backgroundColor: COLORS.background,
   },
   loadingPage: {
     flex: 1,
-    backgroundColor: "#F7F7F2",
+    backgroundColor: COLORS.background,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
   loadingText: {
     marginTop: 14,
-    color: "#334155",
+    color: COLORS.muted,
     fontWeight: "800",
     textAlign: "center",
   },
   lockedTitle: {
-    color: "#991B1B",
+    color: COLORS.danger,
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
@@ -584,254 +699,442 @@ const styles = StyleSheet.create({
   listContent: {
     paddingBottom: 120,
   },
-  hero: {
-    height: 260,
-    overflow: "hidden",
-    position: "relative",
+  topBar: {
+    paddingTop: 18,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  heroImage: {
-    width: "100%",
-    height: "100%",
+  greeting: {
+    color: COLORS.text,
+    fontSize: 24,
+    fontWeight: "900",
   },
-  heroOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.35)",
+  locationLine: {
+    color: COLORS.muted,
+    fontSize: 14,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  cartTopButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: COLORS.card,
     justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  cartTopIcon: {
+    fontSize: 24,
+  },
+  cartBadge: {
+    position: "absolute",
+    top: -5,
+    right: -5,
+    backgroundColor: COLORS.secondary,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 999,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    borderWidth: 2,
+    borderColor: COLORS.card,
+  },
+  cartBadgeText: {
+    color: COLORS.dark,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  heroCard: {
+    marginHorizontal: 18,
+    marginTop: 8,
+    borderRadius: 32,
     padding: 22,
+    backgroundColor: COLORS.primary,
+    flexDirection: "row",
+    overflow: "hidden",
+    minHeight: 190,
+  },
+  heroTextBlock: {
+    flex: 1,
+    paddingRight: 8,
   },
   heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
     color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 18,
-    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    marginBottom: 12,
+    overflow: "hidden",
   },
   heroTitle: {
     color: "#FFFFFF",
+    fontSize: 28,
+    lineHeight: 34,
     fontWeight: "900",
-    fontSize: 34,
   },
   heroSubtitle: {
-    color: "#FFFFFF",
-    marginTop: 10,
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: "800",
-  },
-  heroCartButton: {
-    backgroundColor: "#2E7D32",
-    borderWidth: 1,
-    borderColor: "#FFFFFF",
-    padding: 15,
-    borderRadius: 15,
-    alignItems: "center",
-    marginTop: 18,
-  },
-  heroCartText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  searchInput: {
-    backgroundColor: "#FFFFFF",
-    marginHorizontal: 12,
-    marginTop: 16,
-    borderRadius: 18,
-    padding: 18,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
+    color: "#EAF7E6",
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 21,
     fontWeight: "700",
   },
+  heroButton: {
+    backgroundColor: COLORS.secondary,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+    marginTop: 16,
+  },
+  heroButtonText: {
+    color: COLORS.dark,
+    fontWeight: "900",
+    fontSize: 14,
+  },
+  heroArt: {
+    width: 110,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  heroArtEmoji: {
+    fontSize: 66,
+  },
+  heroArtEmojiSmall: {
+    fontSize: 18,
+    marginTop: 10,
+  },
+  searchBox: {
+    marginHorizontal: 18,
+    marginTop: 18,
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    height: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  searchIcon: {
+    fontSize: 18,
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
   categoryRow: {
-    paddingHorizontal: 12,
-    paddingVertical: 16,
-    gap: 12,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 10,
+    gap: 10,
   },
   categoryChip: {
-    backgroundColor: "#DDE7DB",
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    backgroundColor: COLORS.card,
+    paddingHorizontal: 17,
+    paddingVertical: 11,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   categoryChipActive: {
-    backgroundColor: "#047857",
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
   categoryChipText: {
-    color: "#047857",
+    color: COLORS.primary,
     fontWeight: "900",
-    fontSize: 15,
+    fontSize: 14,
   },
   categoryChipTextActive: {
     color: "#FFFFFF",
   },
-  farmRow: {
+  featuredSection: {
+    marginTop: 8,
+  },
+  sectionTitleRow: {
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 12,
     flexDirection: "row",
-    backgroundColor: "#FFFFFF",
-    marginHorizontal: 12,
-    marginBottom: 18,
-    borderRadius: 24,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
   },
-  leftFarmColumn: {
-    width: 190,
-    marginRight: 16,
+  sectionTitleRowMain: {
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
   },
-  farmLogo: {
-    width: 88,
-    height: 88,
-    borderRadius: 22,
-    marginBottom: 12,
-  },
-  logoPlaceholder: {
-    width: 88,
-    height: 88,
-    borderRadius: 22,
-    backgroundColor: "#DCFCE7",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  logoPlaceholderText: {
-    fontSize: 38,
-  },
-  farmName: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#111827",
-  },
-  farmLocation: {
-    color: "#6B7280",
-    marginTop: 4,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  ratingBox: {
-    backgroundColor: "#FEF3C7",
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-    marginTop: 10,
-  },
-  ratingText: {
-    color: "#92400E",
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 22,
     fontWeight: "900",
   },
-  distanceText: {
-    marginTop: 10,
-    color: "#047857",
-    fontWeight: "900",
-  },
-  visitFarmButton: {
-    backgroundColor: "#14532D",
-    marginTop: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  visitFarmButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 14,
-  },
-  productsRow: {
-    gap: 16,
-    paddingRight: 20,
-  },
-  productCard: {
-    width: 220,
-    backgroundColor: "#F9FAFB",
-    borderRadius: 22,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  productImage: {
-    width: "100%",
-    height: 120,
-    borderRadius: 18,
-    marginBottom: 12,
-  },
-  productPlaceholder: {
-    width: "100%",
-    height: 120,
-    borderRadius: 18,
-    backgroundColor: "#DCFCE7",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  productEmoji: {
-    fontSize: 46,
-  },
-  productName: {
-    fontWeight: "900",
-    fontSize: 17,
-    color: "#111827",
-  },
-  productCategory: {
-    color: "#6B7280",
+  sectionSubtitle: {
+    color: COLORS.muted,
     marginTop: 4,
     fontSize: 13,
     fontWeight: "700",
   },
-  productPrice: {
-    marginTop: 8,
-    fontWeight: "900",
-    fontSize: 20,
-    color: "#047857",
+  featuredRow: {
+    paddingLeft: 18,
+    paddingRight: 18,
+    gap: 14,
   },
-  addButton: {
-    backgroundColor: "#047857",
-    paddingVertical: 13,
-    borderRadius: 15,
-    marginTop: 12,
+  farmSection: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginBottom: 18,
+    borderRadius: 28,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
+  },
+  farmHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 14,
   },
-  addButtonText: {
-    color: "#FFFFFF",
+  farmIdentity: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingRight: 10,
+  },
+  farmLogo: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  logoPlaceholder: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  logoPlaceholderText: {
+    fontSize: 31,
+  },
+  farmTitleBlock: {
+    flex: 1,
+  },
+  farmName: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: COLORS.text,
+  },
+  farmLocation: {
+    color: COLORS.muted,
+    marginTop: 3,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  farmMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 7,
+  },
+  ratingText: {
+    color: "#9A6A00",
+    fontWeight: "900",
+    fontSize: 13,
+  },
+  dot: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    marginHorizontal: 7,
+  },
+  distanceText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 13,
+  },
+  visitFarmButton: {
+    backgroundColor: COLORS.lightGreen,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  visitFarmButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 13,
+  },
+  productsRow: {
+    gap: 14,
+    paddingRight: 6,
+  },
+  productCard: {
+    width: 178,
+    backgroundColor: COLORS.lightGreen,
+    borderRadius: 24,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  featuredProductCard: {
+    width: 170,
+    backgroundColor: COLORS.card,
+  },
+  productImageWrap: {
+    position: "relative",
+  },
+  productImage: {
+    width: "100%",
+    height: 116,
+    borderRadius: 20,
+    marginBottom: 10,
+    backgroundColor: COLORS.softGreen,
+  },
+  productPlaceholder: {
+    width: "100%",
+    height: 116,
+    borderRadius: 20,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  productEmoji: {
+    fontSize: 48,
+  },
+  organicBadge: {
+    position: "absolute",
+    left: 8,
+    bottom: 18,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    maxWidth: 130,
+  },
+  organicBadgeText: {
+    color: COLORS.primary,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  productName: {
     fontWeight: "900",
     fontSize: 15,
+    color: COLORS.text,
+  },
+  productFarmName: {
+    color: COLORS.muted,
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  priceRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  productPrice: {
+    fontWeight: "900",
+    fontSize: 17,
+    color: COLORS.primary,
+  },
+  productUnit: {
+    color: COLORS.muted,
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  addCircleButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  addCircleButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 24,
+    marginTop: -2,
   },
   pressedButton: {
     opacity: 0.75,
   },
   emptyBox: {
-    backgroundColor: "#FFFFFF",
-    margin: 12,
-    borderRadius: 20,
-    padding: 24,
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginTop: 10,
+    borderRadius: 24,
+    padding: 28,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: COLORS.border,
+    alignItems: "center",
+  },
+  emptyIcon: {
+    fontSize: 42,
+    marginBottom: 12,
   },
   emptyTitle: {
     fontWeight: "900",
     fontSize: 20,
-    color: "#111827",
+    color: COLORS.text,
+    textAlign: "center",
   },
   emptySubtitle: {
     marginTop: 10,
-    color: "#6B7280",
+    color: COLORS.muted,
     fontSize: 14,
     fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 21,
   },
   cartFloating: {
     position: "absolute",
     bottom: 20,
     right: 20,
-    backgroundColor: "#0F172A",
-    paddingHorizontal: 24,
+    backgroundColor: COLORS.dark,
+    paddingHorizontal: 23,
     paddingVertical: 16,
     borderRadius: 999,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   cartFloatingText: {
     color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 16,
+    fontSize: 15,
   },
 });
