@@ -375,7 +375,7 @@ export default function CustomerCheckout() {
         zipCode: deliveryInfo.zipCode,
         phone: deliveryInfo.phone,
         deliveryInstructions: deliveryInfo.deliveryInstructions,
-        successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+        successUrl: `${APP_URL}/customer/order-confirmation?session_id={CHECKOUT_SESSION_ID}`,
         cancelUrl: `${APP_URL}/customer/cart`,
       };
 

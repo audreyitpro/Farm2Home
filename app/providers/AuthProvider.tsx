@@ -14,7 +14,6 @@ import {
 } from "../services/authService";
 
 import { getUserProfile, UserProfile } from "../services/profileService";
-
 import { registerPushNotifications } from "../services/notificationService";
 
 type AuthContextValue = {
@@ -46,57 +45,96 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    loadAuth();
+    let mounted = true;
+    let subscription: any = null;
 
-    const listener = listenToAuthChanges(async (_event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user || null);
+    async function start() {
+      try {
+        await loadAuth(mounted);
 
-      if (newSession?.user?.id) {
-        await loadProfile(newSession.user.id);
-        await setupPushNotifications(newSession.user.id);
-      } else {
-        setProfile(null);
+        const listener: any = listenToAuthChanges(
+          async (_event: any, newSession: any) => {
+            if (!mounted) return;
+
+            setSession(newSession || null);
+            setUser(newSession?.user || null);
+
+            if (newSession?.user?.id) {
+              await loadProfile(newSession.user.id, mounted);
+              await setupPushNotifications();
+            } else {
+              setProfile(null);
+            }
+          }
+        );
+
+        subscription = listener?.data?.subscription || listener?.subscription || null;
+      } catch (error) {
+        console.log("AuthProvider listener error:", error);
       }
-    });
+    }
+
+    start();
 
     return () => {
-      listener.data.subscription.unsubscribe();
+      mounted = false;
+
+      try {
+        if (subscription?.unsubscribe) {
+          subscription.unsubscribe();
+        }
+      } catch (error) {
+        console.log("AuthProvider unsubscribe error:", error);
+      }
     };
   }, []);
 
-  async function loadAuth() {
+  async function loadAuth(isMounted = true) {
     try {
       const currentSession = await getCurrentSession();
       const currentUser = await getCurrentUser();
 
-      setSession(currentSession);
-      setUser(currentUser);
+      if (!isMounted) return;
+
+      setSession(currentSession || null);
+      setUser(currentUser || null);
 
       if (currentUser?.id) {
-        await loadProfile(currentUser.id);
-        await setupPushNotifications(currentUser.id);
+        await loadProfile(currentUser.id, isMounted);
+        await setupPushNotifications();
       }
     } catch (error) {
       console.log("AuthProvider load error:", error);
+
+      if (isMounted) {
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+      }
     } finally {
-      setLoading(false);
+      if (isMounted) setLoading(false);
     }
   }
 
-  async function loadProfile(userId: string) {
+  async function loadProfile(userId: string, isMounted = true) {
     try {
       const cloudProfile = await getUserProfile(userId);
-      setProfile(cloudProfile);
+
+      if (isMounted) {
+        setProfile(cloudProfile || null);
+      }
     } catch (error) {
       console.log("Profile load error:", error);
-      setProfile(null);
+
+      if (isMounted) {
+        setProfile(null);
+      }
     }
   }
 
-  async function setupPushNotifications(userId: string) {
+  async function setupPushNotifications() {
     try {
-      await registerPushNotifications(userId);
+      await registerPushNotifications();
     } catch (error) {
       console.log("Push notification setup error:", error);
     }
@@ -104,12 +142,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function refreshProfile() {
     if (user?.id) {
-      await loadProfile(user.id);
+      await loadProfile(user.id, true);
     }
   }
 
   const role = profile?.role || user?.user_metadata?.role || null;
-
   const onboardingComplete = Boolean(profile?.onboarding_complete);
 
   const value = useMemo(
@@ -120,7 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       role,
       onboardingComplete,
-      isLoggedIn: !!session?.user,
+      isLoggedIn: Boolean(session?.user || user),
       refreshProfile,
     }),
     [loading, session, user, profile, role, onboardingComplete]

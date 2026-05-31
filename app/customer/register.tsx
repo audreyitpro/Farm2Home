@@ -5,7 +5,9 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -16,13 +18,27 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { createClient } from "@supabase/supabase-js";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
-import farmTheme from "../styles/farmTheme";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
+
+const ui = {
+  bg: "#F7FBF4",
+  card: "#FFFFFF",
+  border: "#DDE7D6",
+  text: "#102A1C",
+  muted: "#647067",
+  soft: "#F1F8EC",
+  green: "#166534",
+  greenDark: "#14532D",
+  greenSoft: "#DCFCE7",
+  orange: "#EA580C",
+  red: "#DC2626",
+};
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -64,8 +80,7 @@ export default function CustomerRegister() {
   const [loading, setLoading] = useState(false);
 
   const selectedQuestions = useMemo(
-    () =>
-      [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
+    () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
@@ -108,18 +123,11 @@ export default function CustomerRegister() {
     }
 
     if (new Set(selectedQuestions).size !== 3) {
-      Alert.alert(
-        "Duplicate Questions",
-        "Please select 3 different security questions."
-      );
+      Alert.alert("Duplicate Questions", "Please select 3 different security questions.");
       return false;
     }
 
-    if (
-      !securityAnswer1.trim() ||
-      !securityAnswer2.trim() ||
-      !securityAnswer3.trim()
-    ) {
+    if (!securityAnswer1.trim() || !securityAnswer2.trim() || !securityAnswer3.trim()) {
       Alert.alert("Security Required", "Please answer all 3 security questions.");
       return false;
     }
@@ -140,10 +148,7 @@ export default function CustomerRegister() {
     }
 
     if (data) {
-      Alert.alert(
-        "Account Exists",
-        "A customer account already exists with this email or username."
-      );
+      Alert.alert("Account Exists", "A customer account already exists with this email or username.");
       return true;
     }
 
@@ -151,14 +156,8 @@ export default function CustomerRegister() {
   }
 
   async function saveCurrentCustomer(customerAccount: any) {
-    await AsyncStorage.setItem(
-      "pendingCustomer",
-      JSON.stringify(customerAccount)
-    );
-    await AsyncStorage.setItem(
-      "currentCustomer",
-      JSON.stringify(customerAccount)
-    );
+    await AsyncStorage.setItem("pendingCustomer", JSON.stringify(customerAccount));
+    await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerAccount));
     await AsyncStorage.setItem("currentUser", JSON.stringify(customerAccount));
     await AsyncStorage.setItem("userRole", "customer");
     await AsyncStorage.setItem("currentUserRole", "customer");
@@ -201,10 +200,7 @@ export default function CustomerRegister() {
       const customerId = authData?.user?.id;
 
       if (!customerId) {
-        Alert.alert(
-          "Signup Error",
-          "Unable to create customer account. Please try again."
-        );
+        Alert.alert("Signup Error", "Unable to create customer account. Please try again.");
         return;
       }
 
@@ -216,22 +212,18 @@ export default function CustomerRegister() {
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
-
         account_active: true,
         customer_membership_paid: false,
         subscription_status: "pending",
         membership_status: "Pending",
-
         security_question_1: securityQuestion1,
         security_answer_1: normalizeAnswer(securityAnswer1),
         security_question_2: securityQuestion2,
         security_answer_2: normalizeAnswer(securityAnswer2),
         security_question_3: securityQuestion3,
         security_answer_3: normalizeAnswer(securityAnswer3),
-
         notifications_enabled: false,
         expo_push_token: "",
-
         created_at: now,
         updated_at: now,
       };
@@ -269,26 +261,23 @@ export default function CustomerRegister() {
 
       await saveCurrentCustomer(localCustomer);
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-subscription-checkout`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            customerEmail: cleanEmail,
-            email: cleanEmail,
-            name: cleanFullName,
-            username: cleanUsername,
-            userId: customerId,
-            customerId,
-            planType: "customer",
-            successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
-            cancelUrl: `${APP_URL}/customer/register`,
-          }),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          customerEmail: cleanEmail,
+          email: cleanEmail,
+          name: cleanFullName,
+          username: cleanUsername,
+          userId: customerId,
+          customerId,
+          planType: "customer",
+          successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: `${APP_URL}/customer/register`,
+        }),
+      });
 
       const text = await response.text();
 
@@ -321,10 +310,7 @@ export default function CustomerRegister() {
       }
     } catch (error: any) {
       console.log("CUSTOMER REGISTER ERROR:", error);
-      Alert.alert(
-        "Registration Error",
-        error?.message || "Unable to complete customer registration."
-      );
+      Alert.alert("Registration Error", error?.message || "Unable to complete customer registration.");
     } finally {
       setLoading(false);
     }
@@ -348,19 +334,11 @@ export default function CustomerRegister() {
             return (
               <TouchableOpacity
                 key={question}
-                style={[
-                  styles.questionChip,
-                  active && styles.questionChipActive,
-                ]}
+                style={[styles.questionChip, active && styles.questionChipActive]}
                 activeOpacity={0.8}
                 onPress={() => setSelectedQuestion(question)}
               >
-                <Text
-                  style={[
-                    styles.questionChipText,
-                    active && styles.questionChipTextActive,
-                  ]}
-                >
+                <Text style={[styles.questionChipText, active && styles.questionChipTextActive]}>
                   {question}
                 </Text>
               </TouchableOpacity>
@@ -373,7 +351,7 @@ export default function CustomerRegister() {
           value={answer}
           onChangeText={setAnswer}
           placeholder="Hidden answer"
-          placeholderTextColor="#8A8F98"
+          placeholderTextColor={ui.muted}
           secureTextEntry
         />
       </View>
@@ -381,81 +359,100 @@ export default function CustomerRegister() {
   }
 
   return (
-    <View style={styles.page}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="always"
-      >
-        <Text style={styles.header}>Create Customer Account</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-        <Text style={styles.subheader}>
-          Create your login, save security questions, then complete Stripe
-          subscription to access the marketplace.
-        </Text>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="always">
+        <TouchableOpacity style={styles.backButton} onPress={() => router.push("/")}>
+          <Ionicons name="arrow-back-outline" size={18} color={ui.greenDark} />
+          <Text style={styles.backText}>Back Home</Text>
+        </TouchableOpacity>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Full Name"
-          placeholderTextColor="#8A8F98"
-          value={fullName}
-          onChangeText={setFullName}
-        />
+        <View style={styles.heroCard}>
+          <View style={styles.heroIcon}>
+            <Ionicons name="basket-outline" size={30} color="#FFFFFF" />
+          </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Email Address"
-          placeholderTextColor="#8A8F98"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
+          <Text style={styles.header}>Create Customer Account</Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Phone Number"
-          placeholderTextColor="#8A8F98"
-          value={phone}
-          onChangeText={setPhone}
-          keyboardType="phone-pad"
-        />
+          <Text style={styles.subheader}>
+            Join Farm2Home, save your login and security questions, then complete your $4.99 monthly customer subscription.
+          </Text>
+        </View>
 
-        <Text style={styles.sectionTitle}>Create Customer Login</Text>
+        <View style={styles.card}>
+          <SectionTitle title="Customer Information" icon="person-outline" />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Create Username"
-          placeholderTextColor="#8A8F98"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Full Name"
+            placeholderTextColor={ui.muted}
+            value={fullName}
+            onChangeText={setFullName}
+          />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Create Password"
-          placeholderTextColor="#8A8F98"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Email Address"
+            placeholderTextColor={ui.muted}
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Confirm Password"
-          placeholderTextColor="#8A8F98"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Phone Number"
+            placeholderTextColor={ui.muted}
+            value={phone}
+            onChangeText={setPhone}
+            keyboardType="phone-pad"
+          />
+        </View>
 
-        <View style={styles.securityCard}>
-          <Text style={styles.securityTitle}>Security Questions</Text>
+        <View style={styles.card}>
+          <SectionTitle title="Create Customer Login" icon="lock-closed-outline" />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Create Username"
+            placeholderTextColor={ui.muted}
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Create Password"
+            placeholderTextColor={ui.muted}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Confirm Password"
+            placeholderTextColor={ui.muted}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        <View style={styles.card}>
+          <SectionTitle title="Security Questions" icon="help-circle-outline" />
+
+          <Text style={styles.helperText}>
+            Choose 3 different questions. These are used for account recovery.
+          </Text>
 
           {renderQuestionPicker(
             "Security Question 1",
@@ -482,92 +479,156 @@ export default function CustomerRegister() {
           )}
         </View>
 
+        <View style={styles.priceCard}>
+          <View>
+            <Text style={styles.priceTitle}>Customer Membership</Text>
+            <Text style={styles.priceText}>$4.99 monthly to access Farm2Home marketplace ordering.</Text>
+          </View>
+          <Text style={styles.priceAmount}>$4.99</Text>
+        </View>
+
         <TouchableOpacity
           onPress={createAccountAndSubscribe}
           disabled={loading}
           style={[styles.createButton, loading && styles.disabledButton]}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
         >
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.createButtonText}>
-              Create Account + Subscribe
-            </Text>
+            <>
+              <Ionicons name="card-outline" size={20} color="#FFFFFF" />
+              <Text style={styles.createButtonText}>Create Account + Subscribe</Text>
+            </>
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={() => router.push("/customer/login" as any)}
-          style={styles.loginLink}
-        >
+        <TouchableOpacity onPress={() => router.push("/customer/login" as any)} style={styles.loginLink}>
           <Text style={styles.loginLinkText}>Already have an account? Login</Text>
         </TouchableOpacity>
       </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function SectionTitle({
+  title,
+  icon,
+}: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={styles.sectionTitleRow}>
+      <View style={styles.sectionIcon}>
+        <Ionicons name={icon} size={20} color={ui.greenDark} />
+      </View>
+      <Text style={styles.sectionTitle}>{title}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: {
+  safe: {
     flex: 1,
-    backgroundColor: farmTheme.colors.background,
+    backgroundColor: ui.bg,
   },
   content: {
     flexGrow: 1,
+    padding: 20,
+    paddingBottom: 70,
+  },
+  backButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginBottom: 14,
+  },
+  backText: {
+    color: ui.greenDark,
+    fontWeight: "900",
+  },
+  heroCard: {
+    backgroundColor: ui.greenDark,
+    borderRadius: 28,
     padding: 22,
-    paddingBottom: 60,
+    marginBottom: 16,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
     justifyContent: "center",
+    marginBottom: 14,
   },
   header: {
-    fontSize: 30,
+    fontSize: 31,
+    lineHeight: 38,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
+    color: "#FFFFFF",
     marginBottom: 8,
   },
   subheader: {
-    color: farmTheme.colors.mutedText,
-    lineHeight: 21,
-    marginBottom: 20,
+    color: "#DCFCE7",
+    lineHeight: 22,
     fontWeight: "700",
+    fontSize: 15,
   },
-  sectionTitle: {
-    color: farmTheme.colors.primary,
-    fontSize: 18,
-    fontWeight: "900",
-    marginBottom: 10,
-    marginTop: 6,
-  },
-  input: {
-    backgroundColor: "#FFFFFF",
+  card: {
+    backgroundColor: ui.card,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    color: farmTheme.colors.text,
-    fontWeight: "700",
-  },
-  securityCard: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    borderRadius: 18,
-    padding: 16,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  securityTitle: {
-    color: farmTheme.colors.primary,
-    fontSize: 20,
-    fontWeight: "900",
-    marginBottom: 10,
-  },
-  questionBox: {
+    borderColor: ui.border,
+    borderRadius: 24,
+    padding: 17,
     marginBottom: 14,
   },
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 13,
+  },
+  sectionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    backgroundColor: ui.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionTitle: {
+    color: ui.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  helperText: {
+    color: ui.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  input: {
+    backgroundColor: ui.soft,
+    borderWidth: 1,
+    borderColor: ui.border,
+    borderRadius: 15,
+    padding: 14,
+    marginBottom: 12,
+    color: ui.text,
+    fontWeight: "700",
+  },
+  questionBox: {
+    marginBottom: 12,
+  },
   questionLabel: {
-    color: farmTheme.colors.text,
+    color: ui.text,
     fontWeight: "900",
     marginBottom: 8,
   },
@@ -581,23 +642,53 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
   questionChipActive: {
-    backgroundColor: farmTheme.colors.primary,
+    backgroundColor: ui.green,
   },
   questionChipText: {
-    color: farmTheme.colors.primary,
+    color: ui.greenDark,
     fontWeight: "900",
   },
   questionChipTextActive: {
     color: "#FFFFFF",
   },
-  createButton: {
-    backgroundColor: farmTheme.colors.primary,
-    padding: 18,
-    borderRadius: 16,
-    marginTop: 10,
+  priceCard: {
+    backgroundColor: ui.card,
+    borderWidth: 1,
+    borderColor: ui.border,
+    borderRadius: 24,
+    padding: 17,
+    marginBottom: 14,
+    flexDirection: "row",
     alignItems: "center",
-    zIndex: 9999,
-    elevation: 20,
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  priceTitle: {
+    color: ui.text,
+    fontWeight: "900",
+    fontSize: 18,
+  },
+  priceText: {
+    color: ui.muted,
+    fontWeight: "700",
+    marginTop: 4,
+    lineHeight: 20,
+    maxWidth: 640,
+  },
+  priceAmount: {
+    color: ui.green,
+    fontWeight: "900",
+    fontSize: 24,
+  },
+  createButton: {
+    backgroundColor: ui.green,
+    padding: 18,
+    borderRadius: 18,
+    marginTop: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   disabledButton: {
     opacity: 0.6,
@@ -609,12 +700,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   loginLink: {
-    marginTop: 18,
+    marginTop: 16,
     padding: 10,
   },
   loginLinkText: {
     textAlign: "center",
-    color: farmTheme.colors.primary,
-    fontWeight: "800",
+    color: ui.greenDark,
+    fontWeight: "900",
   },
 });

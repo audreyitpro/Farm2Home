@@ -108,6 +108,7 @@ export default function RootLayout() {
         <Stack.Screen name="profile/edit-profile" options={{ title: "Edit Profile", headerShown: false }} />
 
         {/* CUSTOMER */}
+        <Stack.Screen name="customer/dashboard" options={{ title: "Customer Dashboard" }} />
         <Stack.Screen name="customer/customer-dashboard" options={{ title: "Customer Dashboard" }} />
         <Stack.Screen name="customer/login" options={{ title: "Customer Login" }} />
         <Stack.Screen name="customer/password-recovery" options={{ title: "Customer Recovery" }} />

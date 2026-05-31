@@ -5,7 +5,9 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -14,13 +16,22 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
+import { Ionicons } from "@expo/vector-icons";
 
-import farmTheme from "../styles/farmTheme";
+import { supabase } from "../services/supabaseClient";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
+const ui = {
+  bg: "#F7FBF4",
+  card: "#FFFFFF",
+  border: "#DDE7D6",
+  text: "#102A1C",
+  muted: "#647067",
+  soft: "#F1F8EC",
+  green: "#166534",
+  greenDark: "#14532D",
+  greenSoft: "#DCFCE7",
+  red: "#DC2626",
+};
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
@@ -30,38 +41,19 @@ function mapCustomer(customer: any) {
   return {
     id: customer.id,
     role: "customer",
-    fullName:
-      customer.full_name ||
-      customer.fullName ||
-      customer.name ||
-      "Customer",
-    name:
-      customer.full_name ||
-      customer.fullName ||
-      customer.name ||
-      "Customer",
+    fullName: customer.full_name || customer.fullName || customer.name || "Customer",
+    name: customer.full_name || customer.fullName || customer.name || "Customer",
     email: normalize(customer.email),
     phone: customer.phone || "",
     username: customer.username || "",
-    accountActive:
-      customer.account_active ?? customer.accountActive ?? true,
+    accountActive: customer.account_active ?? customer.accountActive ?? true,
     customerMembershipPaid:
-      customer.customer_membership_paid ??
-      customer.customerMembershipPaid ??
-      false,
+      customer.customer_membership_paid ?? customer.customerMembershipPaid ?? false,
     subscriptionStatus:
-      customer.subscription_status ||
-      customer.subscriptionStatus ||
-      "pending",
-    membershipStatus:
-      customer.membership_status ||
-      customer.membershipStatus ||
-      "Pending",
+      customer.subscription_status || customer.subscriptionStatus || "pending",
+    membershipStatus: customer.membership_status || customer.membershipStatus || "Pending",
     createdAt: customer.created_at || customer.createdAt || "",
-    updatedAt:
-      customer.updated_at ||
-      customer.updatedAt ||
-      new Date().toISOString(),
+    updatedAt: customer.updated_at || customer.updatedAt || new Date().toISOString(),
   };
 }
 
@@ -128,7 +120,7 @@ export default function CustomerLoginScreen() {
       if (!customer) {
         Alert.alert(
           "Customer Profile Missing",
-          "Your login exists, but your customer profile was not found. Please contact Farm2Home support."
+          "Your login exists, but your customer profile was not found."
         );
         return;
       }
@@ -169,246 +161,305 @@ export default function CustomerLoginScreen() {
         return;
       }
 
-      Alert.alert(
-        "Password Reset Sent",
-        "Check your email for the secure password reset link."
-      );
-
+      Alert.alert("Password Reset Sent", "Check your email for the secure password reset link.");
       setResetVisible(false);
       setResetEmail("");
     } catch (error: any) {
-      Alert.alert(
-        "Reset Error",
-        error?.message || "Unable to send password reset email."
-      );
+      Alert.alert("Reset Error", error?.message || "Unable to send password reset email.");
     } finally {
       setResetLoading(false);
     }
   }
 
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Text style={styles.header}>Customer Login</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-      <Text style={styles.subheader}>
-        Login to shop verified farmers and fresh Farm2Home products.
-      </Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        placeholderTextColor="#8A8F98"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="email-address"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        placeholderTextColor="#8A8F98"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-
-      <TouchableOpacity
-        style={[styles.loginButton, loading && styles.disabledButton]}
-        onPress={loginCustomer}
-        disabled={loading}
-        activeOpacity={0.85}
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
       >
-        {loading ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text style={styles.loginButtonText}>Login</Text>
-        )}
-      </TouchableOpacity>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.push("/")}>
+          <Ionicons name="arrow-back-outline" size={18} color={ui.greenDark} />
+          <Text style={styles.backText}>Back Home</Text>
+        </TouchableOpacity>
 
-      <TouchableOpacity
-        style={styles.linkButton}
-        onPress={() => router.push("/customer/register" as any)}
-      >
-        <Text style={styles.linkText}>Need an account? Register</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.linkButton}
-        onPress={() => {
-          setResetEmail(email);
-          setResetVisible(true);
-        }}
-      >
-        <Text style={styles.linkText}>Forgot password?</Text>
-      </TouchableOpacity>
-
-      <Modal visible={resetVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={styles.modalTitle}>Reset Password</Text>
-
-              <Text style={styles.modalSubtitle}>
-                Enter your customer email. Farm2Home will send a secure reset
-                link.
-              </Text>
-
-              <TextInput
-                style={styles.input}
-                placeholder="Customer Email"
-                placeholderTextColor="#8A8F98"
-                value={resetEmail}
-                onChangeText={setResetEmail}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-              />
-
-              <TouchableOpacity
-                style={[
-                  styles.loginButton,
-                  resetLoading && styles.disabledButton,
-                ]}
-                onPress={handlePasswordReset}
-                disabled={resetLoading}
-                activeOpacity={0.85}
-              >
-                {resetLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={() => {
-                  setResetVisible(false);
-                  setResetEmail("");
-                }}
-              >
-                <Text style={styles.closeText}>Close</Text>
-              </TouchableOpacity>
-            </ScrollView>
+        <View style={styles.heroCard}>
+          <View style={styles.heroIcon}>
+            <Ionicons name="basket-outline" size={30} color="#FFFFFF" />
           </View>
+
+          <Text style={styles.header}>Customer Login</Text>
+
+          <Text style={styles.subheader}>
+            Login to shop verified farmers, fresh produce, local goods, and Farm2Home marketplace orders.
+          </Text>
         </View>
-      </Modal>
-    </ScrollView>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Welcome Back</Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            placeholderTextColor={ui.muted}
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor={ui.muted}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <TouchableOpacity
+            style={[styles.loginButton, loading && styles.disabledButton]}
+            onPress={loginCustomer}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.loginButtonText}>Login</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => router.push("/customer/register" as any)}
+          >
+            <Text style={styles.secondaryText}>Create Customer Account</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.linkButton}
+            onPress={() => {
+              setResetEmail(email);
+              setResetVisible(true);
+            }}
+          >
+            <Text style={styles.linkText}>Forgot password?</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Modal visible={resetVisible} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                <View style={styles.modalIcon}>
+                  <Ionicons name="key-outline" size={28} color={ui.greenDark} />
+                </View>
+
+                <Text style={styles.modalTitle}>Reset Password</Text>
+
+                <Text style={styles.modalSubtitle}>
+                  Enter your customer email. Farm2Home will send a secure reset link.
+                </Text>
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Customer Email"
+                  placeholderTextColor={ui.muted}
+                  value={resetEmail}
+                  onChangeText={setResetEmail}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                />
+
+                <TouchableOpacity
+                  style={[styles.loginButton, resetLoading && styles.disabledButton]}
+                  onPress={handlePasswordReset}
+                  disabled={resetLoading}
+                  activeOpacity={0.85}
+                >
+                  {resetLoading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => {
+                    setResetVisible(false);
+                    setResetEmail("");
+                  }}
+                >
+                  <Text style={styles.closeText}>Close</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: farmTheme.colors.background,
-  },
-
+  safe: { flex: 1, backgroundColor: ui.bg },
+  page: { flex: 1, backgroundColor: ui.bg },
   content: {
     flexGrow: 1,
-    padding: 22,
-    paddingBottom: 50,
+    padding: 20,
+    paddingBottom: 60,
     justifyContent: "center",
   },
-
+  backButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginBottom: 14,
+  },
+  backText: { color: ui.greenDark, fontWeight: "900" },
+  heroCard: {
+    backgroundColor: ui.greenDark,
+    borderRadius: 28,
+    padding: 22,
+    marginBottom: 16,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
   header: {
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
+    color: "#FFFFFF",
     marginBottom: 8,
   },
-
   subheader: {
-    color: farmTheme.colors.mutedText,
-    lineHeight: 21,
-    marginBottom: 20,
+    color: "#DCFCE7",
+    lineHeight: 22,
     fontWeight: "700",
+    fontSize: 15,
   },
-
-  input: {
-    backgroundColor: "#FFFFFF",
+  card: {
+    backgroundColor: ui.card,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    borderRadius: 14,
+    borderColor: ui.border,
+    borderRadius: 24,
+    padding: 18,
+  },
+  sectionTitle: {
+    color: ui.text,
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: 14,
+  },
+  input: {
+    backgroundColor: ui.soft,
+    borderWidth: 1,
+    borderColor: ui.border,
+    borderRadius: 15,
     padding: 14,
     marginBottom: 12,
-    color: farmTheme.colors.text,
+    color: ui.text,
     fontWeight: "700",
   },
-
   loginButton: {
-    backgroundColor: farmTheme.colors.primary,
-    padding: 18,
-    borderRadius: 16,
-    marginTop: 10,
+    backgroundColor: ui.green,
+    padding: 17,
+    borderRadius: 17,
+    marginTop: 8,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
-
-  disabledButton: {
-    opacity: 0.6,
-  },
-
+  disabledButton: { opacity: 0.6 },
   loginButtonText: {
     color: "#FFFFFF",
     textAlign: "center",
     fontWeight: "900",
     fontSize: 16,
   },
-
-  linkButton: {
-    marginTop: 16,
+  secondaryButton: {
+    backgroundColor: ui.greenSoft,
+    borderRadius: 17,
+    padding: 15,
+    marginTop: 12,
+    alignItems: "center",
   },
-
+  secondaryText: {
+    color: ui.greenDark,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  linkButton: { marginTop: 16 },
   linkText: {
     textAlign: "center",
-    color: farmTheme.colors.primary,
-    fontWeight: "800",
+    color: ui.greenDark,
+    fontWeight: "900",
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "center",
     padding: 22,
   },
-
   modalCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
     padding: 22,
     maxHeight: "90%",
   },
-
+  modalIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 20,
+    backgroundColor: ui.greenSoft,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
   modalTitle: {
-    color: farmTheme.colors.primary,
+    color: ui.text,
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
     marginBottom: 8,
   },
-
   modalSubtitle: {
-    color: farmTheme.colors.mutedText,
+    color: ui.muted,
     fontWeight: "700",
     lineHeight: 22,
     textAlign: "center",
     marginBottom: 18,
   },
-
   closeButton: {
     marginTop: 16,
     alignItems: "center",
   },
-
   closeText: {
-    color: "#B91C1C",
+    color: ui.red,
     fontWeight: "900",
   },
 });

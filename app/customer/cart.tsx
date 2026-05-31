@@ -127,7 +127,7 @@ export default function CustomerCart() {
     return cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
   }, [cart]);
 
-  const serviceFee = subtotal * 0.08;
+  const serviceFee = subtotal * 0.04;
   const estimatedTotal = subtotal + serviceFee;
 
   return (
