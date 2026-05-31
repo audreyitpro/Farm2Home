@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
+  Linking,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -19,15 +20,6 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-import {
-  VerificationRecord,
-  approveVerificationRecord,
-  getPendingVerificationRecords,
-  getVerificationQueue,
-  rejectVerificationRecord,
-  requestMoreInfoForVerificationRecord,
-} from "../data/adminStore";
-
 type FilterType =
   | "all"
   | "farmer"
@@ -35,6 +27,47 @@ type FilterType =
   | "pending"
   | "approved"
   | "rejected";
+
+type VerificationRecord = {
+  id: string;
+  farmerId?: string;
+  carrierId?: string;
+  accountType: string;
+  businessName: string;
+  farmName?: string;
+  companyName?: string;
+  ownerName?: string;
+  email?: string;
+  state?: string;
+  status?: string;
+  complianceStatus?: string;
+  adminReviewStatus?: string;
+  reviewDecision?: string;
+  approved?: boolean;
+  rejected?: boolean;
+  needsMoreInfo?: boolean;
+  reviewed?: boolean;
+  accountActive?: boolean;
+  storeUnlocked?: boolean;
+  complianceSubmitted?: boolean;
+  applicationFeePaid?: boolean;
+  farmerMembershipPaid?: boolean;
+  farmerActivationPaid?: boolean;
+  farmerMonthlySubscriptionPaid?: boolean;
+  stripeAccountId?: string;
+  farmerStripeAccountId?: string;
+  stripePayoutsEnabled?: boolean;
+  stripeChargesEnabled?: boolean;
+  stripeOnboardingComplete?: boolean;
+  pickupDeliveryOption?: string;
+  uploadedDocs?: Record<string, string>;
+  legalChecks?: Record<string, boolean>;
+  documents?: any[];
+  adminNotes?: any[];
+  submittedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
 
 const ui = {
   bg: "#F5F7FB",
@@ -74,8 +107,9 @@ function mapSupabaseRecord(row: any): VerificationRecord {
   return {
     id: row.id,
     farmerId: row.farmer_id || row.id,
+    carrierId: row.carrier_id || "",
     accountType: row.account_type || "FARMER",
-    businessName: row.business_name || row.farm_name || "",
+    businessName: row.business_name || row.farm_name || row.company_name || "",
     farmName: row.farm_name || row.business_name || "",
     companyName: row.company_name || "",
     ownerName: row.owner_name || "",
@@ -90,9 +124,10 @@ function mapSupabaseRecord(row: any): VerificationRecord {
     needsMoreInfo: Boolean(row.needs_more_info),
     reviewed: Boolean(row.reviewed),
     accountActive: Boolean(row.account_active),
+    storeUnlocked: Boolean(row.store_unlocked),
     complianceSubmitted: Boolean(row.compliance_submitted),
-    farmerMembershipPaid: Boolean(row.farmer_membership_paid),
     applicationFeePaid: Boolean(row.application_fee_paid),
+    farmerMembershipPaid: Boolean(row.farmer_membership_paid),
     farmerActivationPaid: Boolean(row.farmer_activation_paid),
     farmerMonthlySubscriptionPaid: Boolean(row.farmer_monthly_subscription_paid),
     stripeAccountId: row.stripe_account_id || "",
@@ -104,11 +139,11 @@ function mapSupabaseRecord(row: any): VerificationRecord {
     uploadedDocs: row.uploaded_docs || {},
     legalChecks: row.legal_checks || {},
     documents,
-    adminNotes: row.admin_notes || [],
+    adminNotes: Array.isArray(row.admin_notes) ? row.admin_notes : [],
     submittedAt: row.submitted_at || row.created_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  } as any;
+  };
 }
 
 export default function AdminDocumentsScreen() {
@@ -134,111 +169,126 @@ export default function AdminDocumentsScreen() {
         .select("*")
         .order("updated_at", { ascending: false });
 
-      if (error) {
-        console.log("SUPABASE ADMIN VERIFICATIONS LOAD ERROR:", error.message);
-      }
+      if (error) throw error;
 
-      const supabaseRecords = Array.isArray(data)
-        ? data.map(mapSupabaseRecord)
-        : [];
-
-      if (supabaseRecords.length > 0) {
-        setRecords(supabaseRecords);
-        return;
-      }
-
-      const pending = await getPendingVerificationRecords();
-      const all = await getVerificationQueue();
-      const combined = pending.length > 0 ? pending : all;
-
-      setRecords(
-        [...combined].sort((a, b) =>
-          String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))
-        )
-      );
-    } catch (error) {
+      const mapped = Array.isArray(data) ? data.map(mapSupabaseRecord) : [];
+      setRecords(mapped);
+    } catch (error: any) {
       console.log("Load admin verification queue error:", error);
+      Alert.alert(
+        "Load Error",
+        error?.message || "Unable to load compliance queue."
+      );
       setRecords([]);
     } finally {
       setRefreshing(false);
     }
   }
 
-  async function updateSupabaseStatus(
-    id: string,
+  async function updateBothTables(
+    item: VerificationRecord,
     status: "APPROVED" | "REJECTED" | "MORE_INFO_REQUIRED",
     note?: string
   ) {
     const now = new Date().toISOString();
 
-    const payload: any = {
-      status,
-      updated_at: now,
-      reviewed: true,
-      admin_review_status:
-        status === "APPROVED"
-          ? "approved"
-          : status === "REJECTED"
-          ? "rejected"
-          : "needs_more_info",
-      review_decision:
-        status === "APPROVED"
-          ? "approved"
-          : status === "REJECTED"
-          ? "rejected"
-          : "needs_more_info",
-      approved: status === "APPROVED",
-      rejected: status === "REJECTED",
-      needs_more_info: status === "MORE_INFO_REQUIRED",
-      account_active: status === "APPROVED",
-      compliance_status:
-        status === "APPROVED"
-          ? "approved"
-          : status === "REJECTED"
-          ? "rejected"
-          : "needs_more_info",
-    };
+    const approved = status === "APPROVED";
+    const rejected = status === "REJECTED";
+    const needsMoreInfo = status === "MORE_INFO_REQUIRED";
 
-    if (note) {
-      payload.admin_notes = [
-        {
+    const adminReviewStatus = approved
+      ? "approved"
+      : rejected
+      ? "rejected"
+      : "needs_more_info";
+
+    const complianceStatus = approved
+      ? "approved"
+      : rejected
+      ? "rejected"
+      : "needs_more_info";
+
+    const noteObject = note
+      ? {
           id: `note_${Date.now()}`,
           note,
           createdAt: now,
           status,
-        },
-      ];
+        }
+      : null;
+
+    const adminPayload: any = {
+      status,
+      compliance_status: complianceStatus,
+      admin_review_status: adminReviewStatus,
+      review_decision: adminReviewStatus,
+      approved,
+      rejected,
+      needs_more_info: needsMoreInfo,
+      reviewed: true,
+      account_active: approved,
+      store_unlocked: approved,
+      updated_at: now,
+    };
+
+    if (noteObject) {
+      adminPayload.admin_notes = [...(item.adminNotes || []), noteObject];
     }
 
-    const { error } = await supabase
+    const { error: adminError } = await supabase
       .from("admin_verifications")
-      .update(payload)
-      .eq("id", id);
+      .update(adminPayload)
+      .eq("id", item.id);
 
-    if (error) {
-      console.log("SUPABASE ADMIN STATUS UPDATE ERROR:", error.message);
-      throw new Error(error.message);
+    if (adminError) throw new Error(adminError.message);
+
+    if (item.accountType !== "FREIGHT_CARRIER") {
+      const farmerPayload: any = {
+        compliance_status: complianceStatus,
+        admin_review_status: adminReviewStatus,
+        review_decision: adminReviewStatus,
+        approved,
+        rejected,
+        needs_more_info: needsMoreInfo,
+        reviewed: true,
+        account_active: approved,
+        store_unlocked: approved,
+        updated_at: now,
+      };
+
+      if (approved) {
+        farmerPayload.approved_at = now;
+        farmerPayload.membership_status = "approved_pending_subscription";
+      }
+
+      const { error: farmerError } = await supabase
+        .from("farmers")
+        .update(farmerPayload)
+        .eq("id", item.farmerId || item.id);
+
+      if (farmerError) throw new Error(farmerError.message);
     }
   }
 
-  async function approveRecord(id: string) {
+  async function approveRecord(item: VerificationRecord) {
     try {
-      await updateSupabaseStatus(id, "APPROVED");
-      await approveVerificationRecord(id);
+      await updateBothTables(item, "APPROVED");
 
-      Alert.alert("Approved", "This application has been approved and marked active.");
+      Alert.alert(
+        "Approved",
+        "Farmer approved. Store setup is now unlocked. Monthly membership starts after approval."
+      );
+
       await loadRecords();
     } catch (error: any) {
       Alert.alert("Approval Error", error?.message || "Unable to approve.");
     }
   }
 
-  async function rejectRecord(id: string) {
+  async function rejectRecord(item: VerificationRecord) {
     try {
-      const reason = rejectNotes[id] || "Rejected by admin.";
-
-      await updateSupabaseStatus(id, "REJECTED", reason);
-      await rejectVerificationRecord(id, reason);
+      const reason = rejectNotes[item.id] || "Rejected by admin.";
+      await updateBothTables(item, "REJECTED", reason);
 
       Alert.alert("Rejected", "This application has been rejected.");
       await loadRecords();
@@ -247,17 +297,18 @@ export default function AdminDocumentsScreen() {
     }
   }
 
-  async function requestMoreInfo(id: string) {
+  async function requestMoreInfo(item: VerificationRecord) {
     try {
-      const note = infoNotes[id] || "More information is required.";
-
-      await updateSupabaseStatus(id, "MORE_INFO_REQUIRED", note);
-      await requestMoreInfoForVerificationRecord(id, note);
+      const note = infoNotes[item.id] || "More information is required.";
+      await updateBothTables(item, "MORE_INFO_REQUIRED", note);
 
       Alert.alert("More Info Requested", "This record was marked for more info.");
       await loadRecords();
     } catch (error: any) {
-      Alert.alert("Request Error", error?.message || "Unable to request more information.");
+      Alert.alert(
+        "Request Error",
+        error?.message || "Unable to request more information."
+      );
     }
   }
 
@@ -269,11 +320,10 @@ export default function AdminDocumentsScreen() {
         return ui.red;
       case "MORE_INFO_REQUIRED":
         return ui.orange;
-      case "STRIPE_COMPLETE_PENDING_REVIEW":
-      case "STRIPE_CONNECTED_PENDING_REVIEW":
       case "PENDING_ADMIN_REVIEW":
       case "PENDING_VERIFICATION":
       case "DOCUMENTS_SUBMITTED":
+      case "STRIPE_COMPLETE_PENDING_REVIEW":
         return ui.blue;
       case "STRIPE_PENDING":
       case "STRIPE_STARTED":
@@ -302,7 +352,12 @@ export default function AdminDocumentsScreen() {
   }
 
   function getDisplayName(item: VerificationRecord) {
-    return item.businessName || item.farmName || item.companyName || "Farm2Home Applicant";
+    return (
+      item.businessName ||
+      item.farmName ||
+      item.companyName ||
+      "Farm2Home Applicant"
+    );
   }
 
   const filteredRecords = useMemo(() => {
@@ -340,13 +395,22 @@ export default function AdminDocumentsScreen() {
   }, [records, searchText, filter]);
 
   const summary = useMemo(() => {
-    const farmers = records.filter((item) => item.accountType === "FARMER").length;
-    const freight = records.filter((item) => item.accountType === "FREIGHT_CARRIER").length;
-    const approved = records.filter((item) => item.status === "APPROVED").length;
-    const rejected = records.filter((item) => item.status === "REJECTED").length;
-    const pending = records.filter(
-      (item) => item.status !== "APPROVED" && item.status !== "REJECTED"
+    const farmers = records.filter(
+      (item) => item.accountType !== "FREIGHT_CARRIER"
     ).length;
+    const freight = records.filter(
+      (item) => item.accountType === "FREIGHT_CARRIER"
+    ).length;
+    const approved = records.filter(
+      (item) => String(item.status).toUpperCase() === "APPROVED"
+    ).length;
+    const rejected = records.filter(
+      (item) => String(item.status).toUpperCase() === "REJECTED"
+    ).length;
+    const pending = records.filter((item) => {
+      const status = String(item.status).toUpperCase();
+      return status !== "APPROVED" && status !== "REJECTED";
+    }).length;
 
     return {
       total: records.length,
@@ -373,6 +437,31 @@ export default function AdminDocumentsScreen() {
     );
   }
 
+  async function openDocument(uri?: string) {
+    if (!uri) {
+      Alert.alert("No Document", "This document has no saved URL.");
+      return;
+    }
+
+    if (
+      uri.startsWith("stripe://") ||
+      uri.startsWith("agreement://") ||
+      uri.startsWith("legal-checklist://")
+    ) {
+      Alert.alert("Saved Item", uri);
+      return;
+    }
+
+    const canOpen = await Linking.canOpenURL(uri);
+
+    if (!canOpen) {
+      Alert.alert("Open Failed", "Unable to open this document link.");
+      return;
+    }
+
+    await Linking.openURL(uri);
+  }
+
   function renderRecord({ item }: { item: VerificationRecord }) {
     const documentCount = item.documents?.length || 0;
     const uploadedDocCount = Object.keys(item.uploadedDocs || {}).length;
@@ -382,7 +471,11 @@ export default function AdminDocumentsScreen() {
         <View style={styles.header}>
           <View style={styles.accountIcon}>
             <Ionicons
-              name={item.accountType === "FREIGHT_CARRIER" ? "trail-sign-outline" : "leaf-outline"}
+              name={
+                item.accountType === "FREIGHT_CARRIER"
+                  ? "trail-sign-outline"
+                  : "leaf-outline"
+              }
               size={22}
               color={ui.primary}
             />
@@ -396,7 +489,12 @@ export default function AdminDocumentsScreen() {
             <Text style={styles.meta}>{item.email || "Email not listed"}</Text>
           </View>
 
-          <View style={[styles.statusBadge, { backgroundColor: statusColor(item.status) }]}>
+          <View
+            style={[
+              styles.statusBadge,
+              { backgroundColor: statusColor(item.status) },
+            ]}
+          >
             <Text style={styles.statusText}>{prettyStatus(item.status)}</Text>
           </View>
         </View>
@@ -404,19 +502,49 @@ export default function AdminDocumentsScreen() {
         <View style={styles.detailBox}>
           <Text style={styles.detailTitle}>Compliance Details</Text>
 
-          <DetailRow label="ID" value={String(item.farmerId || item.carrierId || item.id)} />
+          <DetailRow
+            label="ID"
+            value={String(item.farmerId || item.carrierId || item.id)}
+          />
           <DetailRow label="State" value={item.state || "Not provided"} />
           <DetailRow
-            label="Stripe Account"
-            value={item.stripeAccountId || item.farmerStripeAccountId || "Not connected"}
+            label="Application Fee"
+            value={item.applicationFeePaid ? "Paid" : "Not verified"}
           />
-          <DetailRow label="Stripe Payouts" value={item.stripePayoutsEnabled ? "Enabled" : "Pending"} />
-          <DetailRow label="Stripe Charges" value={item.stripeChargesEnabled ? "Enabled" : "Pending"} />
-          <DetailRow label="Stripe Onboarding" value={item.stripeOnboardingComplete ? "Complete" : "Pending"} />
-          <DetailRow label="Pickup / Delivery" value={item.pickupDeliveryOption || "Not selected"} />
-          <DetailRow label="Documents" value={`${documentCount} saved • ${uploadedDocCount} checklist items`} />
+          <DetailRow
+            label="Stripe Account"
+            value={
+              item.stripeAccountId ||
+              item.farmerStripeAccountId ||
+              "Not connected"
+            }
+          />
+          <DetailRow
+            label="Stripe Payouts"
+            value={item.stripePayoutsEnabled ? "Enabled" : "Pending"}
+          />
+          <DetailRow
+            label="Stripe Charges"
+            value={item.stripeChargesEnabled ? "Enabled" : "Pending"}
+          />
+          <DetailRow
+            label="Stripe Onboarding"
+            value={item.stripeOnboardingComplete ? "Complete" : "Pending"}
+          />
+          <DetailRow
+            label="Pickup / Delivery"
+            value={item.pickupDeliveryOption || "Not selected"}
+          />
+          <DetailRow
+            label="Documents"
+            value={`${documentCount} saved • ${uploadedDocCount} checklist items`}
+          />
           <DetailRow label="Submitted" value={formatDate(item.submittedAt)} />
           <DetailRow label="Updated" value={formatDate(item.updatedAt)} />
+          <DetailRow
+            label="Store Status"
+            value={item.storeUnlocked ? "Unlocked" : "Locked"}
+          />
         </View>
 
         {!!item.documents?.length && (
@@ -424,16 +552,29 @@ export default function AdminDocumentsScreen() {
             <Text style={styles.sectionTitle}>Uploaded Documents</Text>
 
             {item.documents.map((doc: any) => (
-              <View key={doc.id} style={styles.documentRow}>
-                <Ionicons name="document-text-outline" size={18} color={ui.primary} />
+              <TouchableOpacity
+                key={doc.id}
+                style={styles.documentRow}
+                onPress={() => openDocument(doc.uri)}
+              >
+                <Ionicons
+                  name="document-text-outline"
+                  size={18}
+                  color={ui.primary}
+                />
+
                 <View style={{ flex: 1 }}>
                   <Text style={styles.documentName}>{doc.name || doc.type}</Text>
                   <Text style={styles.documentMeta}>
                     {doc.type} • {doc.status}
                   </Text>
-                  {!!doc.uri && <Text style={styles.documentUri}>{doc.uri}</Text>}
+                  {!!doc.uri && (
+                    <Text numberOfLines={2} style={styles.documentUri}>
+                      {doc.uri}
+                    </Text>
+                  )}
                 </View>
-              </View>
+              </TouchableOpacity>
             ))}
           </View>
         )}
@@ -477,18 +618,39 @@ export default function AdminDocumentsScreen() {
         />
 
         <View style={styles.buttonRow}>
-          <TouchableOpacity style={styles.approveButton} onPress={() => approveRecord(item.id)}>
-            <Ionicons name="checkmark-circle-outline" size={17} color="#FFFFFF" />
+          <TouchableOpacity
+            style={styles.approveButton}
+            onPress={() => approveRecord(item)}
+          >
+            <Ionicons
+              name="checkmark-circle-outline"
+              size={17}
+              color="#FFFFFF"
+            />
             <Text style={styles.buttonText}>Approve</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.moreInfoButton} onPress={() => requestMoreInfo(item.id)}>
-            <Ionicons name="alert-circle-outline" size={17} color="#FFFFFF" />
+          <TouchableOpacity
+            style={styles.moreInfoButton}
+            onPress={() => requestMoreInfo(item)}
+          >
+            <Ionicons
+              name="alert-circle-outline"
+              size={17}
+              color="#FFFFFF"
+            />
             <Text style={styles.buttonText}>More Info</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.rejectButton} onPress={() => rejectRecord(item.id)}>
-            <Ionicons name="close-circle-outline" size={17} color="#FFFFFF" />
+          <TouchableOpacity
+            style={styles.rejectButton}
+            onPress={() => rejectRecord(item)}
+          >
+            <Ionicons
+              name="close-circle-outline"
+              size={17}
+              color="#FFFFFF"
+            />
             <Text style={styles.buttonText}>Reject</Text>
           </TouchableOpacity>
         </View>
@@ -513,21 +675,47 @@ export default function AdminDocumentsScreen() {
             </View>
           </View>
 
-          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
-          <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" active />
-          <NavButton label="Compliance" icon="shield-checkmark-outline" route="/admin/compliance-review" />
-          <NavButton label="Business Docs" icon="folder-open-outline" route="/admin/business-documents" />
-          <NavButton label="Platform Health" icon="pulse-outline" route="/admin/platform-health" />
-          <NavButton label="Settings" icon="settings-outline" route="/admin/admin-settings" />
+          <NavButton
+            label="Dashboard"
+            icon="grid-outline"
+            route="/admin/dashboard"
+          />
+          <NavButton
+            label="Documents"
+            icon="document-text-outline"
+            route="/admin/documents"
+            active
+          />
+          <NavButton
+            label="Compliance"
+            icon="shield-checkmark-outline"
+            route="/admin/compliance-review"
+          />
+          <NavButton
+            label="Business Docs"
+            icon="folder-open-outline"
+            route="/admin/business-documents"
+          />
+          <NavButton
+            label="Platform Health"
+            icon="pulse-outline"
+            route="/admin/platform-health"
+          />
+          <NavButton
+            label="Settings"
+            icon="settings-outline"
+            route="/admin/admin-settings"
+          />
         </View>
 
         <View style={styles.main}>
           <View style={styles.topbar}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.welcome}>Farm2Home Admin Portal</Text>
               <Text style={styles.pageTitle}>AI Compliance Queue</Text>
               <Text style={styles.pageSub}>
-                Review farmer and freight submissions, Stripe readiness, uploaded documents, and final approval.
+                Review farmer submissions, Stripe readiness, uploaded documents,
+                and final approval.
               </Text>
             </View>
 
@@ -539,12 +727,41 @@ export default function AdminDocumentsScreen() {
 
           <ScrollView showsVerticalScrollIndicator={false}>
             <View style={styles.statsGrid}>
-              <SummaryCard label="Total" value={String(summary.total)} icon="folder-outline" accent />
-              <SummaryCard label="Pending" value={String(summary.pending)} icon="time-outline" warning />
-              <SummaryCard label="Approved" value={String(summary.approved)} icon="checkmark-circle-outline" success />
-              <SummaryCard label="Rejected" value={String(summary.rejected)} icon="close-circle-outline" danger />
-              <SummaryCard label="Farmers" value={String(summary.farmers)} icon="leaf-outline" success />
-              <SummaryCard label="Freight" value={String(summary.freight)} icon="trail-sign-outline" />
+              <SummaryCard
+                label="Total"
+                value={String(summary.total)}
+                icon="folder-outline"
+                accent
+              />
+              <SummaryCard
+                label="Pending"
+                value={String(summary.pending)}
+                icon="time-outline"
+                warning
+              />
+              <SummaryCard
+                label="Approved"
+                value={String(summary.approved)}
+                icon="checkmark-circle-outline"
+                success
+              />
+              <SummaryCard
+                label="Rejected"
+                value={String(summary.rejected)}
+                icon="close-circle-outline"
+                danger
+              />
+              <SummaryCard
+                label="Farmers"
+                value={String(summary.farmers)}
+                icon="leaf-outline"
+                success
+              />
+              <SummaryCard
+                label="Freight"
+                value={String(summary.freight)}
+                icon="trail-sign-outline"
+              />
             </View>
 
             <View style={styles.searchCard}>
@@ -573,8 +790,12 @@ export default function AdminDocumentsScreen() {
 
             <View style={styles.dataSection}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionHeaderTitle}>Compliance Records</Text>
-                <Text style={styles.sectionLink}>{filteredRecords.length} records</Text>
+                <Text style={styles.sectionHeaderTitle}>
+                  Compliance Records
+                </Text>
+                <Text style={styles.sectionLink}>
+                  {filteredRecords.length} records
+                </Text>
               </View>
 
               <FlatList
@@ -583,13 +804,16 @@ export default function AdminDocumentsScreen() {
                 renderItem={renderRecord}
                 scrollEnabled={false}
                 refreshControl={
-                  <RefreshControl refreshing={refreshing} onRefresh={loadRecords} />
+                  <RefreshControl
+                    refreshing={refreshing}
+                    onRefresh={loadRecords}
+                  />
                 }
                 contentContainerStyle={{ paddingBottom: 80 }}
                 ListEmptyComponent={
                   <EmptyCard
                     title="No Compliance Records"
-                    text="Farmer and freight applications will appear here after they submit for admin review."
+                    text="Farmer applications will appear here after they submit for admin review."
                     onRefresh={loadRecords}
                   />
                 }
@@ -688,7 +912,9 @@ function NavButton({
       onPress={() => router.push(route as any)}
     >
       <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
-      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+      <Text style={[styles.navText, active && styles.navTextActive]}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -704,7 +930,12 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 12,
   },
-  logoRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 },
+  logoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
+  },
   logoMark: {
     width: 42,
     height: 42,
@@ -740,10 +971,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
   },
   welcome: { color: ui.muted, fontWeight: "800", marginBottom: 4 },
   pageTitle: { color: ui.text, fontSize: 26, fontWeight: "900" },
-  pageSub: { color: ui.muted, marginTop: 4, fontWeight: "700", maxWidth: 780 },
+  pageSub: {
+    color: ui.muted,
+    marginTop: 4,
+    fontWeight: "700",
+    maxWidth: 780,
+  },
   refreshPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -754,7 +991,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   refreshPillText: { color: ui.primary, fontWeight: "900" },
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 14 },
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginBottom: 14,
+  },
   summaryCard: {
     width: "48%",
     backgroundColor: ui.card,
@@ -855,7 +1097,12 @@ const styles = StyleSheet.create({
     borderColor: ui.border,
     marginTop: 8,
   },
-  detailTitle: { color: ui.text, fontWeight: "900", marginBottom: 8, fontSize: 16 },
+  detailTitle: {
+    color: ui.text,
+    fontWeight: "900",
+    marginBottom: 8,
+    fontSize: 16,
+  },
   detailRow: { marginBottom: 8 },
   detailLabel: {
     color: ui.primary,
@@ -863,9 +1110,19 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  detailText: { color: ui.text, fontWeight: "700", marginTop: 3, lineHeight: 20 },
+  detailText: {
+    color: ui.text,
+    fontWeight: "700",
+    marginTop: 3,
+    lineHeight: 20,
+  },
   section: { marginTop: 14 },
-  sectionTitle: { fontWeight: "900", color: ui.text, marginBottom: 8, fontSize: 16 },
+  sectionTitle: {
+    fontWeight: "900",
+    color: ui.text,
+    marginBottom: 8,
+    fontSize: 16,
+  },
   documentRow: {
     backgroundColor: ui.card,
     borderRadius: 14,
@@ -878,8 +1135,18 @@ const styles = StyleSheet.create({
   },
   documentName: { color: ui.text, fontWeight: "900" },
   documentMeta: { color: ui.muted, fontWeight: "700", marginTop: 4 },
-  documentUri: { color: ui.muted, fontWeight: "600", marginTop: 6, fontSize: 11 },
-  noteText: { color: ui.text, fontWeight: "700", lineHeight: 21, marginBottom: 4 },
+  documentUri: {
+    color: ui.muted,
+    fontWeight: "600",
+    marginTop: 6,
+    fontSize: 11,
+  },
+  noteText: {
+    color: ui.text,
+    fontWeight: "700",
+    lineHeight: 21,
+    marginBottom: 4,
+  },
   noteInput: {
     backgroundColor: ui.card,
     borderWidth: 1,

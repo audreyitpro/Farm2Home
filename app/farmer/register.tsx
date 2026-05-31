@@ -13,13 +13,9 @@ import {
   View,
 } from "react-native";
 import { router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
 
 import { API_BASE_URL } from "../config/api";
-
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
+import { supabase } from "../services/supabaseClient";
 
 const productOptions = [
   "Produce",
@@ -42,6 +38,18 @@ const productOptions = [
 ];
 
 const PENDING_FARMER_KEY = "pendingFarmerApplication";
+
+function normalizeEmail(value: string) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeUsername(value: string) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
+}
 
 export default function FarmerRegister() {
   const [ownerName, setOwnerName] = useState("");
@@ -73,14 +81,6 @@ export default function FarmerRegister() {
     );
   }
 
-  function normalizeEmail(value: string) {
-    return String(value || "").trim().toLowerCase();
-  }
-
-  function normalizeUsername(value: string) {
-    return String(value || "").trim().toLowerCase();
-  }
-
   async function notifyAdminFarmerVerification(farmer: any) {
     try {
       const response = await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
@@ -94,7 +94,7 @@ export default function FarmerRegister() {
         console.log("Farmer admin email failed:", data);
       }
     } catch (error) {
-      console.log("Farmer admin email error:", error);
+      console.log("Farmer admin email ignored:", error);
     }
   }
 
@@ -111,36 +111,47 @@ export default function FarmerRegister() {
       id: farmer.id,
       farmer_id: farmer.id,
       account_type: "FARMER",
+
       farm_name: farmer.farm_name,
       business_name: farmer.business_name,
       owner_name: farmer.owner_name,
       email: farmer.email,
       phone: farmer.phone,
+
       business_address: farmer.business_address,
       city: farmer.city,
       state: farmer.state,
       zip_code: farmer.zip_code,
       selected_products: farmer.selected_products,
+
       documents: [],
+      uploaded_docs: {},
+      legal_checks: {},
+
       status: "STARTED",
       compliance_status: "in_progress",
       admin_review_status: "not_submitted",
       review_decision: "not_submitted",
+
       approved: false,
       rejected: false,
       reviewed: false,
       needs_more_info: false,
       account_active: false,
       store_unlocked: false,
+
+      compliance_submitted: false,
       application_fee_paid: false,
       farmer_membership_paid: false,
       monthly_membership_started: false,
       monthly_membership_required_after_approval: true,
+
       stripe_account_id: "",
       farmer_stripe_account_id: "",
       stripe_onboarding_complete: false,
       stripe_payouts_enabled: false,
       stripe_charges_enabled: false,
+
       created_at: farmer.created_at,
       updated_at: farmer.updated_at,
     };
@@ -150,7 +161,7 @@ export default function FarmerRegister() {
       .upsert(adminRecord, { onConflict: "id" });
 
     if (error) {
-      console.log("Admin verification insert error:", error.message);
+      throw new Error(error.message);
     }
   }
 
@@ -162,7 +173,8 @@ export default function FarmerRegister() {
       !email.trim() ||
       !phone.trim() ||
       !username.trim() ||
-      !password.trim()
+      !password.trim() ||
+      !confirmPassword.trim()
     ) {
       Alert.alert(
         "Missing Info",
@@ -171,7 +183,7 @@ export default function FarmerRegister() {
       return;
     }
 
-    if (!email.includes("@")) {
+    if (!isValidEmail(email)) {
       Alert.alert("Invalid Email", "Please enter a valid email address.");
       return;
     }
@@ -210,9 +222,23 @@ export default function FarmerRegister() {
       const cleanUsername = normalizeUsername(username);
       const cleanAddress = businessAddress.trim();
       const cleanCity = city.trim();
-      const cleanState = stateValue.trim().toUpperCase();
+      const cleanState = stateValue.trim().toUpperCase().slice(0, 2) || "MI";
       const cleanZip = zipCode.trim();
       const now = new Date().toISOString();
+
+      const { data: existingFarmer } = await supabase
+        .from("farmers")
+        .select("id,email,username")
+        .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
+        .maybeSingle();
+
+      if (existingFarmer) {
+        Alert.alert(
+          "Account Already Exists",
+          "A farmer account with this email or username already exists. Please login instead."
+        );
+        return;
+      }
 
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -247,31 +273,37 @@ export default function FarmerRegister() {
         id: farmerId,
         farmer_id: farmerId,
         role: "farmer",
+
         owner_name: cleanOwnerName,
         farm_name: cleanFarmName,
         business_name: cleanBusinessName,
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
+
         business_address: cleanAddress,
         city: cleanCity,
         state: cleanState,
         zip_code: cleanZip,
         selected_products: selectedProducts,
+
         approved: false,
         rejected: false,
         reviewed: false,
         needs_more_info: false,
         account_active: false,
         store_unlocked: false,
+
         compliance_submitted: false,
         compliance_status: "in_progress",
         admin_review_status: "not_submitted",
         review_decision: "not_submitted",
+
         application_fee_paid: false,
         farmer_membership_paid: false,
         monthly_membership_started: false,
         monthly_membership_required_after_approval: true,
+
         stripe_account_id: "",
         farmer_stripe_account_id: "",
         stripe_onboarding_complete: false,
@@ -279,9 +311,11 @@ export default function FarmerRegister() {
         stripe_charges_enabled: false,
         payouts_enabled: false,
         charges_enabled: false,
+
         products: [],
         notifications_enabled: false,
         expo_push_token: "",
+
         created_at: now,
         updated_at: now,
       };
@@ -301,31 +335,37 @@ export default function FarmerRegister() {
         id: farmerId,
         farmerId,
         role: "farmer",
+
         ownerName: cleanOwnerName,
         farmName: cleanFarmName,
         businessName: cleanBusinessName,
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
+
         businessAddress: cleanAddress,
         city: cleanCity,
         state: cleanState,
         zipCode: cleanZip,
         selectedProducts,
+
         approved: false,
         rejected: false,
         reviewed: false,
         needsMoreInfo: false,
         accountActive: false,
         storeUnlocked: false,
+
         complianceSubmitted: false,
         complianceStatus: "in_progress",
         adminReviewStatus: "not_submitted",
         reviewDecision: "not_submitted",
+
         applicationFeePaid: false,
         farmerMembershipPaid: false,
         monthlyMembershipStarted: false,
         monthlyMembershipRequiredAfterApproval: true,
+
         stripeAccountId: "",
         farmerStripeAccountId: "",
         stripeOnboardingComplete: false,
@@ -333,6 +373,7 @@ export default function FarmerRegister() {
         stripeChargesEnabled: false,
         payoutsEnabled: false,
         chargesEnabled: false,
+
         products: [],
         createdAt: now,
         updatedAt: now,
@@ -340,7 +381,7 @@ export default function FarmerRegister() {
 
       await saveLocalFarmerSession(localFarmer);
 
-      await notifyAdminFarmerVerification({
+      notifyAdminFarmerVerification({
         farmerId,
         ownerName: cleanOwnerName,
         farmName: cleanFarmName,
@@ -354,14 +395,13 @@ export default function FarmerRegister() {
         selectedProducts,
       });
 
-      Alert.alert(
-        "Farmer Account Created",
-        "Continue to compliance verification and Stripe payout setup."
-      );
-
-      router.push({
+      router.replace({
         pathname: "/farmer/compliance-upload",
-        params: { farmerId },
+        params: {
+          farmerId,
+          email: cleanEmail,
+          businessName: cleanBusinessName,
+        },
       } as any);
     } catch (error: any) {
       console.log("Farmer registration error:", error);
@@ -405,22 +445,111 @@ export default function FarmerRegister() {
         <Text style={styles.priceText}>Marketplace Service Fee: 4%</Text>
       </View>
 
-      <TextInput style={styles.input} placeholder="Owner Name" placeholderTextColor="#8A8F98" value={ownerName} onChangeText={setOwnerName} />
-      <TextInput style={styles.input} placeholder="Farm Name" placeholderTextColor="#8A8F98" value={farmName} onChangeText={setFarmName} />
-      <TextInput style={styles.input} placeholder="Business Name" placeholderTextColor="#8A8F98" value={businessName} onChangeText={setBusinessName} />
-      <TextInput style={styles.input} placeholder="Email Address" placeholderTextColor="#8A8F98" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
-      <TextInput style={styles.input} placeholder="Phone Number" placeholderTextColor="#8A8F98" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+      <TextInput
+        style={styles.input}
+        placeholder="Owner Name"
+        placeholderTextColor="#8A8F98"
+        value={ownerName}
+        onChangeText={setOwnerName}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Farm Name"
+        placeholderTextColor="#8A8F98"
+        value={farmName}
+        onChangeText={setFarmName}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Business Name"
+        placeholderTextColor="#8A8F98"
+        value={businessName}
+        onChangeText={setBusinessName}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Email Address"
+        placeholderTextColor="#8A8F98"
+        autoCapitalize="none"
+        keyboardType="email-address"
+        value={email}
+        onChangeText={setEmail}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Phone Number"
+        placeholderTextColor="#8A8F98"
+        keyboardType="phone-pad"
+        value={phone}
+        onChangeText={setPhone}
+      />
 
       <Text style={styles.sectionTitle}>Create Farmer Login</Text>
 
-      <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#8A8F98" autoCapitalize="none" value={username} onChangeText={setUsername} />
-      <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#8A8F98" secureTextEntry value={password} onChangeText={setPassword} />
-      <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#8A8F98" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} />
+      <TextInput
+        style={styles.input}
+        placeholder="Create Username"
+        placeholderTextColor="#8A8F98"
+        autoCapitalize="none"
+        value={username}
+        onChangeText={setUsername}
+      />
 
-      <TextInput style={styles.input} placeholder="Business Address" placeholderTextColor="#8A8F98" value={businessAddress} onChangeText={setBusinessAddress} />
-      <TextInput style={styles.input} placeholder="City" placeholderTextColor="#8A8F98" value={city} onChangeText={setCity} />
-      <TextInput style={styles.input} placeholder="State" placeholderTextColor="#8A8F98" value={stateValue} onChangeText={setStateValue} />
-      <TextInput style={styles.input} placeholder="Zip Code" placeholderTextColor="#8A8F98" keyboardType="numeric" value={zipCode} onChangeText={setZipCode} />
+      <TextInput
+        style={styles.input}
+        placeholder="Create Password"
+        placeholderTextColor="#8A8F98"
+        secureTextEntry
+        value={password}
+        onChangeText={setPassword}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Confirm Password"
+        placeholderTextColor="#8A8F98"
+        secureTextEntry
+        value={confirmPassword}
+        onChangeText={setConfirmPassword}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Business Address"
+        placeholderTextColor="#8A8F98"
+        value={businessAddress}
+        onChangeText={setBusinessAddress}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="City"
+        placeholderTextColor="#8A8F98"
+        value={city}
+        onChangeText={setCity}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="State"
+        placeholderTextColor="#8A8F98"
+        value={stateValue}
+        onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))}
+        maxLength={2}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Zip Code"
+        placeholderTextColor="#8A8F98"
+        keyboardType="numeric"
+        value={zipCode}
+        onChangeText={setZipCode}
+      />
 
       <Text style={styles.sectionTitle}>Select Certified Products On Your Farm</Text>
 
@@ -435,7 +564,9 @@ export default function FarmerRegister() {
               onPress={() => toggleProduct(product)}
               activeOpacity={0.85}
             >
-              <Text style={[styles.productText, active && styles.productTextActive]}>
+              <Text
+                style={[styles.productText, active && styles.productTextActive]}
+              >
                 {product}
               </Text>
             </TouchableOpacity>
@@ -446,12 +577,41 @@ export default function FarmerRegister() {
       <View style={styles.legalBox}>
         <Text style={styles.legalTitle}>Farmer Onboarding Agreement</Text>
 
-        <Agreement label="I understand I am an independent seller and not an employee, agent, or partner of Farm2Home." value={a1} onPress={() => setA1(!a1)} />
-        <Agreement label="I accept full responsibility for food quality, safety, storage, packaging, labeling, and product accuracy." value={a2} onPress={() => setA2(!a2)} />
-        <Agreement label="I certify I comply with Michigan and federal laws required to sell my products." value={a3} onPress={() => setA3(!a3)} />
-        <Agreement label="I agree to resolve customer complaints through refund, replacement, or credit when appropriate." value={a4} onPress={() => setA4(!a4)} />
-        <Agreement label="I agree to indemnify and hold harmless Farm2Home and ASO Developments LLC from claims related to my products, operations, or legal violations." value={a5} onPress={() => setA5(!a5)} />
-        <Agreement label="I accept Farm2Home service fees, membership fees, payout terms, and platform policies." value={a6} onPress={() => setA6(!a6)} />
+        <Agreement
+          label="I understand I am an independent seller and not an employee, agent, or partner of Farm2Home."
+          value={a1}
+          onPress={() => setA1(!a1)}
+        />
+
+        <Agreement
+          label="I accept full responsibility for food quality, safety, storage, packaging, labeling, and product accuracy."
+          value={a2}
+          onPress={() => setA2(!a2)}
+        />
+
+        <Agreement
+          label="I certify I comply with Michigan and federal laws required to sell my products."
+          value={a3}
+          onPress={() => setA3(!a3)}
+        />
+
+        <Agreement
+          label="I agree to resolve customer complaints through refund, replacement, or credit when appropriate."
+          value={a4}
+          onPress={() => setA4(!a4)}
+        />
+
+        <Agreement
+          label="I agree to indemnify and hold harmless Farm2Home and ASO Developments LLC from claims related to my products, operations, or legal violations."
+          value={a5}
+          onPress={() => setA5(!a5)}
+        />
+
+        <Agreement
+          label="I accept Farm2Home service fees, membership fees, payout terms, and platform policies."
+          value={a6}
+          onPress={() => setA6(!a6)}
+        />
       </View>
 
       <TouchableOpacity
@@ -492,6 +652,7 @@ function Agreement({
       <View style={[styles.fakeCheckbox, value && styles.fakeCheckboxActive]}>
         <Text style={styles.fakeCheckboxText}>{value ? "✓" : ""}</Text>
       </View>
+
       <Text style={styles.agreementText}>{label}</Text>
     </TouchableOpacity>
   );
@@ -543,7 +704,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: "#111111",
   },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 20 },
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 20,
+  },
   productChip: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -569,7 +735,11 @@ const styles = StyleSheet.create({
     color: "#111111",
     marginBottom: 12,
   },
-  row: { flexDirection: "row", alignItems: "flex-start", marginBottom: 13 },
+  row: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 13,
+  },
   fakeCheckbox: {
     width: 22,
     height: 22,

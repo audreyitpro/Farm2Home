@@ -1,3 +1,5 @@
+// app/farmer/dashboard.tsx
+
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -41,7 +43,12 @@ const COLORS = {
 const reviews = [
   { id: 1, customer: "Angela", rating: 5, text: "Fresh eggs and fast pickup!" },
   { id: 2, customer: "Marcus", rating: 5, text: "Great greens. Very fresh." },
-  { id: 3, customer: "Tanya", rating: 4, text: "Good quality and friendly farmer." },
+  {
+    id: 3,
+    customer: "Tanya",
+    rating: 4,
+    text: "Good quality and friendly farmer.",
+  },
 ];
 
 function getStock(product: Product) {
@@ -63,7 +70,9 @@ export default function FarmerDashboard() {
   const [farmName, setFarmName] = useState("My Farm");
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
-  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>({});
+  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>(
+    {}
+  );
   const [loading, setLoading] = useState(true);
 
   useFocusEffect(
@@ -71,6 +80,39 @@ export default function FarmerDashboard() {
       loadFarmerProducts();
     }, [])
   );
+
+  function isApprovedFarmer(farmer: any) {
+    return (
+      farmer.approved === true ||
+      farmer.complianceStatus === "approved" ||
+      farmer.compliance_status === "approved" ||
+      farmer.adminReviewStatus === "approved" ||
+      farmer.admin_review_status === "approved" ||
+      farmer.reviewDecision === "approved" ||
+      farmer.review_decision === "approved"
+    );
+  }
+
+  function isStoreUnlocked(farmer: any) {
+    return (
+      farmer.storeUnlocked === true ||
+      farmer.store_unlocked === true ||
+      farmer.accountActive === true ||
+      farmer.account_active === true
+    );
+  }
+
+  function isRejectedFarmer(farmer: any) {
+    return (
+      farmer.rejected === true ||
+      farmer.complianceStatus === "rejected" ||
+      farmer.compliance_status === "rejected" ||
+      farmer.adminReviewStatus === "rejected" ||
+      farmer.admin_review_status === "rejected" ||
+      farmer.reviewDecision === "rejected" ||
+      farmer.review_decision === "rejected"
+    );
+  }
 
   async function loadFarmerProducts() {
     try {
@@ -90,17 +132,35 @@ export default function FarmerDashboard() {
         id: currentFarmer.id || currentFarmer.farmerId,
         farmerId: currentFarmer.farmerId || currentFarmer.id,
         role: "farmer",
-        approved: true,
-        accountActive: true,
-        storeUnlocked: true,
-        complianceStatus: "approved",
-        adminReviewStatus: "approved",
-        reviewDecision: "approved",
-        membershipStatus: "Active",
-        subscriptionStatus: "active",
-        farmerMembershipPaid: true,
-        monthlyMembershipStarted: true,
       };
+
+      if (!activeFarmer.id) {
+        Alert.alert("Session Error", "Please login again.");
+        router.replace("/farmer/login" as any);
+        return;
+      }
+
+      if (isRejectedFarmer(activeFarmer)) {
+        Alert.alert(
+          "Application Rejected",
+          "Your farmer application was rejected. Contact Farm2Home support."
+        );
+        router.replace("/farmer/login" as any);
+        return;
+      }
+
+      if (!isApprovedFarmer(activeFarmer) || !isStoreUnlocked(activeFarmer)) {
+        router.replace({
+          pathname: "/farmer/awaiting-approval",
+          params: {
+            farmerId: activeFarmer.id,
+            email: activeFarmer.email || "",
+            businessName:
+              activeFarmer.businessName || activeFarmer.farmName || "",
+          },
+        } as any);
+        return;
+      }
 
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(activeFarmer));
       await AsyncStorage.setItem("currentUser", JSON.stringify(activeFarmer));
@@ -111,11 +171,38 @@ export default function FarmerDashboard() {
 
       setFarmerId(id);
       setFarmerEmail(activeFarmer.email || "");
-      setFarmName(activeFarmer.farmName || activeFarmer.businessName || "My Farm");
+      setFarmName(
+        activeFarmer.farmName || activeFarmer.businessName || "My Farm"
+      );
 
       const farmer = id ? await getFarmerById(id) : null;
 
       if (farmer) {
+        const farmerApproved = isApprovedFarmer(farmer);
+        const farmerUnlocked = isStoreUnlocked(farmer);
+        const farmerRejected = isRejectedFarmer(farmer);
+
+        if (farmerRejected) {
+          Alert.alert(
+            "Application Rejected",
+            "Your farmer application was rejected. Contact Farm2Home support."
+          );
+          router.replace("/farmer/login" as any);
+          return;
+        }
+
+        if (!farmerApproved || !farmerUnlocked) {
+          router.replace({
+            pathname: "/farmer/awaiting-approval",
+            params: {
+              farmerId: farmer.id,
+              email: farmer.email || "",
+              businessName: farmer.farmName || "",
+            },
+          } as any);
+          return;
+        }
+
         setFarmName(farmer.farmName || activeFarmer.businessName || "My Farm");
         setFarmerEmail(farmer.email || activeFarmer.email || "");
         setProducts(farmer.products || []);
@@ -132,6 +219,9 @@ export default function FarmerDashboard() {
 
   async function logoutFarmer() {
     await AsyncStorage.removeItem("currentFarmer");
+    await AsyncStorage.removeItem("currentUser");
+    await AsyncStorage.removeItem("userRole");
+    await AsyncStorage.removeItem("currentUserRole");
     router.replace("/farmer/login" as any);
   }
 
@@ -170,11 +260,16 @@ export default function FarmerDashboard() {
     Alert.alert("Inventory Updated", "Your product inventory was updated.");
   }
 
-  const totalSold = products.reduce((sum, item) => sum + Number(item.sold || 0), 0);
+  const totalSold = products.reduce(
+    (sum, item) => sum + Number(item.sold || 0),
+    0
+  );
+
   const totalGrossSales = products.reduce(
     (sum, item) => sum + Number(item.grossSales || 0),
     0
   );
+
   const totalStock = products.reduce((sum, item) => sum + getStock(item), 0);
 
   const lowStockProducts = products.filter((item) => {
@@ -207,7 +302,10 @@ export default function FarmerDashboard() {
             </View>
 
             <Pressable
-              style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.logoutButton,
+                pressed && styles.pressed,
+              ]}
               onPress={logoutFarmer}
             >
               <Text style={styles.logoutText}>Logout</Text>
@@ -258,36 +356,42 @@ export default function FarmerDashboard() {
             color={COLORS.primary}
             onPress={() => goTo("/farmer/add-product")}
           />
+
           <ActionButton
             label="Customize Store"
             icon="🏪"
             color={COLORS.primaryDark}
             onPress={() => goTo("/farmer/setup-store")}
           />
+
           <ActionButton
             label="Compliance"
             icon="🛡️"
             color={COLORS.purple}
             onPress={() => goTo("/farmer/compliance-upload")}
           />
+
           <ActionButton
             label="Orders"
             icon="📦"
             color={COLORS.blue}
             onPress={() => goTo("/farmer/orders")}
           />
+
           <ActionButton
             label="Delivery"
             icon="🚚"
             color={COLORS.orange}
             onPress={() => goTo("/farmer/delivery-orders")}
           />
+
           <ActionButton
             label="Payout Status"
             icon="💳"
             color={COLORS.stripe}
             onPress={() => goTo("/farmer/connect-bank")}
           />
+
           <ActionButton
             label="Preview Market"
             icon="🛒"
@@ -303,13 +407,17 @@ export default function FarmerDashboard() {
 
           <View style={styles.noticeTextBlock}>
             <Text style={styles.noticeTitle}>Store Ready</Text>
+
             <Text style={styles.noticeText}>
               Add products, manage inventory, restock items, and monitor your
               Farm2Home storefront.
             </Text>
 
             <Pressable
-              style={({ pressed }) => [styles.previewButton, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.previewButton,
+                pressed && styles.pressed,
+              ]}
               onPress={() => goTo("/farmer/add-product")}
             >
               <Text style={styles.previewButtonText}>Add / Manage Produce</Text>
@@ -321,7 +429,10 @@ export default function FarmerDashboard() {
           <StatCard label="Products" value={String(products.length)} />
           <StatCard label="In Stock" value={String(totalStock)} />
           <StatCard label="Sold" value={String(totalSold)} />
-          <StatCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} />
+          <StatCard
+            label="Gross Sales"
+            value={`$${totalGrossSales.toFixed(2)}`}
+          />
           <StatCard label="Low Stock" value={String(lowStockProducts.length)} />
           <StatCard label="Sold Out" value={String(soldOutProducts.length)} />
         </View>
@@ -332,7 +443,8 @@ export default function FarmerDashboard() {
 
             {lowStockProducts.map((item) => (
               <Text key={`low-${item.id}`} style={styles.alertText}>
-                ⚠️ {item.name} is low: {getStock(item)} {item.unit || "each"} left.
+                ⚠️ {item.name} is low: {getStock(item)}{" "}
+                {item.unit || "each"} left.
               </Text>
             ))}
 
@@ -402,12 +514,29 @@ export default function FarmerDashboard() {
                   </View>
 
                   <View style={styles.detailGrid}>
-                    <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)} / ${item.unit || "each"}`} />
-                    <Detail label="Stock" value={`${stock} ${item.unit || "each"}`} />
+                    <Detail
+                      label="Price"
+                      value={`$${Number(item.price || 0).toFixed(2)} / ${
+                        item.unit || "each"
+                      }`}
+                    />
+                    <Detail
+                      label="Stock"
+                      value={`${stock} ${item.unit || "each"}`}
+                    />
                     <Detail label="Low Alert" value={String(threshold)} />
-                    <Detail label="Sold" value={String(Number(item.sold || 0))} />
-                    <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
-                    <Detail label="Delivery" value={item.deliveryOption || "Not set"} />
+                    <Detail
+                      label="Sold"
+                      value={String(Number(item.sold || 0))}
+                    />
+                    <Detail
+                      label="Gross"
+                      value={`$${Number(item.grossSales || 0).toFixed(2)}`}
+                    />
+                    <Detail
+                      label="Delivery"
+                      value={item.deliveryOption || "Not set"}
+                    />
                   </View>
 
                   <TextInput

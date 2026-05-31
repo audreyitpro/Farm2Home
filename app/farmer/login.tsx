@@ -24,8 +24,12 @@ function normalize(value: string) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isEmail(value: string) {
+  return normalize(value).includes("@");
+}
+
 export default function FarmerLoginScreen() {
-  const [email, setEmail] = useState("");
+  const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -42,7 +46,8 @@ export default function FarmerLoginScreen() {
       email: farmer.email || "",
       username: farmer.username || "",
 
-      farmName: farmer.farm_name || farmer.farmName || farmer.business_name || "",
+      farmName:
+        farmer.farm_name || farmer.farmName || farmer.business_name || "",
       businessName:
         farmer.business_name || farmer.businessName || farmer.farm_name || "",
       ownerName: farmer.owner_name || farmer.ownerName || "",
@@ -80,9 +85,23 @@ export default function FarmerLoginScreen() {
         farmer.farmer_stripe_account_id ||
         farmer.stripeAccountId ||
         "",
+      farmerStripeAccountId:
+        farmer.farmer_stripe_account_id ||
+        farmer.stripe_account_id ||
+        farmer.farmerStripeAccountId ||
+        "",
       stripePayoutsEnabled: Boolean(
         farmer.stripe_payouts_enabled || farmer.stripePayoutsEnabled
       ),
+      stripeChargesEnabled: Boolean(
+        farmer.stripe_charges_enabled || farmer.stripeChargesEnabled
+      ),
+      stripeOnboardingComplete: Boolean(
+        farmer.stripe_onboarding_complete || farmer.stripeOnboardingComplete
+      ),
+
+      pickupDeliveryOption:
+        farmer.pickup_delivery_option || farmer.pickupDeliveryOption || "",
 
       updatedAt: new Date().toISOString(),
     };
@@ -95,13 +114,76 @@ export default function FarmerLoginScreen() {
     return localFarmer;
   }
 
+  async function getFarmerProfile(authUserId: string, authEmail: string) {
+    let farmer: any = null;
+
+    if (authUserId) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("id", authUserId)
+        .maybeSingle();
+
+      if (error) throw error;
+      farmer = data;
+    }
+
+    if (!farmer && authEmail) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("email", normalize(authEmail))
+        .maybeSingle();
+
+      if (error) throw error;
+      farmer = data;
+    }
+
+    if (!farmer && loginId && !isEmail(loginId)) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("username", normalize(loginId))
+        .maybeSingle();
+
+      if (error) throw error;
+      farmer = data;
+    }
+
+    return farmer;
+  }
+
   function routeFarmer(farmer: any) {
-    const rejected = farmer.rejected === true;
-    const approved = farmer.approved === true;
+    const rejected =
+      farmer.rejected === true ||
+      farmer.review_decision === "rejected" ||
+      farmer.admin_review_status === "rejected" ||
+      farmer.compliance_status === "rejected";
+
+    const needsMoreInfo =
+      farmer.needs_more_info === true ||
+      farmer.review_decision === "needs_more_info" ||
+      farmer.admin_review_status === "needs_more_info" ||
+      farmer.compliance_status === "needs_more_info";
+
+    const approved =
+      farmer.approved === true ||
+      farmer.review_decision === "approved" ||
+      farmer.admin_review_status === "approved" ||
+      farmer.compliance_status === "approved";
+
+    const submitted =
+      farmer.compliance_submitted === true ||
+      farmer.compliance_status === "pending_admin_review" ||
+      farmer.admin_review_status === "pending" ||
+      farmer.review_decision === "pending";
+
     const storeUnlocked =
-      farmer.store_unlocked === true || farmer.storeUnlocked === true;
-    const complianceStatus =
-      farmer.compliance_status || farmer.complianceStatus || "";
+      farmer.store_unlocked === true ||
+      farmer.storeUnlocked === true ||
+      farmer.account_active === true ||
+      farmer.accountActive === true ||
+      approved;
 
     if (rejected) {
       Alert.alert(
@@ -111,7 +193,20 @@ export default function FarmerLoginScreen() {
       return;
     }
 
-    if (!approved || complianceStatus === "pending_admin_review") {
+    if (needsMoreInfo) {
+      router.replace({
+        pathname: "/farmer/compliance-upload",
+        params: {
+          farmerId: farmer.id,
+          email: farmer.email,
+          businessName: farmer.business_name || farmer.farm_name || "",
+          needsMoreInfo: "true",
+        },
+      } as any);
+      return;
+    }
+
+    if (!approved && submitted) {
       router.replace({
         pathname: "/farmer/awaiting-approval",
         params: {
@@ -123,7 +218,19 @@ export default function FarmerLoginScreen() {
       return;
     }
 
-    if (approved && !storeUnlocked) {
+    if (!approved) {
+      router.replace({
+        pathname: "/farmer/compliance-upload",
+        params: {
+          farmerId: farmer.id,
+          email: farmer.email,
+          businessName: farmer.business_name || farmer.farm_name || "",
+        },
+      } as any);
+      return;
+    }
+
+    if (approved && storeUnlocked) {
       router.replace("/farmer/setup-store" as any);
       return;
     }
@@ -132,11 +239,19 @@ export default function FarmerLoginScreen() {
   }
 
   async function handleLogin() {
-    const cleanEmail = normalize(email);
+    const cleanLogin = normalize(loginId);
     const cleanPassword = String(password || "").trim();
 
-    if (!cleanEmail || !cleanPassword) {
-      Alert.alert("Missing Information", "Enter email and password.");
+    if (!cleanLogin || !cleanPassword) {
+      Alert.alert("Missing Information", "Enter email/username and password.");
+      return;
+    }
+
+    if (!isEmail(cleanLogin)) {
+      Alert.alert(
+        "Email Required",
+        "For secure login, enter the farmer email connected to this account."
+      );
       return;
     }
 
@@ -144,7 +259,7 @@ export default function FarmerLoginScreen() {
       setLoading(true);
 
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
+        email: cleanLogin,
         password: cleanPassword,
       });
 
@@ -153,28 +268,15 @@ export default function FarmerLoginScreen() {
         return;
       }
 
-      const userId = data?.user?.id;
+      const userId = data?.user?.id || "";
+      const authEmail = data?.user?.email || cleanLogin;
 
-      if (!userId) {
-        Alert.alert("Login Error", "Unable to confirm user account.");
-        return;
-      }
-
-      const { data: farmer, error: farmerError } = await supabase
-        .from("farmers")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (farmerError) {
-        Alert.alert("Profile Error", farmerError.message);
-        return;
-      }
+      const farmer = await getFarmerProfile(userId, authEmail);
 
       if (!farmer) {
         Alert.alert(
           "Farmer Profile Missing",
-          "Your login exists, but your farmer profile was not found. Please contact Farm2Home support."
+          "Your login exists, but your farmer profile was not found. Please complete farmer registration or contact Farm2Home support."
         );
         return;
       }
@@ -190,9 +292,9 @@ export default function FarmerLoginScreen() {
   }
 
   async function handlePasswordReset() {
-    const cleanEmail = normalize(resetEmail || email);
+    const cleanEmail = normalize(resetEmail || loginId);
 
-    if (!cleanEmail) {
+    if (!cleanEmail || !isEmail(cleanEmail)) {
       Alert.alert("Email Required", "Enter your farmer email.");
       return;
     }
@@ -232,18 +334,19 @@ export default function FarmerLoginScreen() {
         <Text style={styles.title}>Farmer Login</Text>
 
         <Text style={styles.subtitle}>
-          Log in to manage your Farm2Home farmer application and market store.
+          Log in to manage your Farm2Home farmer application and farmer market
+          store.
         </Text>
 
         <TextInput
           style={styles.input}
-          placeholder="Email"
+          placeholder="Farmer Email"
           placeholderTextColor="#6B7280"
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
+          value={loginId}
+          onChangeText={setLoginId}
         />
 
         <TextInput
@@ -272,7 +375,7 @@ export default function FarmerLoginScreen() {
         <TouchableOpacity
           style={styles.linkButton}
           onPress={() => {
-            setResetEmail(email);
+            setResetEmail(loginId);
             setResetVisible(true);
           }}
         >
@@ -294,7 +397,8 @@ export default function FarmerLoginScreen() {
               <Text style={styles.modalTitle}>Reset Password</Text>
 
               <Text style={styles.modalSubtitle}>
-                Enter your farmer email. Farm2Home will send a secure reset link.
+                Enter your farmer email. Farm2Home will send a secure reset
+                link.
               </Text>
 
               <TextInput

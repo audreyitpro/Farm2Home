@@ -1,3 +1,5 @@
+// app/farmer/setup-store.tsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,16 +16,24 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, router } from "expo-router";
+import { createClient } from "@supabase/supabase-js";
 
 import {
   Farmer,
   addFarmer,
   getFarmerById,
-  getFarmers,
   updateFarmerStore,
 } from "../data/farmerStore";
 
-import { checkSubscriptionAccess } from "../services/subscriptionService";
+const expoEnv = (globalThis as any)?.process?.env || {};
+const supabaseUrl =
+  expoEnv.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey =
+  expoEnv.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+  "";
+
+const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 const COLORS = {
   primary: "#2E7D32",
@@ -70,67 +80,137 @@ export default function FarmerSetupStoreScreen() {
     try {
       const saved = await AsyncStorage.getItem("currentFarmer");
 
-      if (!saved) {
+      if (!saved && !farmerIdFromParams) {
         Alert.alert("Session Needed", "Please login again.");
         router.replace("/farmer/login" as any);
-        return;
-      }
-
-      const parsed = JSON.parse(saved);
-
-      const access = await checkSubscriptionAccess({
-        role: "farmer",
-        userId: parsed.id,
-        email: parsed.email,
-      });
-
-      if (!access.allowed) {
-        Alert.alert(
-          "Farmer Membership Required",
-          access.reason || "Your farmer subscription is inactive.",
-          [
-            {
-              text: "Manage Subscription",
-              onPress: () => router.push("/farmer/compliance-upload" as any),
-            },
-          ]
-        );
-
-        router.replace("/farmer/dashboard" as any);
         return;
       }
 
       await loadFarmer();
     } catch (error) {
       console.log("Initialize setup store error:", error);
-      Alert.alert("Access Error", "Unable to verify farmer membership.");
+      Alert.alert("Access Error", "Unable to verify farmer approval.");
     }
+  }
+
+  function mapSupabaseFarmer(row: any): Farmer {
+    return {
+      id: row.id,
+
+      ownerName: row.owner_name || row.ownerName || "",
+      farmName: row.farm_name || row.farmName || row.business_name || "",
+      businessName: row.business_name || row.businessName || row.farm_name || "",
+      email: row.email || "",
+      phone: row.phone || "",
+
+      username: row.username || row.email || "",
+      password: "",
+
+      accountActive: Boolean(row.account_active || row.accountActive),
+      approved: Boolean(row.approved),
+      rejected: Boolean(row.rejected),
+      reviewed: Boolean(row.reviewed),
+      needsMoreInfo: Boolean(row.needs_more_info || row.needsMoreInfo),
+      storeUnlocked: Boolean(row.store_unlocked || row.storeUnlocked),
+
+      complianceSubmitted: Boolean(
+        row.compliance_submitted || row.complianceSubmitted
+      ),
+      complianceStatus: row.compliance_status || row.complianceStatus || "",
+      adminReviewStatus: row.admin_review_status || row.adminReviewStatus || "",
+      reviewDecision: row.review_decision || row.reviewDecision || "",
+
+      applicationFeePaid: Boolean(
+        row.application_fee_paid || row.applicationFeePaid
+      ),
+      farmerMembershipPaid: Boolean(
+        row.farmer_membership_paid || row.farmerMembershipPaid
+      ),
+      monthlyMembershipStarted: Boolean(
+        row.monthly_membership_started || row.monthlyMembershipStarted
+      ),
+
+      securityQuestion1: row.security_question_1 || row.securityQuestion1 || "",
+      securityAnswer1: row.security_answer_1 || row.securityAnswer1 || "",
+      securityQuestion2: row.security_question_2 || row.securityQuestion2 || "",
+      securityAnswer2: row.security_answer_2 || row.securityAnswer2 || "",
+      securityQuestion3: row.security_question_3 || row.securityQuestion3 || "",
+      securityAnswer3: row.security_answer_3 || row.securityAnswer3 || "",
+
+      farmLocation:
+        row.farm_location || row.farmLocation || row.location || "",
+      location: row.location || row.farm_location || row.farmLocation || "",
+      about: row.about || "",
+
+      pickup: row.pickup !== false,
+      delivery: row.delivery !== false,
+
+      stripeAccountId:
+        row.stripe_account_id || row.farmer_stripe_account_id || "",
+      farmerStripeAccountId:
+        row.farmer_stripe_account_id || row.stripe_account_id || "",
+      stripePayoutAccount: row.stripe_payout_account || "",
+      stripePayoutAccountLast4: row.stripe_payout_account_last4 || "",
+      stripePayoutBankName: row.stripe_payout_bank_name || "",
+      stripeOnboardingComplete: Boolean(row.stripe_onboarding_complete),
+      stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
+      stripePayoutsEnabled: Boolean(row.stripe_payouts_enabled),
+
+      products: row.products || [],
+      reviews: row.reviews || 0,
+      rating: row.rating || 4.8,
+      distanceMiles: row.distance_miles || row.distanceMiles || 5,
+      itemsSold: row.items_sold || row.itemsSold || 0,
+      revenue: row.revenue || 0,
+
+      createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+      updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
+    } as any;
+  }
+
+  async function getFarmerFromSupabase(activeFarmerId: string, savedEmail?: string) {
+    if (activeFarmerId) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("id", activeFarmerId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) return mapSupabaseFarmer(data);
+    }
+
+    if (savedEmail) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("email", String(savedEmail).trim().toLowerCase())
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) return mapSupabaseFarmer(data);
+    }
+
+    return null;
   }
 
   async function loadFarmer() {
     try {
-      let farmer: Farmer | undefined;
+      const saved = await AsyncStorage.getItem("currentFarmer");
+      const parsed = saved ? JSON.parse(saved) : null;
 
-      if (farmerIdFromParams) {
-        farmer = await getFarmerById(farmerIdFromParams);
+      const activeFarmerId =
+        farmerIdFromParams || parsed?.id || parsed?.farmerId || "";
+
+      let farmer: Farmer | null =
+        (await getFarmerFromSupabase(activeFarmerId, parsed?.email)) || null;
+
+      if (!farmer && activeFarmerId) {
+        farmer = (await getFarmerById(activeFarmerId)) || null;
       }
 
-      if (!farmer) {
-        const saved = await AsyncStorage.getItem("currentFarmer");
-
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          farmer = await getFarmerById(parsed.id);
-        }
-      }
-
-      if (!farmer) {
-        const farmers = await getFarmers();
-
-        farmer =
-          farmers.find(
-            (item) => item.approved === true || item.complianceStatus === "approved"
-          ) || farmers[0];
+      if (!farmer && parsed?.id) {
+        farmer = parsed;
       }
 
       if (!farmer) {
@@ -144,24 +224,40 @@ export default function FarmerSetupStoreScreen() {
       }
 
       const approved =
-        farmer.approved === true || farmer.complianceStatus === "approved";
+        farmer.approved === true ||
+        farmer.complianceStatus === "approved" ||
+        (farmer as any).adminReviewStatus === "approved" ||
+        (farmer as any).reviewDecision === "approved";
 
-      if (!approved) {
+      const storeUnlocked =
+        (farmer as any).storeUnlocked === true ||
+        (farmer as any).store_unlocked === true ||
+        farmer.accountActive === true ||
+        approved;
+
+      if (!approved || !storeUnlocked) {
         Alert.alert(
-          "Compliance Required",
+          "Awaiting Approval",
           "Your compliance review must be approved before setting up your store."
         );
 
-        router.replace("/farmer/compliance-upload" as any);
+        router.replace({
+          pathname: "/farmer/awaiting-approval",
+          params: {
+            farmerId: farmer.id,
+            email: farmer.email,
+            businessName:
+              (farmer as any).businessName || farmer.farmName || "",
+          },
+        } as any);
         return;
       }
 
       setCurrentFarmer(farmer);
-
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
 
       setOwnerName(farmer.ownerName || "");
-      setFarmName(farmer.farmName || "");
+      setFarmName(farmer.farmName || (farmer as any).businessName || "");
       setEmail(farmer.email || "");
       setPhone(farmer.phone || "");
       setFarmLocation(farmer.farmLocation || farmer.location || "");
@@ -169,9 +265,9 @@ export default function FarmerSetupStoreScreen() {
 
       setPickup(farmer.pickup !== false);
       setDelivery(farmer.delivery !== false);
-    } catch (error) {
+    } catch (error: any) {
       console.log("Load farmer error:", error);
-      Alert.alert("Error", "Unable to load farmer setup.");
+      Alert.alert("Error", error?.message || "Unable to load farmer setup.");
     }
   }
 
@@ -205,47 +301,29 @@ export default function FarmerSetupStoreScreen() {
 
       if (!currentFarmer?.id) {
         Alert.alert("Session Error", "Please login again.");
-        return null;
-      }
-
-      const access = await checkSubscriptionAccess({
-        role: "farmer",
-        userId: currentFarmer.id,
-        email: currentFarmer.email || email,
-      });
-
-      if (!access.allowed) {
-        Alert.alert(
-          "Subscription Required",
-          access.reason || "Farmer subscription inactive."
-        );
-
+        router.replace("/farmer/login" as any);
         return null;
       }
 
       setLoading(true);
 
       const farmerPayload: Farmer = {
-        id: currentFarmer?.id || farmerIdFromParams || `farmer-${Date.now()}`,
+        ...currentFarmer,
+
+        id: currentFarmer.id,
 
         ownerName: ownerName.trim(),
         farmName: farmName.trim(),
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         phone: phone.trim(),
 
-        username: currentFarmer?.username || email.trim(),
-        password: currentFarmer?.password || "",
+        username: currentFarmer.username || email.trim().toLowerCase(),
+        password: currentFarmer.password || "",
 
         accountActive: true,
         approved: true,
         complianceStatus: "approved",
-
-        securityQuestion1: currentFarmer?.securityQuestion1 || "",
-        securityAnswer1: currentFarmer?.securityAnswer1 || "",
-        securityQuestion2: currentFarmer?.securityQuestion2 || "",
-        securityAnswer2: currentFarmer?.securityAnswer2 || "",
-        securityQuestion3: currentFarmer?.securityQuestion3 || "",
-        securityAnswer3: currentFarmer?.securityAnswer3 || "",
+        storeUnlocked: true,
 
         farmLocation: farmLocation.trim(),
         location: farmLocation.trim(),
@@ -254,33 +332,49 @@ export default function FarmerSetupStoreScreen() {
         pickup,
         delivery,
 
-        stripeAccountId: currentFarmer?.stripeAccountId || "",
-        farmerStripeAccountId: currentFarmer?.farmerStripeAccountId || "",
-        stripePayoutAccount: currentFarmer?.stripePayoutAccount || "",
-        stripePayoutAccountLast4: currentFarmer?.stripePayoutAccountLast4 || "",
-        stripePayoutBankName: currentFarmer?.stripePayoutBankName || "",
-        stripeOnboardingComplete: currentFarmer?.stripeOnboardingComplete || false,
-        stripeChargesEnabled: currentFarmer?.stripeChargesEnabled || false,
-        stripePayoutsEnabled: currentFarmer?.stripePayoutsEnabled || false,
+        products: currentFarmer.products || [],
+        reviews: currentFarmer.reviews || 0,
+        rating: currentFarmer.rating || 4.8,
+        distanceMiles: currentFarmer.distanceMiles || 5,
+        itemsSold: currentFarmer.itemsSold || 0,
+        revenue: currentFarmer.revenue || 0,
 
-        products: currentFarmer?.products || [],
-        reviews: currentFarmer?.reviews || 0,
-        rating: currentFarmer?.rating || 4.8,
-        distanceMiles: currentFarmer?.distanceMiles || 5,
-        itemsSold: currentFarmer?.itemsSold || 0,
-        revenue: currentFarmer?.revenue || 0,
-
-        createdAt: currentFarmer?.createdAt || new Date().toISOString(),
+        createdAt: currentFarmer.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+      } as any;
+
+      const supabasePayload = {
+        owner_name: ownerName.trim(),
+        farm_name: farmName.trim(),
+        business_name: farmName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        farm_location: farmLocation.trim(),
+        location: farmLocation.trim(),
+        about: about.trim(),
+        pickup,
+        delivery,
+        approved: true,
+        account_active: true,
+        store_unlocked: true,
+        compliance_status: "approved",
+        updated_at: new Date().toISOString(),
       };
+
+      const { error } = await supabase
+        .from("farmers")
+        .update(supabasePayload)
+        .eq("id", currentFarmer.id);
+
+      if (error) throw error;
 
       let savedFarmer = farmerPayload;
 
-      if (currentFarmer?.id) {
+      try {
         const updated = await updateFarmerStore(currentFarmer.id, farmerPayload);
         savedFarmer =
           updated.find((item) => item.id === currentFarmer.id) || farmerPayload;
-      } else {
+      } catch {
         const updated = await addFarmer(farmerPayload);
         savedFarmer =
           updated.find((item) => item.id === farmerPayload.id) || farmerPayload;
@@ -289,6 +383,9 @@ export default function FarmerSetupStoreScreen() {
       setCurrentFarmer(savedFarmer);
 
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(savedFarmer));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(savedFarmer));
+      await AsyncStorage.setItem("userRole", "farmer");
+      await AsyncStorage.setItem("currentUserRole", "farmer");
 
       Alert.alert("Saved", "Farmer store setup saved.");
 
@@ -356,9 +453,7 @@ export default function FarmerSetupStoreScreen() {
 
           <View style={styles.heroTextBlock}>
             <Text style={styles.heroBadge}>Approved Farmer</Text>
-            <Text style={styles.heroTitle}>
-              Complete your farm profile
-            </Text>
+            <Text style={styles.heroTitle}>Complete your farm profile</Text>
             <Text style={styles.heroText}>
               Your compliance review is approved. Set your public store details
               and start uploading produce.
@@ -379,6 +474,9 @@ export default function FarmerSetupStoreScreen() {
               </Text>
               <Text style={styles.statusText}>
                 Status: {currentFarmer?.complianceStatus || "approved"}
+              </Text>
+              <Text style={styles.statusText}>
+                Membership: Starts after approval
               </Text>
             </View>
           </View>
