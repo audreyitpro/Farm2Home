@@ -31,8 +31,8 @@ function isEmail(value: string) {
 export default function FarmerLoginScreen() {
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
+
   const [resetVisible, setResetVisible] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
@@ -114,6 +114,32 @@ export default function FarmerLoginScreen() {
     return localFarmer;
   }
 
+  async function findFarmerByEmailOrUsername(value: string) {
+    const cleanValue = normalize(value);
+
+    if (!cleanValue) return null;
+
+    if (isEmail(cleanValue)) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("email", cleanValue)
+        .maybeSingle();
+
+      if (error) throw error;
+      return data;
+    }
+
+    const { data, error } = await supabase
+      .from("farmers")
+      .select("*")
+      .eq("username", cleanValue)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  }
+
   async function getFarmerProfile(authUserId: string, authEmail: string) {
     let farmer: any = null;
 
@@ -129,28 +155,27 @@ export default function FarmerLoginScreen() {
     }
 
     if (!farmer && authEmail) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .select("*")
-        .eq("email", normalize(authEmail))
-        .maybeSingle();
-
-      if (error) throw error;
-      farmer = data;
+      farmer = await findFarmerByEmailOrUsername(authEmail);
     }
 
-    if (!farmer && loginId && !isEmail(loginId)) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .select("*")
-        .eq("username", normalize(loginId))
-        .maybeSingle();
-
-      if (error) throw error;
-      farmer = data;
+    if (!farmer && loginId) {
+      farmer = await findFarmerByEmailOrUsername(loginId);
     }
 
     return farmer;
+  }
+
+  function farmerPasswordMatches(farmer: any, enteredPassword: string) {
+    const savedPassword = String(
+      farmer.password ||
+        farmer.farmer_password ||
+        farmer.account_password ||
+        ""
+    ).trim();
+
+    if (!savedPassword) return false;
+
+    return savedPassword === enteredPassword.trim();
   }
 
   function routeFarmer(farmer: any) {
@@ -247,38 +272,53 @@ export default function FarmerLoginScreen() {
       return;
     }
 
-    if (!isEmail(cleanLogin)) {
-      Alert.alert(
-        "Email Required",
-        "For secure login, enter the farmer email connected to this account."
-      );
-      return;
-    }
-
     try {
       setLoading(true);
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanLogin,
-        password: cleanPassword,
-      });
+      let farmer: any = null;
+      let authErrorMessage = "";
 
-      if (error) {
-        Alert.alert("Login Failed", error.message);
-        return;
+      if (isEmail(cleanLogin)) {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanLogin,
+          password: cleanPassword,
+        });
+
+        if (!error) {
+          const userId = data?.user?.id || "";
+          const authEmail = data?.user?.email || cleanLogin;
+          farmer = await getFarmerProfile(userId, authEmail);
+        } else {
+          authErrorMessage = error.message || "";
+        }
       }
 
-      const userId = data?.user?.id || "";
-      const authEmail = data?.user?.email || cleanLogin;
-
-      const farmer = await getFarmerProfile(userId, authEmail);
-
       if (!farmer) {
-        Alert.alert(
-          "Farmer Profile Missing",
-          "Your login exists, but your farmer profile was not found. Please complete farmer registration or contact Farm2Home support."
+        const fallbackFarmer = await findFarmerByEmailOrUsername(cleanLogin);
+
+        if (!fallbackFarmer) {
+          Alert.alert(
+            "Login Failed",
+            authErrorMessage ||
+              "No farmer account was found with that email or username."
+          );
+          return;
+        }
+
+        const passwordMatches = farmerPasswordMatches(
+          fallbackFarmer,
+          cleanPassword
         );
-        return;
+
+        if (!passwordMatches) {
+          Alert.alert(
+            "Login Failed",
+            "Password did not match this farmer profile. Use the email/password created during registration or reset your password."
+          );
+          return;
+        }
+
+        farmer = fallbackFarmer;
       }
 
       await saveFarmerSession(farmer);
@@ -334,13 +374,13 @@ export default function FarmerLoginScreen() {
         <Text style={styles.title}>Farmer Login</Text>
 
         <Text style={styles.subtitle}>
-          Log in to manage your Farm2Home farmer application and farmer market
-          store.
+          Log in with your farmer email or username to manage your application
+          and market store.
         </Text>
 
         <TextInput
           style={styles.input}
-          placeholder="Farmer Email"
+          placeholder="Farmer Email or Username"
           placeholderTextColor="#6B7280"
           autoCapitalize="none"
           autoCorrect={false}
@@ -398,7 +438,7 @@ export default function FarmerLoginScreen() {
 
               <Text style={styles.modalSubtitle}>
                 Enter your farmer email. Farm2Home will send a secure reset
-                link.
+                link if the account exists in Supabase Auth.
               </Text>
 
               <TextInput
