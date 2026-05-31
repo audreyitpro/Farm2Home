@@ -1,4 +1,4 @@
-// app/customer/login.tsx
+// app/admin/login.tsx
 
 import React, { useState } from "react";
 import {
@@ -23,67 +23,39 @@ import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../services/supabaseClient";
 
 const ui = {
-  bg: "#F7FBF4",
+  bg: "#F8FAFC",
+  dark: "#020617",
   card: "#FFFFFF",
-  border: "#DDE7D6",
-  text: "#102A1C",
-  muted: "#647067",
-  soft: "#F1F8EC",
-  green: "#166534",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
+  border: "#CBD5E1",
+  text: "#0F172A",
+  muted: "#64748B",
+  soft: "#EFF6FF",
+  primary: "#1D4ED8",
+  primaryDark: "#1E3A8A",
   red: "#DC2626",
-  gold: "#F59E0B",
+  green: "#16A34A",
 };
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
-function mapCustomer(customer: any) {
+function mapAdmin(profile: any) {
   return {
-    id: customer.id,
-    customerId: customer.id,
-    profileId: customer.profile_id || customer.profileId || "",
-    role: "customer",
-
-    fullName:
-      customer.full_name ||
-      customer.fullName ||
-      customer.name ||
-      customer.customer_name ||
-      "Customer",
-
-    name:
-      customer.full_name ||
-      customer.fullName ||
-      customer.name ||
-      customer.customer_name ||
-      "Customer",
-
-    email: normalize(customer.email || customer.customer_email),
-    phone: customer.phone || "",
-    username: customer.username || "",
-
-    accountActive: customer.account_active ?? customer.accountActive ?? true,
-
-    customerMembershipPaid:
-      customer.customer_membership_paid ??
-      customer.customerMembershipPaid ??
-      false,
-
-    subscriptionStatus:
-      customer.subscription_status || customer.subscriptionStatus || "pending",
-
-    membershipStatus:
-      customer.membership_status || customer.membershipStatus || "Pending",
-
-    createdAt: customer.created_at || customer.createdAt || "",
-    updatedAt: customer.updated_at || customer.updatedAt || new Date().toISOString(),
+    id: profile.id,
+    profileId: profile.id,
+    authUserId: profile.auth_user_id || "",
+    role: "admin",
+    fullName: profile.full_name || profile.name || "Farm2Home Admin",
+    email: normalize(profile.email),
+    phone: profile.phone || "",
+    accountActive: profile.account_active ?? true,
+    createdAt: profile.created_at || "",
+    updatedAt: new Date().toISOString(),
   };
 }
 
-export default function CustomerLoginScreen() {
+export default function AdminLoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -92,86 +64,51 @@ export default function CustomerLoginScreen() {
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
 
-  async function saveCurrentCustomer(customer: any) {
-    const mapped = mapCustomer(customer);
+  async function saveAdminSession(admin: any) {
+    const mapped = mapAdmin(admin);
 
-    await AsyncStorage.setItem("currentCustomer", JSON.stringify(mapped));
+    await AsyncStorage.setItem("currentAdmin", JSON.stringify(mapped));
     await AsyncStorage.setItem("currentUser", JSON.stringify(mapped));
-    await AsyncStorage.setItem("userRole", "customer");
-    await AsyncStorage.setItem("currentUserRole", "customer");
+    await AsyncStorage.setItem("userRole", "admin");
+    await AsyncStorage.setItem("currentUserRole", "admin");
 
     return mapped;
   }
 
-  async function findCustomerProfile(userId: string, cleanEmail: string) {
-    let customer: any = null;
+  async function findAdminProfile(userId: string, cleanEmail: string) {
+    let admin: any = null;
 
-    if (userId) {
-      const { data, error } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
+    const byAuth = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("auth_user_id", userId)
+      .eq("role", "admin")
+      .maybeSingle();
 
-      if (error) throw error;
-      if (data) customer = data;
-    }
+    if (byAuth.error) throw byAuth.error;
+    if (byAuth.data) admin = byAuth.data;
 
-    if (!customer && cleanEmail) {
-      const { data, error } = await supabase
-        .from("customers")
+    if (!admin && cleanEmail) {
+      const byEmail = await supabase
+        .from("profiles")
         .select("*")
         .eq("email", cleanEmail)
+        .eq("role", "admin")
         .maybeSingle();
 
-      if (error) throw error;
-      if (data) customer = data;
+      if (byEmail.error) throw byEmail.error;
+      if (byEmail.data) admin = byEmail.data;
     }
 
-    if (!customer && cleanEmail) {
-      const { data, error } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("customer_email", cleanEmail)
-        .maybeSingle();
-
-      if (error) {
-        console.log("customer_email lookup ignored:", error.message);
-      }
-
-      if (data) customer = data;
-    }
-
-    if (!customer && userId) {
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("auth_user_id", userId)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-
-      if (profile?.id) {
-        const { data, error } = await supabase
-          .from("customers")
-          .select("*")
-          .eq("profile_id", profile.id)
-          .maybeSingle();
-
-        if (error) throw error;
-        if (data) customer = data;
-      }
-    }
-
-    return customer;
+    return admin;
   }
 
-  async function loginCustomer() {
+  async function loginAdmin() {
     const cleanEmail = normalize(email);
     const cleanPassword = String(password || "").trim();
 
     if (!cleanEmail || !cleanPassword) {
-      Alert.alert("Missing Login", "Please enter your email and password.");
+      Alert.alert("Missing Login", "Enter admin email and password.");
       return;
     }
 
@@ -191,30 +128,30 @@ export default function CustomerLoginScreen() {
       const userId = data?.user?.id || "";
 
       if (!userId) {
-        Alert.alert("Login Error", "Unable to confirm customer account.");
+        Alert.alert("Login Error", "Unable to confirm admin account.");
         return;
       }
 
-      const customer = await findCustomerProfile(userId, cleanEmail);
+      const adminProfile = await findAdminProfile(userId, cleanEmail);
 
-      if (!customer) {
+      if (!adminProfile) {
         Alert.alert(
-          "Customer Profile Missing",
-          "Your email/password is valid, but no customer profile row was found. Complete customer registration or contact Farm2Home support."
+          "Admin Profile Missing",
+          "Your email/password is valid, but no admin profile was found. Add this user to profiles with role = admin."
         );
         return;
       }
 
-      const mappedCustomer = await saveCurrentCustomer(customer);
+      const mappedAdmin = await saveAdminSession(adminProfile);
 
-      if (mappedCustomer.accountActive === false) {
-        Alert.alert("Account Disabled", "This customer account is not active.");
+      if (mappedAdmin.accountActive === false) {
+        Alert.alert("Account Disabled", "This admin account is disabled.");
         return;
       }
 
-      router.replace("/customer/marketplace" as any);
+      router.replace("/admin/dashboard" as any);
     } catch (error: any) {
-      console.log("Customer login error:", error);
+      console.log("Admin login error:", error);
       Alert.alert("Login Error", error?.message || "Unable to login.");
     } finally {
       setLoading(false);
@@ -225,7 +162,7 @@ export default function CustomerLoginScreen() {
     const cleanEmail = normalize(resetEmail || email);
 
     if (!cleanEmail) {
-      Alert.alert("Email Required", "Enter your customer email.");
+      Alert.alert("Email Required", "Enter your admin email.");
       return;
     }
 
@@ -260,7 +197,7 @@ export default function CustomerLoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={ui.dark} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -274,37 +211,38 @@ export default function CustomerLoginScreen() {
         >
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.push("/" as any)}
+            onPress={() => router.replace("/" as any)}
             activeOpacity={0.85}
           >
-            <Ionicons name="arrow-back-outline" size={18} color={ui.greenDark} />
+            <Ionicons name="arrow-back-outline" size={18} color="#DBEAFE" />
             <Text style={styles.backText}>Back Home</Text>
           </TouchableOpacity>
 
           <View style={styles.heroCard}>
             <View style={styles.heroIcon}>
-              <Ionicons name="basket-outline" size={30} color="#FFFFFF" />
+              <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
             </View>
 
-            <Text style={styles.kicker}>Farm2Home Marketplace</Text>
-            <Text style={styles.header}>Customer Login</Text>
+            <Text style={styles.kicker}>Farm2Home Control Center</Text>
+            <Text style={styles.header}>Admin Login</Text>
 
             <Text style={styles.subheader}>
-              Shop verified farmers, fresh produce, local goods, subscriptions,
-              and Farm2Home marketplace orders.
+              Review farmer applications, documents, compliance status,
+              approvals, marketplace activity, drivers, freight, and operations.
             </Text>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Welcome Back</Text>
+            <Text style={styles.sectionTitle}>Secure Admin Access</Text>
+
             <Text style={styles.sectionSubtitle}>
-              Use the email and password created during customer registration.
+              Use your Farm2Home admin email and password.
             </Text>
 
-            <Text style={styles.label}>Email Address</Text>
+            <Text style={styles.label}>Admin Email</Text>
             <TextInput
               style={styles.input}
-              placeholder="customer@email.com"
+              placeholder="admin@email.com"
               placeholderTextColor={ui.muted}
               value={email}
               onChangeText={setEmail}
@@ -327,7 +265,7 @@ export default function CustomerLoginScreen() {
 
             <TouchableOpacity
               style={[styles.loginButton, loading && styles.disabledButton]}
-              onPress={loginCustomer}
+              onPress={loginAdmin}
               disabled={loading}
               activeOpacity={0.85}
             >
@@ -337,18 +275,10 @@ export default function CustomerLoginScreen() {
                 <>
                   <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
                   <Text style={styles.loginButtonText}>
-                    Login to Marketplace
+                    Login to Admin Dashboard
                   </Text>
                 </>
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => router.push("/customer/register" as any)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.secondaryText}>Create Customer Account</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -364,10 +294,10 @@ export default function CustomerLoginScreen() {
           </View>
 
           <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Fresh from local farms</Text>
+            <Text style={styles.infoTitle}>Admin Requirements</Text>
             <Text style={styles.infoText}>
-              Browse produce, groceries, farm goods, delivery options, and order
-              updates from your Farm2Home customer account.
+              This login requires a Supabase Auth account and a matching row in
+              the profiles table with role set to admin.
             </Text>
           </View>
         </ScrollView>
@@ -378,19 +308,19 @@ export default function CustomerLoginScreen() {
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
               <View style={styles.modalIcon}>
-                <Ionicons name="key-outline" size={28} color={ui.greenDark} />
+                <Ionicons name="key-outline" size={28} color={ui.primary} />
               </View>
 
-              <Text style={styles.modalTitle}>Reset Password</Text>
+              <Text style={styles.modalTitle}>Reset Admin Password</Text>
 
               <Text style={styles.modalSubtitle}>
-                Enter your customer email. Farm2Home will send a secure reset
-                link if the Auth account exists.
+                Enter your admin email. Farm2Home will send a secure reset link
+                if the Auth account exists.
               </Text>
 
               <TextInput
                 style={styles.input}
-                placeholder="Customer Email"
+                placeholder="Admin Email"
                 placeholderTextColor={ui.muted}
                 value={resetEmail}
                 onChangeText={setResetEmail}
@@ -430,7 +360,7 @@ export default function CustomerLoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: ui.bg },
+  safe: { flex: 1, backgroundColor: ui.dark },
   keyboard: { flex: 1, backgroundColor: ui.bg },
   page: { flex: 1, backgroundColor: ui.bg },
   content: {
@@ -444,30 +374,30 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: ui.greenSoft,
+    backgroundColor: "#1E293B",
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 9,
     marginBottom: 14,
   },
-  backText: { color: ui.greenDark, fontWeight: "900" },
+  backText: { color: "#DBEAFE", fontWeight: "900" },
   heroCard: {
-    backgroundColor: ui.greenDark,
+    backgroundColor: ui.dark,
     borderRadius: 30,
     padding: 22,
     marginBottom: 16,
   },
   heroIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 21,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    backgroundColor: ui.primary,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   kicker: {
-    color: "#BBF7D0",
+    color: "#93C5FD",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -481,7 +411,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   subheader: {
-    color: "#DCFCE7",
+    color: "#CBD5E1",
     lineHeight: 22,
     fontWeight: "700",
     fontSize: 15,
@@ -525,7 +455,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   loginButton: {
-    backgroundColor: ui.green,
+    backgroundColor: ui.primary,
     padding: 17,
     borderRadius: 18,
     marginTop: 8,
@@ -541,45 +471,33 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 16,
   },
-  secondaryButton: {
-    backgroundColor: ui.greenSoft,
-    borderRadius: 18,
-    padding: 15,
-    marginTop: 12,
-    alignItems: "center",
-  },
-  secondaryText: {
-    color: ui.greenDark,
-    fontWeight: "900",
-    fontSize: 15,
-  },
   linkButton: { marginTop: 16 },
   linkText: {
     textAlign: "center",
-    color: ui.greenDark,
+    color: ui.primaryDark,
     fontWeight: "900",
   },
   infoCard: {
-    backgroundColor: "#FFFBEB",
+    backgroundColor: "#EFF6FF",
     borderWidth: 1,
-    borderColor: "#FDE68A",
+    borderColor: "#BFDBFE",
     borderRadius: 22,
     padding: 16,
     marginTop: 16,
   },
   infoTitle: {
-    color: "#92400E",
+    color: ui.primaryDark,
     fontWeight: "900",
     marginBottom: 6,
   },
   infoText: {
-    color: "#78350F",
+    color: "#1E40AF",
     fontWeight: "700",
     lineHeight: 21,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
+    backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "center",
     padding: 22,
   },
@@ -593,7 +511,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 20,
-    backgroundColor: ui.greenSoft,
+    backgroundColor: "#DBEAFE",
     alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",

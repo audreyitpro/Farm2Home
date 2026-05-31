@@ -29,6 +29,10 @@ type LoadStatus =
   | "arrived_dropoff"
   | "delivered";
 
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function getParamString(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] || "";
   return value || "";
@@ -66,22 +70,147 @@ export default function LiveLocationProviderScreen() {
     };
   }, []);
 
-  async function loadDriver() {
+  async function getStoredDriver() {
     const raw =
       (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeDriverSession")) ||
       (await AsyncStorage.getItem("currentUser"));
 
-    if (!raw) return;
+    if (!raw) return null;
 
     try {
-      const driver = JSON.parse(raw);
-
-      setDriverId(driver.id || driver.driverId || driver.email || "");
-      setDriverName(
-        driver.fullName || driver.name || driver.username || "Farm2Home Driver"
-      );
+      return JSON.parse(raw);
     } catch {
-      console.log("Driver parse skipped.");
+      return null;
+    }
+  }
+
+  async function loadDriver() {
+    try {
+      const stored = await getStoredDriver();
+
+      const { data: authData } = await supabase.auth.getUser();
+      const authUser = authData?.user;
+
+      const authUserId =
+        authUser?.id ||
+        stored?.authUserId ||
+        stored?.id ||
+        stored?.driverId ||
+        "";
+
+      const authEmail = normalize(authUser?.email || stored?.email || "");
+
+      let dbDriver: any = null;
+      let profile: any = null;
+
+      if (authUserId) {
+        const result = await supabase
+          .from("drivers")
+          .select("*")
+          .eq("id", authUserId)
+          .maybeSingle();
+
+        if (!result.error && result.data) dbDriver = result.data;
+      }
+
+      if (!dbDriver && authEmail) {
+        const result = await supabase
+          .from("drivers")
+          .select("*")
+          .eq("email", authEmail)
+          .maybeSingle();
+
+        if (!result.error && result.data) dbDriver = result.data;
+      }
+
+      if (authUserId) {
+        const result = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("auth_user_id", authUserId)
+          .eq("role", "driver")
+          .maybeSingle();
+
+        if (!result.error && result.data) profile = result.data;
+      }
+
+      if (!profile && authEmail) {
+        const result = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("email", authEmail)
+          .eq("role", "driver")
+          .maybeSingle();
+
+        if (!result.error && result.data) profile = result.data;
+      }
+
+      const stableDriverId =
+        dbDriver?.id ||
+        stored?.id ||
+        stored?.driverId ||
+        authUserId ||
+        profile?.auth_user_id ||
+        "";
+
+      if (!stableDriverId) {
+        Alert.alert("Driver Login Required", "Please login as a driver.");
+        router.replace("/driver/login" as any);
+        return;
+      }
+
+      const stableDriverName =
+        dbDriver?.full_name ||
+        dbDriver?.name ||
+        profile?.full_name ||
+        stored?.fullName ||
+        stored?.name ||
+        stored?.username ||
+        "Farm2Home Driver";
+
+      const sessionDriver = {
+        ...(stored || {}),
+        ...(dbDriver || {}),
+        id: stableDriverId,
+        driverId: stableDriverId,
+        authUserId: dbDriver?.auth_user_id || profile?.auth_user_id || authUserId,
+        profileId: dbDriver?.profile_id || stored?.profileId || profile?.id || "",
+        role: "driver",
+        fullName: stableDriverName,
+        name: stableDriverName,
+        email: normalize(dbDriver?.email || profile?.email || stored?.email || authEmail),
+        username: dbDriver?.username || profile?.username || stored?.username || "",
+        accountActive:
+          dbDriver?.account_active ??
+          profile?.account_active ??
+          stored?.accountActive ??
+          true,
+        membershipStatus:
+          dbDriver?.membership_status ||
+          stored?.membershipStatus ||
+          "Active",
+        subscriptionStatus:
+          dbDriver?.subscription_status ||
+          stored?.subscriptionStatus ||
+          "active",
+        updatedAt: new Date().toISOString(),
+      };
+
+      await AsyncStorage.setItem("currentDriver", JSON.stringify(sessionDriver));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(sessionDriver));
+      await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(sessionDriver));
+      await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(sessionDriver));
+      await AsyncStorage.setItem("userRole", "driver");
+      await AsyncStorage.setItem("currentUserRole", "driver");
+
+      setDriverId(stableDriverId);
+      setDriverName(stableDriverName);
+    } catch (error) {
+      console.log("LIVE_LOCATION_DRIVER_LOAD_ERROR:", error);
+      Alert.alert("Driver Error", "Unable to load driver session.");
+      router.replace("/driver/login" as any);
     }
   }
 
@@ -103,6 +232,12 @@ export default function LiveLocationProviderScreen() {
   }
 
   async function saveDriverLocation(location: Location.LocationObject) {
+    const activeDriverId = driverId;
+
+    if (!activeDriverId) {
+      await loadDriver();
+    }
+
     const lat = location.coords.latitude;
     const lng = location.coords.longitude;
     const currentSpeed = location.coords.speed || 0;
@@ -120,8 +255,8 @@ export default function LiveLocationProviderScreen() {
     const payload = {
       load_id: proofId,
       order_id: proofId,
-      driver_id: driverId,
-      carrier_id: driverId,
+      driver_id: activeDriverId || driverId,
+      carrier_id: activeDriverId || driverId,
       driver_name: driverName,
       latitude: lat,
       longitude: lng,
@@ -184,6 +319,10 @@ export default function LiveLocationProviderScreen() {
       if (!proofId) {
         Alert.alert("Missing Load ID", "This screen needs a loadId or orderId.");
         return;
+      }
+
+      if (!driverId) {
+        await loadDriver();
       }
 
       const allowed = permissionGranted || (await requestPermission());
@@ -253,6 +392,8 @@ export default function LiveLocationProviderScreen() {
   }
 
   async function updateSupabaseOrderStatus(nextStatus: LoadStatus, updates: any) {
+    if (!proofId) return;
+
     try {
       await supabase
         .from("orders")
@@ -260,6 +401,8 @@ export default function LiveLocationProviderScreen() {
           ...updates,
           status: nextStatus.toUpperCase(),
           fulfillmentStatus: nextStatus.toUpperCase(),
+          assignedDriverId: driverId,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", proofId);
     } catch (error) {
@@ -280,6 +423,9 @@ export default function LiveLocationProviderScreen() {
 
       const updates: any = {
         status: nextStatus,
+        driver_id: driverId,
+        assigned_driver_id: driverId,
+        updated_at: now,
       };
 
       if (nextStatus === "arrived_pickup") updates.arrived_pickup_at = now;
@@ -557,13 +703,8 @@ function MilestoneButton({
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 100,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  content: { paddingBottom: 100 },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 22,
@@ -572,11 +713,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   kicker: {
     color: "#10B981",
     fontSize: 12,

@@ -1,3 +1,5 @@
+// app/driver/mobile-driver-app.tsx
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,7 +22,7 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
-import { supabase } from "../data/supabaseClient";
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
 
 type DriverLoad = any;
@@ -60,6 +62,10 @@ const ACTIVE_STATUSES = [
 
 const OPEN_STATUSES = ["OPEN", "NEW", "AVAILABLE"];
 
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
 export default function MobileDriverApp() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -86,41 +92,133 @@ export default function MobileDriverApp() {
   async function getCurrentDriver(): Promise<DriverProfile | null> {
     const raw =
       (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeDriverSession")) ||
       (await AsyncStorage.getItem("currentUser"));
 
-    if (!raw) return null;
+    let parsed: any = null;
 
-    try {
-      const parsed = JSON.parse(raw);
-
-      if (parsed?.role && parsed.role !== "driver") return null;
-
-      const stableId =
-        parsed.id ||
-        parsed.driverId ||
-        parsed.email ||
-        parsed.username ||
-        `driver_${Date.now()}`;
-
-      const driver: DriverProfile = {
-        ...parsed,
-        id: stableId,
-        driverId: parsed.driverId || stableId,
-        role: "driver",
-        accountActive: parsed.accountActive !== false,
-        membershipStatus: parsed.membershipStatus || "Active",
-        subscriptionStatus: parsed.subscriptionStatus || "active",
-      };
-
-      await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
-      await AsyncStorage.setItem("userRole", "driver");
-      await AsyncStorage.setItem("currentUserRole", "driver");
-
-      return driver;
-    } catch {
-      return null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
     }
+
+    if (parsed?.role && parsed.role !== "driver") return null;
+
+    const { data: authData } = await supabase.auth.getUser();
+    const authUser = authData?.user;
+
+    const authUserId = authUser?.id || parsed?.authUserId || parsed?.id || parsed?.driverId || "";
+    const authEmail = normalize(authUser?.email || parsed?.email || "");
+
+    let dbDriver: any = null;
+    let profile: any = null;
+
+    if (authUserId) {
+      const driverResult = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", authUserId)
+        .maybeSingle();
+
+      if (!driverResult.error && driverResult.data) dbDriver = driverResult.data;
+    }
+
+    if (!dbDriver && authEmail) {
+      const driverResult = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("email", authEmail)
+        .maybeSingle();
+
+      if (!driverResult.error && driverResult.data) dbDriver = driverResult.data;
+    }
+
+    if (authUserId) {
+      const profileResult = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("auth_user_id", authUserId)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!profileResult.error && profileResult.data) profile = profileResult.data;
+    }
+
+    if (!profile && authEmail) {
+      const profileResult = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", authEmail)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!profileResult.error && profileResult.data) profile = profileResult.data;
+    }
+
+    const stableId =
+      dbDriver?.id ||
+      parsed?.id ||
+      parsed?.driverId ||
+      authUserId ||
+      profile?.auth_user_id ||
+      "";
+
+    if (!stableId) return null;
+
+    const driver: DriverProfile = {
+      ...(parsed || {}),
+      ...(dbDriver || {}),
+
+      id: stableId,
+      driverId: stableId,
+      role: "driver",
+
+      email: normalize(dbDriver?.email || profile?.email || parsed?.email || authEmail),
+      fullName:
+        dbDriver?.full_name ||
+        dbDriver?.name ||
+        profile?.full_name ||
+        parsed?.fullName ||
+        parsed?.name ||
+        "Farm2Home Driver",
+      name:
+        dbDriver?.name ||
+        dbDriver?.full_name ||
+        profile?.full_name ||
+        parsed?.name ||
+        parsed?.fullName ||
+        "Farm2Home Driver",
+      username: dbDriver?.username || profile?.username || parsed?.username || "",
+
+      accountActive:
+        dbDriver?.account_active ??
+        profile?.account_active ??
+        parsed?.accountActive ??
+        true,
+
+      membershipStatus:
+        dbDriver?.membership_status ||
+        parsed?.membershipStatus ||
+        "Active",
+
+      subscriptionStatus:
+        dbDriver?.subscription_status ||
+        parsed?.subscriptionStatus ||
+        "active",
+    };
+
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
+    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(driver));
+    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(driver));
+    await AsyncStorage.setItem("userRole", "driver");
+    await AsyncStorage.setItem("currentUserRole", "driver");
+
+    return driver;
   }
 
   async function loadDriverDashboard() {
@@ -135,9 +233,25 @@ export default function MobileDriverApp() {
         return;
       }
 
-      const localDriverId =
-        currentDriver.id || currentDriver.driverId || currentDriver.email || "";
+      const subscriptionStatus = normalize(currentDriver.subscriptionStatus);
+      const membershipStatus = normalize(currentDriver.membershipStatus);
 
+      if (
+        currentDriver.accountActive === false ||
+        subscriptionStatus === "canceled" ||
+        subscriptionStatus === "past_due" ||
+        subscriptionStatus === "unpaid" ||
+        membershipStatus === "canceled"
+      ) {
+        Alert.alert(
+          "Membership Required",
+          "Your driver account is inactive or subscription is not active."
+        );
+        router.replace("/driver/login" as any);
+        return;
+      }
+
+      const localDriverId = currentDriver.id || currentDriver.driverId || "";
       const localDriverName =
         currentDriver.fullName ||
         currentDriver.name ||
@@ -156,9 +270,7 @@ export default function MobileDriverApp() {
 
         if (response.ok && Array.isArray(data.orders)) {
           backendOrders = data.orders.filter((order: any) => {
-            const status = String(
-              order.fulfillmentStatus || order.status || "NEW"
-            ).toUpperCase();
+            const status = String(order.fulfillmentStatus || order.status || "NEW").toUpperCase();
 
             const assignedToMe =
               order.assignedDriverId === localDriverId ||
@@ -286,7 +398,6 @@ export default function MobileDriverApp() {
   async function saveDriverGps(loadId: string, status: string) {
     try {
       const location = await requestLocation();
-
       if (!location) return;
 
       const payload = {
@@ -485,9 +596,7 @@ export default function MobileDriverApp() {
         <View style={styles.actionGrid}>
           <TouchableOpacity
             style={styles.blueButton}
-            onPress={() =>
-              updateLoadStatus(load, "ACCEPTED", "EN_ROUTE_TO_PICKUP")
-            }
+            onPress={() => updateLoadStatus(load, "ACCEPTED", "EN_ROUTE_TO_PICKUP")}
             disabled={loading}
           >
             <Text style={styles.actionText}>Start Pickup</Text>
@@ -495,9 +604,7 @@ export default function MobileDriverApp() {
 
           <TouchableOpacity
             style={styles.orangeButton}
-            onPress={() =>
-              updateLoadStatus(load, "ACCEPTED", "ARRIVED_AT_PICKUP")
-            }
+            onPress={() => updateLoadStatus(load, "ACCEPTED", "ARRIVED_AT_PICKUP")}
             disabled={loading}
           >
             <Text style={styles.actionText}>Arrived Pickup</Text>
@@ -524,9 +631,7 @@ export default function MobileDriverApp() {
         <View style={styles.actionGrid}>
           <TouchableOpacity
             style={styles.blueButton}
-            onPress={() =>
-              updateLoadStatus(load, "IN_TRANSIT", "EN_ROUTE_TO_DROPOFF")
-            }
+            onPress={() => updateLoadStatus(load, "IN_TRANSIT", "EN_ROUTE_TO_DROPOFF")}
             disabled={loading}
           >
             <Text style={styles.actionText}>Start Delivery</Text>
@@ -553,9 +658,7 @@ export default function MobileDriverApp() {
         <View style={styles.actionGrid}>
           <TouchableOpacity
             style={styles.orangeButton}
-            onPress={() =>
-              updateLoadStatus(load, "IN_TRANSIT", "ARRIVED_AT_DROPOFF")
-            }
+            onPress={() => updateLoadStatus(load, "IN_TRANSIT", "ARRIVED_AT_DROPOFF")}
             disabled={loading}
           >
             <Text style={styles.actionText}>Arrived Dropoff</Text>
@@ -591,9 +694,11 @@ export default function MobileDriverApp() {
 
   function renderLoadCard({ item }: { item: DriverLoad }) {
     const status = normalizeStatus(item);
+
     const pickupText = `${item.pickup_city || item.pickupAddress || "Pickup"} ${
       item.pickup_state || ""
     }`.trim();
+
     const deliveryText = `${
       item.delivery_city ||
       item.dropoffAddress ||
@@ -605,18 +710,11 @@ export default function MobileDriverApp() {
       <View style={styles.loadCard}>
         <View style={styles.loadHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.loadTitle}>
-              {item.title || "Farm2Home Delivery"}
-            </Text>
+            <Text style={styles.loadTitle}>{item.title || "Farm2Home Delivery"}</Text>
             <Text style={styles.commodity}>{item.commodity || "Farm Goods"}</Text>
           </View>
 
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: statusColor(status) },
-            ]}
-          >
+          <View style={[styles.statusBadge, { backgroundColor: statusColor(status) }]}>
             <Text style={styles.statusText}>{formatStatus(status)}</Text>
           </View>
         </View>
@@ -771,9 +869,7 @@ export default function MobileDriverApp() {
             <View style={styles.earningsCard}>
               <View>
                 <Text style={styles.earningsLabel}>Completed Delivery Earnings</Text>
-                <Text style={styles.earningsValue}>
-                  ${stats.earnings.toFixed(2)}
-                </Text>
+                <Text style={styles.earningsValue}>${stats.earnings.toFixed(2)}</Text>
               </View>
               <Ionicons name="wallet-outline" size={34} color="#BBF7D0" />
             </View>
@@ -835,14 +931,8 @@ export default function MobileDriverApp() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  container: { flex: 1, backgroundColor: freightTheme.colors.background },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 18,
@@ -851,11 +941,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   profileCircle: {
     width: 52,
     height: 52,
@@ -885,11 +971,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
   },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  navRow: { flexDirection: "row", gap: 10, padding: 18 },
   navButton: {
     flex: 1,
     backgroundColor: freightTheme.colors.primary,
@@ -912,14 +994,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
+  navText: { color: "#FFFFFF", fontWeight: "900" },
+  navTextOutline: { color: freightTheme.colors.primary, fontWeight: "900" },
   loadingCard: {
     backgroundColor: freightTheme.colors.card,
     margin: 18,
@@ -989,16 +1065,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  earningsLabel: {
-    color: "#BBF7D0",
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  earningsValue: {
-    color: "#FFFFFF",
-    fontSize: 30,
-    fontWeight: "900",
-  },
+  earningsLabel: { color: "#BBF7D0", fontWeight: "900", marginBottom: 6 },
+  earningsValue: { color: "#FFFFFF", fontSize: 30, fontWeight: "900" },
   activeNotice: {
     backgroundColor: "#052E2B",
     marginHorizontal: 18,
@@ -1028,10 +1096,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  refreshText: { color: "#FFFFFF", fontWeight: "900" },
   sectionTitle: {
     color: freightTheme.colors.text,
     fontSize: 24,
@@ -1068,10 +1133,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderRadius: 14,
   },
-  emptyButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  emptyButtonText: { color: "#FFFFFF", fontWeight: "900" },
   loadCard: {
     backgroundColor: freightTheme.colors.card,
     marginHorizontal: 18,
@@ -1103,22 +1165,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     maxWidth: 150,
   },
-  statusText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 11,
-  },
+  statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 11 },
   routeBox: {
     backgroundColor: freightTheme.colors.surface,
     padding: 14,
     borderRadius: 16,
     marginBottom: 12,
   },
-  routeStop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
+  routeStop: { flexDirection: "row", alignItems: "center", gap: 10 },
   routeLine: {
     width: 2,
     height: 24,
@@ -1181,14 +1235,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 21,
   },
-  loadActions: {
-    marginTop: 10,
-  },
-  actionGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
+  loadActions: { marginTop: 10 },
+  actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   acceptButton: {
     backgroundColor: freightTheme.colors.primary,
     paddingHorizontal: 18,
@@ -1229,10 +1277,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
   },
-  actionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  actionText: { color: "#FFFFFF", fontWeight: "900" },
   completedBadge: {
     backgroundColor: "#10B981",
     padding: 13,
@@ -1242,8 +1287,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  completedText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  completedText: { color: "#FFFFFF", fontWeight: "900" },
 });

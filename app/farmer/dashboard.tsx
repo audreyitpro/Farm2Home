@@ -43,12 +43,7 @@ const COLORS = {
 const reviews = [
   { id: 1, customer: "Angela", rating: 5, text: "Fresh eggs and fast pickup!" },
   { id: 2, customer: "Marcus", rating: 5, text: "Great greens. Very fresh." },
-  {
-    id: 3,
-    customer: "Tanya",
-    rating: 4,
-    text: "Good quality and friendly farmer.",
-  },
+  { id: 3, customer: "Tanya", rating: 4, text: "Good quality and friendly farmer." },
 ];
 
 function getStock(product: Product) {
@@ -70,9 +65,8 @@ export default function FarmerDashboard() {
   const [farmName, setFarmName] = useState("My Farm");
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
-  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>(
-    {}
-  );
+  const [statusLabel, setStatusLabel] = useState("Active Account");
+  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   useFocusEffect(
@@ -114,6 +108,20 @@ export default function FarmerDashboard() {
     );
   }
 
+  function buildStatusLabel(farmer: any) {
+    if (isRejectedFarmer(farmer)) return "Rejected";
+    if (isApprovedFarmer(farmer) || isStoreUnlocked(farmer)) return "Approved / Store Active";
+    if (
+      farmer.complianceSubmitted ||
+      farmer.compliance_submitted ||
+      farmer.complianceStatus === "pending_admin_review" ||
+      farmer.compliance_status === "pending_admin_review"
+    ) {
+      return "Submitted / Awaiting Admin Review";
+    }
+    return "In Progress";
+  }
+
   async function loadFarmerProducts() {
     try {
       setLoading(true);
@@ -149,19 +157,6 @@ export default function FarmerDashboard() {
         return;
       }
 
-      if (!isApprovedFarmer(activeFarmer) || !isStoreUnlocked(activeFarmer)) {
-        router.replace({
-          pathname: "/farmer/awaiting-approval",
-          params: {
-            farmerId: activeFarmer.id,
-            email: activeFarmer.email || "",
-            businessName:
-              activeFarmer.businessName || activeFarmer.farmName || "",
-          },
-        } as any);
-        return;
-      }
-
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(activeFarmer));
       await AsyncStorage.setItem("currentUser", JSON.stringify(activeFarmer));
       await AsyncStorage.setItem("userRole", "farmer");
@@ -171,18 +166,13 @@ export default function FarmerDashboard() {
 
       setFarmerId(id);
       setFarmerEmail(activeFarmer.email || "");
-      setFarmName(
-        activeFarmer.farmName || activeFarmer.businessName || "My Farm"
-      );
+      setFarmName(activeFarmer.farmName || activeFarmer.businessName || "My Farm");
+      setStatusLabel(buildStatusLabel(activeFarmer));
 
       const farmer = id ? await getFarmerById(id) : null;
 
       if (farmer) {
-        const farmerApproved = isApprovedFarmer(farmer);
-        const farmerUnlocked = isStoreUnlocked(farmer);
-        const farmerRejected = isRejectedFarmer(farmer);
-
-        if (farmerRejected) {
+        if (isRejectedFarmer(farmer)) {
           Alert.alert(
             "Application Rejected",
             "Your farmer application was rejected. Contact Farm2Home support."
@@ -191,21 +181,10 @@ export default function FarmerDashboard() {
           return;
         }
 
-        if (!farmerApproved || !farmerUnlocked) {
-          router.replace({
-            pathname: "/farmer/awaiting-approval",
-            params: {
-              farmerId: farmer.id,
-              email: farmer.email || "",
-              businessName: farmer.farmName || "",
-            },
-          } as any);
-          return;
-        }
-
         setFarmName(farmer.farmName || activeFarmer.businessName || "My Farm");
         setFarmerEmail(farmer.email || activeFarmer.email || "");
         setProducts(farmer.products || []);
+        setStatusLabel(buildStatusLabel(farmer));
       } else {
         setProducts(activeFarmer.products || []);
       }
@@ -260,16 +239,11 @@ export default function FarmerDashboard() {
     Alert.alert("Inventory Updated", "Your product inventory was updated.");
   }
 
-  const totalSold = products.reduce(
-    (sum, item) => sum + Number(item.sold || 0),
-    0
-  );
-
+  const totalSold = products.reduce((sum, item) => sum + Number(item.sold || 0), 0);
   const totalGrossSales = products.reduce(
     (sum, item) => sum + Number(item.grossSales || 0),
     0
   );
-
   const totalStock = products.reduce((sum, item) => sum + getStock(item), 0);
 
   const lowStockProducts = products.filter((item) => {
@@ -291,10 +265,7 @@ export default function FarmerDashboard() {
 
   return (
     <View style={styles.page}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.farmAvatar}>
@@ -302,10 +273,7 @@ export default function FarmerDashboard() {
             </View>
 
             <Pressable
-              style={({ pressed }) => [
-                styles.logoutButton,
-                pressed && styles.pressed,
-              ]}
+              style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
               onPress={logoutFarmer}
             >
               <Text style={styles.logoutText}>Logout</Text>
@@ -316,8 +284,17 @@ export default function FarmerDashboard() {
 
           <Text style={styles.subheader}>
             {farmName} · Manage your Farm2Home storefront, products, inventory,
-            and customer activity.
+            compliance, and customer activity.
           </Text>
+
+          <View style={styles.statusCard}>
+            <Text style={styles.statusTitle}>Account Status</Text>
+            <Text style={styles.statusValue}>{statusLabel}</Text>
+            <Text style={styles.statusNote}>
+              You can access your dashboard now. Compliance and approval status
+              can be completed from the Compliance button below.
+            </Text>
+          </View>
 
           <View style={styles.storeMetaRow}>
             <View style={styles.storeMeta}>
@@ -331,18 +308,13 @@ export default function FarmerDashboard() {
             </View>
 
             <View style={styles.storeMeta}>
-              <Text style={styles.storeMetaValue}>
-                ${totalGrossSales.toFixed(2)}
-              </Text>
+              <Text style={styles.storeMetaValue}>${totalGrossSales.toFixed(2)}</Text>
               <Text style={styles.storeMetaLabel}>Sales</Text>
             </View>
           </View>
 
           <Pressable
-            style={({ pressed }) => [
-              styles.setupStoreButton,
-              pressed && styles.pressed,
-            ]}
+            style={({ pressed }) => [styles.setupStoreButton, pressed && styles.pressed]}
             onPress={() => goTo("/farmer/setup-store")}
           >
             <Text style={styles.setupStoreText}>🏪 Edit Store Setup</Text>
@@ -350,54 +322,13 @@ export default function FarmerDashboard() {
         </View>
 
         <View style={styles.actionGrid}>
-          <ActionButton
-            label="Add Product"
-            icon="➕"
-            color={COLORS.primary}
-            onPress={() => goTo("/farmer/add-product")}
-          />
-
-          <ActionButton
-            label="Customize Store"
-            icon="🏪"
-            color={COLORS.primaryDark}
-            onPress={() => goTo("/farmer/setup-store")}
-          />
-
-          <ActionButton
-            label="Compliance"
-            icon="🛡️"
-            color={COLORS.purple}
-            onPress={() => goTo("/farmer/compliance-upload")}
-          />
-
-          <ActionButton
-            label="Orders"
-            icon="📦"
-            color={COLORS.blue}
-            onPress={() => goTo("/farmer/orders")}
-          />
-
-          <ActionButton
-            label="Delivery"
-            icon="🚚"
-            color={COLORS.orange}
-            onPress={() => goTo("/farmer/delivery-orders")}
-          />
-
-          <ActionButton
-            label="Payout Status"
-            icon="💳"
-            color={COLORS.stripe}
-            onPress={() => goTo("/farmer/connect-bank")}
-          />
-
-          <ActionButton
-            label="Preview Market"
-            icon="🛒"
-            color={COLORS.dark}
-            onPress={() => goTo("/customer/marketplace")}
-          />
+          <ActionButton label="Add Product" icon="➕" color={COLORS.primary} onPress={() => goTo("/farmer/add-product")} />
+          <ActionButton label="Customize Store" icon="🏪" color={COLORS.primaryDark} onPress={() => goTo("/farmer/setup-store")} />
+          <ActionButton label="Compliance" icon="🛡️" color={COLORS.purple} onPress={() => goTo("/farmer/compliance-upload")} />
+          <ActionButton label="Orders" icon="📦" color={COLORS.blue} onPress={() => goTo("/farmer/orders")} />
+          <ActionButton label="Delivery" icon="🚚" color={COLORS.orange} onPress={() => goTo("/farmer/delivery-orders")} />
+          <ActionButton label="Payout Status" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/connect-bank")} />
+          <ActionButton label="Preview Market" icon="🛒" color={COLORS.dark} onPress={() => goTo("/customer/marketplace")} />
         </View>
 
         <View style={styles.notice}>
@@ -406,7 +337,7 @@ export default function FarmerDashboard() {
           </View>
 
           <View style={styles.noticeTextBlock}>
-            <Text style={styles.noticeTitle}>Store Ready</Text>
+            <Text style={styles.noticeTitle}>Dashboard Active</Text>
 
             <Text style={styles.noticeText}>
               Add products, manage inventory, restock items, and monitor your
@@ -414,10 +345,7 @@ export default function FarmerDashboard() {
             </Text>
 
             <Pressable
-              style={({ pressed }) => [
-                styles.previewButton,
-                pressed && styles.pressed,
-              ]}
+              style={({ pressed }) => [styles.previewButton, pressed && styles.pressed]}
               onPress={() => goTo("/farmer/add-product")}
             >
               <Text style={styles.previewButtonText}>Add / Manage Produce</Text>
@@ -429,10 +357,7 @@ export default function FarmerDashboard() {
           <StatCard label="Products" value={String(products.length)} />
           <StatCard label="In Stock" value={String(totalStock)} />
           <StatCard label="Sold" value={String(totalSold)} />
-          <StatCard
-            label="Gross Sales"
-            value={`$${totalGrossSales.toFixed(2)}`}
-          />
+          <StatCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} />
           <StatCard label="Low Stock" value={String(lowStockProducts.length)} />
           <StatCard label="Sold Out" value={String(soldOutProducts.length)} />
         </View>
@@ -443,8 +368,7 @@ export default function FarmerDashboard() {
 
             {lowStockProducts.map((item) => (
               <Text key={`low-${item.id}`} style={styles.alertText}>
-                ⚠️ {item.name} is low: {getStock(item)}{" "}
-                {item.unit || "each"} left.
+                ⚠️ {item.name} is low: {getStock(item)} {item.unit || "each"} left.
               </Text>
             ))}
 
@@ -458,9 +382,7 @@ export default function FarmerDashboard() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Inventory / Restock</Text>
-          <Text style={styles.sectionSubtitle}>
-            Update stock counts and product availability
-          </Text>
+          <Text style={styles.sectionSubtitle}>Update stock counts and product availability</Text>
         </View>
 
         {products.length === 0 ? (
@@ -474,10 +396,7 @@ export default function FarmerDashboard() {
             </Text>
 
             <Pressable
-              style={({ pressed }) => [
-                styles.emptyActionButton,
-                pressed && styles.pressed,
-              ]}
+              style={({ pressed }) => [styles.emptyActionButton, pressed && styles.pressed]}
               onPress={() => goTo("/farmer/add-product")}
             >
               <Text style={styles.emptyActionText}>Add Your First Product</Text>
@@ -492,10 +411,7 @@ export default function FarmerDashboard() {
 
             return (
               <View key={item.id} style={styles.productCard}>
-                <Image
-                  source={{ uri: getProductImage(item) }}
-                  style={styles.productImage}
-                />
+                <Image source={{ uri: getProductImage(item) }} style={styles.productImage} />
 
                 <View style={styles.productBody}>
                   <View style={styles.productHeader}>
@@ -514,29 +430,12 @@ export default function FarmerDashboard() {
                   </View>
 
                   <View style={styles.detailGrid}>
-                    <Detail
-                      label="Price"
-                      value={`$${Number(item.price || 0).toFixed(2)} / ${
-                        item.unit || "each"
-                      }`}
-                    />
-                    <Detail
-                      label="Stock"
-                      value={`${stock} ${item.unit || "each"}`}
-                    />
+                    <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)} / ${item.unit || "each"}`} />
+                    <Detail label="Stock" value={`${stock} ${item.unit || "each"}`} />
                     <Detail label="Low Alert" value={String(threshold)} />
-                    <Detail
-                      label="Sold"
-                      value={String(Number(item.sold || 0))}
-                    />
-                    <Detail
-                      label="Gross"
-                      value={`$${Number(item.grossSales || 0).toFixed(2)}`}
-                    />
-                    <Detail
-                      label="Delivery"
-                      value={item.deliveryOption || "Not set"}
-                    />
+                    <Detail label="Sold" value={String(Number(item.sold || 0))} />
+                    <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
+                    <Detail label="Delivery" value={item.deliveryOption || "Not set"} />
                   </View>
 
                   <TextInput
@@ -554,15 +453,10 @@ export default function FarmerDashboard() {
                   />
 
                   <Pressable
-                    style={({ pressed }) => [
-                      styles.restockButton,
-                      pressed && styles.pressed,
-                    ]}
+                    style={({ pressed }) => [styles.restockButton, pressed && styles.pressed]}
                     onPress={() => restockProduct(item.id)}
                   >
-                    <Text style={styles.restockText}>
-                      Restock / Update Inventory
-                    </Text>
+                    <Text style={styles.restockText}>Restock / Update Inventory</Text>
                   </Pressable>
                 </View>
               </View>
@@ -578,9 +472,7 @@ export default function FarmerDashboard() {
         {reviews.map((review) => (
           <View key={review.id} style={styles.reviewCard}>
             <View style={styles.reviewAvatar}>
-              <Text style={styles.reviewAvatarText}>
-                {review.customer.slice(0, 1)}
-              </Text>
+              <Text style={styles.reviewAvatarText}>{review.customer.slice(0, 1)}</Text>
             </View>
 
             <View style={styles.reviewBody}>
@@ -643,10 +535,7 @@ function Detail({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
+  page: { flex: 1, backgroundColor: COLORS.background },
   lockContainer: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -660,10 +549,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textAlign: "center",
   },
-  content: {
-    padding: 18,
-    paddingBottom: 44,
-  },
+  content: { padding: 18, paddingBottom: 44 },
   heroCard: {
     backgroundColor: COLORS.primary,
     borderRadius: 32,
@@ -684,9 +570,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  farmAvatarText: {
-    fontSize: 35,
-  },
+  farmAvatarText: { fontSize: 35 },
   header: {
     fontSize: 31,
     fontWeight: "900",
@@ -697,6 +581,29 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 22,
     fontWeight: "700",
+  },
+  statusCard: {
+    backgroundColor: "#FFFFFF",
+    marginTop: 16,
+    borderRadius: 20,
+    padding: 15,
+  },
+  statusTitle: {
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  statusValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 18,
+    marginTop: 5,
+  },
+  statusNote: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 6,
   },
   storeMetaRow: {
     flexDirection: "row",
@@ -741,10 +648,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 999,
   },
-  logoutText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  logoutText: { color: "#FFFFFF", fontWeight: "900" },
   actionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -758,10 +662,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     justifyContent: "center",
   },
-  actionIcon: {
-    fontSize: 24,
-    marginBottom: 7,
-  },
+  actionIcon: { fontSize: 24, marginBottom: 7 },
   actionText: {
     color: "#FFFFFF",
     fontWeight: "900",
@@ -776,11 +677,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     flexDirection: "row",
     gap: 13,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
   },
   noticeIconBox: {
     width: 54,
@@ -790,12 +686,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  noticeIcon: {
-    fontSize: 27,
-  },
-  noticeTextBlock: {
-    flex: 1,
-  },
+  noticeIcon: { fontSize: 27 },
+  noticeTextBlock: { flex: 1 },
   noticeTitle: {
     fontWeight: "900",
     color: COLORS.text,
@@ -832,11 +724,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
   },
   statValue: {
     fontSize: 23,
@@ -869,10 +756,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     lineHeight: 20,
   },
-  sectionHeader: {
-    marginTop: 6,
-    marginBottom: 12,
-  },
+  sectionHeader: { marginTop: 6, marginBottom: 12 },
   sectionTitle: {
     fontSize: 23,
     fontWeight: "900",
@@ -892,10 +776,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     alignItems: "center",
   },
-  emptyIcon: {
-    fontSize: 46,
-    marginBottom: 10,
-  },
+  emptyIcon: { fontSize: 46, marginBottom: 10 },
   emptyTitle: {
     fontSize: 21,
     fontWeight: "900",
@@ -910,10 +791,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     alignSelf: "stretch",
   },
-  emptyActionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  emptyActionText: { color: "#FFFFFF", fontWeight: "900" },
   productCard: {
     backgroundColor: COLORS.card,
     borderRadius: 30,
@@ -921,20 +799,13 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.07,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
   },
   productImage: {
     width: "100%",
     height: 210,
     backgroundColor: COLORS.softGreen,
   },
-  productBody: {
-    padding: 16,
-  },
+  productBody: { padding: 16 },
   productHeader: {
     flexDirection: "row",
     gap: 10,
@@ -1049,9 +920,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 18,
   },
-  reviewBody: {
-    flex: 1,
-  },
+  reviewBody: { flex: 1 },
   reviewHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1062,17 +931,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.text,
   },
-  reviewRating: {
-    fontWeight: "900",
-    color: COLORS.primary,
-  },
+  reviewRating: { fontWeight: "900", color: COLORS.primary },
   reviewText: {
     marginTop: 5,
     color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 20,
   },
-  pressed: {
-    opacity: 0.75,
-  },
+  pressed: { opacity: 0.75 },
 });

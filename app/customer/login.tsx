@@ -45,6 +45,8 @@ function mapCustomer(customer: any) {
     id: customer.id,
     customerId: customer.id,
     profileId: customer.profile_id || customer.profileId || "",
+    profile_id: customer.profile_id || customer.profileId || "",
+    authUserId: customer.auth_user_id || customer.authUserId || customer.id || "",
     role: "customer",
 
     fullName:
@@ -72,6 +74,19 @@ function mapCustomer(customer: any) {
       customer.customerMembershipPaid ??
       false,
 
+    stripeCustomerId:
+      customer.stripe_customer_id ||
+      customer.stripeCustomerId ||
+      customer.stripe_customer ||
+      "",
+
+    stripeSubscriptionId:
+      customer.stripe_subscription_id ||
+      customer.stripeSubscriptionId ||
+      customer.subscription_id ||
+      customer.subscriptionId ||
+      "",
+
     subscriptionStatus:
       customer.subscription_status || customer.subscriptionStatus || "pending",
 
@@ -97,6 +112,7 @@ export default function CustomerLoginScreen() {
 
     await AsyncStorage.setItem("currentCustomer", JSON.stringify(mapped));
     await AsyncStorage.setItem("currentUser", JSON.stringify(mapped));
+    await AsyncStorage.setItem("farm2homeCurrentCustomer", JSON.stringify(mapped));
     await AsyncStorage.setItem("userRole", "customer");
     await AsyncStorage.setItem("currentUserRole", "customer");
 
@@ -105,62 +121,104 @@ export default function CustomerLoginScreen() {
 
   async function findCustomerProfile(userId: string, cleanEmail: string) {
     let customer: any = null;
+    let profile: any = null;
 
     if (userId) {
-      const { data, error } = await supabase
+      const result = await supabase
         .from("customers")
         .select("*")
         .eq("id", userId)
         .maybeSingle();
 
-      if (error) throw error;
-      if (data) customer = data;
+      if (!result.error && result.data) customer = result.data;
     }
 
     if (!customer && cleanEmail) {
-      const { data, error } = await supabase
+      const result = await supabase
         .from("customers")
         .select("*")
         .eq("email", cleanEmail)
         .maybeSingle();
 
-      if (error) throw error;
-      if (data) customer = data;
+      if (!result.error && result.data) customer = result.data;
     }
 
     if (!customer && cleanEmail) {
-      const { data, error } = await supabase
+      const result = await supabase
         .from("customers")
         .select("*")
         .eq("customer_email", cleanEmail)
         .maybeSingle();
 
-      if (error) {
-        console.log("customer_email lookup ignored:", error.message);
-      }
-
-      if (data) customer = data;
+      if (!result.error && result.data) customer = result.data;
     }
 
     if (!customer && userId) {
-      const { data: profile, error: profileError } = await supabase
+      const profileResult = await supabase
         .from("profiles")
-        .select("id")
+        .select("*")
         .eq("auth_user_id", userId)
+        .eq("role", "customer")
         .maybeSingle();
 
-      if (profileError) throw profileError;
+      if (!profileResult.error && profileResult.data) {
+        profile = profileResult.data;
+      }
 
       if (profile?.id) {
-        const { data, error } = await supabase
+        const result = await supabase
           .from("customers")
           .select("*")
           .eq("profile_id", profile.id)
           .maybeSingle();
 
-        if (error) throw error;
-        if (data) customer = data;
+        if (!result.error && result.data) customer = result.data;
       }
+    }
+
+    if (!profile && cleanEmail) {
+      const profileResult = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", cleanEmail)
+        .eq("role", "customer")
+        .maybeSingle();
+
+      if (!profileResult.error && profileResult.data) {
+        profile = profileResult.data;
+      }
+    }
+
+    if (!customer && profile) {
+      customer = {
+        id: profile.auth_user_id || userId || profile.id,
+        auth_user_id: profile.auth_user_id || userId || "",
+        profile_id: profile.id,
+        role: "customer",
+        full_name: profile.full_name || profile.name || "Customer",
+        name: profile.full_name || profile.name || "Customer",
+        email: profile.email || cleanEmail,
+        phone: profile.phone || "",
+        username: profile.username || "",
+        account_active: profile.account_active ?? true,
+        customer_membership_paid: false,
+        membership_status: "Pending",
+        subscription_status: "pending",
+        created_at: profile.created_at || "",
+        updated_at: new Date().toISOString(),
+      };
+    }
+
+    if (customer && profile) {
+      customer = {
+        ...customer,
+        profile_id: customer.profile_id || profile.id,
+        auth_user_id: customer.auth_user_id || profile.auth_user_id || userId,
+        full_name: customer.full_name || profile.full_name || profile.name,
+        name: customer.name || profile.full_name || profile.name,
+        phone: customer.phone || profile.phone,
+        email: customer.email || profile.email,
+      };
     }
 
     return customer;
@@ -209,6 +267,24 @@ export default function CustomerLoginScreen() {
 
       if (mappedCustomer.accountActive === false) {
         Alert.alert("Account Disabled", "This customer account is not active.");
+        return;
+      }
+
+      const membershipStatus = normalize(mappedCustomer.membershipStatus);
+      const subscriptionStatus = normalize(mappedCustomer.subscriptionStatus);
+
+      if (
+        membershipStatus === "canceled" ||
+        subscriptionStatus === "canceled" ||
+        subscriptionStatus === "past_due" ||
+        subscriptionStatus === "unpaid"
+      ) {
+        Alert.alert(
+          "Membership Required",
+          "Your customer membership is inactive. Please renew your membership."
+        );
+
+        router.replace("/customer/register" as any);
         return;
       }
 
@@ -336,9 +412,7 @@ export default function CustomerLoginScreen() {
               ) : (
                 <>
                   <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
-                  <Text style={styles.loginButtonText}>
-                    Login to Marketplace
-                  </Text>
+                  <Text style={styles.loginButtonText}>Login to Marketplace</Text>
                 </>
               )}
             </TouchableOpacity>

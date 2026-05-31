@@ -20,15 +20,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import * as DocumentPicker from "expo-document-picker";
 import { router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
-
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -73,10 +69,8 @@ export default function DriverRegisterScreen() {
   const [licenseNumber, setLicenseNumber] = useState("");
   const [serviceArea, setServiceArea] = useState("");
 
-  const [licenseDocument, setLicenseDocument] =
-    useState<UploadedDocument | null>(null);
-  const [insuranceDocument, setInsuranceDocument] =
-    useState<UploadedDocument | null>(null);
+  const [licenseDocument, setLicenseDocument] = useState<UploadedDocument | null>(null);
+  const [insuranceDocument, setInsuranceDocument] = useState<UploadedDocument | null>(null);
 
   const [hasInsurance, setHasInsurance] = useState(false);
   const [hasValidLicense, setHasValidLicense] = useState(false);
@@ -90,10 +84,72 @@ export default function DriverRegisterScreen() {
   const [securityAnswer3, setSecurityAnswer3] = useState("");
 
   const selectedQuestions = useMemo(
-    () =>
-      [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
+    () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
+
+  async function createOrUpdateProfile({
+    authUserId,
+    cleanFullName,
+    cleanEmail,
+    cleanPhone,
+    cleanUsername,
+  }: {
+    authUserId: string;
+    cleanFullName: string;
+    cleanEmail: string;
+    cleanPhone: string;
+    cleanUsername: string;
+  }) {
+    const { data: existingProfile, error: existingProfileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", cleanEmail)
+      .maybeSingle();
+
+    if (existingProfileError) throw existingProfileError;
+
+    if (existingProfile?.id) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update({
+          auth_user_id: authUserId,
+          role: "driver",
+          full_name: cleanFullName,
+          name: cleanFullName,
+          phone: cleanPhone,
+          username: cleanUsername,
+          account_active: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingProfile.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .insert({
+        auth_user_id: authUserId,
+        role: "driver",
+        full_name: cleanFullName,
+        name: cleanFullName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        username: cleanUsername,
+        account_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
 
   async function pickDocument(type: "license" | "insurance") {
     try {
@@ -190,11 +246,7 @@ export default function DriverRegisterScreen() {
       return false;
     }
 
-    if (
-      !securityAnswer1.trim() ||
-      !securityAnswer2.trim() ||
-      !securityAnswer3.trim()
-    ) {
+    if (!securityAnswer1.trim() || !securityAnswer2.trim() || !securityAnswer3.trim()) {
       Alert.alert("Security Required", "Please answer all 3 security questions.");
       return false;
     }
@@ -203,21 +255,30 @@ export default function DriverRegisterScreen() {
   }
 
   async function checkDuplicateDriver(cleanEmail: string, cleanUsername: string) {
-    const { data, error } = await supabase
+    const driverCheck = await supabase
       .from("drivers")
       .select("id,email,username")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
       .maybeSingle();
 
-    if (error) {
-      console.log("Duplicate driver check error:", error.message);
-      return false;
-    }
-
-    if (data) {
+    if (!driverCheck.error && driverCheck.data) {
       Alert.alert(
         "Account Exists",
         "A driver account already exists with this email or username."
+      );
+      return true;
+    }
+
+    const profileCheck = await supabase
+      .from("profiles")
+      .select("id,email,username")
+      .eq("email", cleanEmail)
+      .maybeSingle();
+
+    if (!profileCheck.error && profileCheck.data) {
+      Alert.alert(
+        "Account Exists",
+        "A profile already exists with this email. Please login instead."
       );
       return true;
     }
@@ -316,6 +377,7 @@ export default function DriverRegisterScreen() {
             role: "driver",
             username: cleanUsername,
             full_name: cleanFullName,
+            name: cleanFullName,
           },
         },
       });
@@ -335,6 +397,19 @@ export default function DriverRegisterScreen() {
         return;
       }
 
+      const profile = await createOrUpdateProfile({
+        authUserId: driverId,
+        cleanFullName,
+        cleanEmail,
+        cleanPhone,
+        cleanUsername,
+      });
+
+      if (!profile?.id) {
+        Alert.alert("Profile Error", "Unable to create driver profile record.");
+        return;
+      }
+
       const now = new Date().toISOString();
 
       const uploadedLicense = await uploadDriverDocument(
@@ -351,6 +426,8 @@ export default function DriverRegisterScreen() {
 
       const driverPayload = {
         id: driverId,
+        auth_user_id: driverId,
+        profile_id: profile.id,
         role: "driver",
 
         full_name: cleanFullName,
@@ -383,9 +460,13 @@ export default function DriverRegisterScreen() {
         security_answer_3: normalizeAnswer(securityAnswer3),
 
         approved: true,
+        verified: true,
         account_active: true,
         subscription_status: "pending",
         membership_status: "Pending",
+
+        stripe_customer_id: "",
+        stripe_subscription_id: "",
 
         notifications_enabled: false,
         expo_push_token: "",
@@ -394,21 +475,25 @@ export default function DriverRegisterScreen() {
         updated_at: now,
       };
 
-      const { error: profileError } = await supabase
+      const { error: driverError } = await supabase
         .from("drivers")
         .upsert(driverPayload, { onConflict: "id" });
 
-      if (profileError) {
-        Alert.alert("Profile Error", profileError.message);
+      if (driverError) {
+        Alert.alert("Driver Profile Error", driverError.message);
         return;
       }
 
       const localDriver = {
         id: driverId,
         driverId,
+        authUserId: driverId,
+        profileId: profile.id,
+        profile_id: profile.id,
         role: "driver",
 
         fullName: cleanFullName,
+        name: cleanFullName,
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
@@ -437,9 +522,13 @@ export default function DriverRegisterScreen() {
         securityAnswer3: normalizeAnswer(securityAnswer3),
 
         approved: true,
+        verified: true,
         accountActive: true,
         subscriptionStatus: "pending",
         membershipStatus: "Pending",
+
+        stripeCustomerId: "",
+        stripeSubscriptionId: "",
 
         createdAt: now,
         updatedAt: now,
@@ -460,6 +549,7 @@ export default function DriverRegisterScreen() {
               username: cleanUsername,
               userId: driverId,
               driverId,
+              profileId: profile.id,
               planType: "driver",
               successUrl: `${APP_URL}/driver/mobile-driver-app`,
               cancelUrl: `${APP_URL}/driver/register`,
@@ -477,24 +567,24 @@ export default function DriverRegisterScreen() {
         }
 
         if (response.ok && data.url) {
-          await AsyncStorage.setItem(
-            "pendingDriver",
-            JSON.stringify({
-              ...localDriver,
-              stripeCheckoutSessionId: data.id || data.sessionId || null,
-              membershipStatus: "Checkout Started",
-              subscriptionStatus: "pending",
-              updatedAt: new Date().toISOString(),
-            })
-          );
+          const checkoutDriver = {
+            ...localDriver,
+            stripeCheckoutSessionId: data.id || data.sessionId || null,
+            membershipStatus: "Checkout Started",
+            subscriptionStatus: "pending",
+            updatedAt: new Date().toISOString(),
+          };
 
+          await saveDriverSession(checkoutDriver);
           await openCheckoutUrl(data.url);
           return;
         }
 
         Alert.alert(
           "Driver Account Created",
-          "Your driver account was created, but Stripe checkout did not open. Please try subscription again from the driver area."
+          data.error ||
+            data.message ||
+            "Your driver account was created, but Stripe checkout did not open. Please try subscription again from the driver area."
         );
       } catch (stripeError) {
         console.log("Stripe driver checkout skipped:", stripeError);
@@ -752,9 +842,7 @@ export default function DriverRegisterScreen() {
               onPress={() => pickDocument("insurance")}
             >
               <Ionicons
-                name={
-                  insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"
-                }
+                name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"}
                 size={20}
                 color={insuranceDocument ? "#BBF7D0" : freightTheme.colors.primary}
               />
@@ -864,21 +952,10 @@ export default function DriverRegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  keyboard: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  page: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 80,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
+  page: { flex: 1, backgroundColor: freightTheme.colors.background },
+  content: { paddingBottom: 80 },
   heroCard: {
     backgroundColor: "#020617",
     paddingTop: 24,
@@ -1039,9 +1116,7 @@ const styles = StyleSheet.create({
     paddingRight: 12,
     color: freightTheme.colors.text,
   },
-  questionBox: {
-    marginBottom: 12,
-  },
+  questionBox: { marginBottom: 12 },
   questionLabel: {
     color: freightTheme.colors.text,
     fontWeight: "900",
@@ -1080,9 +1155,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
+  disabledButton: { opacity: 0.6 },
   buttonText: {
     color: "#FFFFFF",
     textAlign: "center",

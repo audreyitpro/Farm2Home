@@ -27,42 +27,59 @@ function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
-function mapDriver(driver: any) {
+function mapDriver(driver: any, profile?: any) {
+  const id = driver?.id || profile?.auth_user_id || "";
+
   return {
-    id: driver.id,
-    driverId: driver.id,
-    profileId: driver.profile_id || driver.profileId || "",
+    id,
+    driverId: id,
+    profileId: driver?.profile_id || profile?.id || "",
+    profile_id: driver?.profile_id || profile?.id || "",
+    authUserId: driver?.auth_user_id || profile?.auth_user_id || id,
     role: "driver",
 
     fullName:
-      driver.full_name ||
-      driver.fullName ||
-      driver.name ||
-      driver.driver_name ||
+      driver?.full_name ||
+      driver?.fullName ||
+      driver?.name ||
+      driver?.driver_name ||
+      profile?.full_name ||
+      profile?.name ||
       "Farm2Home Driver",
 
-    email: normalize(driver.email || driver.driver_email),
-    username: driver.username || "",
-    phone: driver.phone || "",
+    name:
+      driver?.name ||
+      driver?.full_name ||
+      profile?.full_name ||
+      "Farm2Home Driver",
 
-    accountActive: driver.account_active ?? driver.accountActive ?? true,
+    email: normalize(driver?.email || driver?.driver_email || profile?.email),
+    username: driver?.username || profile?.username || "",
+    phone: driver?.phone || profile?.phone || "",
+
+    vehicleType: driver?.vehicle_type || driver?.vehicleType || "",
+    licenseNumber: driver?.license_number || driver?.licenseNumber || "",
+    serviceArea: driver?.service_area || driver?.serviceArea || "",
+
+    accountActive: driver?.account_active ?? profile?.account_active ?? true,
 
     membershipStatus:
-      driver.membership_status || driver.membershipStatus || "Active",
+      driver?.membership_status || driver?.membershipStatus || "Active",
 
     subscriptionStatus:
-      driver.subscription_status || driver.subscriptionStatus || "active",
+      driver?.subscription_status || driver?.subscriptionStatus || "active",
 
-    approved: driver.approved ?? true,
-    verified: driver.verified ?? true,
+    approved: driver?.approved ?? true,
+    verified: driver?.verified ?? true,
 
-    expoPushToken: driver.expo_push_token || driver.expoPushToken || "",
+    expoPushToken: driver?.expo_push_token || driver?.expoPushToken || "",
 
     notificationsEnabled:
-      driver.notifications_enabled ?? driver.notificationsEnabled ?? false,
+      driver?.notifications_enabled ?? driver?.notificationsEnabled ?? false,
 
-    createdAt: driver.created_at || driver.createdAt || "",
-    updatedAt: driver.updated_at || driver.updatedAt || new Date().toISOString(),
+    createdAt: driver?.created_at || driver?.createdAt || profile?.created_at || "",
+    updatedAt:
+      driver?.updated_at || driver?.updatedAt || new Date().toISOString(),
   };
 }
 
@@ -91,83 +108,112 @@ export default function DriverLoginScreen() {
   const [resetLoading, setResetLoading] = useState(false);
 
   async function saveLoggedInDriver(driver: any) {
-    const normalizedDriver = mapDriver(driver);
-
-    await AsyncStorage.setItem("currentDriver", JSON.stringify(normalizedDriver));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedDriver));
-    await AsyncStorage.setItem(
-      "farm2homeCurrentDriver",
-      JSON.stringify(normalizedDriver)
-    );
-    await AsyncStorage.setItem(
-      "farm2homeDriverSession",
-      JSON.stringify(normalizedDriver)
-    );
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
+    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(driver));
+    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(driver));
     await AsyncStorage.setItem("userRole", "driver");
     await AsyncStorage.setItem("currentUserRole", "driver");
 
-    return normalizedDriver;
+    return driver;
+  }
+
+  async function findProfile(userId: string, cleanEmail: string) {
+    if (userId) {
+      const byAuth = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("auth_user_id", userId)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!byAuth.error && byAuth.data) return byAuth.data;
+    }
+
+    if (cleanEmail) {
+      const byEmail = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", cleanEmail)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!byEmail.error && byEmail.data) return byEmail.data;
+    }
+
+    return null;
   }
 
   async function findDriverProfile(userId: string, cleanEmail: string) {
     let driver: any = null;
+    let profile: any = null;
 
     if (userId) {
-      const { data, error } = await supabase
+      const byId = await supabase
         .from("drivers")
         .select("*")
         .eq("id", userId)
         .maybeSingle();
 
-      if (error) throw error;
-      if (data) driver = data;
+      if (!byId.error && byId.data) driver = byId.data;
     }
 
     if (!driver && cleanEmail) {
-      const { data, error } = await supabase
+      const byEmail = await supabase
         .from("drivers")
         .select("*")
         .eq("email", cleanEmail)
         .maybeSingle();
 
-      if (error) throw error;
-      if (data) driver = data;
+      if (!byEmail.error && byEmail.data) driver = byEmail.data;
     }
 
     if (!driver && cleanEmail) {
-      const { data, error } = await supabase
+      const byDriverEmail = await supabase
         .from("drivers")
         .select("*")
         .eq("driver_email", cleanEmail)
         .maybeSingle();
 
-      if (error) {
-        console.log("driver_email lookup ignored:", error.message);
+      if (!byDriverEmail.error && byDriverEmail.data) {
+        driver = byDriverEmail.data;
       }
-
-      if (data) driver = data;
     }
 
-    if (!driver && userId) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("auth_user_id", userId)
+    profile = await findProfile(userId, cleanEmail);
+
+    if (!driver && profile?.id) {
+      const byProfile = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("profile_id", profile.id)
         .maybeSingle();
 
-      if (profile?.id) {
-        const { data, error } = await supabase
-          .from("drivers")
-          .select("*")
-          .eq("profile_id", profile.id)
-          .maybeSingle();
-
-        if (error) throw error;
-        if (data) driver = data;
-      }
+      if (!byProfile.error && byProfile.data) driver = byProfile.data;
     }
 
-    return driver;
+    if (!driver && profile) {
+      driver = {
+        id: userId || profile.auth_user_id || profile.id,
+        auth_user_id: userId || profile.auth_user_id || "",
+        profile_id: profile.id,
+        role: "driver",
+        full_name: profile.full_name || profile.name || "Farm2Home Driver",
+        name: profile.full_name || profile.name || "Farm2Home Driver",
+        email: profile.email || cleanEmail,
+        phone: profile.phone || "",
+        username: profile.username || "",
+        account_active: profile.account_active ?? true,
+        membership_status: "Active",
+        subscription_status: "active",
+        approved: true,
+        verified: true,
+      };
+    }
+
+    if (!driver) return null;
+
+    return mapDriver(driver, profile);
   }
 
   async function handleLogin() {
@@ -199,17 +245,16 @@ export default function DriverLoginScreen() {
         return;
       }
 
-      const driver = await findDriverProfile(userId, cleanEmail);
+      const normalizedDriver = await findDriverProfile(userId, cleanEmail);
 
-      if (!driver) {
+      if (!normalizedDriver) {
         Alert.alert(
           "Driver Profile Missing",
           "Your email/password is valid, but no driver profile row was found. Complete driver registration or contact Farm2Home support."
         );
+        router.replace("/driver/register" as any);
         return;
       }
-
-      const normalizedDriver = await saveLoggedInDriver(driver);
 
       if (!isDriverActive(normalizedDriver)) {
         Alert.alert(
@@ -218,6 +263,8 @@ export default function DriverLoginScreen() {
         );
         return;
       }
+
+      await saveLoggedInDriver(normalizedDriver);
 
       router.replace("/driver/mobile-driver-app" as any);
     } catch (error: any) {
@@ -451,18 +498,9 @@ export default function DriverLoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  keyboard: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingBottom: 80,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
+  scrollContent: { flexGrow: 1, paddingBottom: 80 },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 26,
@@ -575,17 +613,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
+  disabledButton: { opacity: 0.6 },
   loginButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-  linkButton: {
-    marginTop: 16,
-  },
+  linkButton: { marginTop: 16 },
   linkText: {
     textAlign: "center",
     color: freightTheme.colors.primary,
@@ -665,12 +699,6 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     fontWeight: "700",
   },
-  closeButton: {
-    marginTop: 18,
-    alignItems: "center",
-  },
-  closeText: {
-    color: "#B91C1C",
-    fontWeight: "900",
-  },
+  closeButton: { marginTop: 18, alignItems: "center" },
+  closeText: { color: "#B91C1C", fontWeight: "900" },
 });

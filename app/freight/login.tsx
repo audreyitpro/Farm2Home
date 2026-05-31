@@ -25,16 +25,24 @@ import freightTheme from "../styles/freightTheme";
 
 type FreightUser = {
   id: string;
-  profileId?: string;
+  freightId: string;
+  profileId: string;
+  authUserId: string;
   role: "freight";
+
   companyName: string;
+  businessName: string;
+  contactName: string;
+  fullName: string;
   email: string;
+  phone: string;
   username: string;
+
   accountActive: boolean;
   membershipStatus: string;
-  subscriptionStatus?: string;
-  approved?: boolean;
-  verificationStatus?: string;
+  subscriptionStatus: string;
+  approved: boolean;
+  verificationStatus: string;
 };
 
 function clean(value: any) {
@@ -45,49 +53,65 @@ function normalize(value: any) {
   return clean(value).toLowerCase();
 }
 
-function mapCarrierToFreightUser(item: any): FreightUser {
+function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
+  const id = item?.id || item?.freight_id || profile?.auth_user_id || "";
+
   return {
-    id: item.id || item.freight_id || `freight_${Date.now()}`,
-    profileId: item.profile_id || item.profileId || "",
+    id,
+    freightId: id,
+    profileId: item?.profile_id || profile?.id || "",
+    authUserId: item?.auth_user_id || profile?.auth_user_id || id,
     role: "freight",
 
     companyName:
-      item.company_name ||
-      item.business_name ||
-      item.carrier_name ||
-      item.freight_company ||
-      item.companyName ||
-      item.businessName ||
-      item.name ||
+      item?.company_name ||
+      item?.business_name ||
+      profile?.company_name ||
       "Freight Carrier",
 
-    email: normalize(item.email || item.freight_email || item.carrier_email),
+    businessName:
+      item?.business_name ||
+      item?.company_name ||
+      profile?.company_name ||
+      "Freight Carrier",
 
-    username: normalize(
-      item.username || item.freight_username || item.carrier_username
-    ),
+    contactName:
+      item?.contact_name ||
+      item?.full_name ||
+      item?.name ||
+      profile?.full_name ||
+      profile?.name ||
+      "",
+
+    fullName:
+      item?.full_name ||
+      item?.contact_name ||
+      item?.name ||
+      profile?.full_name ||
+      profile?.name ||
+      "",
+
+    email: normalize(item?.email || profile?.email),
+    phone: item?.phone || profile?.phone || "",
+    username: normalize(item?.username),
 
     accountActive:
-      item.account_active === undefined
-        ? item.accountActive !== false
-        : item.account_active !== false,
+      item?.account_active === undefined
+        ? profile?.account_active !== false
+        : item?.account_active !== false,
 
-    membershipStatus:
-      item.membership_status || item.membershipStatus || "Pending",
-
-    subscriptionStatus:
-      item.subscription_status || item.subscriptionStatus || "pending",
+    membershipStatus: item?.membership_status || "Pending",
+    subscriptionStatus: item?.subscription_status || "pending",
 
     approved:
-      item.approved === true ||
-      normalize(item.status) === "approved" ||
-      normalize(item.verification_status) === "approved" ||
-      normalize(item.verificationStatus) === "approved",
+      item?.approved === true ||
+      normalize(item?.status) === "approved" ||
+      normalize(item?.verification_status) === "approved" ||
+      normalize(item?.admin_review_status) === "approved",
 
     verificationStatus:
-      item.verification_status ||
-      item.verificationStatus ||
-      item.admin_review_status ||
+      item?.verification_status ||
+      item?.admin_review_status ||
       "PENDING_VERIFICATION",
   };
 }
@@ -120,18 +144,16 @@ export default function FreightLoginScreen() {
     const sessionUser = {
       ...user,
       role: "freight" as const,
-      profileId: user.profileId || "",
       accountActive: user.accountActive !== false,
       membershipStatus: user.membershipStatus || "Pending",
+      subscriptionStatus: user.subscriptionStatus || "pending",
       updatedAt: new Date().toISOString(),
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(sessionUser));
-    await AsyncStorage.setItem(
-      "currentFreightCarrier",
-      JSON.stringify(sessionUser)
-    );
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(sessionUser));
     await AsyncStorage.setItem("currentFreightUser", JSON.stringify(sessionUser));
+    await AsyncStorage.setItem("farm2homeCurrentFreight", JSON.stringify(sessionUser));
     await AsyncStorage.setItem("currentUser", JSON.stringify(sessionUser));
     await AsyncStorage.setItem("userRole", "freight");
     await AsyncStorage.setItem("currentUserRole", "freight");
@@ -139,71 +161,105 @@ export default function FreightLoginScreen() {
     return sessionUser;
   }
 
+  async function findProfile(userId: string, cleanEmail: string) {
+    if (userId) {
+      const byAuth = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("auth_user_id", userId)
+        .eq("role", "freight")
+        .maybeSingle();
+
+      if (!byAuth.error && byAuth.data) return byAuth.data;
+    }
+
+    if (cleanEmail) {
+      const byEmail = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", cleanEmail)
+        .eq("role", "freight")
+        .maybeSingle();
+
+      if (!byEmail.error && byEmail.data) return byEmail.data;
+    }
+
+    return null;
+  }
+
   async function findFreightProfile(userId: string, cleanEmail: string) {
     let freightUser: any = null;
+    let profile: any = null;
 
     if (userId) {
-      const { data: carrierById, error: carrierByIdError } = await supabase
+      const carrierById = await supabase
         .from("freight_carriers")
         .select("*")
         .eq("id", userId)
         .maybeSingle();
 
-      if (carrierByIdError) throw carrierByIdError;
-      if (carrierById) freightUser = carrierById;
+      if (!carrierById.error && carrierById.data) freightUser = carrierById.data;
     }
 
     if (!freightUser && userId) {
-      const { data: freightUserById, error: freightUserByIdError } =
-        await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", userId)
-          .maybeSingle();
+      const userById = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
 
-      if (freightUserByIdError) throw freightUserByIdError;
-      if (freightUserById) freightUser = freightUserById;
+      if (!userById.error && userById.data) freightUser = userById.data;
     }
 
     if (!freightUser && cleanEmail) {
-      const { data: carrierByEmail, error: carrierByEmailError } =
-        await supabase
-          .from("freight_carriers")
-          .select("*")
-          .eq("email", cleanEmail)
-          .maybeSingle();
+      const carrierByEmail = await supabase
+        .from("freight_carriers")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
 
-      if (carrierByEmailError) throw carrierByEmailError;
-      if (carrierByEmail) freightUser = carrierByEmail;
-    }
-
-    if (!freightUser && cleanEmail) {
-      const { data: carrierByFreightEmail, error: carrierByFreightEmailError } =
-        await supabase
-          .from("freight_carriers")
-          .select("*")
-          .eq("freight_email", cleanEmail)
-          .maybeSingle();
-
-      if (carrierByFreightEmailError) {
-        console.log("freight_email lookup ignored:", carrierByFreightEmailError);
+      if (!carrierByEmail.error && carrierByEmail.data) {
+        freightUser = carrierByEmail.data;
       }
-
-      if (carrierByFreightEmail) freightUser = carrierByFreightEmail;
     }
 
     if (!freightUser && cleanEmail) {
-      const { data: userByEmail, error: userByEmailError } = await supabase
+      const userByEmail = await supabase
         .from("freight_users")
         .select("*")
         .eq("email", cleanEmail)
         .maybeSingle();
 
-      if (userByEmailError) throw userByEmailError;
-      if (userByEmail) freightUser = userByEmail;
+      if (!userByEmail.error && userByEmail.data) {
+        freightUser = userByEmail.data;
+      }
     }
 
-    return freightUser;
+    profile = await findProfile(userId, cleanEmail);
+
+    if (!freightUser && profile) {
+      freightUser = {
+        id: userId || profile.auth_user_id,
+        auth_user_id: userId || profile.auth_user_id,
+        profile_id: profile.id,
+        role: "freight",
+        company_name: profile.company_name || "Freight Carrier",
+        contact_name: profile.full_name || profile.name || "",
+        full_name: profile.full_name || profile.name || "",
+        email: profile.email,
+        phone: profile.phone,
+        username: "",
+        account_active: profile.account_active ?? true,
+        approved: false,
+        verification_status: "PENDING_VERIFICATION",
+        membership_status: "Pending",
+        subscription_status: "pending",
+      };
+    }
+
+    if (!freightUser) return null;
+
+    return mapCarrierToFreightUser(freightUser, profile);
   }
 
   async function handleLogin() {
@@ -235,17 +291,16 @@ export default function FreightLoginScreen() {
         return;
       }
 
-      const freightUser = await findFreightProfile(userId, cleanEmail);
+      const mappedUser = await findFreightProfile(userId, cleanEmail);
 
-      if (!freightUser) {
+      if (!mappedUser) {
         Alert.alert(
           "Freight Profile Missing",
-          "Your email/password is valid, but no freight profile row was found. Please complete freight registration or contact Farm2Home support."
+          "Your login exists, but no freight profile row was found. Please complete freight registration."
         );
+        router.replace("/freight/register" as any);
         return;
       }
-
-      const mappedUser = mapCarrierToFreightUser(freightUser);
 
       if (!isFreightActive(mappedUser)) {
         Alert.alert("Account Not Active", "Your freight account is not active.");
@@ -255,6 +310,10 @@ export default function FreightLoginScreen() {
       await saveFreightSession(mappedUser);
 
       if (mappedUser.approved !== true) {
+        Alert.alert(
+          "Pending Review",
+          "Your freight account is saved and pending Farm2Home admin approval."
+        );
         router.replace("/freight/register" as any);
         return;
       }
@@ -262,10 +321,7 @@ export default function FreightLoginScreen() {
       router.replace("/freight/dashboard" as any);
     } catch (error: any) {
       console.log("Freight login error:", error);
-      Alert.alert(
-        "Login Error",
-        error?.message || "Unable to login to freight account."
-      );
+      Alert.alert("Login Error", error?.message || "Unable to login to freight account.");
     } finally {
       setLoginLoading(false);
     }
@@ -347,8 +403,7 @@ export default function FreightLoginScreen() {
           <View style={styles.loginCard}>
             <Text style={styles.cardTitle}>Freight Portal Access</Text>
             <Text style={styles.cardSubtitle}>
-              Sign in with the email and password used during Freight Connect
-              registration.
+              Sign in with the email and password used during Freight Connect registration.
             </Text>
 
             <Text style={styles.inputLabel}>Email Address</Text>
@@ -386,9 +441,7 @@ export default function FreightLoginScreen() {
               ) : (
                 <>
                   <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.loginButtonText}>
-                    Login to Freight Portal
-                  </Text>
+                  <Text style={styles.loginButtonText}>Login to Freight Portal</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -491,18 +544,9 @@ export default function FreightLoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  keyboard: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    flexGrow: 1,
-    paddingBottom: 90,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
+  content: { flexGrow: 1, paddingBottom: 90 },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 28,
@@ -538,11 +582,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 999,
   },
-  homeChipText: {
-    color: "#CBD5E1",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  homeChipText: { color: "#CBD5E1", fontWeight: "900", fontSize: 12 },
   kicker: {
     color: "#10B981",
     fontSize: 12,
@@ -612,22 +652,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  loginButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  forgotButton: {
-    alignItems: "center",
-    marginTop: 16,
-  },
-  forgotText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
+  disabledButton: { opacity: 0.6 },
+  loginButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
+  forgotButton: { alignItems: "center", marginTop: 16 },
+  forgotText: { color: freightTheme.colors.primary, fontWeight: "900" },
   divider: {
     height: 1,
     backgroundColor: freightTheme.colors.border,
@@ -644,10 +672,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  registerText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
+  registerText: { color: freightTheme.colors.primary, fontWeight: "900" },
   infoCard: {
     marginHorizontal: 18,
     backgroundColor: "#0F172A",
@@ -656,16 +681,8 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 16,
   },
-  infoTitle: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  infoText: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    lineHeight: 21,
-  },
+  infoTitle: { color: "#10B981", fontWeight: "900", marginBottom: 6 },
+  infoText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 21 },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.65)",
@@ -718,12 +735,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 14,
   },
-  closeButton: {
-    marginTop: 16,
-    alignItems: "center",
-  },
-  closeText: {
-    color: "#B91C1C",
-    fontWeight: "900",
-  },
+  closeButton: { marginTop: 16, alignItems: "center" },
+  closeText: { color: "#B91C1C", fontWeight: "900" },
 });

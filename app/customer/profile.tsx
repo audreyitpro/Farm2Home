@@ -1,3 +1,5 @@
+// app/customer/profile.tsx
+
 import React, { useCallback, useState } from "react";
 import {
   Alert,
@@ -14,6 +16,7 @@ import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
+import { supabase } from "../services/supabaseClient";
 
 const COLORS = {
   primary: "#2E7D32",
@@ -30,6 +33,10 @@ const COLORS = {
   dark: "#111827",
   blue: "#1565C0",
 };
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
 
 export default function CustomerProfile() {
   const [customer, setCustomer] = useState<any>(null);
@@ -56,30 +63,139 @@ export default function CustomerProfile() {
         (await AsyncStorage.getItem("currentUser"));
 
       const savedCustomers = await AsyncStorage.getItem("farm2homeCustomers");
-
       const customers = savedCustomers ? JSON.parse(savedCustomers) : [];
       const safeCustomers = Array.isArray(customers) ? customers : [];
 
       setAllCustomers(safeCustomers);
 
-      if (!currentRaw && safeCustomers.length === 0) {
-        router.replace("/customer/login" as never);
-        return;
-      }
-
-      const current = currentRaw
+      let current = currentRaw
         ? JSON.parse(currentRaw)
         : safeCustomers[safeCustomers.length - 1];
 
-      if (!current) {
+      if (!current?.id && !current?.email) {
         router.replace("/customer/login" as never);
         return;
       }
 
-      setCustomer(current);
-      setFullName(current.fullName || current.name || "");
-      setUsername(current.username || "");
-      setEmail(current.email || "");
+      let dbCustomer: any = null;
+      let profile: any = null;
+
+      if (current?.id) {
+        const customerResult = await supabase
+          .from("customers")
+          .select("*")
+          .eq("id", current.id)
+          .maybeSingle();
+
+        if (!customerResult.error && customerResult.data) {
+          dbCustomer = customerResult.data;
+        }
+      }
+
+      if (!dbCustomer && current?.email) {
+        const customerResult = await supabase
+          .from("customers")
+          .select("*")
+          .eq("email", normalize(current.email))
+          .maybeSingle();
+
+        if (!customerResult.error && customerResult.data) {
+          dbCustomer = customerResult.data;
+        }
+      }
+
+      if (dbCustomer?.profile_id) {
+        const profileResult = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", dbCustomer.profile_id)
+          .maybeSingle();
+
+        if (!profileResult.error && profileResult.data) {
+          profile = profileResult.data;
+        }
+      }
+
+      if (!profile && current?.email) {
+        const profileResult = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("email", normalize(current.email))
+          .eq("role", "customer")
+          .maybeSingle();
+
+        if (!profileResult.error && profileResult.data) {
+          profile = profileResult.data;
+        }
+      }
+
+      const customerData = {
+        ...current,
+        ...dbCustomer,
+
+        id: dbCustomer?.id || current?.id || "",
+        customerId: dbCustomer?.id || current?.customerId || current?.id || "",
+        profileId: dbCustomer?.profile_id || current?.profileId || profile?.id || "",
+        profile_id: dbCustomer?.profile_id || current?.profile_id || profile?.id || "",
+
+        role: "customer",
+
+        fullName:
+          dbCustomer?.full_name ||
+          dbCustomer?.name ||
+          profile?.full_name ||
+          current?.fullName ||
+          current?.name ||
+          "",
+
+        name:
+          dbCustomer?.name ||
+          dbCustomer?.full_name ||
+          profile?.full_name ||
+          current?.name ||
+          current?.fullName ||
+          "",
+
+        username: dbCustomer?.username || current?.username || "",
+        email: normalize(dbCustomer?.email || profile?.email || current?.email || ""),
+        phone: dbCustomer?.phone || profile?.phone || current?.phone || "",
+
+        accountActive: dbCustomer?.account_active ?? current?.accountActive ?? true,
+
+        membershipStatus:
+          dbCustomer?.membership_status ||
+          current?.membershipStatus ||
+          "Active",
+
+        subscriptionStatus:
+          dbCustomer?.subscription_status ||
+          current?.subscriptionStatus ||
+          "active",
+
+        stripeCustomerId:
+          dbCustomer?.stripe_customer_id ||
+          current?.stripeCustomerId ||
+          current?.customerId ||
+          "",
+
+        stripeSubscriptionId:
+          dbCustomer?.stripe_subscription_id ||
+          current?.stripeSubscriptionId ||
+          current?.subscriptionId ||
+          "",
+
+        updatedAt: new Date().toISOString(),
+      };
+
+      setCustomer(customerData);
+      setFullName(customerData.fullName || "");
+      setUsername(customerData.username || "");
+      setEmail(customerData.email || "");
+
+      await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerData));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(customerData));
+      await AsyncStorage.setItem("userRole", "customer");
+      await AsyncStorage.setItem("currentUserRole", "customer");
     } catch (error) {
       console.log("Customer profile load error:", error);
       router.replace("/customer/login" as never);
@@ -88,25 +204,14 @@ export default function CustomerProfile() {
 
   async function persistCustomer(updatedCustomer: any) {
     const existing = allCustomers.length > 0 ? allCustomers : [];
-
     const exists = existing.some((item) => item.id === updatedCustomer.id);
 
     const updatedCustomers = exists
-      ? existing.map((item) =>
-          item.id === updatedCustomer.id ? updatedCustomer : item
-        )
+      ? existing.map((item) => (item.id === updatedCustomer.id ? updatedCustomer : item))
       : [...existing, updatedCustomer];
 
-    await AsyncStorage.setItem(
-      "farm2homeCustomers",
-      JSON.stringify(updatedCustomers)
-    );
-
-    await AsyncStorage.setItem(
-      "currentCustomer",
-      JSON.stringify(updatedCustomer)
-    );
-
+    await AsyncStorage.setItem("farm2homeCustomers", JSON.stringify(updatedCustomers));
+    await AsyncStorage.setItem("currentCustomer", JSON.stringify(updatedCustomer));
     await AsyncStorage.setItem("currentUser", JSON.stringify(updatedCustomer));
     await AsyncStorage.setItem("userRole", "customer");
     await AsyncStorage.setItem("currentUserRole", "customer");
@@ -131,32 +236,58 @@ export default function CustomerProfile() {
       return;
     }
 
-    const updatedCustomer = {
-      ...customer,
-      fullName: fullName.trim(),
-      name: fullName.trim(),
-      username: username.trim(),
-      email: email.trim(),
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      const now = new Date().toISOString();
 
-    await persistCustomer(updatedCustomer);
+      if (customer.id) {
+        const { error } = await supabase
+          .from("customers")
+          .update({
+            full_name: fullName.trim(),
+            name: fullName.trim(),
+            username: username.trim(),
+            email: normalize(email),
+            updated_at: now,
+          })
+          .eq("id", customer.id);
 
-    Alert.alert("Saved", "Customer profile updated successfully.");
+        if (error) throw error;
+      }
+
+      const profileId = customer.profile_id || customer.profileId;
+
+      if (profileId) {
+        const { error } = await supabase
+          .from("profiles")
+          .update({
+            full_name: fullName.trim(),
+            name: fullName.trim(),
+            email: normalize(email),
+            updated_at: now,
+          })
+          .eq("id", profileId);
+
+        if (error) throw error;
+      }
+
+      const updatedCustomer = {
+        ...customer,
+        fullName: fullName.trim(),
+        name: fullName.trim(),
+        username: username.trim(),
+        email: normalize(email),
+        updatedAt: now,
+      };
+
+      await persistCustomer(updatedCustomer);
+      Alert.alert("Saved", "Customer profile updated successfully.");
+    } catch (error: any) {
+      Alert.alert("Save Error", error?.message || "Unable to save profile.");
+    }
   }
 
   async function changePassword() {
     if (!customer) return;
-
-    if (!currentPassword.trim()) {
-      Alert.alert("Current Password Required", "Please enter your current password.");
-      return;
-    }
-
-    if (customer.password && currentPassword !== customer.password) {
-      Alert.alert("Incorrect Password", "Your current password is incorrect.");
-      return;
-    }
 
     if (!newPassword.trim()) {
       Alert.alert("New Password Required", "Please enter a new password.");
@@ -173,19 +304,21 @@ export default function CustomerProfile() {
       return;
     }
 
-    const updatedCustomer = {
-      ...customer,
-      password: newPassword,
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
 
-    await persistCustomer(updatedCustomer);
+      if (error) throw error;
 
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmNewPassword("");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
 
-    Alert.alert("Password Updated", "Your password was changed successfully.");
+      Alert.alert("Password Updated", "Your password was changed successfully.");
+    } catch (error: any) {
+      Alert.alert("Password Error", error?.message || "Unable to change password.");
+    }
   }
 
   async function openUrl(url: string) {
@@ -201,49 +334,45 @@ export default function CustomerProfile() {
 
   async function openBillingPortal() {
     try {
-      const stripeCustomerId = customer?.stripeCustomerId || customer?.customerId;
+      const stripeCustomerId =
+        customer?.stripeCustomerId ||
+        customer?.stripe_customer_id ||
+        customer?.customerId;
 
       if (!stripeCustomerId) {
         Alert.alert("Missing Stripe Customer", "No Stripe customer ID was found.");
         return;
       }
 
-      const res = await fetch(
-        `${API_BASE_URL}/payments/create-customer-portal-session`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            customerId: stripeCustomerId,
-            returnUrl: "farm2home://customer/profile",
-          }),
-        }
-      );
+      const res = await fetch(`${API_BASE_URL}/payments/create-customer-portal-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          customerId: stripeCustomerId,
+          returnUrl: "farm2home://customer/profile",
+        }),
+      });
 
       const data = await res.json();
 
       if (!res.ok || data.error || !data.url) {
-        Alert.alert(
-          "Billing Error",
-          data.error || "Unable to open billing portal."
-        );
+        Alert.alert("Billing Error", data.error || "Unable to open billing portal.");
         return;
       }
 
       await openUrl(data.url);
     } catch (error: any) {
-      Alert.alert(
-        "Billing Error",
-        error.message || "Unable to open billing portal."
-      );
+      Alert.alert("Billing Error", error.message || "Unable to open billing portal.");
     }
   }
 
   async function cancelSubscription() {
     const subscriptionId =
-      customer?.stripeSubscriptionId || customer?.subscriptionId;
+      customer?.stripeSubscriptionId ||
+      customer?.stripe_subscription_id ||
+      customer?.subscriptionId;
 
     if (!subscriptionId) {
       Alert.alert("No Subscription", "No active customer subscription was found.");
@@ -254,39 +383,39 @@ export default function CustomerProfile() {
       "Cancel Subscription",
       "Are you sure you want to cancel your customer membership?",
       [
-        {
-          text: "No",
-          style: "cancel",
-        },
+        { text: "No", style: "cancel" },
         {
           text: "Yes, Cancel",
           style: "destructive",
           onPress: async () => {
             try {
-              const response = await fetch(
-                `${API_BASE_URL}/payments/cancel-subscription`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify({
-                    subscriptionId,
-                    customerId: customer?.id,
-                    role: "customer",
-                  }),
-                }
-              );
+              const response = await fetch(`${API_BASE_URL}/payments/cancel-subscription`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  subscriptionId,
+                  customerId: customer?.id,
+                  role: "customer",
+                }),
+              });
 
               const data = await response.json();
 
               if (!response.ok || data.error) {
-                Alert.alert(
-                  "Stripe Error",
-                  data.error || "Unable to cancel subscription."
-                );
+                Alert.alert("Stripe Error", data.error || "Unable to cancel subscription.");
                 return;
               }
+
+              await supabase
+                .from("customers")
+                .update({
+                  membership_status: "Canceled",
+                  subscription_status: "canceled",
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", customer.id);
 
               const updatedCustomer = {
                 ...customer,
@@ -297,15 +426,9 @@ export default function CustomerProfile() {
 
               await persistCustomer(updatedCustomer);
 
-              Alert.alert(
-                "Canceled",
-                "Customer subscription canceled successfully."
-              );
+              Alert.alert("Canceled", "Customer subscription canceled successfully.");
             } catch (error: any) {
-              Alert.alert(
-                "Cancel Error",
-                error.message || "Unable to cancel subscription."
-              );
+              Alert.alert("Cancel Error", error.message || "Unable to cancel subscription.");
             }
           },
         },
@@ -314,10 +437,14 @@ export default function CustomerProfile() {
   }
 
   async function logout() {
-    await AsyncStorage.removeItem("currentCustomer");
-    await AsyncStorage.removeItem("currentUser");
-    await AsyncStorage.removeItem("userRole");
-    await AsyncStorage.removeItem("currentUserRole");
+    await supabase.auth.signOut();
+
+    await AsyncStorage.multiRemove([
+      "currentCustomer",
+      "currentUser",
+      "userRole",
+      "currentUserRole",
+    ]);
 
     router.replace("/customer/login" as never);
   }
@@ -344,10 +471,7 @@ export default function CustomerProfile() {
 
   return (
     <View style={styles.page}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
@@ -442,15 +566,6 @@ export default function CustomerProfile() {
 
           <TextInput
             style={styles.input}
-            placeholder="Current password"
-            placeholderTextColor="#8A9482"
-            value={currentPassword}
-            onChangeText={setCurrentPassword}
-            secureTextEntry
-          />
-
-          <TextInput
-            style={styles.input}
             placeholder="New password"
             placeholderTextColor="#8A9482"
             value={newPassword}
@@ -542,14 +657,8 @@ export default function CustomerProfile() {
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  content: {
-    padding: 18,
-    paddingBottom: 70,
-  },
+  page: { flex: 1, backgroundColor: COLORS.background },
+  content: { padding: 18, paddingBottom: 70 },
   emptyPage: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -557,10 +666,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 24,
   },
-  emptyIcon: {
-    fontSize: 52,
-    marginBottom: 10,
-  },
+  emptyIcon: { fontSize: 52, marginBottom: 10 },
   emptyTitle: {
     color: COLORS.text,
     fontSize: 28,
@@ -574,12 +680,7 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     textAlign: "center",
   },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 18,
-    gap: 12,
-  },
+  topBar: { flexDirection: "row", alignItems: "center", marginBottom: 18, gap: 12 },
   backCircle: {
     width: 46,
     height: 46,
@@ -596,19 +697,9 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: -4,
   },
-  topTitleBlock: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
+  topTitleBlock: { flex: 1 },
+  title: { fontSize: 30, fontWeight: "900", color: COLORS.text },
+  subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   heroCard: {
     backgroundColor: COLORS.primary,
     borderRadius: 30,
@@ -626,24 +717,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  avatarText: {
-    color: COLORS.dark,
-    fontSize: 30,
-    fontWeight: "900",
-  },
-  heroTextBlock: {
-    flex: 1,
-  },
-  heroName: {
-    color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  heroEmail: {
-    color: "#EAF7E6",
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  avatarText: { color: COLORS.dark, fontSize: 30, fontWeight: "900" },
+  heroTextBlock: { flex: 1 },
+  heroName: { color: "#FFFFFF", fontSize: 22, fontWeight: "900" },
+  heroEmail: { color: "#EAF7E6", fontWeight: "700", marginTop: 4 },
   statusPill: {
     alignSelf: "flex-start",
     marginTop: 10,
@@ -664,28 +741,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.07,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
   },
-  statusHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  statusIcon: {
-    fontSize: 34,
-  },
-  statusTextBlock: {
-    flex: 1,
-  },
-  statusTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
+  statusHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  statusIcon: { fontSize: 34 },
+  statusTextBlock: { flex: 1 },
+  statusTitle: { fontSize: 18, fontWeight: "900", color: COLORS.text },
   active: {
     fontSize: 18,
     fontWeight: "900",
@@ -706,11 +766,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
   },
   sectionTitle: {
     fontSize: 21,
@@ -770,11 +825,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 30,
   },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
+  buttonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
   quickActionsCard: {
     backgroundColor: COLORS.card,
     padding: 18,
@@ -782,11 +833,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
   },
   actionRow: {
     flexDirection: "row",
@@ -807,29 +853,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  actionIconText: {
-    fontSize: 25,
-  },
-  actionTextBlock: {
-    flex: 1,
-  },
-  actionTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 16,
-  },
+  actionIconText: { fontSize: 25 },
+  actionTextBlock: { flex: 1 },
+  actionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
   actionSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
     fontSize: 12,
     marginTop: 3,
   },
-  actionArrow: {
-    color: COLORS.primary,
-    fontSize: 26,
-    fontWeight: "900",
-  },
-  pressed: {
-    opacity: 0.75,
-  },
+  actionArrow: { color: COLORS.primary, fontSize: 26, fontWeight: "900" },
+  pressed: { opacity: 0.75 },
 });

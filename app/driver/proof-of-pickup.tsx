@@ -1,6 +1,5 @@
 // app/driver/proof-of-pickup.tsx
 
-import { notifyPickupCompleted } from "../services/notificationService";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -17,17 +16,24 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
+import { API_BASE_URL } from "../config/api";
 import { supabase } from "../services/supabaseClient";
 import { uploadProofOfPickupImage } from "../services/storageService";
+import { notifyPickupCompleted } from "../services/notificationService";
 import freightTheme from "../styles/freightTheme";
 
 function getParamString(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] || "";
   return value || "";
+}
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
 }
 
 export default function ProofOfPickupScreen() {
@@ -41,6 +47,116 @@ export default function ProofOfPickupScreen() {
   const [pickupName, setPickupName] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
+
+  async function getCurrentDriver() {
+    const raw =
+      (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeDriverSession")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    let stored: any = null;
+
+    if (raw) {
+      try {
+        stored = JSON.parse(raw);
+      } catch {
+        stored = null;
+      }
+    }
+
+    const { data: authData } = await supabase.auth.getUser();
+    const authUser = authData?.user;
+
+    const authUserId =
+      authUser?.id ||
+      stored?.authUserId ||
+      stored?.id ||
+      stored?.driverId ||
+      "";
+
+    const authEmail = normalize(authUser?.email || stored?.email || "");
+
+    let dbDriver: any = null;
+    let profile: any = null;
+
+    if (authUserId) {
+      const result = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", authUserId)
+        .maybeSingle();
+
+      if (!result.error && result.data) dbDriver = result.data;
+    }
+
+    if (!dbDriver && authEmail) {
+      const result = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("email", authEmail)
+        .maybeSingle();
+
+      if (!result.error && result.data) dbDriver = result.data;
+    }
+
+    if (authUserId) {
+      const result = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("auth_user_id", authUserId)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!result.error && result.data) profile = result.data;
+    }
+
+    const stableId =
+      dbDriver?.id ||
+      stored?.id ||
+      stored?.driverId ||
+      authUserId ||
+      profile?.auth_user_id ||
+      "";
+
+    if (!stableId) return null;
+
+    const driver = {
+      ...(stored || {}),
+      ...(dbDriver || {}),
+      id: stableId,
+      driverId: stableId,
+      authUserId: dbDriver?.auth_user_id || profile?.auth_user_id || authUserId,
+      profileId: dbDriver?.profile_id || stored?.profileId || profile?.id || "",
+      role: "driver",
+      fullName:
+        dbDriver?.full_name ||
+        dbDriver?.name ||
+        profile?.full_name ||
+        stored?.fullName ||
+        stored?.name ||
+        stored?.username ||
+        "Farm2Home Driver",
+      name:
+        dbDriver?.name ||
+        dbDriver?.full_name ||
+        profile?.full_name ||
+        stored?.name ||
+        stored?.fullName ||
+        "Farm2Home Driver",
+      email: normalize(dbDriver?.email || profile?.email || stored?.email || authEmail),
+      username: dbDriver?.username || profile?.username || stored?.username || "",
+    };
+
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
+    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(driver));
+    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(driver));
+    await AsyncStorage.setItem("userRole", "driver");
+    await AsyncStorage.setItem("currentUserRole", "driver");
+
+    return driver;
+  }
 
   async function takePhoto() {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -80,7 +196,24 @@ export default function ProofOfPickupScreen() {
     }
   }
 
-  async function updateOrderStatus() {
+  async function updateBackendOrderStatus(driverId: string) {
+    if (!proofId) return;
+
+    try {
+      await fetch(`${API_BASE_URL}/orders/${proofId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "PICKED_UP",
+          driverId,
+        }),
+      });
+    } catch (error) {
+      console.log("Backend pickup status update skipped:", error);
+    }
+  }
+
+  async function updateOrderStatus(driverId: string, uploadedUrl: string) {
     try {
       if (!proofId) return;
 
@@ -92,6 +225,10 @@ export default function ProofOfPickupScreen() {
           picked_up_at: new Date().toISOString(),
           pickup_notes: notes.trim() || null,
           pickup_contact_name: pickupName.trim() || null,
+          proof_of_pickup_photo_url: uploadedUrl,
+          assignedDriverId: driverId,
+          driverId,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", proofId);
     } catch (error) {
@@ -106,12 +243,20 @@ export default function ProofOfPickupScreen() {
     }
 
     if (!photoUri) {
-      Alert.alert("Missing Photo", "Please take a pickup photo first.");
+      Alert.alert("Missing Photo", "Please take or upload a pickup photo first.");
       return;
     }
 
     try {
       setLoading(true);
+
+      const driver = await getCurrentDriver();
+
+      if (!driver?.id) {
+        Alert.alert("Driver Login Required", "Please login again.");
+        router.replace("/driver/login" as any);
+        return;
+      }
 
       const now = new Date().toISOString();
       const uploadedUrl = await uploadProofOfPickupImage(proofId, photoUri);
@@ -124,15 +269,24 @@ export default function ProofOfPickupScreen() {
           proof_of_pickup_photo_url: uploadedUrl,
           pickup_notes: notes.trim() || null,
           pickup_contact_name: pickupName.trim() || null,
+          driver_id: driver.id,
+          assigned_driver_id: driver.id,
+          updated_at: now,
         })
         .eq("id", proofId);
 
       if (error) {
-        console.log("Freight pickup update error:", error.message);
+        console.log("Freight pickup update skipped:", error.message);
       }
 
-      await updateOrderStatus();
-      await notifyPickupCompleted();
+      await updateOrderStatus(driver.id, uploadedUrl);
+      await updateBackendOrderStatus(driver.id);
+
+      try {
+        await notifyPickupCompleted();
+      } catch (notifyError) {
+        console.log("Pickup notification skipped:", notifyError);
+      }
 
       Alert.alert("Pickup Complete", "Pickup proof has been uploaded and saved.", [
         {
@@ -171,6 +325,7 @@ export default function ProofOfPickupScreen() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           <View style={styles.hero}>
             <View style={styles.heroIcon}>

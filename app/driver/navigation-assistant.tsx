@@ -1,7 +1,8 @@
 // app/driver/navigation-assistant.tsx
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Linking,
   Platform,
@@ -16,6 +17,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
 
 function getParamString(value: string | string[] | undefined): string {
@@ -30,25 +32,101 @@ export default function NavigationAssistantScreen() {
   const orderId = getParamString(params.orderId);
   const proofId = loadId || orderId;
 
-  const pickupAddress = getParamString(params.pickupAddress);
-  const dropoffAddress = getParamString(params.dropoffAddress);
-  const pickupCity = getParamString(params.pickupCity);
-  const dropoffCity = getParamString(params.dropoffCity);
+  const [loading, setLoading] = useState(false);
+  const [selectedStop, setSelectedStop] = useState<"pickup" | "dropoff">("pickup");
 
-  const [selectedStop, setSelectedStop] = useState<"pickup" | "dropoff">(
-    "pickup"
-  );
+  const [pickupAddress, setPickupAddress] = useState(getParamString(params.pickupAddress));
+  const [dropoffAddress, setDropoffAddress] = useState(getParamString(params.dropoffAddress));
+  const [pickupCity, setPickupCity] = useState(getParamString(params.pickupCity));
+  const [dropoffCity, setDropoffCity] = useState(getParamString(params.dropoffCity));
 
-  const pickupDestination = useMemo(() => {
-    return pickupAddress || pickupCity || "";
-  }, [pickupAddress, pickupCity]);
+  useEffect(() => {
+    loadRouteDetails();
+  }, [proofId]);
 
-  const dropoffDestination = useMemo(() => {
-    return dropoffAddress || dropoffCity || "";
-  }, [dropoffAddress, dropoffCity]);
+  const pickupDestination = useMemo(() => pickupAddress || pickupCity || "", [pickupAddress, pickupCity]);
+  const dropoffDestination = useMemo(() => dropoffAddress || dropoffCity || "", [dropoffAddress, dropoffCity]);
+  const activeDestination = selectedStop === "pickup" ? pickupDestination : dropoffDestination;
 
-  const activeDestination =
-    selectedStop === "pickup" ? pickupDestination : dropoffDestination;
+  async function loadRouteDetails() {
+    if (!proofId) return;
+
+    try {
+      setLoading(true);
+
+      let record: any = null;
+
+      const loadResult = await supabase
+        .from("freight_loads")
+        .select("*")
+        .eq("id", proofId)
+        .maybeSingle();
+
+      if (!loadResult.error && loadResult.data) {
+        record = loadResult.data;
+      }
+
+      if (!record) {
+        const orderResult = await supabase
+          .from("orders")
+          .select("*")
+          .eq("id", proofId)
+          .maybeSingle();
+
+        if (!orderResult.error && orderResult.data) {
+          record = orderResult.data;
+        }
+      }
+
+      if (!record) return;
+
+      const deliveryInfo = record.deliveryInfo || record.delivery_info || {};
+
+      setPickupAddress(
+        pickupAddress ||
+          record.pickup_address ||
+          record.pickupAddress ||
+          deliveryInfo.pickupAddress ||
+          deliveryInfo.farmAddress ||
+          ""
+      );
+
+      setDropoffAddress(
+        dropoffAddress ||
+          record.dropoff_address ||
+          record.dropoffAddress ||
+          record.delivery_address ||
+          record.deliveryAddress ||
+          deliveryInfo.address ||
+          deliveryInfo.deliveryAddress ||
+          ""
+      );
+
+      setPickupCity(
+        pickupCity ||
+          record.pickup_city ||
+          record.pickupCity ||
+          deliveryInfo.pickupCity ||
+          deliveryInfo.farmCity ||
+          ""
+      );
+
+      setDropoffCity(
+        dropoffCity ||
+          record.delivery_city ||
+          record.deliveryCity ||
+          record.dropoff_city ||
+          record.dropoffCity ||
+          deliveryInfo.city ||
+          deliveryInfo.deliveryCity ||
+          ""
+      );
+    } catch (error) {
+      console.log("Navigation route details skipped:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function openMaps(destination?: string) {
     if (!destination) {
@@ -78,9 +156,7 @@ export default function NavigationAssistantScreen() {
     }
 
     const encoded = encodeURIComponent(destination);
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${encoded}`;
-
-    Linking.openURL(url).catch(() => {
+    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`).catch(() => {
       Alert.alert("Navigation Error", "Unable to open Google Maps.");
     });
   }
@@ -92,9 +168,7 @@ export default function NavigationAssistantScreen() {
     }
 
     const encoded = encodeURIComponent(destination);
-    const url = `http://maps.apple.com/?daddr=${encoded}`;
-
-    Linking.openURL(url).catch(() => {
+    Linking.openURL(`http://maps.apple.com/?daddr=${encoded}`).catch(() => {
       Alert.alert("Navigation Error", "Unable to open Apple Maps.");
     });
   }
@@ -120,14 +194,18 @@ export default function NavigationAssistantScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Delivery / Load ID</Text>
           <Text style={styles.cardValue}>{proofId || "No load selected"}</Text>
+
+          {loading && (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color="#10B981" />
+              <Text style={styles.loadingText}>Loading route details...</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.stopTabs}>
           <TouchableOpacity
-            style={[
-              styles.stopTab,
-              selectedStop === "pickup" && styles.stopTabActive,
-            ]}
+            style={[styles.stopTab, selectedStop === "pickup" && styles.stopTabActive]}
             onPress={() => setSelectedStop("pickup")}
           >
             <Ionicons
@@ -135,21 +213,13 @@ export default function NavigationAssistantScreen() {
               size={18}
               color={selectedStop === "pickup" ? "#FFFFFF" : "#10B981"}
             />
-            <Text
-              style={[
-                styles.stopTabText,
-                selectedStop === "pickup" && styles.stopTabTextActive,
-              ]}
-            >
+            <Text style={[styles.stopTabText, selectedStop === "pickup" && styles.stopTabTextActive]}>
               Pickup
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[
-              styles.stopTab,
-              selectedStop === "dropoff" && styles.stopTabActive,
-            ]}
+            style={[styles.stopTab, selectedStop === "dropoff" && styles.stopTabActive]}
             onPress={() => setSelectedStop("dropoff")}
           >
             <Ionicons
@@ -157,12 +227,7 @@ export default function NavigationAssistantScreen() {
               size={18}
               color={selectedStop === "dropoff" ? "#FFFFFF" : "#10B981"}
             />
-            <Text
-              style={[
-                styles.stopTabText,
-                selectedStop === "dropoff" && styles.stopTabTextActive,
-              ]}
-            >
+            <Text style={[styles.stopTabText, selectedStop === "dropoff" && styles.stopTabTextActive]}>
               Dropoff
             </Text>
           </TouchableOpacity>
@@ -177,30 +242,19 @@ export default function NavigationAssistantScreen() {
           </View>
 
           <Text style={styles.addressLabel}>Destination</Text>
-          <Text style={styles.addressText}>
-            {activeDestination || "No address provided"}
-          </Text>
+          <Text style={styles.addressText}>{activeDestination || "No address provided"}</Text>
 
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => openMaps(activeDestination)}
-          >
+          <TouchableOpacity style={styles.primaryButton} onPress={() => openMaps(activeDestination)}>
             <Ionicons name="navigate-circle-outline" size={19} color="#FFFFFF" />
             <Text style={styles.primaryButtonText}>Open Navigation</Text>
           </TouchableOpacity>
 
           <View style={styles.mapButtons}>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => openGoogleMaps(activeDestination)}
-            >
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => openGoogleMaps(activeDestination)}>
               <Text style={styles.secondaryButtonText}>Google Maps</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => openAppleMaps(activeDestination)}
-            >
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => openAppleMaps(activeDestination)}>
               <Text style={styles.secondaryButtonText}>Apple Maps</Text>
             </TouchableOpacity>
           </View>
@@ -261,13 +315,8 @@ export default function NavigationAssistantScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 100,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  content: { paddingBottom: 100 },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 22,
@@ -327,6 +376,16 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginTop: 6,
   },
+  loadingRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  loadingText: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "800",
+  },
   stopTabs: {
     flexDirection: "row",
     gap: 10,
@@ -345,16 +404,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  stopTabActive: {
-    backgroundColor: freightTheme.colors.primary,
-  },
-  stopTabText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  stopTabTextActive: {
-    color: "#FFFFFF",
-  },
+  stopTabActive: { backgroundColor: freightTheme.colors.primary },
+  stopTabText: { color: freightTheme.colors.primary, fontWeight: "900" },
+  stopTabTextActive: { color: "#FFFFFF" },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -388,15 +440,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  mapButtons: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 10,
-  },
+  primaryButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  mapButtons: { flexDirection: "row", gap: 10, marginTop: 10 },
   secondaryButton: {
     flex: 1,
     backgroundColor: freightTheme.colors.surface,

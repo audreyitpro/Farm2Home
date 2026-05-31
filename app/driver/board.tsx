@@ -19,6 +19,7 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
 
 type DeliveryJob = {
@@ -44,12 +45,21 @@ type DeliveryJob = {
 type DriverProfile = {
   id?: string;
   driverId?: string;
+  authUserId?: string;
+  profileId?: string;
   fullName?: string;
   name?: string;
   username?: string;
   email?: string;
   role?: string;
+  accountActive?: boolean;
+  membershipStatus?: string;
+  subscriptionStatus?: string;
 };
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
 
 export default function DriverBoardScreen() {
   const [loading, setLoading] = useState(false);
@@ -89,29 +99,161 @@ export default function DriverBoardScreen() {
     [selectedJobs]
   );
 
-  async function getCurrentDriver(): Promise<DriverProfile | null> {
+  async function getStoredDriver() {
     const rawDriver =
       (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeDriverSession")) ||
       (await AsyncStorage.getItem("currentUser"));
 
     if (!rawDriver) return null;
 
     try {
-      const parsed = JSON.parse(rawDriver);
-
-      if (parsed?.role && parsed.role !== "driver") return null;
-
-      const currentDriver = {
-        ...parsed,
-        id: parsed.id || parsed.driverId || parsed.email || parsed.username,
-        driverId: parsed.driverId || parsed.id || parsed.email || parsed.username,
-        role: "driver",
-      };
-
-      return currentDriver;
+      return JSON.parse(rawDriver);
     } catch {
       return null;
     }
+  }
+
+  async function getCurrentDriver(): Promise<DriverProfile | null> {
+    const stored = await getStoredDriver();
+
+    if (stored?.role && stored.role !== "driver") return null;
+
+    const { data: authData } = await supabase.auth.getUser();
+    const authUser = authData?.user;
+
+    const authUserId =
+      authUser?.id ||
+      stored?.authUserId ||
+      stored?.id ||
+      stored?.driverId ||
+      "";
+
+    const authEmail = normalize(authUser?.email || stored?.email || "");
+
+    let dbDriver: any = null;
+    let profile: any = null;
+
+    if (authUserId) {
+      const result = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", authUserId)
+        .maybeSingle();
+
+      if (!result.error && result.data) dbDriver = result.data;
+    }
+
+    if (!dbDriver && authEmail) {
+      const result = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("email", authEmail)
+        .maybeSingle();
+
+      if (!result.error && result.data) dbDriver = result.data;
+    }
+
+    if (authUserId) {
+      const result = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("auth_user_id", authUserId)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!result.error && result.data) profile = result.data;
+    }
+
+    if (!profile && authEmail) {
+      const result = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", authEmail)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!result.error && result.data) profile = result.data;
+    }
+
+    const stableId =
+      dbDriver?.id ||
+      stored?.id ||
+      stored?.driverId ||
+      authUserId ||
+      profile?.auth_user_id ||
+      "";
+
+    if (!stableId) return null;
+
+    const currentDriver: DriverProfile = {
+      ...(stored || {}),
+      ...(dbDriver || {}),
+
+      id: stableId,
+      driverId: stableId,
+      authUserId: dbDriver?.auth_user_id || profile?.auth_user_id || authUserId,
+      profileId: dbDriver?.profile_id || stored?.profileId || profile?.id || "",
+      role: "driver",
+
+      fullName:
+        dbDriver?.full_name ||
+        dbDriver?.name ||
+        profile?.full_name ||
+        stored?.fullName ||
+        stored?.name ||
+        "Farm2Home Driver",
+
+      name:
+        dbDriver?.name ||
+        dbDriver?.full_name ||
+        profile?.full_name ||
+        stored?.name ||
+        stored?.fullName ||
+        "Farm2Home Driver",
+
+      username: dbDriver?.username || profile?.username || stored?.username || "",
+      email: normalize(dbDriver?.email || profile?.email || stored?.email || authEmail),
+
+      accountActive:
+        dbDriver?.account_active ??
+        profile?.account_active ??
+        stored?.accountActive ??
+        true,
+
+      membershipStatus:
+        dbDriver?.membership_status ||
+        stored?.membershipStatus ||
+        "Active",
+
+      subscriptionStatus:
+        dbDriver?.subscription_status ||
+        stored?.subscriptionStatus ||
+        "active",
+    };
+
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(currentDriver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(currentDriver));
+    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(currentDriver));
+    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(currentDriver));
+    await AsyncStorage.setItem("userRole", "driver");
+    await AsyncStorage.setItem("currentUserRole", "driver");
+
+    return currentDriver;
+  }
+
+  function driverHasAccess(currentDriver: DriverProfile) {
+    const membershipStatus = normalize(currentDriver.membershipStatus);
+    const subscriptionStatus = normalize(currentDriver.subscriptionStatus);
+
+    if (currentDriver.accountActive === false) return false;
+    if (membershipStatus === "canceled") return false;
+    if (subscriptionStatus === "canceled") return false;
+    if (subscriptionStatus === "past_due") return false;
+    if (subscriptionStatus === "unpaid") return false;
+
+    return true;
   }
 
   async function initialize() {
@@ -125,13 +267,16 @@ export default function DriverBoardScreen() {
         return;
       }
 
+      if (!driverHasAccess(currentDriver)) {
+        Alert.alert(
+          "Driver Membership Required",
+          "Your driver account is inactive or subscription is not active."
+        );
+        router.replace("/driver/login" as any);
+        return;
+      }
+
       setDriver(currentDriver);
-
-      await AsyncStorage.setItem("currentDriver", JSON.stringify(currentDriver));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(currentDriver));
-      await AsyncStorage.setItem("userRole", "driver");
-      await AsyncStorage.setItem("currentUserRole", "driver");
-
       await loadJobs();
     } catch (error) {
       console.log("Driver board initialize error:", error);
@@ -622,14 +767,8 @@ export default function DriverBoardScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  container: { flex: 1, backgroundColor: freightTheme.colors.background },
   centered: {
     flex: 1,
     backgroundColor: freightTheme.colors.background,
@@ -644,12 +783,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 22,
   },
-  content: {
-    paddingBottom: 120,
-  },
-  headerBox: {
-    marginBottom: 4,
-  },
+  content: { paddingBottom: 120 },
+  headerBox: { marginBottom: 4 },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 18,
@@ -658,11 +793,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   eyebrow: {
     color: "#10B981",
     fontWeight: "900",
@@ -691,11 +822,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#10B981",
   },
-  topActions: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  topActions: { flexDirection: "row", gap: 10, padding: 18 },
   topActionButton: {
     flex: 1,
     backgroundColor: freightTheme.colors.primary,
@@ -718,10 +845,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  topActionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  topActionText: { color: "#FFFFFF", fontWeight: "900" },
   topActionOutlineText: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
@@ -757,10 +881,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  refreshButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  refreshButtonText: { color: "#FFFFFF", fontWeight: "900" },
   batchBox: {
     backgroundColor: "#064E3B",
     borderRadius: 20,
@@ -768,21 +889,9 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginBottom: 16,
   },
-  batchHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  batchTitle: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  batchText: {
-    color: "#BBF7D0",
-    fontWeight: "800",
-    marginTop: 8,
-  },
+  batchHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  batchTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 18 },
+  batchText: { color: "#BBF7D0", fontWeight: "800", marginTop: 8 },
   batchButton: {
     backgroundColor: "#22C55E",
     padding: 14,
@@ -797,10 +906,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     alignItems: "center",
   },
-  batchButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  batchButtonText: { color: "#FFFFFF", fontWeight: "900" },
   sectionTitle: {
     color: freightTheme.colors.text,
     fontSize: 24,
@@ -846,22 +952,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     maxWidth: 140,
   },
-  badgeText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 11,
-  },
+  badgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 11 },
   routeCard: {
     backgroundColor: freightTheme.colors.surface,
     borderRadius: 16,
     padding: 14,
     marginBottom: 14,
   },
-  routeStop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
+  routeStop: { flexDirection: "row", alignItems: "center", gap: 10 },
   routeLine: {
     width: 2,
     height: 22,
@@ -881,11 +979,7 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     marginTop: 2,
   },
-  metaRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 4,
-  },
+  metaRow: { flexDirection: "row", gap: 12, marginBottom: 4 },
   metaBox: {
     flex: 1,
     backgroundColor: freightTheme.colors.surface,
@@ -923,10 +1017,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  selectButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  selectButtonText: { color: "#FFFFFF", fontWeight: "900" },
   acceptButton: {
     backgroundColor: "#15803D",
     paddingVertical: 15,
@@ -942,9 +1033,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 16,
   },
-  disabled: {
-    opacity: 0.6,
-  },
+  disabled: { opacity: 0.6 },
   emptyBox: {
     backgroundColor: freightTheme.colors.card,
     borderRadius: 22,

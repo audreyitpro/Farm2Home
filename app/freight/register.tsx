@@ -19,15 +19,11 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
-
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -84,71 +80,124 @@ export default function FreightRegister() {
   const [authorityActive, setAuthorityActive] = useState(false);
   const [insuranceActive, setInsuranceActive] = useState(false);
   const [licensedLivestock, setLicensedLivestock] = useState(false);
-  const [licensedRefrigeratedFood, setLicensedRefrigeratedFood] =
-    useState(false);
+  const [licensedRefrigeratedFood, setLicensedRefrigeratedFood] = useState(false);
 
   const selectedQuestions = useMemo(
-    () =>
-      [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
+    () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
   function validateSecurityQuestions() {
     if (selectedQuestions.length !== 3) {
-      Alert.alert(
-        "Security Questions Required",
-        "Please choose 3 security questions."
-      );
+      Alert.alert("Security Questions Required", "Please choose 3 security questions.");
       return false;
     }
 
     if (new Set(selectedQuestions).size !== 3) {
-      Alert.alert(
-        "Duplicate Security Questions",
-        "Please choose 3 different security questions."
-      );
+      Alert.alert("Duplicate Security Questions", "Please choose 3 different security questions.");
       return false;
     }
 
-    if (
-      !securityAnswer1.trim() ||
-      !securityAnswer2.trim() ||
-      !securityAnswer3.trim()
-    ) {
-      Alert.alert(
-        "Security Answers Required",
-        "Please answer all 3 security questions."
-      );
+    if (!securityAnswer1.trim() || !securityAnswer2.trim() || !securityAnswer3.trim()) {
+      Alert.alert("Security Answers Required", "Please answer all 3 security questions.");
       return false;
     }
 
     return true;
   }
 
-  async function checkDuplicateFreightUser(
-    cleanEmail: string,
-    cleanUsername: string
-  ) {
-    const { data, error } = await supabase
-      .from("freight_users")
-      .select("id,email,username")
-      .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-      .maybeSingle();
+  async function checkDuplicateFreight(cleanEmail: string, cleanUsername: string) {
+    const checks = await Promise.all([
+      supabase
+        .from("freight_users")
+        .select("id,email,username")
+        .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
+        .maybeSingle(),
+      supabase
+        .from("freight_carriers")
+        .select("id,email,username")
+        .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
+        .maybeSingle(),
+    ]);
 
-    if (error) {
-      console.log("Freight duplicate check error:", error.message);
-      return false;
-    }
+    for (const result of checks) {
+      if (result.error) {
+        console.log("Freight duplicate check error:", result.error.message);
+        continue;
+      }
 
-    if (data) {
-      Alert.alert(
-        "Account Exists",
-        "A freight account already exists with this email or username."
-      );
-      return true;
+      if (result.data) {
+        Alert.alert(
+          "Account Exists",
+          "A freight account already exists with this email or username."
+        );
+        return true;
+      }
     }
 
     return false;
+  }
+
+  async function createOrUpdateProfile({
+    authUserId,
+    cleanCompanyName,
+    cleanContactName,
+    cleanEmail,
+    cleanPhone,
+  }: {
+    authUserId: string;
+    cleanCompanyName: string;
+    cleanContactName: string;
+    cleanEmail: string;
+    cleanPhone: string;
+  }) {
+    const { data: existingProfile, error: existingProfileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", cleanEmail)
+      .maybeSingle();
+
+    if (existingProfileError) throw existingProfileError;
+
+    if (existingProfile?.id) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update({
+          auth_user_id: authUserId,
+          role: "freight",
+          full_name: cleanContactName,
+          name: cleanContactName,
+          phone: cleanPhone,
+          company_name: cleanCompanyName,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingProfile.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .insert({
+        auth_user_id: authUserId,
+        role: "freight",
+        full_name: cleanContactName,
+        name: cleanContactName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        company_name: cleanCompanyName,
+        account_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return data;
   }
 
   async function saveFreightSession(carrier: any) {
@@ -156,6 +205,7 @@ export default function FreightRegister() {
     await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
     await AsyncStorage.setItem("currentFreight", JSON.stringify(carrier));
     await AsyncStorage.setItem("currentFreightUser", JSON.stringify(carrier));
+    await AsyncStorage.setItem("farm2homeCurrentFreight", JSON.stringify(carrier));
     await AsyncStorage.setItem("currentUser", JSON.stringify(carrier));
     await AsyncStorage.setItem("userRole", "freight");
     await AsyncStorage.setItem("currentUserRole", "freight");
@@ -166,6 +216,7 @@ export default function FreightRegister() {
       id: carrier.id,
       carrier_id: carrier.id,
       freight_id: carrier.id,
+      profile_id: carrier.profile_id,
       account_type: "FREIGHT_CARRIER",
 
       company_name: carrier.company_name,
@@ -183,6 +234,8 @@ export default function FreightRegister() {
 
       mdot_number: carrier.mdot_number,
       mc_number: carrier.mc_number,
+      dot_number: carrier.mdot_number,
+
       insurance_provider: carrier.insurance_provider,
       insurance_policy_number: carrier.insurance_policy_number,
       authority_active: carrier.authority_active,
@@ -222,21 +275,11 @@ export default function FreightRegister() {
 
   async function notifyAdminFreightVerification(carrier: any) {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/notify/freight-verification`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(carrier),
-        }
-      );
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        console.log("Freight admin email failed:", data);
-      }
+      await fetch(`${API_BASE_URL}/notify/freight-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(carrier),
+      });
     } catch (error) {
       console.log("Freight admin email error:", error);
     }
@@ -256,56 +299,6 @@ export default function FreightRegister() {
     await WebBrowser.openBrowserAsync(url);
   }
 
-  function renderQuestionPicker(
-    label: string,
-    selectedQuestion: string,
-    setSelectedQuestion: (value: string) => void,
-    answer: string,
-    setAnswer: (value: string) => void
-  ) {
-    return (
-      <View style={styles.securityBox}>
-        <Text style={styles.securityLabel}>{label}</Text>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {SECURITY_QUESTIONS.map((question) => {
-            const active = selectedQuestion === question;
-
-            return (
-              <TouchableOpacity
-                key={question}
-                style={[
-                  styles.questionChip,
-                  active && styles.questionChipActive,
-                ]}
-                onPress={() => setSelectedQuestion(question)}
-                activeOpacity={0.85}
-              >
-                <Text
-                  style={[
-                    styles.questionChipText,
-                    active && styles.questionChipTextActive,
-                  ]}
-                >
-                  {question}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Hidden answer"
-          placeholderTextColor="#94A3B8"
-          value={answer}
-          onChangeText={setAnswer}
-          secureTextEntry
-        />
-      </View>
-    );
-  }
-
   async function submit() {
     if (loading) return;
 
@@ -314,7 +307,6 @@ export default function FreightRegister() {
     const cleanEmail = normalize(email);
     const cleanPhone = phone.trim();
     const cleanServiceArea = serviceArea.trim();
-
     const cleanUsername = normalize(username);
     const cleanPassword = password.trim();
     const cleanConfirmPassword = confirmPassword.trim();
@@ -329,10 +321,7 @@ export default function FreightRegister() {
     const cleanInsurancePolicyNumber = insurancePolicyNumber.trim();
 
     if (!cleanCompanyName || !cleanContactName || !cleanEmail || !cleanPhone) {
-      Alert.alert(
-        "Missing Info",
-        "Company, contact, email, and phone are required."
-      );
+      Alert.alert("Missing Info", "Company, contact, email, and phone are required.");
       return;
     }
 
@@ -369,10 +358,7 @@ export default function FreightRegister() {
     }
 
     if (!cleanInsuranceProvider || !cleanInsurancePolicyNumber) {
-      Alert.alert(
-        "Missing Insurance",
-        "Insurance provider and policy number are required."
-      );
+      Alert.alert("Missing Insurance", "Insurance provider and policy number are required.");
       return;
     }
 
@@ -395,11 +381,7 @@ export default function FreightRegister() {
     try {
       setLoading(true);
 
-      const duplicate = await checkDuplicateFreightUser(
-        cleanEmail,
-        cleanUsername
-      );
-
+      const duplicate = await checkDuplicateFreight(cleanEmail, cleanUsername);
       if (duplicate) return;
 
       const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -411,6 +393,7 @@ export default function FreightRegister() {
             username: cleanUsername,
             company_name: cleanCompanyName,
             contact_name: cleanContactName,
+            full_name: cleanContactName,
           },
         },
       });
@@ -423,10 +406,20 @@ export default function FreightRegister() {
       const carrierId = authData?.user?.id;
 
       if (!carrierId) {
-        Alert.alert(
-          "Signup Error",
-          "Unable to create freight account. Please try again."
-        );
+        Alert.alert("Signup Error", "Unable to create freight account. Please try again.");
+        return;
+      }
+
+      const profile = await createOrUpdateProfile({
+        authUserId: carrierId,
+        cleanCompanyName,
+        cleanContactName,
+        cleanEmail,
+        cleanPhone,
+      });
+
+      if (!profile?.id) {
+        Alert.alert("Profile Error", "Unable to create freight profile record.");
         return;
       }
 
@@ -434,10 +427,15 @@ export default function FreightRegister() {
 
       const freightPayload = {
         id: carrierId,
+        profile_id: profile.id,
+        auth_user_id: carrierId,
         role: "freight",
 
         company_name: cleanCompanyName,
+        business_name: cleanCompanyName,
         contact_name: cleanContactName,
+        full_name: cleanContactName,
+        name: cleanContactName,
         owner_name: cleanContactName,
         email: cleanEmail,
         phone: cleanPhone,
@@ -459,6 +457,7 @@ export default function FreightRegister() {
         zip_code: cleanZipCode,
 
         mdot_number: cleanMdotNumber,
+        dot_number: cleanMdotNumber,
         mc_number: cleanMcNumber,
         insurance_provider: cleanInsuranceProvider,
         insurance_policy_number: cleanInsurancePolicyNumber,
@@ -481,21 +480,35 @@ export default function FreightRegister() {
         updated_at: now,
       };
 
-      const { error: freightError } = await supabase
+      const freightUserResult = await supabase
         .from("freight_users")
         .upsert(freightPayload, { onConflict: "id" });
 
-      if (freightError) {
-        Alert.alert("Profile Error", freightError.message);
+      if (freightUserResult.error) {
+        Alert.alert("Freight User Error", freightUserResult.error.message);
+        return;
+      }
+
+      const carrierResult = await supabase
+        .from("freight_carriers")
+        .upsert(freightPayload, { onConflict: "id" });
+
+      if (carrierResult.error) {
+        Alert.alert("Freight Carrier Error", carrierResult.error.message);
         return;
       }
 
       const localCarrier = {
         id: carrierId,
+        freightId: carrierId,
+        profileId: profile.id,
+        authUserId: carrierId,
         role: "freight" as const,
 
         companyName: cleanCompanyName,
+        businessName: cleanCompanyName,
         contactName: cleanContactName,
+        fullName: cleanContactName,
         ownerName: cleanContactName,
         email: cleanEmail,
         phone: cleanPhone,
@@ -517,6 +530,7 @@ export default function FreightRegister() {
         zipCode: cleanZipCode,
 
         mdotNumber: cleanMdotNumber,
+        dotNumber: cleanMdotNumber,
         mcNumber: cleanMcNumber,
         insuranceProvider: cleanInsuranceProvider,
         insurancePolicyNumber: cleanInsurancePolicyNumber,
@@ -540,42 +554,26 @@ export default function FreightRegister() {
       await createAdminVerificationRecord(freightPayload);
       await notifyAdminFreightVerification(localCarrier);
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-subscription-checkout`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            customerEmail: cleanEmail,
-            email: cleanEmail,
-            name: cleanContactName,
-            username: cleanUsername,
-            userId: carrierId,
-            freightId: carrierId,
-            companyName: cleanCompanyName,
-            planType: "freight",
-            successUrl: `${APP_URL}/freight/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
-            cancelUrl: `${APP_URL}/freight/register`,
-          }),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerEmail: cleanEmail,
+          email: cleanEmail,
+          name: cleanContactName,
+          username: cleanUsername,
+          userId: carrierId,
+          freightId: carrierId,
+          companyName: cleanCompanyName,
+          planType: "freight",
+          successUrl: `${APP_URL}/freight/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: `${APP_URL}/freight/register`,
+        }),
+      });
 
       const text = await response.text();
 
-      console.log("FREIGHT STRIPE STATUS:", response.status);
-      console.log("FREIGHT STRIPE RESPONSE:", text);
-
-      let data: {
-        success?: boolean;
-        url?: string;
-        id?: string;
-        sessionId?: string;
-        error?: string;
-        message?: string;
-      } = {};
-
+      let data: any = {};
       try {
         data = text ? JSON.parse(text) : {};
       } catch {
@@ -589,6 +587,7 @@ export default function FreightRegister() {
             data.message ||
             "Your freight account was saved, but Stripe checkout did not open. Check STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID."
         );
+        router.replace("/freight/login" as any);
         return;
       }
 
@@ -603,14 +602,52 @@ export default function FreightRegister() {
       await openCheckoutUrl(data.url);
     } catch (error: any) {
       console.log("FREIGHT REGISTER ERROR:", error);
-
-      Alert.alert(
-        "Registration Error",
-        error?.message || "Unable to complete freight registration."
-      );
+      Alert.alert("Registration Error", error?.message || "Unable to complete freight registration.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function renderQuestionPicker(
+    label: string,
+    selectedQuestion: string,
+    setSelectedQuestion: (value: string) => void,
+    answer: string,
+    setAnswer: (value: string) => void
+  ) {
+    return (
+      <View style={styles.securityBox}>
+        <Text style={styles.securityLabel}>{label}</Text>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {SECURITY_QUESTIONS.map((question) => {
+            const active = selectedQuestion === question;
+
+            return (
+              <TouchableOpacity
+                key={question}
+                style={[styles.questionChip, active && styles.questionChipActive]}
+                onPress={() => setSelectedQuestion(question)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.questionChipText, active && styles.questionChipTextActive]}>
+                  {question}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        <TextInput
+          style={styles.input}
+          placeholder="Hidden answer"
+          placeholderTextColor="#94A3B8"
+          value={answer}
+          onChangeText={setAnswer}
+          secureTextEntry
+        />
+      </View>
+    );
   }
 
   function SectionHeader({
@@ -694,48 +731,11 @@ export default function FreightRegister() {
               subtitle="Business and primary contact information."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Company Name"
-              placeholderTextColor="#94A3B8"
-              value={companyName}
-              onChangeText={setCompanyName}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Contact Name"
-              placeholderTextColor="#94A3B8"
-              value={contactName}
-              onChangeText={setContactName}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              placeholderTextColor="#94A3B8"
-              autoCapitalize="none"
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Phone"
-              placeholderTextColor="#94A3B8"
-              keyboardType="phone-pad"
-              value={phone}
-              onChangeText={setPhone}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Service Area (States / Cities)"
-              placeholderTextColor="#94A3B8"
-              value={serviceArea}
-              onChangeText={setServiceArea}
-            />
+            <TextInput style={styles.input} placeholder="Company Name" placeholderTextColor="#94A3B8" value={companyName} onChangeText={setCompanyName} />
+            <TextInput style={styles.input} placeholder="Contact Name" placeholderTextColor="#94A3B8" value={contactName} onChangeText={setContactName} />
+            <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#94A3B8" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
+            <TextInput style={styles.input} placeholder="Phone" placeholderTextColor="#94A3B8" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+            <TextInput style={styles.input} placeholder="Service Area (States / Cities)" placeholderTextColor="#94A3B8" value={serviceArea} onChangeText={setServiceArea} />
           </View>
 
           <View style={styles.card}>
@@ -745,35 +745,9 @@ export default function FreightRegister() {
               subtitle="Create credentials for the Freight Connect portal."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Create Username"
-              placeholderTextColor="#94A3B8"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Create Password"
-              placeholderTextColor="#94A3B8"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm Password"
-              placeholderTextColor="#94A3B8"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
+            <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
+            <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+            <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" />
           </View>
 
           <View style={styles.securityCard}>
@@ -783,157 +757,50 @@ export default function FreightRegister() {
               subtitle="Choose 3 different questions for account verification."
             />
 
-            {renderQuestionPicker(
-              "Security Question 1",
-              securityQuestion1,
-              setSecurityQuestion1,
-              securityAnswer1,
-              setSecurityAnswer1
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 2",
-              securityQuestion2,
-              setSecurityQuestion2,
-              securityAnswer2,
-              setSecurityAnswer2
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 3",
-              securityQuestion3,
-              setSecurityQuestion3,
-              securityAnswer3,
-              setSecurityAnswer3
-            )}
+            {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
+            {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
+            {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
           </View>
 
           <View style={styles.card}>
-            <SectionHeader
-              icon="location-outline"
-              title="Business Address"
-              subtitle="Carrier business location for verification."
-            />
+            <SectionHeader icon="location-outline" title="Business Address" subtitle="Carrier business location for verification." />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Business Address"
-              placeholderTextColor="#94A3B8"
-              value={businessAddress}
-              onChangeText={setBusinessAddress}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="City"
-              placeholderTextColor="#94A3B8"
-              value={city}
-              onChangeText={setCity}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="State"
-              placeholderTextColor="#94A3B8"
-              value={stateValue}
-              onChangeText={setStateValue}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Zip Code"
-              placeholderTextColor="#94A3B8"
-              keyboardType="numeric"
-              value={zipCode}
-              onChangeText={setZipCode}
-            />
+            <TextInput style={styles.input} placeholder="Business Address" placeholderTextColor="#94A3B8" value={businessAddress} onChangeText={setBusinessAddress} />
+            <TextInput style={styles.input} placeholder="City" placeholderTextColor="#94A3B8" value={city} onChangeText={setCity} />
+            <TextInput style={styles.input} placeholder="State" placeholderTextColor="#94A3B8" value={stateValue} onChangeText={setStateValue} />
+            <TextInput style={styles.input} placeholder="Zip Code" placeholderTextColor="#94A3B8" keyboardType="numeric" value={zipCode} onChangeText={setZipCode} />
           </View>
 
           <View style={styles.card}>
-            <SectionHeader
-              icon="shield-checkmark-outline"
-              title="Authority & Insurance"
-              subtitle="Operating authority and policy verification."
-            />
+            <SectionHeader icon="shield-checkmark-outline" title="Authority & Insurance" subtitle="Operating authority and policy verification." />
 
-            <TextInput
-              style={styles.input}
-              placeholder="MDOT Number"
-              placeholderTextColor="#94A3B8"
-              value={mdotNumber}
-              onChangeText={setMdotNumber}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="MC Number"
-              placeholderTextColor="#94A3B8"
-              value={mcNumber}
-              onChangeText={setMcNumber}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Insurance Provider"
-              placeholderTextColor="#94A3B8"
-              value={insuranceProvider}
-              onChangeText={setInsuranceProvider}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Insurance Policy Number"
-              placeholderTextColor="#94A3B8"
-              value={insurancePolicyNumber}
-              onChangeText={setInsurancePolicyNumber}
-            />
+            <TextInput style={styles.input} placeholder="MDOT Number" placeholderTextColor="#94A3B8" value={mdotNumber} onChangeText={setMdotNumber} />
+            <TextInput style={styles.input} placeholder="MC Number" placeholderTextColor="#94A3B8" value={mcNumber} onChangeText={setMcNumber} />
+            <TextInput style={styles.input} placeholder="Insurance Provider" placeholderTextColor="#94A3B8" value={insuranceProvider} onChangeText={setInsuranceProvider} />
+            <TextInput style={styles.input} placeholder="Insurance Policy Number" placeholderTextColor="#94A3B8" value={insurancePolicyNumber} onChangeText={setInsurancePolicyNumber} />
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Active MC / Operating Authority</Text>
-              <Switch
-                value={authorityActive}
-                onValueChange={setAuthorityActive}
-                trackColor={{ false: "#334155", true: "#064E3B" }}
-                thumbColor={authorityActive ? "#10B981" : "#CBD5E1"}
-              />
+              <Switch value={authorityActive} onValueChange={setAuthorityActive} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={authorityActive ? "#10B981" : "#CBD5E1"} />
             </View>
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Active Insurance</Text>
-              <Switch
-                value={insuranceActive}
-                onValueChange={setInsuranceActive}
-                trackColor={{ false: "#334155", true: "#064E3B" }}
-                thumbColor={insuranceActive ? "#10B981" : "#CBD5E1"}
-              />
+              <Switch value={insuranceActive} onValueChange={setInsuranceActive} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={insuranceActive ? "#10B981" : "#CBD5E1"} />
             </View>
           </View>
 
           <View style={styles.card}>
-            <SectionHeader
-              icon="cube-outline"
-              title="Transport Authorization"
-              subtitle="Select the freight services your carrier can provide."
-            />
+            <SectionHeader icon="cube-outline" title="Transport Authorization" subtitle="Select the freight services your carrier can provide." />
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Licensed to Move Livestock</Text>
-              <Switch
-                value={licensedLivestock}
-                onValueChange={setLicensedLivestock}
-                trackColor={{ false: "#334155", true: "#064E3B" }}
-                thumbColor={licensedLivestock ? "#10B981" : "#CBD5E1"}
-              />
+              <Switch value={licensedLivestock} onValueChange={setLicensedLivestock} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={licensedLivestock ? "#10B981" : "#CBD5E1"} />
             </View>
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Licensed for Refrigerated Fresh Food</Text>
-              <Switch
-                value={licensedRefrigeratedFood}
-                onValueChange={setLicensedRefrigeratedFood}
-                trackColor={{ false: "#334155", true: "#064E3B" }}
-                thumbColor={licensedRefrigeratedFood ? "#10B981" : "#CBD5E1"}
-              />
+              <Switch value={licensedRefrigeratedFood} onValueChange={setLicensedRefrigeratedFood} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={licensedRefrigeratedFood ? "#10B981" : "#CBD5E1"} />
             </View>
           </View>
 
@@ -948,17 +815,12 @@ export default function FreightRegister() {
             ) : (
               <>
                 <Ionicons name="card-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.buttonText}>
-                  Register + Subscribe + Start Verification
-                </Text>
+                <Text style={styles.buttonText}>Register + Subscribe + Start Verification</Text>
               </>
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => router.push("/freight/login" as any)}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity onPress={() => router.push("/freight/login" as any)} activeOpacity={0.85}>
             <Text style={styles.link}>Already registered? Login</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -968,21 +830,10 @@ export default function FreightRegister() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  keyboard: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  page: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 90,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
+  page: { flex: 1, backgroundColor: freightTheme.colors.background },
+  content: { paddingBottom: 90 },
   heroCard: {
     backgroundColor: "#020617",
     paddingTop: 24,
@@ -1009,12 +860,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
   },
-  title: {
-    fontSize: 36,
-    fontWeight: "900",
-    marginTop: 6,
-    color: "#FFFFFF",
-  },
+  title: { fontSize: 36, fontWeight: "900", marginTop: 6, color: "#FFFFFF" },
   subtitle: {
     color: "#CBD5E1",
     fontSize: 15,
@@ -1032,22 +878,9 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 14,
   },
-  noticeHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 6,
-  },
-  noticeTitle: {
-    color: "#FCD34D",
-    fontWeight: "900",
-    fontSize: 17,
-  },
-  noticeText: {
-    color: "#FEF3C7",
-    fontWeight: "700",
-    lineHeight: 22,
-  },
+  noticeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  noticeTitle: { color: "#FCD34D", fontWeight: "900", fontSize: 17 },
+  noticeText: { color: "#FEF3C7", fontWeight: "700", lineHeight: 22 },
   priceBox: {
     backgroundColor: "#064E3B",
     padding: 18,
@@ -1060,16 +893,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  price: {
-    fontSize: 27,
-    fontWeight: "900",
-    color: "#FFFFFF",
-  },
-  priceSub: {
-    color: "#BBF7D0",
-    marginTop: 4,
-    fontWeight: "800",
-  },
+  price: { fontSize: 27, fontWeight: "900", color: "#FFFFFF" },
+  priceSub: { color: "#BBF7D0", marginTop: 4, fontWeight: "800" },
   priceIcon: {
     width: 48,
     height: 48,
@@ -1096,12 +921,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 16,
-  },
+  sectionHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 16 },
   sectionIcon: {
     width: 40,
     height: 40,
@@ -1110,11 +930,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  section: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: freightTheme.colors.text,
-  },
+  section: { fontSize: 20, fontWeight: "900", color: freightTheme.colors.text },
   sectionSubtitle: {
     color: freightTheme.colors.mutedText,
     fontWeight: "700",
@@ -1132,14 +948,8 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontWeight: "700",
   },
-  securityBox: {
-    marginBottom: 12,
-  },
-  securityLabel: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-    marginBottom: 8,
-  },
+  securityBox: { marginBottom: 12 },
+  securityLabel: { color: freightTheme.colors.text, fontWeight: "900", marginBottom: 8 },
   questionChip: {
     backgroundColor: freightTheme.colors.surface,
     borderWidth: 1,
@@ -1155,13 +965,8 @@ const styles = StyleSheet.create({
     backgroundColor: freightTheme.colors.primary,
     borderColor: freightTheme.colors.primary,
   },
-  questionChipText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  questionChipTextActive: {
-    color: "#FFFFFF",
-  },
+  questionChipText: { color: freightTheme.colors.primary, fontWeight: "900" },
+  questionChipTextActive: { color: "#FFFFFF" },
   switchRow: {
     backgroundColor: freightTheme.colors.surface,
     padding: 14,
@@ -1192,9 +997,7 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     elevation: 20,
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
+  disabledButton: { opacity: 0.6 },
   buttonText: {
     color: "#FFFFFF",
     textAlign: "center",

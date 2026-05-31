@@ -20,11 +20,15 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
 
 export default function DriverProfile() {
   const [driver, setDriver] = useState<any>(null);
-  const [allDrivers, setAllDrivers] = useState<any[]>([]);
 
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
@@ -35,7 +39,6 @@ export default function DriverProfile() {
   const [licenseNumber, setLicenseNumber] = useState("");
   const [serviceArea, setServiceArea] = useState("");
 
-  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
 
@@ -45,60 +48,178 @@ export default function DriverProfile() {
     }, [])
   );
 
-  function normalize(value: any) {
-    return String(value || "").trim().toLowerCase();
-  }
+  async function getStoredDriver() {
+    const raw =
+      (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeDriverSession")) ||
+      (await AsyncStorage.getItem("currentUser"));
 
-  async function readArray(key: string) {
-    const raw = await AsyncStorage.getItem(key);
-    if (!raw) return [];
+    if (!raw) return null;
 
     try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      return JSON.parse(raw);
     } catch {
-      return [];
+      return null;
     }
   }
 
   async function loadDriver() {
     try {
-      const raw =
-        (await AsyncStorage.getItem("currentDriver")) ||
-        (await AsyncStorage.getItem("currentUser"));
+      const stored = await getStoredDriver();
 
-      const storageDrivers = [
-        ...(await readArray("farm2homeDrivers")),
-        ...(await readArray("drivers")),
-        ...(await readArray("driverAccounts")),
-      ];
+      const { data: authData } = await supabase.auth.getUser();
+      const authUser = authData?.user;
 
-      setAllDrivers(storageDrivers);
+      const authUserId =
+        authUser?.id ||
+        stored?.authUserId ||
+        stored?.id ||
+        stored?.driverId ||
+        "";
 
-      if (!raw && storageDrivers.length === 0) {
+      const authEmail = normalize(authUser?.email || stored?.email || "");
+
+      if (!authUserId && !authEmail) {
         router.replace("/driver/login" as any);
         return;
       }
 
-      const current = raw ? JSON.parse(raw) : storageDrivers[0];
+      let dbDriver: any = null;
+      let profile: any = null;
 
-      if (!current) {
+      if (authUserId) {
+        const driverResult = await supabase
+          .from("drivers")
+          .select("*")
+          .eq("id", authUserId)
+          .maybeSingle();
+
+        if (!driverResult.error && driverResult.data) {
+          dbDriver = driverResult.data;
+        }
+      }
+
+      if (!dbDriver && authEmail) {
+        const driverResult = await supabase
+          .from("drivers")
+          .select("*")
+          .eq("email", authEmail)
+          .maybeSingle();
+
+        if (!driverResult.error && driverResult.data) {
+          dbDriver = driverResult.data;
+        }
+      }
+
+      if (dbDriver?.profile_id) {
+        const profileResult = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", dbDriver.profile_id)
+          .maybeSingle();
+
+        if (!profileResult.error && profileResult.data) {
+          profile = profileResult.data;
+        }
+      }
+
+      if (!profile && authUserId) {
+        const profileResult = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("auth_user_id", authUserId)
+          .eq("role", "driver")
+          .maybeSingle();
+
+        if (!profileResult.error && profileResult.data) {
+          profile = profileResult.data;
+        }
+      }
+
+      const stableId =
+        dbDriver?.id ||
+        stored?.id ||
+        stored?.driverId ||
+        authUserId ||
+        profile?.auth_user_id ||
+        "";
+
+      if (!stableId) {
         router.replace("/driver/login" as any);
         return;
       }
 
       const normalizedDriver = {
-        ...current,
-        id: current.id || current.driverId || current.email || `driver_${Date.now()}`,
-        driverId:
-          current.driverId || current.id || current.email || `driver_${Date.now()}`,
+        ...(stored || {}),
+        ...(dbDriver || {}),
+
+        id: stableId,
+        driverId: stableId,
+        authUserId: dbDriver?.auth_user_id || profile?.auth_user_id || authUserId,
+        profileId: dbDriver?.profile_id || stored?.profileId || profile?.id || "",
+        profile_id: dbDriver?.profile_id || stored?.profile_id || profile?.id || "",
         role: "driver",
-        accountActive: current.accountActive !== false,
-        membershipStatus: current.membershipStatus || "Active",
-        subscriptionStatus: current.subscriptionStatus || "active",
+
+        fullName:
+          dbDriver?.full_name ||
+          dbDriver?.name ||
+          profile?.full_name ||
+          stored?.fullName ||
+          stored?.name ||
+          "Farm2Home Driver",
+
+        name:
+          dbDriver?.name ||
+          dbDriver?.full_name ||
+          profile?.full_name ||
+          stored?.name ||
+          stored?.fullName ||
+          "Farm2Home Driver",
+
+        username: dbDriver?.username || profile?.username || stored?.username || "",
+        email: normalize(dbDriver?.email || profile?.email || stored?.email || authEmail),
+        phone: dbDriver?.phone || profile?.phone || stored?.phone || "",
+
+        vehicleType: dbDriver?.vehicle_type || stored?.vehicleType || "",
+        licenseNumber: dbDriver?.license_number || stored?.licenseNumber || "",
+        serviceArea: dbDriver?.service_area || stored?.serviceArea || "",
+
+        licenseDocument: dbDriver?.license_document || stored?.licenseDocument || null,
+        insuranceDocument: dbDriver?.insurance_document || stored?.insuranceDocument || null,
+        uploadedDocs: dbDriver?.uploaded_docs || stored?.uploadedDocs || {},
+
+        accountActive:
+          dbDriver?.account_active ??
+          profile?.account_active ??
+          stored?.accountActive ??
+          true,
+
+        membershipStatus:
+          dbDriver?.membership_status ||
+          stored?.membershipStatus ||
+          "Active",
+
+        subscriptionStatus:
+          dbDriver?.subscription_status ||
+          stored?.subscriptionStatus ||
+          "active",
+
+        stripeCustomerId:
+          dbDriver?.stripe_customer_id ||
+          stored?.stripeCustomerId ||
+          "",
+
+        stripeSubscriptionId:
+          dbDriver?.stripe_subscription_id ||
+          stored?.stripeSubscriptionId ||
+          stored?.subscriptionId ||
+          "",
+
+        updatedAt: new Date().toISOString(),
       };
 
-      await persistDriver(normalizedDriver, storageDrivers);
+      await persistDriver(normalizedDriver, false);
 
       setDriver(normalizedDriver);
       setFullName(normalizedDriver.fullName || normalizedDriver.name || "");
@@ -115,58 +236,65 @@ export default function DriverProfile() {
     }
   }
 
-  async function persistDriver(updatedDriver: any, baseDrivers?: any[]) {
+  async function persistDriver(updatedDriver: any, saveToSupabase = true) {
+    const now = new Date().toISOString();
+
     const normalizedDriver = {
       ...updatedDriver,
-      id:
-        updatedDriver.id ||
-        updatedDriver.driverId ||
-        updatedDriver.email ||
-        `driver_${Date.now()}`,
-      driverId:
-        updatedDriver.driverId ||
-        updatedDriver.id ||
-        updatedDriver.email ||
-        `driver_${Date.now()}`,
+      id: updatedDriver.id || updatedDriver.driverId || updatedDriver.authUserId,
+      driverId: updatedDriver.driverId || updatedDriver.id || updatedDriver.authUserId,
       role: "driver",
       username: normalize(updatedDriver.username),
       email: normalize(updatedDriver.email),
       accountActive: updatedDriver.accountActive !== false,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
 
-    const existing = baseDrivers || allDrivers || [];
+    if (saveToSupabase && normalizedDriver.id) {
+      const { error: driverError } = await supabase
+        .from("drivers")
+        .update({
+          full_name: normalizedDriver.fullName || normalizedDriver.name,
+          name: normalizedDriver.fullName || normalizedDriver.name,
+          username: normalizedDriver.username,
+          email: normalizedDriver.email,
+          phone: normalizedDriver.phone,
+          vehicle_type: normalizedDriver.vehicleType,
+          license_number: normalizedDriver.licenseNumber,
+          service_area: normalizedDriver.serviceArea,
+          updated_at: now,
+        })
+        .eq("id", normalizedDriver.id);
 
-    const updatedDrivers = [
-      normalizedDriver,
-      ...existing.filter(
-        (item) =>
-          item.id !== normalizedDriver.id &&
-          item.driverId !== normalizedDriver.driverId &&
-          normalize(item.email) !== normalizedDriver.email &&
-          normalize(item.username) !== normalizedDriver.username
-      ),
-    ];
+      if (driverError) throw driverError;
+    }
 
-    for (const key of ["farm2homeDrivers", "drivers", "driverAccounts"]) {
-      await AsyncStorage.setItem(key, JSON.stringify(updatedDrivers));
+    const profileId = normalizedDriver.profile_id || normalizedDriver.profileId;
+
+    if (saveToSupabase && profileId) {
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          full_name: normalizedDriver.fullName || normalizedDriver.name,
+          name: normalizedDriver.fullName || normalizedDriver.name,
+          username: normalizedDriver.username,
+          email: normalizedDriver.email,
+          phone: normalizedDriver.phone,
+          updated_at: now,
+        })
+        .eq("id", profileId);
+
+      if (profileError) throw profileError;
     }
 
     await AsyncStorage.setItem("currentDriver", JSON.stringify(normalizedDriver));
     await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedDriver));
-    await AsyncStorage.setItem(
-      "farm2homeCurrentDriver",
-      JSON.stringify(normalizedDriver)
-    );
-    await AsyncStorage.setItem(
-      "farm2homeDriverSession",
-      JSON.stringify(normalizedDriver)
-    );
+    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(normalizedDriver));
     await AsyncStorage.setItem("userRole", "driver");
     await AsyncStorage.setItem("currentUserRole", "driver");
 
     setDriver(normalizedDriver);
-    setAllDrivers(updatedDrivers);
   }
 
   async function saveProfile() {
@@ -185,36 +313,27 @@ export default function DriverProfile() {
       return;
     }
 
-    const updatedDriver = {
-      ...driver,
-      fullName: fullName.trim(),
-      name: fullName.trim(),
-      username: username.trim().toLowerCase(),
-      email: email.trim().toLowerCase(),
-      phone: phone.trim(),
-      vehicleType: vehicleType.trim(),
-      licenseNumber: licenseNumber.trim(),
-      serviceArea: serviceArea.trim(),
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      const updatedDriver = {
+        ...driver,
+        fullName: fullName.trim(),
+        name: fullName.trim(),
+        username: username.trim().toLowerCase(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        vehicleType: vehicleType.trim(),
+        licenseNumber: licenseNumber.trim(),
+        serviceArea: serviceArea.trim(),
+      };
 
-    await persistDriver(updatedDriver);
-    Alert.alert("Saved", "Driver profile updated.");
+      await persistDriver(updatedDriver, true);
+      Alert.alert("Saved", "Driver profile updated.");
+    } catch (error: any) {
+      Alert.alert("Save Error", error?.message || "Unable to save driver profile.");
+    }
   }
 
   async function changePassword() {
-    if (!driver) return;
-
-    if (!currentPassword.trim()) {
-      Alert.alert("Current Password Required", "Enter your current password.");
-      return;
-    }
-
-    if (driver.password && currentPassword.trim() !== driver.password) {
-      Alert.alert("Incorrect Password", "Your current password is incorrect.");
-      return;
-    }
-
     if (!newPassword.trim()) {
       Alert.alert("New Password Required", "Enter your new password.");
       return;
@@ -230,19 +349,20 @@ export default function DriverProfile() {
       return;
     }
 
-    const updatedDriver = {
-      ...driver,
-      password: newPassword,
-      updatedAt: new Date().toISOString(),
-    };
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
 
-    await persistDriver(updatedDriver);
+      if (error) throw error;
 
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmNewPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
 
-    Alert.alert("Password Updated", "Your password was changed successfully.");
+      Alert.alert("Password Updated", "Your password was changed successfully.");
+    } catch (error: any) {
+      Alert.alert("Password Error", error?.message || "Unable to change password.");
+    }
   }
 
   async function openUrl(url: string) {
@@ -259,6 +379,7 @@ export default function DriverProfile() {
   async function manageSubscription() {
     const stripeCustomerId =
       driver?.stripeCustomerId ||
+      driver?.stripe_customer_id ||
       driver?.customerId ||
       driver?.driverStripeCustomerId;
 
@@ -305,14 +426,12 @@ export default function DriverProfile() {
   async function cancelSubscription() {
     const subscriptionId =
       driver?.stripeSubscriptionId ||
+      driver?.stripe_subscription_id ||
       driver?.subscriptionId ||
       driver?.driverSubscriptionId;
 
     if (!subscriptionId) {
-      Alert.alert(
-        "No Subscription",
-        "No active driver subscription ID was found."
-      );
+      Alert.alert("No Subscription", "No active driver subscription ID was found.");
       return;
     }
 
@@ -346,16 +465,24 @@ export default function DriverProfile() {
                 return;
               }
 
+              await supabase
+                .from("drivers")
+                .update({
+                  membership_status: "Canceled",
+                  subscription_status: "canceled",
+                  account_active: false,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", driver.id);
+
               const updatedDriver = {
                 ...driver,
                 membershipStatus: "Canceled",
                 subscriptionStatus: "canceled",
                 accountActive: false,
-                updatedAt: new Date().toISOString(),
               };
 
-              await persistDriver(updatedDriver);
-
+              await persistDriver(updatedDriver, false);
               Alert.alert("Canceled", "Driver subscription was canceled.");
             } catch (error: any) {
               Alert.alert(
@@ -370,10 +497,16 @@ export default function DriverProfile() {
   }
 
   async function logout() {
-    await AsyncStorage.removeItem("currentDriver");
-    await AsyncStorage.removeItem("currentUser");
-    await AsyncStorage.removeItem("userRole");
-    await AsyncStorage.removeItem("currentUserRole");
+    await supabase.auth.signOut();
+
+    await AsyncStorage.multiRemove([
+      "currentDriver",
+      "currentUser",
+      "farm2homeCurrentDriver",
+      "farm2homeDriverSession",
+      "userRole",
+      "currentUserRole",
+    ]);
 
     router.replace("/driver/login" as any);
   }
@@ -403,14 +536,18 @@ export default function DriverProfile() {
     if (type === "license") {
       return (
         driver?.licenseDocument?.name ||
+        driver?.license_document?.name ||
         driver?.uploadedDocs?.driver_license?.name ||
+        driver?.uploaded_docs?.driver_license?.name ||
         "Not uploaded"
       );
     }
 
     return (
       driver?.insuranceDocument?.name ||
+      driver?.insurance_document?.name ||
       driver?.uploadedDocs?.insurance?.name ||
+      driver?.uploaded_docs?.insurance?.name ||
       "Not uploaded"
     );
   }
@@ -514,28 +651,10 @@ export default function DriverProfile() {
           </View>
 
           <View style={styles.quickGrid}>
-            <QuickNav
-              icon="phone-portrait-outline"
-              label="Driver App"
-              onPress={() => router.push("/driver/mobile-driver-app" as any)}
-            />
-            <QuickNav
-              icon="list-outline"
-              label="Board"
-              onPress={() => router.push("/driver/board" as any)}
-            />
-            <QuickNav
-              icon="wallet-outline"
-              label="Earnings"
-              onPress={() => router.push("/driver/earnings" as any)}
-            />
-            <QuickNav
-              icon="radio-outline"
-              label="Live GPS"
-              onPress={() =>
-                router.push("/driver/live-location-provider" as any)
-              }
-            />
+            <QuickNav icon="phone-portrait-outline" label="Driver App" onPress={() => router.push("/driver/mobile-driver-app" as any)} />
+            <QuickNav icon="list-outline" label="Board" onPress={() => router.push("/driver/board" as any)} />
+            <QuickNav icon="wallet-outline" label="Earnings" onPress={() => router.push("/driver/earnings" as any)} />
+            <QuickNav icon="radio-outline" label="Live GPS" onPress={() => router.push("/driver/live-location-provider" as any)} />
           </View>
 
           <View style={styles.card}>
@@ -546,46 +665,18 @@ export default function DriverProfile() {
             />
 
             <Text style={styles.label}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              value={fullName}
-              onChangeText={setFullName}
-              placeholder="Full Name"
-              placeholderTextColor="#94A3B8"
-            />
+            <TextInput style={styles.input} value={fullName} onChangeText={setFullName} placeholder="Full Name" placeholderTextColor="#94A3B8" />
 
             <Text style={styles.label}>Username</Text>
-            <TextInput
-              style={styles.input}
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              placeholder="Username"
-              placeholderTextColor="#94A3B8"
-            />
+            <TextInput style={styles.input} value={username} onChangeText={setUsername} autoCapitalize="none" placeholder="Username" placeholderTextColor="#94A3B8" />
 
             <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              placeholder="Email"
-              placeholderTextColor="#94A3B8"
-            />
+            <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="Email" placeholderTextColor="#94A3B8" />
 
             <Text style={styles.label}>Phone</Text>
-            <TextInput
-              style={styles.input}
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              placeholder="Phone"
-              placeholderTextColor="#94A3B8"
-            />
+            <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="Phone" placeholderTextColor="#94A3B8" />
 
-            <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
+            <TouchableOpacity style={styles.greenButtonNoMargin} onPress={saveProfile}>
               <Ionicons name="save-outline" size={18} color="#FFFFFF" />
               <Text style={styles.buttonText}>Save Profile</Text>
             </TouchableOpacity>
@@ -599,45 +690,18 @@ export default function DriverProfile() {
             />
 
             <Text style={styles.label}>Vehicle Type</Text>
-            <TextInput
-              style={styles.input}
-              value={vehicleType}
-              onChangeText={setVehicleType}
-              placeholder="Vehicle Type"
-              placeholderTextColor="#94A3B8"
-            />
+            <TextInput style={styles.input} value={vehicleType} onChangeText={setVehicleType} placeholder="Vehicle Type" placeholderTextColor="#94A3B8" />
 
             <Text style={styles.label}>License Number</Text>
-            <TextInput
-              style={styles.input}
-              value={licenseNumber}
-              onChangeText={setLicenseNumber}
-              placeholder="License Number"
-              placeholderTextColor="#94A3B8"
-            />
+            <TextInput style={styles.input} value={licenseNumber} onChangeText={setLicenseNumber} placeholder="License Number" placeholderTextColor="#94A3B8" />
 
             <Text style={styles.label}>Service Area</Text>
-            <TextInput
-              style={styles.input}
-              value={serviceArea}
-              onChangeText={setServiceArea}
-              placeholder="Service Area"
-              placeholderTextColor="#94A3B8"
-            />
+            <TextInput style={styles.input} value={serviceArea} onChangeText={setServiceArea} placeholder="Service Area" placeholderTextColor="#94A3B8" />
 
-            <DocumentRow
-              icon="card-outline"
-              label="Uploaded License"
-              value={documentName("license")}
-            />
+            <DocumentRow icon="card-outline" label="Uploaded License" value={documentName("license")} />
+            <DocumentRow icon="document-text-outline" label="Uploaded Insurance" value={documentName("insurance")} />
 
-            <DocumentRow
-              icon="document-text-outline"
-              label="Uploaded Insurance"
-              value={documentName("insurance")}
-            />
-
-            <TouchableOpacity style={styles.greenButton} onPress={saveProfile}>
+            <TouchableOpacity style={styles.greenButtonNoMargin} onPress={saveProfile}>
               <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
               <Text style={styles.buttonText}>Save Driver Details</Text>
             </TouchableOpacity>
@@ -647,16 +711,7 @@ export default function DriverProfile() {
             <SectionHeader
               icon="key-outline"
               title="Change Password"
-              subtitle="Update your local driver password."
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Current password"
-              placeholderTextColor="#94A3B8"
-              value={currentPassword}
-              onChangeText={setCurrentPassword}
-              secureTextEntry
+              subtitle="Update your secure Supabase Auth password."
             />
 
             <TextInput
@@ -776,21 +831,10 @@ function DocumentRow({
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  keyboard: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 90,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
+  container: { flex: 1, backgroundColor: freightTheme.colors.background },
+  content: { paddingBottom: 90 },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 22,
@@ -799,11 +843,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
-  heroTop: {
-    flexDirection: "row",
-    gap: 14,
-    alignItems: "center",
-  },
+  heroTop: { flexDirection: "row", gap: 14, alignItems: "center" },
   avatar: {
     width: 66,
     height: 66,
@@ -814,11 +854,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: {
-    color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "900",
-  },
+  avatarText: { color: "#FFFFFF", fontSize: 22, fontWeight: "900" },
   kicker: {
     color: "#10B981",
     fontSize: 12,
@@ -866,11 +902,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 999,
   },
-  statusBadgeText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  statusBadgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
   statusSmall: {
     marginTop: 12,
     color: "#BBF7D0",
@@ -894,10 +926,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickText: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-  },
+  quickText: { color: freightTheme.colors.text, fontWeight: "900" },
   card: {
     backgroundColor: freightTheme.colors.card,
     padding: 18,
@@ -983,6 +1012,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginHorizontal: 18,
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
+  },
+  greenButtonNoMargin: {
+    backgroundColor: freightTheme.colors.primary,
+    padding: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
     marginTop: 12,
     flexDirection: "row",
     gap: 8,

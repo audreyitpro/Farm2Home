@@ -18,7 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { supabase } from "../data/supabaseClient";
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
 
 type FreightLoad = any;
@@ -44,10 +44,13 @@ const ACTIVE_STATUSES = [
   "arrived_dropoff",
 ];
 
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
 export default function DriverEarnings() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [driver, setDriver] = useState<any>(null);
   const [loads, setLoads] = useState<FreightLoad[]>([]);
   const [stats, setStats] = useState<EarningStats>({
@@ -67,59 +70,162 @@ export default function DriverEarnings() {
   );
 
   const completedLoads = useMemo(
-    () =>
-      loads.filter(
-        (item) => String(item.status || "").toLowerCase() === "delivered"
-      ),
+    () => loads.filter((item) => normalize(item.status) === "delivered"),
     [loads]
   );
 
   const activeLoads = useMemo(
-    () =>
-      loads.filter((item) =>
-        ACTIVE_STATUSES.includes(String(item.status || "").toLowerCase())
-      ),
+    () => loads.filter((item) => ACTIVE_STATUSES.includes(normalize(item.status))),
     [loads]
   );
 
   async function getCurrentDriver() {
     const raw =
       (await AsyncStorage.getItem("currentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentDriver")) ||
+      (await AsyncStorage.getItem("farm2homeDriverSession")) ||
       (await AsyncStorage.getItem("currentUser"));
 
-    if (!raw) return null;
+    let stored: any = null;
 
-    try {
-      const parsed = JSON.parse(raw);
-
-      if (parsed?.role && parsed.role !== "driver") return null;
-
-      const stableId =
-        parsed.id ||
-        parsed.driverId ||
-        parsed.email ||
-        parsed.username ||
-        `driver_${Date.now()}`;
-
-      const normalized = {
-        ...parsed,
-        id: stableId,
-        driverId: parsed.driverId || stableId,
-        role: "driver",
-        accountActive: parsed.accountActive !== false,
-        membershipStatus: parsed.membershipStatus || "Active",
-        subscriptionStatus: parsed.subscriptionStatus || "active",
-      };
-
-      await AsyncStorage.setItem("currentDriver", JSON.stringify(normalized));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(normalized));
-      await AsyncStorage.setItem("userRole", "driver");
-      await AsyncStorage.setItem("currentUserRole", "driver");
-
-      return normalized;
-    } catch {
-      return null;
+    if (raw) {
+      try {
+        stored = JSON.parse(raw);
+      } catch {
+        stored = null;
+      }
     }
+
+    if (stored?.role && stored.role !== "driver") return null;
+
+    const { data: authData } = await supabase.auth.getUser();
+    const authUser = authData?.user;
+
+    const authUserId =
+      authUser?.id ||
+      stored?.authUserId ||
+      stored?.id ||
+      stored?.driverId ||
+      "";
+
+    const authEmail = normalize(authUser?.email || stored?.email || "");
+
+    let dbDriver: any = null;
+    let profile: any = null;
+
+    if (authUserId) {
+      const result = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", authUserId)
+        .maybeSingle();
+
+      if (!result.error && result.data) dbDriver = result.data;
+    }
+
+    if (!dbDriver && authEmail) {
+      const result = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("email", authEmail)
+        .maybeSingle();
+
+      if (!result.error && result.data) dbDriver = result.data;
+    }
+
+    if (authUserId) {
+      const result = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("auth_user_id", authUserId)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!result.error && result.data) profile = result.data;
+    }
+
+    if (!profile && authEmail) {
+      const result = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", authEmail)
+        .eq("role", "driver")
+        .maybeSingle();
+
+      if (!result.error && result.data) profile = result.data;
+    }
+
+    const stableId =
+      dbDriver?.id ||
+      stored?.id ||
+      stored?.driverId ||
+      authUserId ||
+      profile?.auth_user_id ||
+      "";
+
+    if (!stableId) return null;
+
+    const normalizedDriver = {
+      ...(stored || {}),
+      ...(dbDriver || {}),
+      id: stableId,
+      driverId: stableId,
+      authUserId: dbDriver?.auth_user_id || profile?.auth_user_id || authUserId,
+      profileId: dbDriver?.profile_id || stored?.profileId || profile?.id || "",
+      role: "driver",
+      fullName:
+        dbDriver?.full_name ||
+        dbDriver?.name ||
+        profile?.full_name ||
+        stored?.fullName ||
+        stored?.name ||
+        stored?.username ||
+        "Farm2Home Driver",
+      name:
+        dbDriver?.name ||
+        dbDriver?.full_name ||
+        profile?.full_name ||
+        stored?.name ||
+        stored?.fullName ||
+        "Farm2Home Driver",
+      username: dbDriver?.username || profile?.username || stored?.username || "",
+      email: normalize(dbDriver?.email || profile?.email || stored?.email || authEmail),
+      accountActive:
+        dbDriver?.account_active ??
+        profile?.account_active ??
+        stored?.accountActive ??
+        true,
+      membershipStatus:
+        dbDriver?.membership_status ||
+        stored?.membershipStatus ||
+        "Active",
+      subscriptionStatus:
+        dbDriver?.subscription_status ||
+        stored?.subscriptionStatus ||
+        "active",
+    };
+
+    await AsyncStorage.setItem("currentDriver", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(normalizedDriver));
+    await AsyncStorage.setItem("userRole", "driver");
+    await AsyncStorage.setItem("currentUserRole", "driver");
+
+    return normalizedDriver;
+  }
+
+  function driverHasAccess(currentDriver: any) {
+    const membershipStatus = normalize(currentDriver?.membershipStatus);
+    const subscriptionStatus = normalize(currentDriver?.subscriptionStatus);
+
+    if (currentDriver?.accountActive === false) return false;
+    if (membershipStatus === "canceled") return false;
+    if (subscriptionStatus === "canceled") return false;
+    if (subscriptionStatus === "past_due") return false;
+    if (subscriptionStatus === "unpaid") return false;
+
+    return true;
   }
 
   async function loadEarnings() {
@@ -129,6 +235,15 @@ export default function DriverEarnings() {
       const currentDriver = await getCurrentDriver();
 
       if (!currentDriver) {
+        router.replace("/driver/login" as any);
+        return;
+      }
+
+      if (!driverHasAccess(currentDriver)) {
+        Alert.alert(
+          "Driver Membership Required",
+          "Your driver account is inactive or subscription is not active."
+        );
         router.replace("/driver/login" as any);
         return;
       }
@@ -144,7 +259,9 @@ export default function DriverEarnings() {
         const { data, error } = await supabase
           .from(TABLE_NAME)
           .select("*")
-          .or(`driver_id.eq.${driverId},carrier_id.eq.${driverId}`)
+          .or(
+            `driver_id.eq.${driverId},carrier_id.eq.${driverId},assigned_driver_id.eq.${driverId}`
+          )
           .order("created_at", { ascending: false });
 
         if (error) {
@@ -169,11 +286,11 @@ export default function DriverEarnings() {
 
   function calculateStats(driverLoads: FreightLoad[]) {
     const completed = driverLoads.filter(
-      (item) => String(item.status || "").toLowerCase() === "delivered"
+      (item) => normalize(item.status) === "delivered"
     );
 
     const active = driverLoads.filter((item) =>
-      ACTIVE_STATUSES.includes(String(item.status || "").toLowerCase())
+      ACTIVE_STATUSES.includes(normalize(item.status))
     );
 
     const sevenDaysAgo = new Date();
@@ -186,27 +303,17 @@ export default function DriverEarnings() {
     });
 
     const totalEarnings = completed.reduce(
-      (sum, item) =>
-        sum + Number(item.rate || item.deliveryFee || item.delivery_fee || item.total || 0),
+      (sum, item) => sum + getLoadPay(item),
       0
     );
 
     const weeklyEarnings = weeklyCompleted.reduce(
-      (sum, item) =>
-        sum + Number(item.rate || item.deliveryFee || item.delivery_fee || item.total || 0),
+      (sum, item) => sum + getLoadPay(item),
       0
     );
 
     const totalMiles = completed.reduce(
-      (sum, item) =>
-        sum +
-        Number(
-          item.distance_miles ||
-            item.estimatedMiles ||
-            item.estimated_miles ||
-            item.miles ||
-            0
-        ),
+      (sum, item) => sum + getLoadMiles(item),
       0
     );
 
@@ -237,7 +344,7 @@ export default function DriverEarnings() {
   }
 
   function statusColor(status?: string | null) {
-    switch (String(status || "").toLowerCase()) {
+    switch (normalize(status)) {
       case "delivered":
         return "#10B981";
       case "in_transit":
@@ -276,7 +383,15 @@ export default function DriverEarnings() {
   }
 
   function getLoadPay(item: FreightLoad) {
-    return Number(item.rate || item.deliveryFee || item.delivery_fee || item.total || 0);
+    return Number(
+      item.rate ||
+        item.deliveryFee ||
+        item.delivery_fee ||
+        item.driver_payout ||
+        item.payout ||
+        item.total ||
+        0
+    );
   }
 
   function getLoadMiles(item: FreightLoad) {
@@ -552,10 +667,7 @@ export default function DriverEarnings() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
+  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
   loadingScreen: {
     flex: 1,
     backgroundColor: freightTheme.colors.background,
@@ -567,10 +679,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontWeight: "800",
   },
-  container: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
+  container: { flex: 1, backgroundColor: freightTheme.colors.background },
   hero: {
     backgroundColor: "#020617",
     paddingTop: 22,
@@ -579,11 +688,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   walletIcon: {
     width: 58,
     height: 58,
@@ -613,11 +718,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  navRow: { flexDirection: "row", gap: 10, padding: 18 },
   navButton: {
     flex: 1,
     backgroundColor: freightTheme.colors.primary,
@@ -640,14 +741,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
+  navText: { color: "#FFFFFF", fontWeight: "900" },
+  navTextOutline: { color: freightTheme.colors.primary, fontWeight: "900" },
   driverCard: {
     backgroundColor: freightTheme.colors.card,
     marginHorizontal: 18,
@@ -693,17 +788,13 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 8,
   },
-  statValueAccent: {
-    color: "#FFFFFF",
-  },
+  statValueAccent: { color: "#FFFFFF" },
   statLabel: {
     color: freightTheme.colors.mutedText,
     fontWeight: "800",
     marginTop: 4,
   },
-  statLabelAccent: {
-    color: "#BBF7D0",
-  },
+  statLabelAccent: { color: "#BBF7D0" },
   refreshButton: {
     backgroundColor: "#334155",
     marginHorizontal: 18,
@@ -715,10 +806,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  refreshText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  refreshText: { color: "#FFFFFF", fontWeight: "900" },
   settlementCard: {
     backgroundColor: "#064E3B",
     marginHorizontal: 18,
@@ -817,22 +905,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     maxWidth: 150,
   },
-  statusText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 11,
-  },
+  statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 11 },
   routeBox: {
     backgroundColor: freightTheme.colors.surface,
     borderRadius: 16,
     padding: 14,
     marginBottom: 12,
   },
-  routeStop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
+  routeStop: { flexDirection: "row", alignItems: "center", gap: 10 },
   routeLine: {
     width: 2,
     height: 22,
@@ -884,8 +964,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  actionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  actionText: { color: "#FFFFFF", fontWeight: "900" },
 });
