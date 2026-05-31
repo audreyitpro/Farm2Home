@@ -18,14 +18,10 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
 import { Ionicons } from "@expo/vector-icons";
 
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
-
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
@@ -35,6 +31,7 @@ function mapDriver(driver: any) {
   return {
     id: driver.id,
     driverId: driver.id,
+    profileId: driver.profile_id || driver.profileId || "",
     role: "driver",
 
     fullName:
@@ -44,7 +41,7 @@ function mapDriver(driver: any) {
       driver.driver_name ||
       "Farm2Home Driver",
 
-    email: normalize(driver.email),
+    email: normalize(driver.email || driver.driver_email),
     username: driver.username || "",
     phone: driver.phone || "",
 
@@ -112,20 +109,73 @@ export default function DriverLoginScreen() {
     return normalizedDriver;
   }
 
+  async function findDriverProfile(userId: string, cleanEmail: string) {
+    let driver: any = null;
+
+    if (userId) {
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) driver = data;
+    }
+
+    if (!driver && cleanEmail) {
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) driver = data;
+    }
+
+    if (!driver && cleanEmail) {
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("driver_email", cleanEmail)
+        .maybeSingle();
+
+      if (error) {
+        console.log("driver_email lookup ignored:", error.message);
+      }
+
+      if (data) driver = data;
+    }
+
+    if (!driver && userId) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("auth_user_id", userId)
+        .maybeSingle();
+
+      if (profile?.id) {
+        const { data, error } = await supabase
+          .from("drivers")
+          .select("*")
+          .eq("profile_id", profile.id)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (data) driver = data;
+      }
+    }
+
+    return driver;
+  }
+
   async function handleLogin() {
     const cleanEmail = normalize(email);
     const cleanPassword = String(password || "").trim();
 
     if (!cleanEmail || !cleanPassword) {
       Alert.alert("Missing Information", "Enter email and password.");
-      return;
-    }
-
-    if (!supabaseUrl || !supabaseAnonKey) {
-      Alert.alert(
-        "Configuration Missing",
-        "Supabase environment keys are missing. Check EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY."
-      );
       return;
     }
 
@@ -142,28 +192,19 @@ export default function DriverLoginScreen() {
         return;
       }
 
-      const userId = data?.user?.id;
+      const userId = data?.user?.id || "";
 
       if (!userId) {
         Alert.alert("Login Error", "Unable to confirm driver account.");
         return;
       }
 
-      const { data: driver, error: driverError } = await supabase
-        .from("drivers")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (driverError) {
-        Alert.alert("Profile Error", driverError.message);
-        return;
-      }
+      const driver = await findDriverProfile(userId, cleanEmail);
 
       if (!driver) {
         Alert.alert(
           "Driver Profile Missing",
-          "Your login exists, but your driver profile was not found. Please contact Farm2Home support."
+          "Your email/password is valid, but no driver profile row was found. Complete driver registration or contact Farm2Home support."
         );
         return;
       }
@@ -192,14 +233,6 @@ export default function DriverLoginScreen() {
 
     if (!cleanEmail) {
       Alert.alert("Email Required", "Enter your driver email.");
-      return;
-    }
-
-    if (!supabaseUrl || !supabaseAnonKey) {
-      Alert.alert(
-        "Configuration Missing",
-        "Supabase environment keys are missing. Check EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY."
-      );
       return;
     }
 
@@ -246,25 +279,36 @@ export default function DriverLoginScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.hero}>
-            <View style={styles.heroIcon}>
-              <Ionicons name="car-outline" size={32} color="#FFFFFF" />
+            <View style={styles.heroTop}>
+              <View style={styles.heroIcon}>
+                <Ionicons name="car-outline" size={32} color="#FFFFFF" />
+              </View>
+
+              <TouchableOpacity
+                style={styles.homeChip}
+                onPress={() => router.replace("/" as any)}
+              >
+                <Ionicons name="home-outline" size={15} color="#CBD5E1" />
+                <Text style={styles.homeChipText}>Home</Text>
+              </TouchableOpacity>
             </View>
 
             <Text style={styles.kicker}>Farm2Home Driver Portal</Text>
             <Text style={styles.title}>Driver Login</Text>
             <Text style={styles.subtitle}>
               Access delivery orders, routes, GPS tracking, proof of delivery,
-              and earnings.
+              customer drop-offs, and driver earnings.
             </Text>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Welcome Back</Text>
+            <Text style={styles.cardTitle}>Driver Access</Text>
             <Text style={styles.cardSubtitle}>
-              Sign in with your approved driver account.
+              Sign in with the email and password used during driver
+              registration.
             </Text>
 
-            <Text style={styles.inputLabel}>Email</Text>
+            <Text style={styles.inputLabel}>Email Address</Text>
             <TextInput
               style={styles.input}
               placeholder="driver@email.com"
@@ -279,7 +323,7 @@ export default function DriverLoginScreen() {
             <Text style={styles.inputLabel}>Password</Text>
             <TextInput
               style={styles.input}
-              placeholder="Password"
+              placeholder="Enter password"
               placeholderTextColor="#94A3B8"
               secureTextEntry
               autoCapitalize="none"
@@ -292,13 +336,16 @@ export default function DriverLoginScreen() {
               style={[styles.loginButton, loading && styles.disabledButton]}
               onPress={handleLogin}
               disabled={loading}
+              activeOpacity={0.85}
             >
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
                   <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.loginButtonText}>Driver Login</Text>
+                  <Text style={styles.loginButtonText}>
+                    Login to Driver Portal
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
@@ -310,6 +357,7 @@ export default function DriverLoginScreen() {
                 setResetVisible(true);
               }}
               disabled={loading}
+              activeOpacity={0.85}
             >
               <Text style={styles.linkText}>Forgot Password?</Text>
             </TouchableOpacity>
@@ -320,6 +368,7 @@ export default function DriverLoginScreen() {
               style={styles.registerButton}
               onPress={() => router.push("/driver/register" as any)}
               disabled={loading}
+              activeOpacity={0.85}
             >
               <Ionicons
                 name="person-add-outline"
@@ -328,14 +377,14 @@ export default function DriverLoginScreen() {
               />
               <Text style={styles.registerButtonText}>Register as Driver</Text>
             </TouchableOpacity>
+          </View>
 
-            <TouchableOpacity
-              style={styles.backHomeButton}
-              onPress={() => router.replace("/" as any)}
-              disabled={loading}
-            >
-              <Text style={styles.backHomeText}>Back To Home</Text>
-            </TouchableOpacity>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>Driver Board Access</Text>
+            <Text style={styles.infoText}>
+              Drivers can view local delivery opportunities, accept open orders,
+              track routes, and support Farm2Home farmers and customers.
+            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -351,7 +400,8 @@ export default function DriverLoginScreen() {
               <Text style={styles.modalTitle}>Reset Driver Password</Text>
 
               <Text style={styles.modalSubtitle}>
-                Enter your driver email. Farm2Home will send a secure reset link.
+                Enter your driver email. Farm2Home will send a secure reset link
+                if the Auth account exists.
               </Text>
 
               <Text style={styles.inputLabelDark}>Driver Email</Text>
@@ -370,6 +420,7 @@ export default function DriverLoginScreen() {
                 style={[styles.loginButton, resetLoading && styles.disabledButton]}
                 onPress={handlePasswordReset}
                 disabled={resetLoading}
+                activeOpacity={0.85}
               >
                 {resetLoading ? (
                   <ActivityIndicator color="#FFFFFF" />
@@ -420,6 +471,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
+  heroTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
   heroIcon: {
     width: 62,
     height: 62,
@@ -429,7 +486,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "#10B981",
-    marginBottom: 14,
+  },
+  homeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#0F172A",
+    borderWidth: 1,
+    borderColor: "#334155",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+  },
+  homeChipText: {
+    color: "#CBD5E1",
+    fontWeight: "900",
+    fontSize: 12,
   },
   kicker: {
     color: "#10B981",
@@ -449,7 +521,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 23,
     marginTop: 8,
-    maxWidth: 560,
+    maxWidth: 600,
   },
   card: {
     backgroundColor: freightTheme.colors.card,
@@ -461,7 +533,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     color: freightTheme.colors.text,
-    fontSize: 26,
+    fontSize: 27,
     fontWeight: "900",
     textAlign: "center",
   },
@@ -487,11 +559,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#CBD5E1",
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
     marginBottom: 14,
     color: "#111827",
-    fontWeight: "700",
+    fontWeight: "800",
   },
   loginButton: {
     backgroundColor: freightTheme.colors.primary,
@@ -538,13 +611,23 @@ const styles = StyleSheet.create({
     color: freightTheme.colors.primary,
     fontWeight: "900",
   },
-  backHomeButton: {
-    marginTop: 16,
-    alignItems: "center",
+  infoCard: {
+    marginHorizontal: 18,
+    backgroundColor: "#0F172A",
+    borderWidth: 1,
+    borderColor: "#1E293B",
+    borderRadius: 22,
+    padding: 16,
   },
-  backHomeText: {
-    color: freightTheme.colors.mutedText,
+  infoTitle: {
+    color: "#10B981",
     fontWeight: "900",
+    marginBottom: 6,
+  },
+  infoText: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 21,
   },
   modalOverlay: {
     flex: 1,

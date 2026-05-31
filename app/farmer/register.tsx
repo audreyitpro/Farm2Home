@@ -83,16 +83,11 @@ export default function FarmerRegister() {
 
   async function notifyAdminFarmerVerification(farmer: any) {
     try {
-      const response = await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
+      await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(farmer),
       });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        console.log("Farmer admin email failed:", data);
-      }
     } catch (error) {
       console.log("Farmer admin email ignored:", error);
     }
@@ -106,6 +101,60 @@ export default function FarmerRegister() {
     await AsyncStorage.setItem("currentUserRole", "farmer");
   }
 
+  async function createOrUpdateProfile({
+    authUserId,
+    cleanOwnerName,
+    cleanEmail,
+    cleanPhone,
+  }: {
+    authUserId: string;
+    cleanOwnerName: string;
+    cleanEmail: string;
+    cleanPhone: string;
+  }) {
+    const { data: existingProfile, error: existingProfileError } =
+      await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+
+    if (existingProfileError) throw existingProfileError;
+
+    if (existingProfile?.id) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update({
+          auth_user_id: authUserId,
+          role: "farmer",
+          full_name: cleanOwnerName,
+          phone: cleanPhone,
+        })
+        .eq("id", existingProfile.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .insert({
+        auth_user_id: authUserId,
+        role: "farmer",
+        full_name: cleanOwnerName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        created_at: new Date().toISOString(),
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
   async function createAdminVerificationRecord(farmer: any) {
     const adminRecord = {
       id: farmer.id,
@@ -117,16 +166,6 @@ export default function FarmerRegister() {
       owner_name: farmer.owner_name,
       email: farmer.email,
       phone: farmer.phone,
-
-      business_address: farmer.business_address,
-      city: farmer.city,
-      state: farmer.state,
-      zip_code: farmer.zip_code,
-      selected_products: farmer.selected_products,
-
-      documents: [],
-      uploaded_docs: {},
-      legal_checks: {},
 
       status: "STARTED",
       compliance_status: "in_progress",
@@ -161,7 +200,7 @@ export default function FarmerRegister() {
       .upsert(adminRecord, { onConflict: "id" });
 
     if (error) {
-      throw new Error(error.message);
+      console.log("Admin verification save ignored:", error.message);
     }
   }
 
@@ -178,7 +217,7 @@ export default function FarmerRegister() {
     ) {
       Alert.alert(
         "Missing Info",
-        "Please complete all farmer account fields, including username and password."
+        "Please complete all farmer account fields."
       );
       return;
     }
@@ -220,10 +259,7 @@ export default function FarmerRegister() {
       const cleanEmail = normalizeEmail(email);
       const cleanPhone = phone.trim();
       const cleanUsername = normalizeUsername(username);
-      const cleanAddress = businessAddress.trim();
-      const cleanCity = city.trim();
       const cleanState = stateValue.trim().toUpperCase().slice(0, 2) || "MI";
-      const cleanZip = zipCode.trim();
       const now = new Date().toISOString();
 
       const { data: existingFarmer } = await supabase
@@ -259,45 +295,52 @@ export default function FarmerRegister() {
         return;
       }
 
-      const farmerId = authData?.user?.id;
+      const authUserId = authData?.user?.id;
 
-      if (!farmerId) {
+      if (!authUserId) {
         Alert.alert(
           "Registration Error",
-          "Unable to create authentication account. Please try again."
+          "Unable to create authentication account."
         );
         return;
       }
 
+      const profile = await createOrUpdateProfile({
+        authUserId,
+        cleanOwnerName,
+        cleanEmail,
+        cleanPhone,
+      });
+
+      if (!profile?.id) {
+        Alert.alert("Profile Error", "Unable to create profile record.");
+        return;
+      }
+
       const farmerPayload = {
-        id: farmerId,
-        farmer_id: farmerId,
-        role: "farmer",
+        id: authUserId,
+        profile_id: profile.id,
+
+        email: cleanEmail,
+        username: cleanUsername,
 
         owner_name: cleanOwnerName,
         farm_name: cleanFarmName,
         business_name: cleanBusinessName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-
-        business_address: cleanAddress,
-        city: cleanCity,
         state: cleanState,
-        zip_code: cleanZip,
-        selected_products: selectedProducts,
+
+        compliance_status: "in_progress",
+        admin_review_status: "not_submitted",
+        review_decision: "not_submitted",
 
         approved: false,
         rejected: false,
         reviewed: false,
         needs_more_info: false,
+
         account_active: false,
         store_unlocked: false,
-
         compliance_submitted: false,
-        compliance_status: "in_progress",
-        admin_review_status: "not_submitted",
-        review_decision: "not_submitted",
 
         application_fee_paid: false,
         farmer_membership_paid: false,
@@ -309,12 +352,6 @@ export default function FarmerRegister() {
         stripe_onboarding_complete: false,
         stripe_payouts_enabled: false,
         stripe_charges_enabled: false,
-        payouts_enabled: false,
-        charges_enabled: false,
-
-        products: [],
-        notifications_enabled: false,
-        expo_push_token: "",
 
         created_at: now,
         updated_at: now,
@@ -325,15 +362,19 @@ export default function FarmerRegister() {
         .upsert(farmerPayload, { onConflict: "id" });
 
       if (farmerError) {
-        Alert.alert("Profile Error", farmerError.message);
+        Alert.alert("Farmer Profile Error", farmerError.message);
         return;
       }
 
-      await createAdminVerificationRecord(farmerPayload);
+      await createAdminVerificationRecord({
+        ...farmerPayload,
+        phone: cleanPhone,
+      });
 
       const localFarmer = {
-        id: farmerId,
-        farmerId,
+        id: authUserId,
+        farmerId: authUserId,
+        profileId: profile.id,
         role: "farmer",
 
         ownerName: cleanOwnerName,
@@ -343,10 +384,10 @@ export default function FarmerRegister() {
         phone: cleanPhone,
         username: cleanUsername,
 
-        businessAddress: cleanAddress,
-        city: cleanCity,
+        businessAddress: businessAddress.trim(),
+        city: city.trim(),
         state: cleanState,
-        zipCode: cleanZip,
+        zipCode: zipCode.trim(),
         selectedProducts,
 
         approved: false,
@@ -371,8 +412,6 @@ export default function FarmerRegister() {
         stripeOnboardingComplete: false,
         stripePayoutsEnabled: false,
         stripeChargesEnabled: false,
-        payoutsEnabled: false,
-        chargesEnabled: false,
 
         products: [],
         createdAt: now,
@@ -381,24 +420,12 @@ export default function FarmerRegister() {
 
       await saveLocalFarmerSession(localFarmer);
 
-      notifyAdminFarmerVerification({
-        farmerId,
-        ownerName: cleanOwnerName,
-        farmName: cleanFarmName,
-        businessName: cleanBusinessName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        businessAddress: cleanAddress,
-        city: cleanCity,
-        state: cleanState,
-        zipCode: cleanZip,
-        selectedProducts,
-      });
+      notifyAdminFarmerVerification(localFarmer);
 
       router.replace({
         pathname: "/farmer/compliance-upload",
         params: {
-          farmerId,
+          farmerId: authUserId,
           email: cleanEmail,
           businessName: cleanBusinessName,
         },
@@ -564,9 +591,7 @@ export default function FarmerRegister() {
               onPress={() => toggleProduct(product)}
               activeOpacity={0.85}
             >
-              <Text
-                style={[styles.productText, active && styles.productTextActive]}
-              >
+              <Text style={[styles.productText, active && styles.productTextActive]}>
                 {product}
               </Text>
             </TouchableOpacity>
@@ -582,31 +607,26 @@ export default function FarmerRegister() {
           value={a1}
           onPress={() => setA1(!a1)}
         />
-
         <Agreement
           label="I accept full responsibility for food quality, safety, storage, packaging, labeling, and product accuracy."
           value={a2}
           onPress={() => setA2(!a2)}
         />
-
         <Agreement
           label="I certify I comply with Michigan and federal laws required to sell my products."
           value={a3}
           onPress={() => setA3(!a3)}
         />
-
         <Agreement
           label="I agree to resolve customer complaints through refund, replacement, or credit when appropriate."
           value={a4}
           onPress={() => setA4(!a4)}
         />
-
         <Agreement
           label="I agree to indemnify and hold harmless Farm2Home and ASO Developments LLC from claims related to my products, operations, or legal violations."
           value={a5}
           onPress={() => setA5(!a5)}
         />
-
         <Agreement
           label="I accept Farm2Home service fees, membership fees, payout terms, and platform policies."
           value={a6}
@@ -652,7 +672,6 @@ function Agreement({
       <View style={[styles.fakeCheckbox, value && styles.fakeCheckboxActive]}>
         <Text style={styles.fakeCheckboxText}>{value ? "✓" : ""}</Text>
       </View>
-
       <Text style={styles.agreementText}>{label}</Text>
     </TouchableOpacity>
   );

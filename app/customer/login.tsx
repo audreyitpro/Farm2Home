@@ -4,7 +4,9 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -31,6 +33,7 @@ const ui = {
   greenDark: "#14532D",
   greenSoft: "#DCFCE7",
   red: "#DC2626",
+  gold: "#F59E0B",
 };
 
 function normalize(value: any) {
@@ -40,18 +43,41 @@ function normalize(value: any) {
 function mapCustomer(customer: any) {
   return {
     id: customer.id,
+    customerId: customer.id,
+    profileId: customer.profile_id || customer.profileId || "",
     role: "customer",
-    fullName: customer.full_name || customer.fullName || customer.name || "Customer",
-    name: customer.full_name || customer.fullName || customer.name || "Customer",
-    email: normalize(customer.email),
+
+    fullName:
+      customer.full_name ||
+      customer.fullName ||
+      customer.name ||
+      customer.customer_name ||
+      "Customer",
+
+    name:
+      customer.full_name ||
+      customer.fullName ||
+      customer.name ||
+      customer.customer_name ||
+      "Customer",
+
+    email: normalize(customer.email || customer.customer_email),
     phone: customer.phone || "",
     username: customer.username || "",
+
     accountActive: customer.account_active ?? customer.accountActive ?? true,
+
     customerMembershipPaid:
-      customer.customer_membership_paid ?? customer.customerMembershipPaid ?? false,
+      customer.customer_membership_paid ??
+      customer.customerMembershipPaid ??
+      false,
+
     subscriptionStatus:
       customer.subscription_status || customer.subscriptionStatus || "pending",
-    membershipStatus: customer.membership_status || customer.membershipStatus || "Pending",
+
+    membershipStatus:
+      customer.membership_status || customer.membershipStatus || "Pending",
+
     createdAt: customer.created_at || customer.createdAt || "",
     updatedAt: customer.updated_at || customer.updatedAt || new Date().toISOString(),
   };
@@ -77,6 +103,69 @@ export default function CustomerLoginScreen() {
     return mapped;
   }
 
+  async function findCustomerProfile(userId: string, cleanEmail: string) {
+    let customer: any = null;
+
+    if (userId) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) customer = data;
+    }
+
+    if (!customer && cleanEmail) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) customer = data;
+    }
+
+    if (!customer && cleanEmail) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("customer_email", cleanEmail)
+        .maybeSingle();
+
+      if (error) {
+        console.log("customer_email lookup ignored:", error.message);
+      }
+
+      if (data) customer = data;
+    }
+
+    if (!customer && userId) {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("auth_user_id", userId)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+
+      if (profile?.id) {
+        const { data, error } = await supabase
+          .from("customers")
+          .select("*")
+          .eq("profile_id", profile.id)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (data) customer = data;
+      }
+    }
+
+    return customer;
+  }
+
   async function loginCustomer() {
     const cleanEmail = normalize(email);
     const cleanPassword = String(password || "").trim();
@@ -99,28 +188,19 @@ export default function CustomerLoginScreen() {
         return;
       }
 
-      const userId = data?.user?.id;
+      const userId = data?.user?.id || "";
 
       if (!userId) {
         Alert.alert("Login Error", "Unable to confirm customer account.");
         return;
       }
 
-      const { data: customer, error: customerError } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (customerError) {
-        Alert.alert("Profile Error", customerError.message);
-        return;
-      }
+      const customer = await findCustomerProfile(userId, cleanEmail);
 
       if (!customer) {
         Alert.alert(
           "Customer Profile Missing",
-          "Your login exists, but your customer profile was not found."
+          "Your email/password is valid, but no customer profile row was found. Complete customer registration or contact Farm2Home support."
         );
         return;
       }
@@ -161,11 +241,18 @@ export default function CustomerLoginScreen() {
         return;
       }
 
-      Alert.alert("Password Reset Sent", "Check your email for the secure password reset link.");
+      Alert.alert(
+        "Password Reset Sent",
+        "Check your email for the secure password reset link."
+      );
+
       setResetVisible(false);
       setResetEmail("");
     } catch (error: any) {
-      Alert.alert("Reset Error", error?.message || "Unable to send password reset email.");
+      Alert.alert(
+        "Reset Error",
+        error?.message || "Unable to send password reset email."
+      );
     } finally {
       setResetLoading(false);
     }
@@ -175,145 +262,176 @@ export default function CustomerLoginScreen() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-      <ScrollView
-        style={styles.page}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <TouchableOpacity style={styles.backButton} onPress={() => router.push("/")}>
-          <Ionicons name="arrow-back-outline" size={18} color={ui.greenDark} />
-          <Text style={styles.backText}>Back Home</Text>
-        </TouchableOpacity>
-
-        <View style={styles.heroCard}>
-          <View style={styles.heroIcon}>
-            <Ionicons name="basket-outline" size={30} color="#FFFFFF" />
-          </View>
-
-          <Text style={styles.header}>Customer Login</Text>
-
-          <Text style={styles.subheader}>
-            Login to shop verified farmers, fresh produce, local goods, and Farm2Home marketplace orders.
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Welcome Back</Text>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor={ui.muted}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={ui.muted}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
+        <ScrollView
+          style={styles.page}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <TouchableOpacity
-            style={[styles.loginButton, loading && styles.disabledButton]}
-            onPress={loginCustomer}
-            disabled={loading}
+            style={styles.backButton}
+            onPress={() => router.push("/" as any)}
             activeOpacity={0.85}
           >
-            {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.loginButtonText}>Login</Text>
-              </>
-            )}
+            <Ionicons name="arrow-back-outline" size={18} color={ui.greenDark} />
+            <Text style={styles.backText}>Back Home</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => router.push("/customer/register" as any)}
-          >
-            <Text style={styles.secondaryText}>Create Customer Account</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.linkButton}
-            onPress={() => {
-              setResetEmail(email);
-              setResetVisible(true);
-            }}
-          >
-            <Text style={styles.linkText}>Forgot password?</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Modal visible={resetVisible} transparent animationType="slide">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <ScrollView keyboardShouldPersistTaps="handled">
-                <View style={styles.modalIcon}>
-                  <Ionicons name="key-outline" size={28} color={ui.greenDark} />
-                </View>
-
-                <Text style={styles.modalTitle}>Reset Password</Text>
-
-                <Text style={styles.modalSubtitle}>
-                  Enter your customer email. Farm2Home will send a secure reset link.
-                </Text>
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="Customer Email"
-                  placeholderTextColor={ui.muted}
-                  value={resetEmail}
-                  onChangeText={setResetEmail}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="email-address"
-                />
-
-                <TouchableOpacity
-                  style={[styles.loginButton, resetLoading && styles.disabledButton]}
-                  onPress={handlePasswordReset}
-                  disabled={resetLoading}
-                  activeOpacity={0.85}
-                >
-                  {resetLoading ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.loginButtonText}>Send Reset Link</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={() => {
-                    setResetVisible(false);
-                    setResetEmail("");
-                  }}
-                >
-                  <Text style={styles.closeText}>Close</Text>
-                </TouchableOpacity>
-              </ScrollView>
+          <View style={styles.heroCard}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="basket-outline" size={30} color="#FFFFFF" />
             </View>
+
+            <Text style={styles.kicker}>Farm2Home Marketplace</Text>
+            <Text style={styles.header}>Customer Login</Text>
+
+            <Text style={styles.subheader}>
+              Shop verified farmers, fresh produce, local goods, subscriptions,
+              and Farm2Home marketplace orders.
+            </Text>
           </View>
-        </Modal>
-      </ScrollView>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Welcome Back</Text>
+            <Text style={styles.sectionSubtitle}>
+              Use the email and password created during customer registration.
+            </Text>
+
+            <Text style={styles.label}>Email Address</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="customer@email.com"
+              placeholderTextColor={ui.muted}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+            />
+
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter password"
+              placeholderTextColor={ui.muted}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              style={[styles.loginButton, loading && styles.disabledButton]}
+              onPress={loginCustomer}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
+                  <Text style={styles.loginButtonText}>
+                    Login to Marketplace
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => router.push("/customer/register" as any)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.secondaryText}>Create Customer Account</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.linkButton}
+              onPress={() => {
+                setResetEmail(email);
+                setResetVisible(true);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.linkText}>Forgot password?</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>Fresh from local farms</Text>
+            <Text style={styles.infoText}>
+              Browse produce, groceries, farm goods, delivery options, and order
+              updates from your Farm2Home customer account.
+            </Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <Modal visible={resetVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <View style={styles.modalIcon}>
+                <Ionicons name="key-outline" size={28} color={ui.greenDark} />
+              </View>
+
+              <Text style={styles.modalTitle}>Reset Password</Text>
+
+              <Text style={styles.modalSubtitle}>
+                Enter your customer email. Farm2Home will send a secure reset
+                link if the Auth account exists.
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Customer Email"
+                placeholderTextColor={ui.muted}
+                value={resetEmail}
+                onChangeText={setResetEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+              />
+
+              <TouchableOpacity
+                style={[styles.loginButton, resetLoading && styles.disabledButton]}
+                onPress={handlePasswordReset}
+                disabled={resetLoading}
+                activeOpacity={0.85}
+              >
+                {resetLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => {
+                  setResetVisible(false);
+                  setResetEmail("");
+                }}
+              >
+                <Text style={styles.closeText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ui.bg },
+  keyboard: { flex: 1, backgroundColor: ui.bg },
   page: { flex: 1, backgroundColor: ui.bg },
   content: {
     flexGrow: 1,
@@ -335,21 +453,29 @@ const styles = StyleSheet.create({
   backText: { color: ui.greenDark, fontWeight: "900" },
   heroCard: {
     backgroundColor: ui.greenDark,
-    borderRadius: 28,
+    borderRadius: 30,
     padding: 22,
     marginBottom: 16,
   },
   heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 21,
     backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
+  kicker: {
+    color: "#BBF7D0",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
   header: {
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
     color: "#FFFFFF",
     marginBottom: 8,
@@ -364,29 +490,44 @@ const styles = StyleSheet.create({
     backgroundColor: ui.card,
     borderWidth: 1,
     borderColor: ui.border,
-    borderRadius: 24,
-    padding: 18,
+    borderRadius: 26,
+    padding: 20,
   },
   sectionTitle: {
     color: ui.text,
-    fontSize: 22,
+    fontSize: 25,
     fontWeight: "900",
-    marginBottom: 14,
+    textAlign: "center",
+  },
+  sectionSubtitle: {
+    color: ui.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 21,
+    marginTop: 7,
+    marginBottom: 18,
+  },
+  label: {
+    color: ui.text,
+    fontWeight: "900",
+    fontSize: 13,
+    marginBottom: 7,
+    marginTop: 6,
   },
   input: {
     backgroundColor: ui.soft,
     borderWidth: 1,
     borderColor: ui.border,
-    borderRadius: 15,
-    padding: 14,
+    borderRadius: 17,
+    padding: 15,
     marginBottom: 12,
     color: ui.text,
-    fontWeight: "700",
+    fontWeight: "800",
   },
   loginButton: {
     backgroundColor: ui.green,
     padding: 17,
-    borderRadius: 17,
+    borderRadius: 18,
     marginTop: 8,
     alignItems: "center",
     justifyContent: "center",
@@ -402,7 +543,7 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     backgroundColor: ui.greenSoft,
-    borderRadius: 17,
+    borderRadius: 18,
     padding: 15,
     marginTop: 12,
     alignItems: "center",
@@ -418,6 +559,24 @@ const styles = StyleSheet.create({
     color: ui.greenDark,
     fontWeight: "900",
   },
+  infoCard: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 22,
+    padding: 16,
+    marginTop: 16,
+  },
+  infoTitle: {
+    color: "#92400E",
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  infoText: {
+    color: "#78350F",
+    fontWeight: "700",
+    lineHeight: 21,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
@@ -426,7 +585,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 24,
+    borderRadius: 26,
     padding: 22,
     maxHeight: "90%",
   },

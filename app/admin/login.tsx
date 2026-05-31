@@ -1,8 +1,15 @@
-import React, { useEffect, useState } from "react";
+// app/customer/login.tsx
+
+import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -11,221 +18,607 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
-const ADMIN_USERNAME = "audreyitpro";
-const ADMIN_PASSWORD = "Farm2HomeAdmin26";
+import { supabase } from "../services/supabaseClient";
 
-export default function AdminLoginScreen() {
-  const [username, setUsername] = useState("");
+const ui = {
+  bg: "#F7FBF4",
+  card: "#FFFFFF",
+  border: "#DDE7D6",
+  text: "#102A1C",
+  muted: "#647067",
+  soft: "#F1F8EC",
+  green: "#166534",
+  greenDark: "#14532D",
+  greenSoft: "#DCFCE7",
+  red: "#DC2626",
+  gold: "#F59E0B",
+};
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function mapCustomer(customer: any) {
+  return {
+    id: customer.id,
+    customerId: customer.id,
+    profileId: customer.profile_id || customer.profileId || "",
+    role: "customer",
+
+    fullName:
+      customer.full_name ||
+      customer.fullName ||
+      customer.name ||
+      customer.customer_name ||
+      "Customer",
+
+    name:
+      customer.full_name ||
+      customer.fullName ||
+      customer.name ||
+      customer.customer_name ||
+      "Customer",
+
+    email: normalize(customer.email || customer.customer_email),
+    phone: customer.phone || "",
+    username: customer.username || "",
+
+    accountActive: customer.account_active ?? customer.accountActive ?? true,
+
+    customerMembershipPaid:
+      customer.customer_membership_paid ??
+      customer.customerMembershipPaid ??
+      false,
+
+    subscriptionStatus:
+      customer.subscription_status || customer.subscriptionStatus || "pending",
+
+    membershipStatus:
+      customer.membership_status || customer.membershipStatus || "Pending",
+
+    createdAt: customer.created_at || customer.createdAt || "",
+    updatedAt: customer.updated_at || customer.updatedAt || new Date().toISOString(),
+  };
+}
+
+export default function CustomerLoginScreen() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [loading, setLoading] = useState(false);
+  const [resetVisible, setResetVisible] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
 
-  useEffect(() => {
-    async function restoreAdminSession() {
-      try {
-        const adminLoggedIn = await AsyncStorage.getItem("adminLoggedIn");
-        const currentAdmin = await AsyncStorage.getItem("currentAdmin");
+  async function saveCurrentCustomer(customer: any) {
+    const mapped = mapCustomer(customer);
 
-        if (adminLoggedIn === "true" && currentAdmin) {
-          router.replace("/admin/dashboard" as any);
-        }
-      } catch (error) {
-        console.log("Admin restore session error:", error);
+    await AsyncStorage.setItem("currentCustomer", JSON.stringify(mapped));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(mapped));
+    await AsyncStorage.setItem("userRole", "customer");
+    await AsyncStorage.setItem("currentUserRole", "customer");
+
+    return mapped;
+  }
+
+  async function findCustomerProfile(userId: string, cleanEmail: string) {
+    let customer: any = null;
+
+    if (userId) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) customer = data;
+    }
+
+    if (!customer && cleanEmail) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) customer = data;
+    }
+
+    if (!customer && cleanEmail) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("customer_email", cleanEmail)
+        .maybeSingle();
+
+      if (error) {
+        console.log("customer_email lookup ignored:", error.message);
+      }
+
+      if (data) customer = data;
+    }
+
+    if (!customer && userId) {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("auth_user_id", userId)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+
+      if (profile?.id) {
+        const { data, error } = await supabase
+          .from("customers")
+          .select("*")
+          .eq("profile_id", profile.id)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (data) customer = data;
       }
     }
 
-    restoreAdminSession();
-  }, []);
+    return customer;
+  }
 
-  async function handleLogin() {
-    if (loading) return;
+  async function loginCustomer() {
+    const cleanEmail = normalize(email);
+    const cleanPassword = String(password || "").trim();
 
-    const cleanUsername = username.trim().toLowerCase();
-    const cleanPassword = password.trim();
-
-    if (!cleanUsername || !cleanPassword) {
-      Alert.alert(
-        "Missing Information",
-        "Please enter admin username and password."
-      );
-      return;
-    }
-
-    if (
-      cleanUsername !== ADMIN_USERNAME.toLowerCase() ||
-      cleanPassword !== ADMIN_PASSWORD
-    ) {
-      Alert.alert("Access Denied", "Invalid admin credentials.");
+    if (!cleanEmail || !cleanPassword) {
+      Alert.alert("Missing Login", "Please enter your email and password.");
       return;
     }
 
     try {
       setLoading(true);
 
-      const adminUser = {
-        id: "farm2home_admin_001",
-        username: ADMIN_USERNAME,
-        role: "ADMIN",
-        accountType: "ADMIN",
-        fullName: "Farm2Home Administration",
-        loginAt: new Date().toISOString(),
-      };
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: cleanPassword,
+      });
 
-      await AsyncStorage.multiSet([
-        ["currentUser", JSON.stringify(adminUser)],
-        ["currentAdmin", JSON.stringify(adminUser)],
-        ["farm2homeAdminSession", JSON.stringify(adminUser)],
-        ["userRole", "admin"],
-        ["currentUserRole", "admin"],
-        ["adminLoggedIn", "true"],
-        ["adminUsername", ADMIN_USERNAME],
-      ]);
+      if (error) {
+        Alert.alert("Login Failed", error.message);
+        return;
+      }
 
-      router.replace("/admin/dashboard" as any);
+      const userId = data?.user?.id || "";
+
+      if (!userId) {
+        Alert.alert("Login Error", "Unable to confirm customer account.");
+        return;
+      }
+
+      const customer = await findCustomerProfile(userId, cleanEmail);
+
+      if (!customer) {
+        Alert.alert(
+          "Customer Profile Missing",
+          "Your email/password is valid, but no customer profile row was found. Complete customer registration or contact Farm2Home support."
+        );
+        return;
+      }
+
+      const mappedCustomer = await saveCurrentCustomer(customer);
+
+      if (mappedCustomer.accountActive === false) {
+        Alert.alert("Account Disabled", "This customer account is not active.");
+        return;
+      }
+
+      router.replace("/customer/marketplace" as any);
     } catch (error: any) {
-      console.log("Admin login error:", error);
-
-      Alert.alert(
-        "Admin Login Error",
-        error?.message || "Unable to login."
-      );
+      console.log("Customer login error:", error);
+      Alert.alert("Login Error", error?.message || "Unable to login.");
     } finally {
       setLoading(false);
     }
   }
 
+  async function handlePasswordReset() {
+    const cleanEmail = normalize(resetEmail || email);
+
+    if (!cleanEmail) {
+      Alert.alert("Email Required", "Enter your customer email.");
+      return;
+    }
+
+    try {
+      setResetLoading(true);
+
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: "farm2home://reset-password",
+      });
+
+      if (error) {
+        Alert.alert("Reset Error", error.message);
+        return;
+      }
+
+      Alert.alert(
+        "Password Reset Sent",
+        "Check your email for the secure password reset link."
+      );
+
+      setResetVisible(false);
+      setResetEmail("");
+    } catch (error: any) {
+      Alert.alert(
+        "Reset Error",
+        error?.message || "Unable to send password reset email."
+      );
+    } finally {
+      setResetLoading(false);
+    }
+  }
+
   return (
-    <KeyboardAvoidingView
-      style={styles.page}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <View style={styles.container}>
-        <Text style={styles.logo}>🛡️</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
 
-        <Text style={styles.title}>Farm2Home Admin Portal</Text>
-
-        <Text style={styles.subtitle}>
-          Authorized administration access only
-        </Text>
-
-        <View style={styles.card}>
-          <Text style={styles.label}>Admin Username</Text>
-
-          <TextInput
-            style={styles.input}
-            value={username}
-            onChangeText={setUsername}
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="Enter admin username"
-            placeholderTextColor="#9CA3AF"
-          />
-
-          <Text style={styles.label}>Admin Password</Text>
-
-          <TextInput
-            style={styles.input}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            placeholder="Enter admin password"
-            placeholderTextColor="#9CA3AF"
-          />
-
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          style={styles.page}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
+            style={styles.backButton}
+            onPress={() => router.push("/" as any)}
             activeOpacity={0.85}
           >
-            <Text style={styles.buttonText}>
-              {loading ? "Signing In..." : "Secure Admin Login"}
-            </Text>
+            <Ionicons name="arrow-back-outline" size={18} color={ui.greenDark} />
+            <Text style={styles.backText}>Back Home</Text>
           </TouchableOpacity>
+
+          <View style={styles.heroCard}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="basket-outline" size={30} color="#FFFFFF" />
+            </View>
+
+            <Text style={styles.kicker}>Farm2Home Marketplace</Text>
+            <Text style={styles.header}>Customer Login</Text>
+
+            <Text style={styles.subheader}>
+              Shop verified farmers, fresh produce, local goods, subscriptions,
+              and Farm2Home marketplace orders.
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Welcome Back</Text>
+            <Text style={styles.sectionSubtitle}>
+              Use the email and password created during customer registration.
+            </Text>
+
+            <Text style={styles.label}>Email Address</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="customer@email.com"
+              placeholderTextColor={ui.muted}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+            />
+
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter password"
+              placeholderTextColor={ui.muted}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              style={[styles.loginButton, loading && styles.disabledButton]}
+              onPress={loginCustomer}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
+                  <Text style={styles.loginButtonText}>
+                    Login to Marketplace
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => router.push("/customer/register" as any)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.secondaryText}>Create Customer Account</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.linkButton}
+              onPress={() => {
+                setResetEmail(email);
+                setResetVisible(true);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.linkText}>Forgot password?</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>Fresh from local farms</Text>
+            <Text style={styles.infoText}>
+              Browse produce, groceries, farm goods, delivery options, and order
+              updates from your Farm2Home customer account.
+            </Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <Modal visible={resetVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <View style={styles.modalIcon}>
+                <Ionicons name="key-outline" size={28} color={ui.greenDark} />
+              </View>
+
+              <Text style={styles.modalTitle}>Reset Password</Text>
+
+              <Text style={styles.modalSubtitle}>
+                Enter your customer email. Farm2Home will send a secure reset
+                link if the Auth account exists.
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Customer Email"
+                placeholderTextColor={ui.muted}
+                value={resetEmail}
+                onChangeText={setResetEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+              />
+
+              <TouchableOpacity
+                style={[styles.loginButton, resetLoading && styles.disabledButton]}
+                onPress={handlePasswordReset}
+                disabled={resetLoading}
+                activeOpacity={0.85}
+              >
+                {resetLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => {
+                  setResetVisible(false);
+                  setResetEmail("");
+                }}
+              >
+                <Text style={styles.closeText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
         </View>
-      </View>
-    </KeyboardAvoidingView>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
+  safe: { flex: 1, backgroundColor: ui.bg },
+  keyboard: { flex: 1, backgroundColor: ui.bg },
+  page: { flex: 1, backgroundColor: ui.bg },
+  content: {
+    flexGrow: 1,
+    padding: 20,
+    paddingBottom: 60,
     justifyContent: "center",
-    padding: 24,
   },
-
-  container: {
-    width: "100%",
-    maxWidth: 460,
-    alignSelf: "center",
+  backButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ui.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginBottom: 14,
   },
-
-  logo: {
-    fontSize: 64,
-    textAlign: "center",
-    marginBottom: 12,
+  backText: { color: ui.greenDark, fontWeight: "900" },
+  heroCard: {
+    backgroundColor: ui.greenDark,
+    borderRadius: 30,
+    padding: 22,
+    marginBottom: 16,
   },
-
-  title: {
+  heroIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  kicker: {
+    color: "#BBF7D0",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  header: {
     fontSize: 34,
     fontWeight: "900",
-    color: "#111827",
-    textAlign: "center",
-  },
-
-  subtitle: {
-    color: "#4B5563",
-    textAlign: "center",
-    fontWeight: "700",
-    marginTop: 8,
-    marginBottom: 24,
-    lineHeight: 22,
-  },
-
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-
-  label: {
-    color: "#374151",
-    fontWeight: "900",
-    marginBottom: 8,
-    marginTop: 8,
-  },
-
-  input: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    color: "#111827",
-    fontWeight: "700",
-    marginBottom: 10,
-  },
-
-  button: {
-    backgroundColor: "#111827",
-    padding: 16,
-    borderRadius: 16,
-    alignItems: "center",
-    marginTop: 14,
-  },
-
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-
-  buttonText: {
     color: "#FFFFFF",
+    marginBottom: 8,
+  },
+  subheader: {
+    color: "#DCFCE7",
+    lineHeight: 22,
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  card: {
+    backgroundColor: ui.card,
+    borderWidth: 1,
+    borderColor: ui.border,
+    borderRadius: 26,
+    padding: 20,
+  },
+  sectionTitle: {
+    color: ui.text,
+    fontSize: 25,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  sectionSubtitle: {
+    color: ui.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 21,
+    marginTop: 7,
+    marginBottom: 18,
+  },
+  label: {
+    color: ui.text,
+    fontWeight: "900",
+    fontSize: 13,
+    marginBottom: 7,
+    marginTop: 6,
+  },
+  input: {
+    backgroundColor: ui.soft,
+    borderWidth: 1,
+    borderColor: ui.border,
+    borderRadius: 17,
+    padding: 15,
+    marginBottom: 12,
+    color: ui.text,
+    fontWeight: "800",
+  },
+  loginButton: {
+    backgroundColor: ui.green,
+    padding: 17,
+    borderRadius: 18,
+    marginTop: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  disabledButton: { opacity: 0.6 },
+  loginButtonText: {
+    color: "#FFFFFF",
+    textAlign: "center",
     fontWeight: "900",
     fontSize: 16,
+  },
+  secondaryButton: {
+    backgroundColor: ui.greenSoft,
+    borderRadius: 18,
+    padding: 15,
+    marginTop: 12,
+    alignItems: "center",
+  },
+  secondaryText: {
+    color: ui.greenDark,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  linkButton: { marginTop: 16 },
+  linkText: {
+    textAlign: "center",
+    color: ui.greenDark,
+    fontWeight: "900",
+  },
+  infoCard: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 22,
+    padding: 16,
+    marginTop: 16,
+  },
+  infoTitle: {
+    color: "#92400E",
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  infoText: {
+    color: "#78350F",
+    fontWeight: "700",
+    lineHeight: 21,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    padding: 22,
+  },
+  modalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 26,
+    padding: 22,
+    maxHeight: "90%",
+  },
+  modalIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 20,
+    backgroundColor: ui.greenSoft,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: ui.text,
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    color: ui.muted,
+    fontWeight: "700",
+    lineHeight: 22,
+    textAlign: "center",
+    marginBottom: 18,
+  },
+  closeButton: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+  closeText: {
+    color: ui.red,
+    fontWeight: "900",
   },
 });

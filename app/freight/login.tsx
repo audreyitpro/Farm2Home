@@ -18,17 +18,14 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
 import { Ionicons } from "@expo/vector-icons";
 
+import { supabase } from "../services/supabaseClient";
 import freightTheme from "../styles/freightTheme";
-
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
 
 type FreightUser = {
   id: string;
+  profileId?: string;
   role: "freight";
   companyName: string;
   email: string;
@@ -51,18 +48,24 @@ function normalize(value: any) {
 function mapCarrierToFreightUser(item: any): FreightUser {
   return {
     id: item.id || item.freight_id || `freight_${Date.now()}`,
+    profileId: item.profile_id || item.profileId || "",
     role: "freight",
 
     companyName:
       item.company_name ||
-      item.companyName ||
       item.business_name ||
+      item.carrier_name ||
+      item.freight_company ||
+      item.companyName ||
       item.businessName ||
       item.name ||
       "Freight Carrier",
 
-    email: normalize(item.email),
-    username: normalize(item.username),
+    email: normalize(item.email || item.freight_email || item.carrier_email),
+
+    username: normalize(
+      item.username || item.freight_username || item.carrier_username
+    ),
 
     accountActive:
       item.account_active === undefined
@@ -84,6 +87,7 @@ function mapCarrierToFreightUser(item: any): FreightUser {
     verificationStatus:
       item.verification_status ||
       item.verificationStatus ||
+      item.admin_review_status ||
       "PENDING_VERIFICATION",
   };
 }
@@ -116,6 +120,7 @@ export default function FreightLoginScreen() {
     const sessionUser = {
       ...user,
       role: "freight" as const,
+      profileId: user.profileId || "",
       accountActive: user.accountActive !== false,
       membershipStatus: user.membershipStatus || "Pending",
       updatedAt: new Date().toISOString(),
@@ -132,6 +137,73 @@ export default function FreightLoginScreen() {
     await AsyncStorage.setItem("currentUserRole", "freight");
 
     return sessionUser;
+  }
+
+  async function findFreightProfile(userId: string, cleanEmail: string) {
+    let freightUser: any = null;
+
+    if (userId) {
+      const { data: carrierById, error: carrierByIdError } = await supabase
+        .from("freight_carriers")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (carrierByIdError) throw carrierByIdError;
+      if (carrierById) freightUser = carrierById;
+    }
+
+    if (!freightUser && userId) {
+      const { data: freightUserById, error: freightUserByIdError } =
+        await supabase
+          .from("freight_users")
+          .select("*")
+          .eq("id", userId)
+          .maybeSingle();
+
+      if (freightUserByIdError) throw freightUserByIdError;
+      if (freightUserById) freightUser = freightUserById;
+    }
+
+    if (!freightUser && cleanEmail) {
+      const { data: carrierByEmail, error: carrierByEmailError } =
+        await supabase
+          .from("freight_carriers")
+          .select("*")
+          .eq("email", cleanEmail)
+          .maybeSingle();
+
+      if (carrierByEmailError) throw carrierByEmailError;
+      if (carrierByEmail) freightUser = carrierByEmail;
+    }
+
+    if (!freightUser && cleanEmail) {
+      const { data: carrierByFreightEmail, error: carrierByFreightEmailError } =
+        await supabase
+          .from("freight_carriers")
+          .select("*")
+          .eq("freight_email", cleanEmail)
+          .maybeSingle();
+
+      if (carrierByFreightEmailError) {
+        console.log("freight_email lookup ignored:", carrierByFreightEmailError);
+      }
+
+      if (carrierByFreightEmail) freightUser = carrierByFreightEmail;
+    }
+
+    if (!freightUser && cleanEmail) {
+      const { data: userByEmail, error: userByEmailError } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+
+      if (userByEmailError) throw userByEmailError;
+      if (userByEmail) freightUser = userByEmail;
+    }
+
+    return freightUser;
   }
 
   async function handleLogin() {
@@ -156,28 +228,19 @@ export default function FreightLoginScreen() {
         return;
       }
 
-      const userId = data?.user?.id;
+      const userId = data?.user?.id || "";
 
       if (!userId) {
         Alert.alert("Login Error", "Unable to confirm freight account.");
         return;
       }
 
-      const { data: freightUser, error: freightError } = await supabase
-        .from("freight_users")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (freightError) {
-        Alert.alert("Profile Error", freightError.message);
-        return;
-      }
+      const freightUser = await findFreightProfile(userId, cleanEmail);
 
       if (!freightUser) {
         Alert.alert(
           "Freight Profile Missing",
-          "Your login exists, but your freight profile was not found. Please contact Farm2Home support."
+          "Your email/password is valid, but no freight profile row was found. Please complete freight registration or contact Farm2Home support."
         );
         return;
       }
@@ -190,6 +253,11 @@ export default function FreightLoginScreen() {
       }
 
       await saveFreightSession(mappedUser);
+
+      if (mappedUser.approved !== true) {
+        router.replace("/freight/register" as any);
+        return;
+      }
 
       router.replace("/freight/dashboard" as any);
     } catch (error: any) {
@@ -254,25 +322,36 @@ export default function FreightLoginScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.hero}>
-            <View style={styles.heroIcon}>
-              <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
+            <View style={styles.heroTop}>
+              <View style={styles.heroIcon}>
+                <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
+              </View>
+
+              <TouchableOpacity
+                style={styles.homeChip}
+                onPress={() => router.replace("/" as any)}
+              >
+                <Ionicons name="home-outline" size={15} color="#CBD5E1" />
+                <Text style={styles.homeChipText}>Home</Text>
+              </TouchableOpacity>
             </View>
 
             <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
-            <Text style={styles.title}>Freight Login</Text>
+            <Text style={styles.title}>Carrier Login</Text>
             <Text style={styles.subtitle}>
-              Access livestock, refrigerated fresh food freight loads, carrier
-              routes, live tracking, and earnings.
+              Access refrigerated fresh food freight, livestock loads, carrier
+              routes, live tracking, dispatch tools, and earnings.
             </Text>
           </View>
 
           <View style={styles.loginCard}>
-            <Text style={styles.cardTitle}>Carrier Access</Text>
+            <Text style={styles.cardTitle}>Freight Portal Access</Text>
             <Text style={styles.cardSubtitle}>
-              Sign in with your approved Freight Connect account.
+              Sign in with the email and password used during Freight Connect
+              registration.
             </Text>
 
-            <Text style={styles.inputLabel}>Email</Text>
+            <Text style={styles.inputLabel}>Email Address</Text>
             <TextInput
               style={styles.input}
               placeholder="carrier@email.com"
@@ -287,7 +366,7 @@ export default function FreightLoginScreen() {
             <Text style={styles.inputLabel}>Password</Text>
             <TextInput
               style={styles.input}
-              placeholder="Password"
+              placeholder="Enter password"
               placeholderTextColor="#94A3B8"
               secureTextEntry
               autoCapitalize="none"
@@ -300,13 +379,16 @@ export default function FreightLoginScreen() {
               style={[styles.loginButton, loginLoading && styles.disabledButton]}
               onPress={handleLogin}
               disabled={loginLoading}
+              activeOpacity={0.85}
             >
               {loginLoading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
                   <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.loginButtonText}>Login</Text>
+                  <Text style={styles.loginButtonText}>
+                    Login to Freight Portal
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
@@ -317,6 +399,7 @@ export default function FreightLoginScreen() {
                 setResetEmail(email);
                 setResetVisible(true);
               }}
+              activeOpacity={0.85}
             >
               <Text style={styles.forgotText}>Forgot Password?</Text>
             </TouchableOpacity>
@@ -326,6 +409,7 @@ export default function FreightLoginScreen() {
             <TouchableOpacity
               style={styles.registerButton}
               onPress={() => router.push("/freight/register" as any)}
+              activeOpacity={0.85}
             >
               <Ionicons
                 name="business-outline"
@@ -334,13 +418,14 @@ export default function FreightLoginScreen() {
               />
               <Text style={styles.registerText}>Register for Freight Connect</Text>
             </TouchableOpacity>
+          </View>
 
-            <TouchableOpacity
-              style={styles.homeButton}
-              onPress={() => router.replace("/" as any)}
-            >
-              <Text style={styles.homeText}>Back To Home</Text>
-            </TouchableOpacity>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>Carrier Requirements</Text>
+            <Text style={styles.infoText}>
+              Keep insurance, vehicle readiness, payment setup, and compliance
+              information current to remain active on Freight Connect.
+            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -357,7 +442,7 @@ export default function FreightLoginScreen() {
 
               <Text style={styles.modalSubtitle}>
                 Enter your freight account email. Farm2Home will send a secure
-                reset link.
+                reset link if the Auth account exists.
               </Text>
 
               <Text style={styles.modalInputLabel}>Freight Email</Text>
@@ -376,6 +461,7 @@ export default function FreightLoginScreen() {
                 style={[styles.loginButton, resetLoading && styles.disabledButton]}
                 onPress={handlePasswordReset}
                 disabled={resetLoading}
+                activeOpacity={0.85}
               >
                 {resetLoading ? (
                   <ActivityIndicator color="#FFFFFF" />
@@ -425,6 +511,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
+  heroTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
   heroIcon: {
     width: 64,
     height: 64,
@@ -434,7 +526,22 @@ const styles = StyleSheet.create({
     borderColor: "#10B981",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
+  },
+  homeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#0F172A",
+    borderWidth: 1,
+    borderColor: "#334155",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+  },
+  homeChipText: {
+    color: "#CBD5E1",
+    fontWeight: "900",
+    fontSize: 12,
   },
   kicker: {
     color: "#10B981",
@@ -445,7 +552,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#FFFFFF",
-    fontSize: 36,
+    fontSize: 38,
     fontWeight: "900",
     marginTop: 6,
   },
@@ -454,7 +561,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 23,
     fontWeight: "700",
-    maxWidth: 620,
+    maxWidth: 640,
   },
   loginCard: {
     width: "auto",
@@ -467,7 +574,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     color: freightTheme.colors.text,
-    fontSize: 26,
+    fontSize: 27,
     fontWeight: "900",
     textAlign: "center",
   },
@@ -488,11 +595,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#CBD5E1",
-    borderRadius: 14,
+    borderRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 15,
     color: "#111827",
-    fontWeight: "700",
+    fontWeight: "800",
     marginBottom: 14,
   },
   loginButton: {
@@ -541,13 +648,23 @@ const styles = StyleSheet.create({
     color: freightTheme.colors.primary,
     fontWeight: "900",
   },
-  homeButton: {
-    alignItems: "center",
-    marginTop: 16,
+  infoCard: {
+    marginHorizontal: 18,
+    backgroundColor: "#0F172A",
+    borderWidth: 1,
+    borderColor: "#1E293B",
+    borderRadius: 22,
+    padding: 16,
   },
-  homeText: {
-    color: freightTheme.colors.mutedText,
+  infoTitle: {
+    color: "#10B981",
     fontWeight: "900",
+    marginBottom: 6,
+  },
+  infoText: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 21,
   },
   modalOverlay: {
     flex: 1,

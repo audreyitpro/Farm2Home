@@ -4,7 +4,9 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,11 +16,21 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
+import { supabase } from "../services/supabaseClient";
+
+const COLORS = {
+  bg: "#F4F8F1",
+  card: "#FFFFFF",
+  text: "#102A1C",
+  muted: "#66756B",
+  border: "#DDE8D8",
+  primary: "#166534",
+  primary2: "#22C55E",
+  soft: "#ECFDF5",
+  gold: "#F59E0B",
+  danger: "#B91C1C",
+};
 
 function normalize(value: string) {
   return String(value || "").trim().toLowerCase();
@@ -41,6 +53,7 @@ export default function FarmerLoginScreen() {
     const localFarmer = {
       id: farmer.id,
       farmerId: farmer.id,
+      profileId: farmer.profile_id || farmer.profileId || "",
       role: "farmer",
 
       email: farmer.email || "",
@@ -90,6 +103,7 @@ export default function FarmerLoginScreen() {
         farmer.stripe_account_id ||
         farmer.farmerStripeAccountId ||
         "",
+
       stripePayoutsEnabled: Boolean(
         farmer.stripe_payouts_enabled || farmer.stripePayoutsEnabled
       ),
@@ -116,7 +130,6 @@ export default function FarmerLoginScreen() {
 
   async function findFarmerByEmailOrUsername(value: string) {
     const cleanValue = normalize(value);
-
     if (!cleanValue) return null;
 
     if (isEmail(cleanValue)) {
@@ -163,19 +176,6 @@ export default function FarmerLoginScreen() {
     }
 
     return farmer;
-  }
-
-  function farmerPasswordMatches(farmer: any, enteredPassword: string) {
-    const savedPassword = String(
-      farmer.password ||
-        farmer.farmer_password ||
-        farmer.account_password ||
-        ""
-    ).trim();
-
-    if (!savedPassword) return false;
-
-    return savedPassword === enteredPassword.trim();
   }
 
   function routeFarmer(farmer: any) {
@@ -272,53 +272,38 @@ export default function FarmerLoginScreen() {
       return;
     }
 
+    if (!isEmail(cleanLogin)) {
+      Alert.alert(
+        "Email Required",
+        "Please enter the email connected to your farmer account."
+      );
+      return;
+    }
+
     try {
       setLoading(true);
 
-      let farmer: any = null;
-      let authErrorMessage = "";
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanLogin,
+        password: cleanPassword,
+      });
 
-      if (isEmail(cleanLogin)) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: cleanLogin,
-          password: cleanPassword,
-        });
-
-        if (!error) {
-          const userId = data?.user?.id || "";
-          const authEmail = data?.user?.email || cleanLogin;
-          farmer = await getFarmerProfile(userId, authEmail);
-        } else {
-          authErrorMessage = error.message || "";
-        }
+      if (error) {
+        Alert.alert("Login Failed", error.message);
+        return;
       }
 
+      const userId = data?.user?.id || "";
+      const authEmail = data?.user?.email || cleanLogin;
+
+      const farmer = await getFarmerProfile(userId, authEmail);
+
       if (!farmer) {
-        const fallbackFarmer = await findFarmerByEmailOrUsername(cleanLogin);
-
-        if (!fallbackFarmer) {
-          Alert.alert(
-            "Login Failed",
-            authErrorMessage ||
-              "No farmer account was found with that email or username."
-          );
-          return;
-        }
-
-        const passwordMatches = farmerPasswordMatches(
-          fallbackFarmer,
-          cleanPassword
+        Alert.alert(
+          "Farmer Profile Missing",
+          "Your email/password is valid, but no farmer profile row was found. Complete farmer registration or add the farmer profile in Supabase."
         );
-
-        if (!passwordMatches) {
-          Alert.alert(
-            "Login Failed",
-            "Password did not match this farmer profile. Use the email/password created during registration or reset your password."
-          );
-          return;
-        }
-
-        farmer = fallbackFarmer;
+        return;
       }
 
       await saveFarmerSession(farmer);
@@ -369,82 +354,117 @@ export default function FarmerLoginScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Farmer Login</Text>
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.hero}>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>FARM2HOME FARMER PORTAL</Text>
+          </View>
 
-        <Text style={styles.subtitle}>
-          Log in with your farmer email or username to manage your application
-          and market store.
-        </Text>
+          <Text style={styles.heroIcon}>🌾</Text>
+          <Text style={styles.heroTitle}>Welcome Back, Farmer</Text>
+          <Text style={styles.heroSubtitle}>
+            Manage your compliance review, Stripe payout setup, store profile,
+            produce listings, and local orders.
+          </Text>
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Farmer Email or Username"
-          placeholderTextColor="#6B7280"
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-          value={loginId}
-          onChangeText={setLoginId}
-        />
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Farmer Login</Text>
+          <Text style={styles.cardSubtitle}>
+            Use the same email and password created during farmer registration.
+          </Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor="#6B7280"
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={password}
-          onChangeText={setPassword}
-        />
+          <Text style={styles.label}>Email Address</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="farmer@email.com"
+            placeholderTextColor="#94A3B8"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            value={loginId}
+            onChangeText={setLoginId}
+          />
 
-        <TouchableOpacity
-          style={[styles.loginButton, loading && styles.disabled]}
-          onPress={handleLogin}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.loginButtonText}>Login</Text>
-          )}
-        </TouchableOpacity>
+          <Text style={styles.label}>Password</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter password"
+            placeholderTextColor="#94A3B8"
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={password}
+            onChangeText={setPassword}
+          />
 
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => {
-            setResetEmail(loginId);
-            setResetVisible(true);
-          }}
-        >
-          <Text style={styles.linkText}>Forgot Password?</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.loginButton, loading && styles.disabled]}
+            onPress={handleLogin}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.loginButtonText}>Login to Farmer Portal</Text>
+            )}
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => router.push("/farmer/register" as any)}
-        >
-          <Text style={styles.linkText}>Register as Farmer</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => {
+              setResetEmail(loginId);
+              setResetVisible(true);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.secondaryButtonText}>Forgot Password?</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.registerButton}
+            onPress={() => router.push("/farmer/register" as any)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.registerButtonText}>
+              New farmer? Start registration
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.infoCard}>
+          <Text style={styles.infoTitle}>Farmer Approval Flow</Text>
+          <Text style={styles.infoText}>
+            Register → Complete Compliance → Pay Application Fee → Connect Stripe
+            Payout → Submit for Admin Review → Store Unlocks After Approval.
+          </Text>
+        </View>
+      </ScrollView>
 
       <Modal visible={resetVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={styles.modalTitle}>Reset Password</Text>
-
+              <Text style={styles.modalIcon}>🔐</Text>
+              <Text style={styles.modalTitle}>Reset Farmer Password</Text>
               <Text style={styles.modalSubtitle}>
-                Enter your farmer email. Farm2Home will send a secure reset
-                link if the account exists in Supabase Auth.
+                Enter your farmer email. Farm2Home will send a secure reset link
+                if the account exists in Supabase Auth.
               </Text>
 
               <TextInput
                 style={styles.input}
                 placeholder="Farmer Email"
-                placeholderTextColor="#6B7280"
+                placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="email-address"
@@ -477,73 +497,151 @@ export default function FarmerLoginScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    backgroundColor: "#F5F7EF",
+    backgroundColor: COLORS.bg,
+  },
+  content: {
+    flexGrow: 1,
+    padding: 20,
     justifyContent: "center",
-    alignItems: "center",
-    padding: 22,
   },
-  card: {
-    width: "100%",
-    maxWidth: 520,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 26,
+  hero: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 32,
     padding: 24,
-    borderWidth: 1,
-    borderColor: "#DDE7DB",
+    marginBottom: 16,
+    alignItems: "center",
   },
-  title: {
-    fontSize: 34,
+  badge: {
+    backgroundColor: "rgba(255,255,255,0.16)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    marginBottom: 12,
+  },
+  badgeText: {
+    color: "#DCFCE7",
     fontWeight: "900",
-    color: "#14532D",
-    textAlign: "center",
+    fontSize: 11,
+    letterSpacing: 0.8,
+  },
+  heroIcon: {
+    fontSize: 48,
     marginBottom: 8,
   },
-  subtitle: {
-    color: "#64745E",
-    fontWeight: "700",
-    lineHeight: 22,
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 31,
+    fontWeight: "900",
     textAlign: "center",
-    marginBottom: 22,
+  },
+  heroSubtitle: {
+    color: "#DCFCE7",
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+  card: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 28,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  cardSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 21,
+    marginTop: 8,
+    marginBottom: 18,
+  },
+  label: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 13,
+    marginBottom: 7,
+    marginTop: 6,
   },
   input: {
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#F8FAFC",
     borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 16,
-    padding: 14,
+    borderColor: "#CBD5E1",
+    borderRadius: 18,
+    paddingHorizontal: 15,
+    paddingVertical: 15,
     fontSize: 15,
-    fontWeight: "700",
-    marginBottom: 14,
-    color: "#111827",
+    fontWeight: "800",
+    marginBottom: 13,
+    color: "#0F172A",
   },
   loginButton: {
-    backgroundColor: "#047857",
-    paddingVertical: 16,
-    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    paddingVertical: 17,
+    borderRadius: 18,
     alignItems: "center",
-  },
-  disabled: {
-    opacity: 0.65,
+    marginTop: 6,
   },
   loginButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
-  linkButton: {
-    marginTop: 16,
+  secondaryButton: {
+    backgroundColor: COLORS.soft,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    paddingVertical: 15,
+    borderRadius: 18,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  secondaryButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+  registerButton: {
+    paddingVertical: 16,
     alignItems: "center",
   },
-  linkText: {
-    color: "#047857",
+  registerButtonText: {
+    color: COLORS.gold,
     fontWeight: "900",
+  },
+  infoCard: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FDE68A",
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 16,
+    marginTop: 16,
+  },
+  infoTitle: {
+    color: "#92400E",
+    fontWeight: "900",
+    marginBottom: 5,
+  },
+  infoText: {
+    color: "#78350F",
+    fontWeight: "700",
+    lineHeight: 21,
+  },
+  disabled: {
+    opacity: 0.65,
   },
   modalOverlay: {
     flex: 1,
@@ -552,23 +650,28 @@ const styles = StyleSheet.create({
     padding: 22,
   },
   modalCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
     padding: 22,
     maxHeight: "90%",
   },
-  modalTitle: {
-    color: "#14532D",
-    fontSize: 26,
-    fontWeight: "900",
+  modalIcon: {
+    fontSize: 42,
     textAlign: "center",
     marginBottom: 8,
   },
+  modalTitle: {
+    color: COLORS.text,
+    fontSize: 25,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   modalSubtitle: {
-    color: "#64745E",
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 22,
     textAlign: "center",
+    marginTop: 8,
     marginBottom: 18,
   },
   closeButton: {
@@ -576,7 +679,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   closeText: {
-    color: "#B91C1C",
+    color: COLORS.danger,
     fontWeight: "900",
   },
 });
