@@ -3,19 +3,26 @@ import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://placeholder.supabase.co";
+const SUPABASE_URL =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ||
+  "https://qrewbzxspsalunanmejh.supabase.co";
 
 const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder.placeholder";
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+  "PASTE_YOUR_REAL_ANON_KEY_HERE";
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
-  },
-});
+export const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  {
+    auth: {
+      storage: AsyncStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  }
+);
 
 export async function getCurrentUser() {
   try {
@@ -26,7 +33,7 @@ export async function getCurrentUser() {
       return null;
     }
 
-    return data.user;
+    return data.user ?? null;
   } catch (error) {
     console.log("Get current user crash:", error);
     return null;
@@ -42,7 +49,7 @@ export async function getCurrentSession() {
       return null;
     }
 
-    return data.session;
+    return data.session ?? null;
   } catch (error) {
     console.log("Get current session crash:", error);
     return null;
