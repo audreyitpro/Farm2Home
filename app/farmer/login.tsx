@@ -26,7 +26,6 @@ const COLORS = {
   muted: "#66756B",
   border: "#DDE8D8",
   primary: "#166534",
-  primary2: "#22C55E",
   soft: "#ECFDF5",
   gold: "#F59E0B",
   danger: "#B91C1C",
@@ -59,10 +58,8 @@ export default function FarmerLoginScreen() {
       email: farmer.email || "",
       username: farmer.username || "",
 
-      farmName:
-        farmer.farm_name || farmer.farmName || farmer.business_name || "",
-      businessName:
-        farmer.business_name || farmer.businessName || farmer.farm_name || "",
+      farmName: farmer.farm_name || farmer.farmName || farmer.business_name || "",
+      businessName: farmer.business_name || farmer.businessName || farmer.farm_name || "",
       ownerName: farmer.owner_name || farmer.ownerName || "",
 
       state: farmer.state || "MI",
@@ -79,8 +76,7 @@ export default function FarmerLoginScreen() {
         farmer.compliance_submitted || farmer.complianceSubmitted
       ),
       complianceStatus: farmer.compliance_status || farmer.complianceStatus || "",
-      adminReviewStatus:
-        farmer.admin_review_status || farmer.adminReviewStatus || "",
+      adminReviewStatus: farmer.admin_review_status || farmer.adminReviewStatus || "",
       reviewDecision: farmer.review_decision || farmer.reviewDecision || "",
 
       applicationFeePaid: Boolean(
@@ -200,15 +196,10 @@ export default function FarmerLoginScreen() {
     const submitted =
       farmer.compliance_submitted === true ||
       farmer.compliance_status === "pending_admin_review" ||
+      farmer.compliance_status === "PENDING_ADMIN_REVIEW" ||
       farmer.admin_review_status === "pending" ||
+      farmer.admin_review_status === "PENDING_ADMIN_REVIEW" ||
       farmer.review_decision === "pending";
-
-    const storeUnlocked =
-      farmer.store_unlocked === true ||
-      farmer.storeUnlocked === true ||
-      farmer.account_active === true ||
-      farmer.accountActive === true ||
-      approved;
 
     if (rejected) {
       Alert.alert(
@@ -255,11 +246,6 @@ export default function FarmerLoginScreen() {
       return;
     }
 
-    if (approved && storeUnlocked) {
-      router.replace("/farmer/setup-store" as any);
-      return;
-    }
-
     router.replace("/farmer/dashboard" as any);
   }
 
@@ -268,7 +254,7 @@ export default function FarmerLoginScreen() {
     const cleanPassword = String(password || "").trim();
 
     if (!cleanLogin || !cleanPassword) {
-      Alert.alert("Missing Information", "Enter email/username and password.");
+      Alert.alert("Missing Information", "Enter email and password.");
       return;
     }
 
@@ -301,7 +287,7 @@ export default function FarmerLoginScreen() {
       if (!farmer) {
         Alert.alert(
           "Farmer Profile Missing",
-          "Your email/password is valid, but no farmer profile row was found. Complete farmer registration or add the farmer profile in Supabase."
+          "Your email/password is valid, but no farmer profile row was found."
         );
         return;
       }
@@ -371,7 +357,7 @@ export default function FarmerLoginScreen() {
           <Text style={styles.heroIcon}>🌾</Text>
           <Text style={styles.heroTitle}>Welcome Back, Farmer</Text>
           <Text style={styles.heroSubtitle}>
-            Manage your compliance review, Stripe payout setup, store profile,
+            Manage compliance review, Stripe payout setup, store profile,
             produce listings, and local orders.
           </Text>
         </View>
@@ -415,7 +401,7 @@ export default function FarmerLoginScreen() {
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.loginButtonText}>Login to Farmer Portal</Text>
+              <Text style={styles.loginButtonText}>Login to Farmer Dashboard</Text>
             )}
           </TouchableOpacity>
 
@@ -445,7 +431,7 @@ export default function FarmerLoginScreen() {
           <Text style={styles.infoTitle}>Farmer Approval Flow</Text>
           <Text style={styles.infoText}>
             Register → Complete Compliance → Pay Application Fee → Connect Stripe
-            Payout → Submit for Admin Review → Store Unlocks After Approval.
+            Payout → Submit for Admin Review → Dashboard Unlocks After Approval.
           </Text>
         </View>
       </ScrollView>
@@ -457,8 +443,7 @@ export default function FarmerLoginScreen() {
               <Text style={styles.modalIcon}>🔐</Text>
               <Text style={styles.modalTitle}>Reset Farmer Password</Text>
               <Text style={styles.modalSubtitle}>
-                Enter your farmer email. Farm2Home will send a secure reset link
-                if the account exists in Supabase Auth.
+                Enter your farmer email. Farm2Home will send a secure reset link.
               </Text>
 
               <TextInput
@@ -502,10 +487,7 @@ export default function FarmerLoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
+  screen: { flex: 1, backgroundColor: COLORS.bg },
   content: {
     flexGrow: 1,
     padding: 20,
@@ -531,10 +513,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 0.8,
   },
-  heroIcon: {
-    fontSize: 48,
-    marginBottom: 8,
-  },
+  heroIcon: { fontSize: 48, marginBottom: 8 },
   heroTitle: {
     color: "#FFFFFF",
     fontSize: 31,
@@ -640,9 +619,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 21,
   },
-  disabled: {
-    opacity: 0.65,
-  },
+  disabled: { opacity: 0.65 },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",

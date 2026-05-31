@@ -15,7 +15,7 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { supabase } from "../data/supabaseClient";
+import { supabase } from "../services/supabaseClient";
 
 import {
   ComplianceRecord,
@@ -54,7 +54,7 @@ function prettyStatus(status?: string) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function mapAdminVerificationToComplianceRecord(row: any): any {
+function mapAdminVerificationToComplianceRecord(row: any): ComplianceRecord {
   const mappedDocuments = Array.isArray(row.documents)
     ? row.documents.map((doc: any, index: number) => ({
         id: doc.id || `${row.id}_doc_${index}`,
@@ -77,43 +77,69 @@ function mapAdminVerificationToComplianceRecord(row: any): any {
   const rawStatus = String(row.status || "").toUpperCase();
 
   return {
-    farmerId: String(row.farmer_id || row.id),
-    businessName:
-      row.business_name ||
-      row.farm_name ||
-      row.company_name ||
-      "Farm2Home Applicant",
-    ownerName: row.owner_name || row.contact_name || "Not listed",
-    state: row.state || "Not listed",
-    status:
+  farmerId: String(row.farmer_id || row.id),
+  businessName:
+    row.business_name ||
+    row.farm_name ||
+    row.company_name ||
+    "Farm2Home Applicant",
+
+  ownerName: row.owner_name || row.contact_name || "Not listed",
+  state: row.state || "Not listed",
+
+  status:
+    adminStatus === "approved" || rawStatus === "APPROVED"
+      ? "approved"
+      : adminStatus === "rejected" || rawStatus === "REJECTED"
+      ? "rejected"
+      : adminStatus === "needs_more_info" ||
+        rawStatus === "MORE_INFO_REQUIRED"
+      ? "needs_more_info"
+      : "under_ai_review",
+
+  documents: mappedDocuments,
+
+  result: {
+    score:
       adminStatus === "approved" || rawStatus === "APPROVED"
-        ? "approved"
-        : adminStatus === "rejected" || rawStatus === "REJECTED"
-        ? "rejected"
-        : adminStatus === "needs_more_info" || rawStatus === "MORE_INFO_REQUIRED"
-        ? "needs_more_info"
-        : "under_ai_review",
-    documents: mappedDocuments,
-    result: {
-      score:
-        adminStatus === "approved" || rawStatus === "APPROVED"
-          ? 100
-          : row.stripe_payouts_enabled
-          ? 70
-          : 0,
-      idVerified: Boolean(row.id_verified),
-      businessVerified: Boolean(row.business_verified || row.business_name),
-      einVerified: Boolean(row.ein_verified),
-      stateRegistrationVerified: Boolean(row.state_registration_verified),
-      insuranceVerified: Boolean(row.insurance_verified),
-      payoutVerified: Boolean(row.stripe_payouts_enabled),
-      noFraudFlags: !Boolean(row.fraud_flag),
-      missingItems: [],
-      verificationSources: ["Supabase admin_verifications"],
-      reviewedAt: row.updated_at || row.created_at,
-      autoApproved: false,
-    },
-  };
+        ? 100
+        : row.stripe_payouts_enabled ||
+          row.stripe_onboarding_complete
+        ? 70
+        : 0,
+
+    idVerified: Boolean(row.id_verified),
+    businessVerified: Boolean(
+      row.business_verified || row.business_name
+    ),
+    einVerified: Boolean(row.ein_verified),
+    stateRegistrationVerified: Boolean(
+      row.state_registration_verified
+    ),
+    insuranceVerified: Boolean(row.insurance_verified),
+
+    payoutVerified: Boolean(
+      row.stripe_payouts_enabled ||
+      row.stripe_onboarding_complete
+    ),
+
+    noFraudFlags: !Boolean(row.fraud_flag),
+
+    missingItems: [],
+
+    verificationSources: [
+      "Supabase admin_verifications",
+    ],
+
+    reviewedAt:
+      row.updated_at ||
+      row.created_at ||
+      new Date().toISOString(),
+
+    autoApproved: false,
+  },
+} as any;
+  
 }
 
 export default function AdminComplianceReviewScreen() {
@@ -165,184 +191,252 @@ export default function AdminComplianceReviewScreen() {
     };
   }, [records]);
 
-  async function approveFarmer(record: ComplianceRecord) {
-    const now = new Date().toISOString();
-
-    const result = {
-      farmerId: record.farmerId,
-      businessName: record.businessName,
-      ownerName: record.ownerName,
-      state: record.state,
-      status: "approved" as const,
-      score: 100,
-      idVerified: true,
-      businessVerified: true,
-      einVerified: true,
-      stateRegistrationVerified: true,
-      insuranceVerified: true,
-      payoutVerified: true,
-      noFraudFlags: true,
-      missingItems: [],
-      verificationSources: [
-        "Admin manual review",
-        "Document review",
-        "Farm2Home compliance approval",
-      ],
-      reviewedAt: now,
-      autoApproved: false,
-    };
-
-    await saveComplianceResult(record.farmerId, result);
-
-    await updateFarmerStore(record.farmerId, {
-      approved: true,
-      complianceStatus: "approved",
-      accountActive: true,
-      storeUnlocked: true,
-      adminReviewStatus: "approved",
-      reviewDecision: "approved",
-      status: "APPROVED",
-      updatedAt: now,
-    } as any);
-
-    await supabase
+  async function updateAdminAndFarmer(
+    record: ComplianceRecord,
+    adminPayload: any,
+    farmerPayload: any
+  ) {
+    const { error: adminError } = await supabase
       .from("admin_verifications")
-      .update({
-        status: "APPROVED",
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        rejected: false,
-        needs_more_info: false,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
-        updated_at: now,
-      })
+      .update(adminPayload)
       .or(`id.eq.${record.farmerId},farmer_id.eq.${record.farmerId}`);
 
-    Alert.alert("Approved", "Farmer has been approved.");
-    await loadRecords();
+    if (adminError) throw adminError;
+
+    const { error: farmerError } = await supabase
+      .from("farmers")
+      .update(farmerPayload)
+      .eq("id", record.farmerId);
+
+    if (farmerError) throw farmerError;
+  }
+
+  async function approveFarmer(record: ComplianceRecord) {
+    try {
+      const now = new Date().toISOString();
+
+      const result = {
+        farmerId: record.farmerId,
+        businessName: record.businessName,
+        ownerName: record.ownerName,
+        state: record.state,
+        status: "approved" as const,
+        score: 100,
+        idVerified: true,
+        businessVerified: true,
+        einVerified: true,
+        stateRegistrationVerified: true,
+        insuranceVerified: true,
+        payoutVerified: true,
+        noFraudFlags: true,
+        missingItems: [],
+        verificationSources: [
+          "Admin manual review",
+          "Document review",
+          "Farm2Home compliance approval",
+        ],
+        reviewedAt: now,
+        autoApproved: false,
+      };
+
+      await saveComplianceResult(record.farmerId, result);
+
+      await updateFarmerStore(record.farmerId, {
+        approved: true,
+        complianceStatus: "approved",
+        accountActive: true,
+        storeUnlocked: true,
+        adminReviewStatus: "approved",
+        reviewDecision: "approved",
+        status: "APPROVED",
+        updatedAt: now,
+      } as any);
+
+      await updateAdminAndFarmer(
+        record,
+        {
+          status: "APPROVED",
+          compliance_status: "approved",
+          admin_review_status: "approved",
+          review_decision: "approved",
+          approved: true,
+          rejected: false,
+          needs_more_info: false,
+          reviewed: true,
+          account_active: true,
+          store_unlocked: true,
+          approved_at: now,
+          updated_at: now,
+        },
+        {
+          compliance_status: "approved",
+          admin_review_status: "approved",
+          review_decision: "approved",
+          approved: true,
+          rejected: false,
+          needs_more_info: false,
+          reviewed: true,
+          account_active: true,
+          store_unlocked: true,
+          approved_at: now,
+          membership_status: "approved_pending_subscription",
+          updated_at: now,
+        }
+      );
+
+      Alert.alert("Approved", "Farmer has been approved.");
+      await loadRecords();
+    } catch (error: any) {
+      Alert.alert("Approval Error", error?.message || "Unable to approve farmer.");
+    }
   }
 
   async function rejectFarmer(record: ComplianceRecord) {
-    const now = new Date().toISOString();
+    try {
+      const now = new Date().toISOString();
 
-    const result = {
-      farmerId: record.farmerId,
-      businessName: record.businessName,
-      ownerName: record.ownerName,
-      state: record.state,
-      status: "rejected" as const,
-      score: record.result?.score || 0,
-      idVerified: false,
-      businessVerified: false,
-      einVerified: false,
-      stateRegistrationVerified: false,
-      insuranceVerified: false,
-      payoutVerified: false,
-      noFraudFlags: false,
-      missingItems: record.result?.missingItems || ["Manual rejection"],
-      verificationSources: [
-        "Admin manual review",
-        "Farm2Home compliance rejection",
-      ],
-      reviewedAt: now,
-      autoApproved: false,
-    };
+      const result = {
+        farmerId: record.farmerId,
+        businessName: record.businessName,
+        ownerName: record.ownerName,
+        state: record.state,
+        status: "rejected" as const,
+        score: record.result?.score || 0,
+        idVerified: false,
+        businessVerified: false,
+        einVerified: false,
+        stateRegistrationVerified: false,
+        insuranceVerified: false,
+        payoutVerified: false,
+        noFraudFlags: false,
+        missingItems: record.result?.missingItems || ["Manual rejection"],
+        verificationSources: [
+          "Admin manual review",
+          "Farm2Home compliance rejection",
+        ],
+        reviewedAt: now,
+        autoApproved: false,
+      };
 
-    await saveComplianceResult(record.farmerId, result);
+      await saveComplianceResult(record.farmerId, result);
 
-    await updateFarmerStore(record.farmerId, {
-      approved: false,
-      complianceStatus: "rejected",
-      accountActive: false,
-      storeUnlocked: false,
-      adminReviewStatus: "rejected",
-      reviewDecision: "rejected",
-      status: "REJECTED",
-      updatedAt: now,
-    } as any);
-
-    await supabase
-      .from("admin_verifications")
-      .update({
-        status: "REJECTED",
-        compliance_status: "rejected",
-        admin_review_status: "rejected",
-        review_decision: "rejected",
+      await updateFarmerStore(record.farmerId, {
         approved: false,
-        rejected: true,
-        needs_more_info: false,
-        reviewed: true,
-        account_active: false,
-        store_unlocked: false,
-        updated_at: now,
-      })
-      .or(`id.eq.${record.farmerId},farmer_id.eq.${record.farmerId}`);
+        complianceStatus: "rejected",
+        accountActive: false,
+        storeUnlocked: false,
+        adminReviewStatus: "rejected",
+        reviewDecision: "rejected",
+        status: "REJECTED",
+        updatedAt: now,
+      } as any);
 
-    Alert.alert("Rejected", "Farmer compliance application was rejected.");
-    await loadRecords();
+      await updateAdminAndFarmer(
+        record,
+        {
+          status: "REJECTED",
+          compliance_status: "rejected",
+          admin_review_status: "rejected",
+          review_decision: "rejected",
+          approved: false,
+          rejected: true,
+          needs_more_info: false,
+          reviewed: true,
+          account_active: false,
+          store_unlocked: false,
+          updated_at: now,
+        },
+        {
+          compliance_status: "rejected",
+          admin_review_status: "rejected",
+          review_decision: "rejected",
+          approved: false,
+          rejected: true,
+          needs_more_info: false,
+          reviewed: true,
+          account_active: false,
+          store_unlocked: false,
+          updated_at: now,
+        }
+      );
+
+      Alert.alert("Rejected", "Farmer compliance application was rejected.");
+      await loadRecords();
+    } catch (error: any) {
+      Alert.alert("Reject Error", error?.message || "Unable to reject farmer.");
+    }
   }
 
   async function requestMoreInfo(record: ComplianceRecord) {
-    const now = new Date().toISOString();
+    try {
+      const now = new Date().toISOString();
 
-    const result = {
-      farmerId: record.farmerId,
-      businessName: record.businessName,
-      ownerName: record.ownerName,
-      state: record.state,
-      status: "needs_more_info" as const,
-      score: record.result?.score || 0,
-      idVerified: Boolean(record.result?.idVerified),
-      businessVerified: Boolean(record.result?.businessVerified),
-      einVerified: Boolean(record.result?.einVerified),
-      stateRegistrationVerified: Boolean(record.result?.stateRegistrationVerified),
-      insuranceVerified: Boolean(record.result?.insuranceVerified),
-      payoutVerified: Boolean(record.result?.payoutVerified),
-      noFraudFlags: Boolean(record.result?.noFraudFlags),
-      missingItems:
-        record.result?.missingItems?.length
+      const result = {
+        farmerId: record.farmerId,
+        businessName: record.businessName,
+        ownerName: record.ownerName,
+        state: record.state,
+        status: "needs_more_info" as const,
+        score: record.result?.score || 0,
+        idVerified: Boolean(record.result?.idVerified),
+        businessVerified: Boolean(record.result?.businessVerified),
+        einVerified: Boolean(record.result?.einVerified),
+        stateRegistrationVerified: Boolean(record.result?.stateRegistrationVerified),
+        insuranceVerified: Boolean(record.result?.insuranceVerified),
+        payoutVerified: Boolean(record.result?.payoutVerified),
+        noFraudFlags: Boolean(record.result?.noFraudFlags),
+        missingItems: record.result?.missingItems?.length
           ? record.result.missingItems
           : ["Additional documents or clarification needed"],
-      verificationSources: [
-        ...(record.result?.verificationSources || []),
-        "Admin requested more information",
-      ],
-      reviewedAt: now,
-      autoApproved: false,
-    };
+        verificationSources: [
+          ...(record.result?.verificationSources || []),
+          "Admin requested more information",
+        ],
+        reviewedAt: now,
+        autoApproved: false,
+      };
 
-    await saveComplianceResult(record.farmerId, result);
+      await saveComplianceResult(record.farmerId, result);
 
-    await updateFarmerStore(record.farmerId, {
-      approved: false,
-      complianceStatus: "needs_more_info",
-      adminReviewStatus: "needs_more_info",
-      reviewDecision: "needs_more_info",
-      status: "MORE_INFO_REQUIRED",
-      updatedAt: now,
-    } as any);
-
-    await supabase
-      .from("admin_verifications")
-      .update({
-        status: "MORE_INFO_REQUIRED",
-        compliance_status: "needs_more_info",
-        admin_review_status: "needs_more_info",
-        review_decision: "needs_more_info",
+      await updateFarmerStore(record.farmerId, {
         approved: false,
-        rejected: false,
-        needs_more_info: true,
-        reviewed: true,
-        updated_at: now,
-      })
-      .or(`id.eq.${record.farmerId},farmer_id.eq.${record.farmerId}`);
+        complianceStatus: "needs_more_info",
+        adminReviewStatus: "needs_more_info",
+        reviewDecision: "needs_more_info",
+        status: "MORE_INFO_REQUIRED",
+        updatedAt: now,
+      } as any);
 
-    Alert.alert("More Info Requested", "Farmer was marked as needing more info.");
-    await loadRecords();
+      await updateAdminAndFarmer(
+        record,
+        {
+          status: "MORE_INFO_REQUIRED",
+          compliance_status: "needs_more_info",
+          admin_review_status: "needs_more_info",
+          review_decision: "needs_more_info",
+          approved: false,
+          rejected: false,
+          needs_more_info: true,
+          reviewed: true,
+          updated_at: now,
+        },
+        {
+          compliance_status: "needs_more_info",
+          admin_review_status: "needs_more_info",
+          review_decision: "needs_more_info",
+          approved: false,
+          rejected: false,
+          needs_more_info: true,
+          reviewed: true,
+          updated_at: now,
+        }
+      );
+
+      Alert.alert("More Info Requested", "Farmer was marked as needing more info.");
+      await loadRecords();
+    } catch (error: any) {
+      Alert.alert("Request Error", error?.message || "Unable to request more info.");
+    }
   }
 
   function CheckRow({ label, value }: { label: string; value: boolean }) {
@@ -524,7 +618,8 @@ export default function AdminComplianceReviewScreen() {
                 <Text style={styles.welcome}>Farm2Home Admin Portal</Text>
                 <Text style={styles.pageTitle}>Compliance Review</Text>
                 <Text style={styles.pageSub}>
-                  Review new registrations, AI compliance findings, uploaded documents, missing requirements, legal checks, and approval decisions.
+                  Review new registrations, AI compliance findings, uploaded documents,
+                  missing requirements, legal checks, and approval decisions.
                 </Text>
               </View>
 

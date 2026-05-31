@@ -171,11 +171,8 @@ export default function DriverRegisterScreen() {
         size: file.size,
       };
 
-      if (type === "license") {
-        setLicenseDocument(savedFile);
-      } else {
-        setInsuranceDocument(savedFile);
-      }
+      if (type === "license") setLicenseDocument(savedFile);
+      else setInsuranceDocument(savedFile);
     } catch (error: any) {
       Alert.alert("Upload Error", error?.message || "Unable to select document.");
     }
@@ -353,6 +350,60 @@ export default function DriverRegisterScreen() {
     await WebBrowser.openBrowserAsync(url);
   }
 
+  async function createDriverStripeCheckout({
+    cleanEmail,
+    cleanFullName,
+    cleanUsername,
+    driverId,
+    profileId,
+  }: {
+    cleanEmail: string;
+    cleanFullName: string;
+    cleanUsername: string;
+    driverId: string;
+    profileId: string;
+  }) {
+    const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customerEmail: cleanEmail,
+        email: cleanEmail,
+        name: cleanFullName,
+        username: cleanUsername,
+        userId: driverId,
+        driverId,
+        profileId,
+        planType: "driver",
+        successUrl: `${APP_URL}/driver/mobile-driver-app?driverId=${driverId}&stripeReturn=true&session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${APP_URL}/driver/register?driverId=${driverId}&stripeCancel=true`,
+      }),
+    });
+
+    const text = await response.text();
+
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+
+    console.log("DRIVER STRIPE STATUS:", response.status);
+    console.log("DRIVER STRIPE RESPONSE:", data);
+
+    if (!response.ok || !data.url) {
+      throw new Error(
+        data.error ||
+          data.message ||
+          data.raw ||
+          "Stripe checkout URL was not returned. Check STRIPE_DRIVER_MEMBERSHIP_PRICE_ID and backend planType driver."
+      );
+    }
+
+    return data;
+  }
+
   async function registerDriver() {
     if (loading) return;
     if (!validateForm()) return;
@@ -390,10 +441,7 @@ export default function DriverRegisterScreen() {
       const driverId = authData?.user?.id;
 
       if (!driverId) {
-        Alert.alert(
-          "Signup Error",
-          "Unable to create driver account. Please try again."
-        );
+        Alert.alert("Signup Error", "Unable to create driver account. Please try again.");
         return;
       }
 
@@ -537,64 +585,37 @@ export default function DriverRegisterScreen() {
       await saveDriverSession(localDriver);
 
       try {
-        const response = await fetch(
-          `${API_BASE_URL}/payments/create-subscription-checkout`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              customerEmail: cleanEmail,
-              email: cleanEmail,
-              name: cleanFullName,
-              username: cleanUsername,
-              userId: driverId,
-              driverId,
-              profileId: profile.id,
-              planType: "driver",
-              successUrl: `${APP_URL}/driver/mobile-driver-app`,
-              cancelUrl: `${APP_URL}/driver/register`,
-            }),
-          }
-        );
+        const data = await createDriverStripeCheckout({
+          cleanEmail,
+          cleanFullName,
+          cleanUsername,
+          driverId,
+          profileId: profile.id,
+        });
 
-        const text = await response.text();
-        let data: any = {};
+        const checkoutDriver = {
+          ...localDriver,
+          stripeCheckoutSessionId: data.id || data.sessionId || null,
+          membershipStatus: "Checkout Started",
+          subscriptionStatus: "pending",
+          updatedAt: new Date().toISOString(),
+        };
 
-        try {
-          data = text ? JSON.parse(text) : {};
-        } catch {
-          data = {};
-        }
-
-        if (response.ok && data.url) {
-          const checkoutDriver = {
-            ...localDriver,
-            stripeCheckoutSessionId: data.id || data.sessionId || null,
-            membershipStatus: "Checkout Started",
-            subscriptionStatus: "pending",
-            updatedAt: new Date().toISOString(),
-          };
-
-          await saveDriverSession(checkoutDriver);
-          await openCheckoutUrl(data.url);
-          return;
-        }
+        await saveDriverSession(checkoutDriver);
+        await openCheckoutUrl(data.url);
+        return;
+      } catch (stripeError: any) {
+        console.log("Stripe driver checkout error:", stripeError);
 
         Alert.alert(
           "Driver Account Created",
-          data.error ||
-            data.message ||
-            "Your driver account was created, but Stripe checkout did not open. Please try subscription again from the driver area."
+          stripeError?.message ||
+            "Your driver account was created, but Stripe checkout did not open."
         );
-      } catch (stripeError) {
-        console.log("Stripe driver checkout skipped:", stripeError);
-        Alert.alert(
-          "Driver Account Created",
-          "Your account was created, but Stripe checkout did not open."
-        );
+
+        router.replace("/driver/profile" as any);
+        return;
       }
-
-      router.replace("/driver/mobile-driver-app" as any);
     } catch (error: any) {
       console.log("Driver register error:", error);
       Alert.alert(
