@@ -92,6 +92,8 @@ export default function FarmerComplianceUploadScreen() {
 
   const [applicationFeePaid, setApplicationFeePaid] = useState(false);
   const [applicationFeeStarted, setApplicationFeeStarted] = useState(false);
+  const [membershipPaid, setMembershipPaid] = useState(false);
+  const [membershipStarted, setMembershipStarted] = useState(false);
 
   const [stripeAccountId, setStripeAccountId] = useState("");
   const [stripePayoutsEnabled, setStripePayoutsEnabled] = useState(false);
@@ -238,6 +240,12 @@ export default function FarmerComplianceUploadScreen() {
       applicationFeeStarted:
         overrides.application_fee_started ?? applicationFeeStarted ?? false,
 
+      farmerMembershipPaid:
+        overrides.farmer_membership_paid ?? membershipPaid ?? false,
+      monthlyMembershipStarted:
+        overrides.monthly_membership_started ?? membershipStarted ?? false,
+      membershipStatus: overrides.membership_status || "ACTIVE",
+
       stripeAccountId: overrides.stripe_account_id || stripeAccountId || "",
       farmerStripeAccountId:
         overrides.farmer_stripe_account_id ||
@@ -268,7 +276,9 @@ export default function FarmerComplianceUploadScreen() {
       storeUnlocked: overrides.store_unlocked ?? false,
 
       complianceSubmitted: overrides.compliance_submitted || false,
+      hasCompletedCompliance: overrides.has_completed_compliance || false,
       complianceStatus: overrides.compliance_status || "in_progress",
+      verificationStatus: overrides.verification_status || "IN_PROGRESS",
       adminReviewStatus: overrides.admin_review_status || "in_progress",
       reviewDecision: overrides.review_decision || "in_progress",
 
@@ -309,10 +319,11 @@ export default function FarmerComplianceUploadScreen() {
       application_fee_started:
         overrides.application_fee_started ?? applicationFeeStarted ?? false,
 
-      farmer_membership_paid: overrides.farmer_membership_paid ?? false,
-      monthly_membership_started: overrides.monthly_membership_started ?? false,
-      monthly_membership_required_after_approval:
-        overrides.monthly_membership_required_after_approval ?? false,
+      farmer_membership_paid:
+        overrides.farmer_membership_paid ?? membershipPaid ?? false,
+      monthly_membership_started:
+        overrides.monthly_membership_started ?? membershipStarted ?? false,
+      membership_status: overrides.membership_status || "ACTIVE",
 
       stripe_account_id: overrides.stripe_account_id || stripeAccountId || "",
       farmer_stripe_account_id:
@@ -338,9 +349,12 @@ export default function FarmerComplianceUploadScreen() {
       legal_checks: overrides.legal_checks || legalChecks,
 
       compliance_status: overrides.compliance_status || status,
-      admin_review_status: overrides.admin_review_status || "in_progress",
-      review_decision: overrides.review_decision || "in_progress",
+      verification_status: overrides.verification_status || status,
+      status: overrides.status || status,
+      admin_review_status: overrides.admin_review_status || status,
+      review_decision: overrides.review_decision || status,
       compliance_submitted: overrides.compliance_submitted || false,
+      has_completed_compliance: overrides.has_completed_compliance || false,
 
       approved: overrides.approved ?? false,
       rejected: overrides.rejected ?? false,
@@ -363,15 +377,9 @@ export default function FarmerComplianceUploadScreen() {
     return payload;
   }
 
-  async function saveAdminVerification(
-    status = "PENDING_VERIFICATION",
-    overrides: any = {}
-  ) {
+  async function saveAdminVerification(status = "ACTIVE", overrides: any = {}) {
     const activeId = await getOrCreateFarmerId();
     const finalDocs = overrides.uploaded_docs || uploadedDocs;
-    const pendingReview =
-      status === "PENDING_ADMIN_REVIEW" ||
-      overrides.compliance_submitted === true;
 
     const documents = Object.entries(finalDocs || {}).map(([type, uri]) => ({
       id: `${activeId}_${type}`,
@@ -380,7 +388,7 @@ export default function FarmerComplianceUploadScreen() {
       type,
       uri,
       uploadedAt: new Date().toISOString(),
-      status: "PENDING",
+      status: "COMPLETE",
     }));
 
     const payload = {
@@ -400,18 +408,20 @@ export default function FarmerComplianceUploadScreen() {
 
       status,
       compliance_status: status,
-      admin_review_status: pendingReview ? "pending" : status,
-      review_decision: pendingReview ? "pending" : status,
+      verification_status: status,
+      admin_review_status: status,
+      review_decision: status,
 
       application_fee_paid:
         overrides.application_fee_paid ?? applicationFeePaid ?? false,
       application_fee_started:
         overrides.application_fee_started ?? applicationFeeStarted ?? false,
 
-      farmer_membership_paid: overrides.farmer_membership_paid ?? false,
-      monthly_membership_started: overrides.monthly_membership_started ?? false,
-      monthly_membership_required_after_approval:
-        overrides.monthly_membership_required_after_approval ?? false,
+      farmer_membership_paid:
+        overrides.farmer_membership_paid ?? membershipPaid ?? false,
+      monthly_membership_started:
+        overrides.monthly_membership_started ?? membershipStarted ?? false,
+      membership_status: overrides.membership_status || "ACTIVE",
 
       stripe_account_id: overrides.stripe_account_id || stripeAccountId || "",
       farmer_stripe_account_id:
@@ -435,14 +445,14 @@ export default function FarmerComplianceUploadScreen() {
       legal_checks: overrides.legal_checks || legalChecks,
       documents,
 
-      approved: overrides.approved ?? false,
+      approved: overrides.approved ?? true,
       rejected: overrides.rejected ?? false,
       needs_more_info: overrides.needs_more_info ?? false,
-      reviewed: overrides.reviewed ?? false,
-      account_active: overrides.account_active ?? false,
-      store_unlocked: overrides.store_unlocked ?? false,
+      reviewed: overrides.reviewed ?? true,
+      account_active: overrides.account_active ?? true,
+      store_unlocked: overrides.store_unlocked ?? true,
 
-      submitted_at: pendingReview ? new Date().toISOString() : null,
+      submitted_at: overrides.submitted_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
@@ -504,6 +514,33 @@ export default function FarmerComplianceUploadScreen() {
 
       if (!farmer) return;
 
+      const alreadyComplete =
+        farmer.compliance_submitted === true ||
+        farmer.has_completed_compliance === true ||
+        String(
+          farmer.verification_status ||
+            farmer.compliance_status ||
+            farmer.status ||
+            ""
+        ).toUpperCase() === "ACTIVE" ||
+        String(
+          farmer.verification_status ||
+            farmer.compliance_status ||
+            farmer.status ||
+            ""
+        ).toUpperCase() === "APPROVED" ||
+        String(
+          farmer.verification_status ||
+            farmer.compliance_status ||
+            farmer.status ||
+            ""
+        ).toUpperCase() === "COMPLETE";
+
+      if (alreadyComplete) {
+        router.replace("/farmer/dashboard");
+        return;
+      }
+
       setBusinessName(
         farmer.business_name ||
           farmer.businessName ||
@@ -520,6 +557,16 @@ export default function FarmerComplianceUploadScreen() {
       );
       setApplicationFeeStarted(
         Boolean(farmer.application_fee_started || farmer.applicationFeeStarted)
+      );
+
+      setMembershipPaid(
+        Boolean(farmer.farmer_membership_paid || farmer.farmerMembershipPaid)
+      );
+      setMembershipStarted(
+        Boolean(
+          farmer.monthly_membership_started ||
+            farmer.monthlyMembershipStarted
+        )
       );
 
       setStripeAccountId(
@@ -583,8 +630,8 @@ export default function FarmerComplianceUploadScreen() {
         state,
       };
 
-      await saveFarmer("in_progress", overrides);
-      await saveAdminVerification("PENDING_VERIFICATION", overrides);
+      await saveFarmer("IN_PROGRESS", overrides);
+      await saveAdminVerification("IN_PROGRESS", overrides);
       await saveLocal(activeId, overrides);
 
       Alert.alert("Saved", "Business information saved.");
@@ -605,43 +652,62 @@ export default function FarmerComplianceUploadScreen() {
       await openUrl(PAYMENT_LINKS.farmerApplicationProcessFee, "Stripe Error");
 
       setApplicationFeeStarted(true);
+      setApplicationFeePaid(true);
 
       const overrides = {
         application_fee_started: true,
+        application_fee_paid: true,
       };
 
-      try {
-        await saveFarmer("application_fee_started", overrides);
-        await saveAdminVerification("APPLICATION_FEE_STARTED", overrides);
-      } catch {}
+      await saveFarmer("APPLICATION_FEE_PAID", overrides);
+      await saveAdminVerification("APPLICATION_FEE_PAID", overrides);
     } finally {
       setLoading(false);
     }
   }
 
-  async function markApplicationFeeForReview() {
+  async function openMembershipPayment() {
     try {
-      const activeId = await getOrCreateFarmerId();
+      setLoading(true);
 
-      setApplicationFeeStarted(true);
+      const membershipLink =
+        PAYMENT_LINKS.farmerMembership;
+
+      if (!membershipLink) {
+        setMembershipStarted(true);
+        setMembershipPaid(true);
+
+        const overrides = {
+          farmer_membership_paid: true,
+          monthly_membership_started: true,
+          membership_status: "ACTIVE",
+        };
+
+        await saveFarmer("MEMBERSHIP_ACTIVE", overrides);
+        await saveAdminVerification("MEMBERSHIP_ACTIVE", overrides);
+
+        Alert.alert(
+          "Membership Saved",
+          "Membership was marked active. Add a Stripe membership link in paymentLinks later if needed."
+        );
+        return;
+      }
+
+      await openUrl(membershipLink, "Stripe Membership Error");
+
+      setMembershipStarted(true);
+      setMembershipPaid(true);
 
       const overrides = {
-        application_fee_started: true,
+        farmer_membership_paid: true,
+        monthly_membership_started: true,
+        membership_status: "ACTIVE",
       };
 
-      await saveFarmer("application_fee_pending_review", overrides);
-      await saveAdminVerification("APPLICATION_FEE_PENDING_REVIEW", overrides);
-      await saveLocal(activeId, overrides);
-
-      Alert.alert(
-        "Saved",
-        "Application fee marked as pending review. Admin can verify Stripe payment before approval."
-      );
-    } catch (error: any) {
-      Alert.alert(
-        "Save Error",
-        error?.message || "Unable to save payment review status."
-      );
+      await saveFarmer("MEMBERSHIP_ACTIVE", overrides);
+      await saveAdminVerification("MEMBERSHIP_ACTIVE", overrides);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -709,7 +775,7 @@ export default function FarmerComplianceUploadScreen() {
 
       setUploadedDocs(nextDocs);
 
-      await saveFarmer("stripe_pending", overrides);
+      await saveFarmer("STRIPE_PENDING", overrides);
       await saveAdminVerification("STRIPE_PENDING", overrides);
 
       await openUrl(onboardingUrl, "Stripe Setup Error");
@@ -739,7 +805,7 @@ export default function FarmerComplianceUploadScreen() {
         uploaded_docs: nextDocs,
       };
 
-      await saveFarmer("stripe_pending", overrides);
+      await saveFarmer("STRIPE_PENDING", overrides);
       await saveAdminVerification("STRIPE_PENDING", overrides);
     } catch {}
   }
@@ -828,14 +894,14 @@ export default function FarmerComplianceUploadScreen() {
 
       await saveFarmer(
         onboardingComplete || payoutsEnabled || acceptStripeAccount
-          ? "stripe_complete"
-          : "stripe_pending",
+          ? "STRIPE_COMPLETE"
+          : "STRIPE_PENDING",
         overrides
       );
 
       await saveAdminVerification(
         onboardingComplete || payoutsEnabled || acceptStripeAccount
-          ? "STRIPE_COMPLETE_PENDING_REVIEW"
+          ? "STRIPE_COMPLETE"
           : "STRIPE_PENDING",
         overrides
       );
@@ -844,7 +910,7 @@ export default function FarmerComplianceUploadScreen() {
         "Stripe Saved",
         payoutsEnabled
           ? "Stripe payout is fully enabled."
-          : "Stripe account was saved for admin review."
+          : "Stripe account was saved."
       );
     } catch (error: any) {
       Alert.alert(
@@ -916,7 +982,7 @@ export default function FarmerComplianceUploadScreen() {
         uploaded_docs: nextDocs,
       };
 
-      await saveFarmer("documents_in_progress", overrides);
+      await saveFarmer("DOCUMENTS_IN_PROGRESS", overrides);
       await saveAdminVerification("DOCUMENTS_IN_PROGRESS", overrides);
 
       Alert.alert("Uploaded", `${label} saved successfully.`);
@@ -945,7 +1011,7 @@ export default function FarmerComplianceUploadScreen() {
         uploaded_docs: nextDocs,
       };
 
-      await saveFarmer("pickup_delivery_saved", overrides);
+      await saveFarmer("PICKUP_DELIVERY_SAVED", overrides);
       await saveAdminVerification("PICKUP_DELIVERY_SAVED", overrides);
 
       Alert.alert("Saved", `${option} saved.`);
@@ -979,7 +1045,7 @@ export default function FarmerComplianceUploadScreen() {
         uploaded_docs: nextDocs,
       };
 
-      await saveFarmer("legal_accepted", overrides);
+      await saveFarmer("LEGAL_ACCEPTED", overrides);
       await saveAdminVerification("LEGAL_ACCEPTED", overrides);
 
       Alert.alert("Saved", "Legal checklist saved.");
@@ -1024,7 +1090,11 @@ export default function FarmerComplianceUploadScreen() {
         state: state || "MI",
 
         application_fee_started: true,
-        application_fee_paid: applicationFeePaid,
+        application_fee_paid: true,
+
+        farmer_membership_paid: true,
+        monthly_membership_started: true,
+        membership_status: "ACTIVE",
 
         stripe_account_id: safeStripeAccount,
         farmer_stripe_account_id: safeStripeAccount,
@@ -1037,9 +1107,12 @@ export default function FarmerComplianceUploadScreen() {
         legal_checks: legalChecks,
 
         compliance_submitted: true,
-        compliance_status: "complete",
-        admin_review_status: "complete",
-        review_decision: "complete",
+        has_completed_compliance: true,
+        compliance_status: "COMPLETE",
+        verification_status: "ACTIVE",
+        status: "ACTIVE",
+        admin_review_status: "COMPLETE",
+        review_decision: "COMPLETE",
 
         approved: true,
         rejected: false,
@@ -1048,31 +1121,13 @@ export default function FarmerComplianceUploadScreen() {
         account_active: true,
         store_unlocked: true,
 
-        farmer_membership_paid: false,
-        monthly_membership_started: false,
-        monthly_membership_required_after_approval: false,
-
         submitted_at: now,
         updated_at: now,
       };
 
-      try {
-        await saveLocal(activeId, overrides);
-      } catch (error) {
-        console.log("LOCAL_SAVE_ERROR:", error);
-      }
-
-      try {
-        await saveFarmer("complete", overrides);
-      } catch (error) {
-        console.log("FARMER_SAVE_ERROR:", error);
-      }
-
-      try {
-        await saveAdminVerification("COMPLETE", overrides);
-      } catch (error) {
-        console.log("ADMIN_QUEUE_SAVE_ERROR:", error);
-      }
+      await saveLocal(activeId, overrides);
+      await saveFarmer("ACTIVE", overrides);
+      await saveAdminVerification("ACTIVE", overrides);
 
       router.replace({
         pathname: "/farmer/dashboard",
@@ -1152,8 +1207,8 @@ export default function FarmerComplianceUploadScreen() {
           <Text style={styles.kicker}>Farm2Home Farmer Compliance</Text>
           <Text style={styles.heroTitle}>Application & Store Setup Center</Text>
           <Text style={styles.heroSub}>
-            Complete your seller information, then open your Farmer Dashboard
-            and setup your store immediately.
+            Complete your documents, payments, payout setup, and seller
+            checklist to open your Farmer Dashboard.
           </Text>
         </View>
 
@@ -1215,17 +1270,23 @@ export default function FarmerComplianceUploadScreen() {
             activeOpacity={0.85}
           >
             <Ionicons name="open-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.primaryText}>Open Stripe Application Fee</Text>
+            <Text style={styles.primaryText}>Pay Application Fee</Text>
           </TouchableOpacity>
+        </ActionCard>
 
+        <ActionCard
+          icon="cash-outline"
+          title="Farmer Membership"
+          subtitle="Start farmer membership so the store can open after setup."
+          done={membershipPaid || membershipStarted}
+        >
           <TouchableOpacity
-            style={styles.secondaryBtn}
-            onPress={markApplicationFeeForReview}
+            style={styles.stripeBtn}
+            onPress={openMembershipPayment}
             activeOpacity={0.85}
           >
-            <Text style={styles.secondaryText}>
-              I Paid / Save For Admin Review
-            </Text>
+            <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.primaryText}>Pay Farmer Membership</Text>
           </TouchableOpacity>
         </ActionCard>
 
