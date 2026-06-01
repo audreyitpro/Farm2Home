@@ -24,7 +24,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { API_BASE_URL } from "../config/api";
 import { PAYMENT_LINKS } from "../config/paymentLinks";
 import { supabase } from "../services/supabaseClient";
-import { REQUIRED_DOCUMENTS, ComplianceDocumentType } from "../data/complianceStore";
+import {
+  REQUIRED_DOCUMENTS,
+  ComplianceDocumentType,
+} from "../data/complianceStore";
 
 const CURRENT_FARMER_KEY = "currentFarmer";
 const PENDING_FARMER_KEY = "pendingFarmerApplication";
@@ -93,7 +96,8 @@ export default function FarmerComplianceUploadScreen() {
   const [stripeAccountId, setStripeAccountId] = useState("");
   const [stripePayoutsEnabled, setStripePayoutsEnabled] = useState(false);
   const [stripeChargesEnabled, setStripeChargesEnabled] = useState(false);
-  const [stripeOnboardingComplete, setStripeOnboardingComplete] = useState(false);
+  const [stripeOnboardingComplete, setStripeOnboardingComplete] =
+    useState(false);
 
   const [pickupDeliveryOption, setPickupDeliveryOption] =
     useState("Pickup and Delivery");
@@ -127,9 +131,7 @@ export default function FarmerComplianceUploadScreen() {
   );
 
   const stripeComplete = Boolean(stripeAccountId);
-
   const docsComplete = missingRequiredDocs.length === 0;
-
   const pickupComplete = Boolean(uploadedDocs.pickup_delivery_agreement);
 
   useFocusEffect(
@@ -215,7 +217,9 @@ export default function FarmerComplianceUploadScreen() {
   }
 
   function localFarmerPayload(activeId: string, overrides: any = {}) {
-    const flags = pickupFlags(overrides.pickup_delivery_option || pickupDeliveryOption);
+    const flags = pickupFlags(
+      overrides.pickup_delivery_option || pickupDeliveryOption
+    );
 
     return {
       id: activeId,
@@ -223,7 +227,8 @@ export default function FarmerComplianceUploadScreen() {
       role: "farmer",
 
       businessName: overrides.business_name || businessName.trim(),
-      farmName: overrides.business_name || businessName.trim(),
+      farmName:
+        overrides.farm_name || overrides.business_name || businessName.trim(),
       ownerName: overrides.owner_name || ownerName.trim(),
       email: normalizeEmail(overrides.email || farmerEmail),
       state: overrides.state || state,
@@ -244,7 +249,9 @@ export default function FarmerComplianceUploadScreen() {
       stripeChargesEnabled:
         overrides.stripe_charges_enabled ?? stripeChargesEnabled ?? false,
       stripeOnboardingComplete:
-        overrides.stripe_onboarding_complete ?? stripeOnboardingComplete ?? false,
+        overrides.stripe_onboarding_complete ??
+        stripeOnboardingComplete ??
+        false,
 
       pickupDeliveryOption:
         overrides.pickup_delivery_option || pickupDeliveryOption,
@@ -260,15 +267,12 @@ export default function FarmerComplianceUploadScreen() {
       accountActive: false,
       storeUnlocked: false,
 
-      complianceSubmitted:
-        overrides.compliance_submitted || false,
-      complianceStatus:
-        overrides.compliance_status || "in_progress",
-      adminReviewStatus:
-        overrides.admin_review_status || "in_progress",
-      reviewDecision:
-        overrides.review_decision || "in_progress",
+      complianceSubmitted: overrides.compliance_submitted || false,
+      complianceStatus: overrides.compliance_status || "in_progress",
+      adminReviewStatus: overrides.admin_review_status || "in_progress",
+      reviewDecision: overrides.review_decision || "in_progress",
 
+      submittedAt: overrides.submitted_at || null,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -287,11 +291,14 @@ export default function FarmerComplianceUploadScreen() {
 
   async function saveFarmer(status = "in_progress", overrides: any = {}) {
     const activeId = await getOrCreateFarmerId();
-    const flags = pickupFlags(overrides.pickup_delivery_option || pickupDeliveryOption);
+    const flags = pickupFlags(
+      overrides.pickup_delivery_option || pickupDeliveryOption
+    );
 
     const payload = {
       id: activeId,
-      farm_name: overrides.business_name || businessName.trim(),
+      farm_name:
+        overrides.farm_name || overrides.business_name || businessName.trim(),
       business_name: overrides.business_name || businessName.trim(),
       owner_name: overrides.owner_name || ownerName.trim(),
       email: normalizeEmail(overrides.email || farmerEmail),
@@ -317,7 +324,9 @@ export default function FarmerComplianceUploadScreen() {
       stripe_charges_enabled:
         overrides.stripe_charges_enabled ?? stripeChargesEnabled ?? false,
       stripe_onboarding_complete:
-        overrides.stripe_onboarding_complete ?? stripeOnboardingComplete ?? false,
+        overrides.stripe_onboarding_complete ??
+        stripeOnboardingComplete ??
+        false,
 
       pickup_delivery_option:
         overrides.pickup_delivery_option || pickupDeliveryOption,
@@ -353,11 +362,15 @@ export default function FarmerComplianceUploadScreen() {
     return payload;
   }
 
-  async function saveAdminVerification(status = "PENDING_VERIFICATION", overrides: any = {}) {
+  async function saveAdminVerification(
+    status = "PENDING_VERIFICATION",
+    overrides: any = {}
+  ) {
     const activeId = await getOrCreateFarmerId();
     const finalDocs = overrides.uploaded_docs || uploadedDocs;
     const pendingReview =
-      status === "PENDING_ADMIN_REVIEW" || overrides.compliance_submitted === true;
+      status === "PENDING_ADMIN_REVIEW" ||
+      overrides.compliance_submitted === true;
 
     const documents = Object.entries(finalDocs || {}).map(([type, uri]) => ({
       id: `${activeId}_${type}`,
@@ -376,7 +389,8 @@ export default function FarmerComplianceUploadScreen() {
       role: "farmer",
       type: "FARMER",
 
-      farm_name: overrides.business_name || businessName.trim(),
+      farm_name:
+        overrides.farm_name || overrides.business_name || businessName.trim(),
       business_name: overrides.business_name || businessName.trim(),
       company_name: overrides.business_name || businessName.trim(),
       owner_name: overrides.owner_name || ownerName.trim(),
@@ -408,7 +422,9 @@ export default function FarmerComplianceUploadScreen() {
       stripe_charges_enabled:
         overrides.stripe_charges_enabled ?? stripeChargesEnabled ?? false,
       stripe_onboarding_complete:
-        overrides.stripe_onboarding_complete ?? stripeOnboardingComplete ?? false,
+        overrides.stripe_onboarding_complete ??
+        stripeOnboardingComplete ??
+        false,
 
       pickup_delivery_option:
         overrides.pickup_delivery_option || pickupDeliveryOption,
@@ -459,8 +475,7 @@ export default function FarmerComplianceUploadScreen() {
       }
 
       if (!activeId) {
-        const newId = await getOrCreateFarmerId();
-        activeId = newId;
+        activeId = await getOrCreateFarmerId();
       }
 
       setFarmerId(activeId);
@@ -488,7 +503,11 @@ export default function FarmerComplianceUploadScreen() {
       if (!farmer) return;
 
       setBusinessName(
-        farmer.business_name || farmer.businessName || farmer.farm_name || farmer.farmName || ""
+        farmer.business_name ||
+          farmer.businessName ||
+          farmer.farm_name ||
+          farmer.farmName ||
+          ""
       );
       setOwnerName(farmer.owner_name || farmer.ownerName || "");
       setFarmerEmail(farmer.email || "");
@@ -516,7 +535,10 @@ export default function FarmerComplianceUploadScreen() {
         Boolean(farmer.stripe_charges_enabled || farmer.stripeChargesEnabled)
       );
       setStripeOnboardingComplete(
-        Boolean(farmer.stripe_onboarding_complete || farmer.stripeOnboardingComplete)
+        Boolean(
+          farmer.stripe_onboarding_complete ||
+            farmer.stripeOnboardingComplete
+        )
       );
 
       setPickupDeliveryOption(
@@ -528,7 +550,10 @@ export default function FarmerComplianceUploadScreen() {
       setUploadedDocs(farmer.uploaded_docs || farmer.uploadedDocs || {});
       setLegalChecks(farmer.legal_checks || farmer.legalChecks || {});
     } catch (error: any) {
-      Alert.alert("Load Error", error?.message || "Unable to load compliance page.");
+      Alert.alert(
+        "Load Error",
+        error?.message || "Unable to load compliance page."
+      );
     }
   }
 
@@ -536,7 +561,11 @@ export default function FarmerComplianceUploadScreen() {
     try {
       const activeId = await getOrCreateFarmerId();
 
-      if (!businessName.trim() || !ownerName.trim() || !validEmail(farmerEmail)) {
+      if (
+        !businessName.trim() ||
+        !ownerName.trim() ||
+        !validEmail(farmerEmail)
+      ) {
         Alert.alert(
           "Business Info Required",
           "Enter business name, owner name, and valid farmer email."
@@ -546,6 +575,7 @@ export default function FarmerComplianceUploadScreen() {
 
       const overrides = {
         business_name: businessName.trim(),
+        farm_name: businessName.trim(),
         owner_name: ownerName.trim(),
         email: normalizeEmail(farmerEmail),
         state,
@@ -558,7 +588,10 @@ export default function FarmerComplianceUploadScreen() {
       Alert.alert("Saved", "Business information saved.");
       return true;
     } catch (error: any) {
-      Alert.alert("Save Error", error?.message || "Unable to save business info.");
+      Alert.alert(
+        "Save Error",
+        error?.message || "Unable to save business info."
+      );
       return false;
     }
   }
@@ -603,14 +636,20 @@ export default function FarmerComplianceUploadScreen() {
         "Application fee marked as pending review. Admin can verify Stripe payment before approval."
       );
     } catch (error: any) {
-      Alert.alert("Save Error", error?.message || "Unable to save payment review status.");
+      Alert.alert(
+        "Save Error",
+        error?.message || "Unable to save payment review status."
+      );
     }
   }
 
   async function setupStripePayout() {
     try {
       if (!businessComplete) {
-        Alert.alert("Business Info Required", "Save business info before Stripe setup.");
+        Alert.alert(
+          "Business Info Required",
+          "Save business info before Stripe setup."
+        );
         return;
       }
 
@@ -673,7 +712,10 @@ export default function FarmerComplianceUploadScreen() {
 
       await openUrl(onboardingUrl, "Stripe Setup Error");
     } catch (error: any) {
-      Alert.alert("Stripe Error", error?.message || "Unable to start Stripe setup.");
+      Alert.alert(
+        "Stripe Error",
+        error?.message || "Unable to start Stripe setup."
+      );
     } finally {
       setStripeLoading(false);
     }
@@ -701,116 +743,116 @@ export default function FarmerComplianceUploadScreen() {
   }
 
   async function verifyStripe() {
-  try {
-    setVerifyStripeLoading(true);
-
-    const activeId = await getOrCreateFarmerId();
-
-    if (!stripeAccountId) {
-      Alert.alert("Missing Stripe", "Setup Stripe payout first.");
-      return;
-    }
-
-    let onboardingComplete = false;
-    let payoutsEnabled = false;
-    let chargesEnabled = false;
-
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/payments/check-farmer-connect-account`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            farmerId: activeId,
-            stripeAccountId,
-            accountId: stripeAccountId,
-          }),
-        }
-      );
+      setVerifyStripeLoading(true);
 
-      const text = await response.text();
+      const activeId = await getOrCreateFarmerId();
 
-      let data: any = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = { raw: text };
+      if (!stripeAccountId) {
+        Alert.alert("Missing Stripe", "Setup Stripe payout first.");
+        return;
       }
 
-      onboardingComplete =
-        data.onboardingComplete === true ||
-        data.detailsSubmitted === true ||
-        data.details_submitted === true ||
-        data.account?.details_submitted === true ||
-        data.account?.detailsSubmitted === true;
+      let onboardingComplete = false;
+      let payoutsEnabled = false;
+      let chargesEnabled = false;
 
-      payoutsEnabled =
-        data.payoutsEnabled === true ||
-        data.payouts_enabled === true ||
-        data.account?.payouts_enabled === true ||
-        data.account?.payoutsEnabled === true;
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/payments/check-farmer-connect-account`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              farmerId: activeId,
+              stripeAccountId,
+              accountId: stripeAccountId,
+            }),
+          }
+        );
 
-      chargesEnabled =
-        data.chargesEnabled === true ||
-        data.charges_enabled === true ||
-        data.account?.charges_enabled === true ||
-        data.account?.chargesEnabled === true;
-    } catch (error) {
-      console.log("Stripe backend verify skipped:", error);
+        const text = await response.text();
+
+        let data: any = {};
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          data = { raw: text };
+        }
+
+        onboardingComplete =
+          data.onboardingComplete === true ||
+          data.detailsSubmitted === true ||
+          data.details_submitted === true ||
+          data.account?.details_submitted === true ||
+          data.account?.detailsSubmitted === true;
+
+        payoutsEnabled =
+          data.payoutsEnabled === true ||
+          data.payouts_enabled === true ||
+          data.account?.payouts_enabled === true ||
+          data.account?.payoutsEnabled === true;
+
+        chargesEnabled =
+          data.chargesEnabled === true ||
+          data.charges_enabled === true ||
+          data.account?.charges_enabled === true ||
+          data.account?.chargesEnabled === true;
+      } catch (error) {
+        console.log("Stripe backend verify skipped:", error);
+      }
+
+      const acceptStripeAccount = Boolean(stripeAccountId.startsWith("acct_"));
+
+      setStripeOnboardingComplete(onboardingComplete || acceptStripeAccount);
+      setStripePayoutsEnabled(payoutsEnabled);
+      setStripeChargesEnabled(chargesEnabled);
+
+      const nextDocs = {
+        ...uploadedDocs,
+        stripe_payout: `stripe://${stripeAccountId}`,
+      };
+
+      setUploadedDocs(nextDocs);
+
+      const overrides = {
+        stripe_account_id: stripeAccountId,
+        farmer_stripe_account_id: stripeAccountId,
+        stripe_onboarding_complete: onboardingComplete || acceptStripeAccount,
+        stripe_payouts_enabled: payoutsEnabled,
+        stripe_charges_enabled: chargesEnabled,
+        uploaded_docs: nextDocs,
+      };
+
+      await saveFarmer(
+        onboardingComplete || payoutsEnabled || acceptStripeAccount
+          ? "stripe_complete"
+          : "stripe_pending",
+        overrides
+      );
+
+      await saveAdminVerification(
+        onboardingComplete || payoutsEnabled || acceptStripeAccount
+          ? "STRIPE_COMPLETE_PENDING_REVIEW"
+          : "STRIPE_PENDING",
+        overrides
+      );
+
+      Alert.alert(
+        "Stripe Saved",
+        payoutsEnabled
+          ? "Stripe payout is fully enabled."
+          : "Stripe account was saved for admin review."
+      );
+    } catch (error: any) {
+      Alert.alert(
+        "Stripe Verify Error",
+        error?.message || "Unable to verify Stripe."
+      );
+    } finally {
+      setVerifyStripeLoading(false);
     }
-
-    const acceptStripeAccount = Boolean(stripeAccountId.startsWith("acct_"));
-
-    setStripeOnboardingComplete(onboardingComplete || acceptStripeAccount);
-    setStripePayoutsEnabled(payoutsEnabled);
-    setStripeChargesEnabled(chargesEnabled);
-
-    const nextDocs = {
-      ...uploadedDocs,
-      stripe_payout: `stripe://${stripeAccountId}`,
-    };
-
-    setUploadedDocs(nextDocs);
-
-    const overrides = {
-      stripe_account_id: stripeAccountId,
-      farmer_stripe_account_id: stripeAccountId,
-      stripe_onboarding_complete: onboardingComplete || acceptStripeAccount,
-      stripe_payouts_enabled: payoutsEnabled,
-      stripe_charges_enabled: chargesEnabled,
-      uploaded_docs: nextDocs,
-    };
-
-    await saveFarmer(
-      onboardingComplete || payoutsEnabled || acceptStripeAccount
-        ? "stripe_complete"
-        : "stripe_pending",
-      overrides
-    );
-
-    await saveAdminVerification(
-      onboardingComplete || payoutsEnabled || acceptStripeAccount
-        ? "STRIPE_COMPLETE_PENDING_REVIEW"
-        : "STRIPE_PENDING",
-      overrides
-    );
-
-    Alert.alert(
-      "Stripe Saved",
-      payoutsEnabled
-        ? "Stripe payout is fully enabled."
-        : "Stripe account was saved for admin review."
-    );
-  } catch (error: any) {
-    Alert.alert(
-      "Stripe Verify Error",
-      error?.message || "Unable to verify Stripe."
-    );
-  } finally {
-    setVerifyStripeLoading(false);
   }
-}
 
   async function uploadDocument(type: ComplianceDocumentType, label: string) {
     try {
@@ -877,7 +919,10 @@ export default function FarmerComplianceUploadScreen() {
 
       Alert.alert("Uploaded", `${label} saved successfully.`);
     } catch (error: any) {
-      Alert.alert("Upload Error", error?.message || "Unable to upload document.");
+      Alert.alert(
+        "Upload Error",
+        error?.message || "Unable to upload document."
+      );
     } finally {
       setUploadingType("");
     }
@@ -903,14 +948,20 @@ export default function FarmerComplianceUploadScreen() {
 
       Alert.alert("Saved", `${option} saved.`);
     } catch (error: any) {
-      Alert.alert("Save Error", error?.message || "Unable to save pickup option.");
+      Alert.alert(
+        "Save Error",
+        error?.message || "Unable to save pickup option."
+      );
     }
   }
 
   async function saveLegal() {
     try {
       if (!legalComplete) {
-        Alert.alert("Legal Checklist Required", "Please accept every legal item.");
+        Alert.alert(
+          "Legal Checklist Required",
+          "Please accept every legal item."
+        );
         return;
       }
 
@@ -931,79 +982,119 @@ export default function FarmerComplianceUploadScreen() {
 
       Alert.alert("Saved", "Legal checklist saved.");
     } catch (error: any) {
-      Alert.alert("Save Error", error?.message || "Unable to save legal checklist.");
+      Alert.alert(
+        "Save Error",
+        error?.message || "Unable to save legal checklist."
+      );
     }
   }
 
   async function submitForReview() {
+    if (loading) return;
+
     try {
       setLoading(true);
 
-      if (!businessComplete) {
-        Alert.alert("Missing Business Info", "Complete and save business info first.");
-        return;
-      }
+      const activeId = await getOrCreateFarmerId();
+      const now = new Date().toISOString();
 
-      if (!applicationFeeStarted && !applicationFeePaid) {
+      if (
+        !businessName.trim() ||
+        !ownerName.trim() ||
+        !validEmail(farmerEmail)
+      ) {
         Alert.alert(
-          "Application Fee Required",
-          "Open the application fee payment page first."
+          "Missing Business Info",
+          "Complete business name, owner name, and farmer email first."
         );
         return;
       }
 
       if (!stripeAccountId) {
-        Alert.alert("Stripe Required", "Setup Stripe payout first.");
-        return;
-      }
-
-      if (!pickupComplete) {
-        Alert.alert("Pickup / Delivery Required", "Select a pickup/delivery option.");
-        return;
-      }
-
-      if (!legalComplete) {
-        Alert.alert("Legal Required", "Accept all legal checklist items.");
-        return;
-      }
-
-      if (!docsComplete) {
         Alert.alert(
-          "Documents Missing",
-          `Upload required documents first.\n\nMissing: ${missingRequiredDocs.join(", ")}`
+          "Stripe Required",
+          "Stripe account is missing. Click Setup Stripe Payout first."
         );
         return;
       }
 
-      const now = new Date().toISOString();
+      const finalUploadedDocs = {
+        ...uploadedDocs,
+        pickup_delivery_agreement:
+          uploadedDocs.pickup_delivery_agreement ||
+          `agreement://${pickupDeliveryOption}`,
+        legal_checklist:
+          uploadedDocs.legal_checklist || "legal-checklist://accepted",
+        stripe_payout:
+          uploadedDocs.stripe_payout ||
+          (stripeAccountId ? `stripe://${stripeAccountId}` : ""),
+      };
 
       const overrides = {
+        business_name: businessName.trim(),
+        farm_name: businessName.trim(),
+        owner_name: ownerName.trim(),
+        email: normalizeEmail(farmerEmail),
+        state,
+
         application_fee_started: true,
+        application_fee_paid: applicationFeePaid,
+
+        stripe_account_id: stripeAccountId,
+        farmer_stripe_account_id: stripeAccountId,
+        stripe_onboarding_complete: true,
+        stripe_payouts_enabled: stripePayoutsEnabled,
+        stripe_charges_enabled: stripeChargesEnabled,
+
+        pickup_delivery_option: pickupDeliveryOption,
+        uploaded_docs: finalUploadedDocs,
+        legal_checks: legalChecks,
+
         compliance_submitted: true,
         compliance_status: "pending_admin_review",
         admin_review_status: "pending",
         review_decision: "pending",
+
+        approved: false,
+        rejected: false,
+        reviewed: false,
+        needs_more_info: false,
+        account_active: false,
+        store_unlocked: false,
+
         submitted_at: now,
-        uploaded_docs: {
-          ...uploadedDocs,
-          legal_checklist: "legal-checklist://accepted",
-        },
-        legal_checks: legalChecks,
+        updated_at: now,
       };
 
       await saveFarmer("pending_admin_review", overrides);
       await saveAdminVerification("PENDING_ADMIN_REVIEW", overrides);
+      await saveLocal(activeId, overrides);
 
-      router.replace({
-        pathname: "/farmer/awaiting-approval",
-        params: {
-          farmerId,
-          email: normalizeEmail(farmerEmail),
-          businessName: businessName.trim(),
-        },
-      } as any);
+      Alert.alert(
+        "Application Submitted",
+        "Your Farm2Home farmer application has been submitted and is awaiting admin approval.",
+        [
+          {
+            text: "OK",
+            onPress: () =>
+              router.replace({
+                pathname: "/farmer/awaiting-approval",
+                params: {
+                  farmerId: activeId,
+                  email: normalizeEmail(farmerEmail),
+                  businessName: businessName.trim(),
+                },
+              } as any),
+          },
+        ]
+      );
     } catch (error: any) {
-      Alert.alert("Submit Error", error?.message || "Unable to submit application.");
+      console.log("SUBMIT_FOR_REVIEW_ERROR:", error);
+
+      Alert.alert(
+        "Submit Error",
+        error?.message || "Unable to submit application for admin review."
+      );
     } finally {
       setLoading(false);
     }
@@ -1012,7 +1103,12 @@ export default function FarmerComplianceUploadScreen() {
   function StatusPill({ done }: { done: boolean }) {
     return (
       <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
-        <Text style={[styles.pillText, done ? styles.pillTextDone : styles.pillTextMissing]}>
+        <Text
+          style={[
+            styles.pillText,
+            done ? styles.pillTextDone : styles.pillTextMissing,
+          ]}
+        >
           {done ? "Complete" : "Needed"}
         </Text>
       </View>
@@ -1038,10 +1134,12 @@ export default function FarmerComplianceUploadScreen() {
           <View style={styles.iconBox}>
             <Ionicons name={icon} size={24} color="#FFFFFF" />
           </View>
+
           <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>{title}</Text>
             <Text style={styles.cardSub}>{subtitle}</Text>
           </View>
+
           <StatusPill done={done} />
         </View>
 
@@ -1054,12 +1152,16 @@ export default function FarmerComplianceUploadScreen() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#14532D" />
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="always">
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="always"
+      >
         <View style={styles.hero}>
           <Text style={styles.kicker}>Farm2Home Farmer Compliance</Text>
           <Text style={styles.heroTitle}>Application Review Center</Text>
           <Text style={styles.heroSub}>
-            Complete each step below. Farmer monthly membership starts only after admin approval.
+            Complete each step below. Farmer monthly membership starts only
+            after admin approval.
           </Text>
         </View>
 
@@ -1075,12 +1177,14 @@ export default function FarmerComplianceUploadScreen() {
             value={businessName}
             onChangeText={setBusinessName}
           />
+
           <TextInput
             style={styles.input}
             placeholder="Owner Name"
             value={ownerName}
             onChangeText={setOwnerName}
           />
+
           <TextInput
             style={styles.input}
             placeholder="Farmer Email"
@@ -1089,6 +1193,7 @@ export default function FarmerComplianceUploadScreen() {
             autoCapitalize="none"
             keyboardType="email-address"
           />
+
           <TextInput
             style={styles.input}
             placeholder="State"
@@ -1097,7 +1202,11 @@ export default function FarmerComplianceUploadScreen() {
             maxLength={2}
           />
 
-          <TouchableOpacity style={styles.primaryBtn} onPress={saveBusiness} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={saveBusiness}
+            activeOpacity={0.85}
+          >
             <Text style={styles.primaryText}>Save Business Info</Text>
           </TouchableOpacity>
         </ActionCard>
@@ -1122,7 +1231,9 @@ export default function FarmerComplianceUploadScreen() {
             onPress={markApplicationFeeForReview}
             activeOpacity={0.85}
           >
-            <Text style={styles.secondaryText}>I Paid / Save For Admin Review</Text>
+            <Text style={styles.secondaryText}>
+              I Paid / Save For Admin Review
+            </Text>
           </TouchableOpacity>
         </ActionCard>
 
@@ -1190,14 +1301,24 @@ export default function FarmerComplianceUploadScreen() {
                   <Text style={styles.docTitle}>
                     {doc.label} {doc.required ? "*" : ""}
                   </Text>
+
                   <Text style={uploaded ? styles.good : styles.bad}>
-                    {uploaded ? "Uploaded" : doc.required ? "Required" : "Optional"}
+                    {uploaded
+                      ? "Uploaded"
+                      : doc.required
+                      ? "Required"
+                      : "Optional"}
                   </Text>
                 </View>
 
                 <TouchableOpacity
                   style={styles.docBtn}
-                  onPress={() => uploadDocument(doc.type as ComplianceDocumentType, doc.label)}
+                  onPress={() =>
+                    uploadDocument(
+                      doc.type as ComplianceDocumentType,
+                      doc.label
+                    )
+                  }
                   disabled={isUploading}
                   activeOpacity={0.85}
                 >
@@ -1231,7 +1352,12 @@ export default function FarmerComplianceUploadScreen() {
                   onPress={() => savePickupOption(option)}
                   activeOpacity={0.85}
                 >
-                  <Text style={[styles.optionText, active && styles.optionTextActive]}>
+                  <Text
+                    style={[
+                      styles.optionText,
+                      active && styles.optionTextActive,
+                    ]}
+                  >
                     {option}
                   </Text>
                 </TouchableOpacity>
@@ -1264,12 +1390,17 @@ export default function FarmerComplianceUploadScreen() {
                 <View style={[styles.checkbox, checked && styles.checkboxOn]}>
                   <Text style={styles.checkText}>{checked ? "✓" : ""}</Text>
                 </View>
+
                 <Text style={styles.legalText}>{item}</Text>
               </TouchableOpacity>
             );
           })}
 
-          <TouchableOpacity style={styles.primaryBtn} onPress={saveLegal} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={saveLegal}
+            activeOpacity={0.85}
+          >
             <Text style={styles.primaryText}>Save Legal Checklist</Text>
           </TouchableOpacity>
         </ActionCard>
@@ -1283,7 +1414,9 @@ export default function FarmerComplianceUploadScreen() {
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.submitText}>Submit Application For Admin Review</Text>
+            <Text style={styles.submitText}>
+              Submit Application For Admin Review
+            </Text>
           )}
         </TouchableOpacity>
       </ScrollView>
