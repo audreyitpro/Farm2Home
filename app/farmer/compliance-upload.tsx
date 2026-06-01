@@ -134,8 +134,8 @@ export default function FarmerComplianceUploadScreen() {
   const docsComplete = missingRequiredDocs.length === 0;
   const pickupComplete = Boolean(uploadedDocs.pickup_delivery_agreement);
 
-  const farmerDashboardHref = {
-    pathname: "/farmer/dashboard",
+  const awaitingApprovalHref = {
+    pathname: "/farmer/awaiting-approval",
     params: {
       farmerId: farmerId || farmerIdParam || "pending",
       email: normalizeEmail(farmerEmail),
@@ -230,11 +230,6 @@ export default function FarmerComplianceUploadScreen() {
       overrides.pickup_delivery_option || pickupDeliveryOption
     );
 
-    const approved =
-      overrides.approved === true ||
-      overrides.compliance_status === "approved" ||
-      overrides.admin_review_status === "approved";
-
     return {
       id: activeId,
       farmerId: activeId,
@@ -275,11 +270,11 @@ export default function FarmerComplianceUploadScreen() {
       uploadedDocs: overrides.uploaded_docs || uploadedDocs,
       legalChecks: overrides.legal_checks || legalChecks,
 
-      approved,
+      approved: false,
       rejected: false,
-      reviewed: approved,
-      accountActive: approved,
-      storeUnlocked: approved,
+      reviewed: false,
+      accountActive: false,
+      storeUnlocked: false,
 
       complianceSubmitted: overrides.compliance_submitted || false,
       complianceStatus: overrides.compliance_status || "in_progress",
@@ -325,7 +320,7 @@ export default function FarmerComplianceUploadScreen() {
 
       farmer_membership_paid: false,
       monthly_membership_started: false,
-      monthly_membership_required_after_approval: false,
+      monthly_membership_required_after_approval: true,
 
       stripe_account_id: overrides.stripe_account_id || stripeAccountId || "",
       farmer_stripe_account_id:
@@ -351,15 +346,15 @@ export default function FarmerComplianceUploadScreen() {
       legal_checks: overrides.legal_checks || legalChecks,
 
       compliance_status: overrides.compliance_status || status,
-      admin_review_status: overrides.admin_review_status || "approved",
-      review_decision: overrides.review_decision || "approved",
+      admin_review_status: overrides.admin_review_status || "in_progress",
+      review_decision: overrides.review_decision || "in_progress",
       compliance_submitted: overrides.compliance_submitted || false,
 
-      approved: overrides.approved ?? true,
+      approved: true,
       rejected: false,
-      reviewed: overrides.reviewed ?? true,
-      account_active: overrides.account_active ?? true,
-      store_unlocked: overrides.store_unlocked ?? true,
+      reviewed: false,
+      account_active: true,
+      store_unlocked: true,
 
       submitted_at: overrides.submitted_at || null,
       updated_at: new Date().toISOString(),
@@ -377,11 +372,14 @@ export default function FarmerComplianceUploadScreen() {
   }
 
   async function saveAdminVerification(
-    status = "APPROVED",
+    status = "PENDING_VERIFICATION",
     overrides: any = {}
   ) {
     const activeId = await getOrCreateFarmerId();
     const finalDocs = overrides.uploaded_docs || uploadedDocs;
+    const pendingReview =
+      status === "PENDING_ADMIN_REVIEW" ||
+      overrides.compliance_submitted === true;
 
     const documents = Object.entries(finalDocs || {}).map(([type, uri]) => ({
       id: `${activeId}_${type}`,
@@ -390,7 +388,7 @@ export default function FarmerComplianceUploadScreen() {
       type,
       uri,
       uploadedAt: new Date().toISOString(),
-      status: "APPROVED",
+      status: "PENDING",
     }));
 
     const payload = {
@@ -409,9 +407,9 @@ export default function FarmerComplianceUploadScreen() {
       state: overrides.state || state,
 
       status,
-      compliance_status: overrides.compliance_status || "approved",
-      admin_review_status: overrides.admin_review_status || "approved",
-      review_decision: overrides.review_decision || "approved",
+      compliance_status: status,
+      admin_review_status: pendingReview ? "pending" : status,
+      review_decision: pendingReview ? "pending" : status,
 
       application_fee_paid:
         overrides.application_fee_paid ?? applicationFeePaid ?? false,
@@ -420,7 +418,7 @@ export default function FarmerComplianceUploadScreen() {
 
       farmer_membership_paid: false,
       monthly_membership_started: false,
-      monthly_membership_required_after_approval: false,
+      monthly_membership_required_after_approval: true,
 
       stripe_account_id: overrides.stripe_account_id || stripeAccountId || "",
       farmer_stripe_account_id:
@@ -444,14 +442,14 @@ export default function FarmerComplianceUploadScreen() {
       legal_checks: overrides.legal_checks || legalChecks,
       documents,
 
-      approved: true,
+      approved: false,
       rejected: false,
       needs_more_info: false,
-      reviewed: true,
-      account_active: true,
-      store_unlocked: true,
+      reviewed: false,
+      account_active: false,
+      store_unlocked: false,
 
-      submitted_at: overrides.submitted_at || new Date().toISOString(),
+      submitted_at: pendingReview ? new Date().toISOString() : null,
       updated_at: new Date().toISOString(),
     };
 
@@ -592,8 +590,8 @@ export default function FarmerComplianceUploadScreen() {
         state,
       };
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
+      await saveFarmer("in_progress", overrides);
+      await saveAdminVerification("PENDING_VERIFICATION", overrides);
       await saveLocal(activeId, overrides);
 
       Alert.alert("Saved", "Business information saved.");
@@ -617,18 +615,11 @@ export default function FarmerComplianceUploadScreen() {
 
       const overrides = {
         application_fee_started: true,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
       try {
-        await saveFarmer("approved", overrides);
-        await saveAdminVerification("APPROVED", overrides);
+        await saveFarmer("application_fee_started", overrides);
+        await saveAdminVerification("APPLICATION_FEE_STARTED", overrides);
       } catch {}
     } finally {
       setLoading(false);
@@ -643,27 +634,20 @@ export default function FarmerComplianceUploadScreen() {
 
       const overrides = {
         application_fee_started: true,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
+      await saveFarmer("application_fee_pending_review", overrides);
+      await saveAdminVerification("APPLICATION_FEE_PENDING_REVIEW", overrides);
       await saveLocal(activeId, overrides);
 
       Alert.alert(
         "Saved",
-        "Application fee saved. Farmer dashboard access is unlocked."
+        "Application fee marked as pending review. Admin can verify Stripe payment before approval."
       );
     } catch (error: any) {
       Alert.alert(
         "Save Error",
-        error?.message || "Unable to save payment status."
+        error?.message || "Unable to save payment review status."
       );
     }
   }
@@ -728,19 +712,12 @@ export default function FarmerComplianceUploadScreen() {
         stripe_account_id: accountId,
         farmer_stripe_account_id: accountId,
         uploaded_docs: nextDocs,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
       setUploadedDocs(nextDocs);
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
+      await saveFarmer("stripe_pending", overrides);
+      await saveAdminVerification("STRIPE_PENDING", overrides);
 
       await openUrl(onboardingUrl, "Stripe Setup Error");
     } catch (error: any) {
@@ -767,17 +744,10 @@ export default function FarmerComplianceUploadScreen() {
         stripe_account_id: accountId,
         farmer_stripe_account_id: accountId,
         uploaded_docs: nextDocs,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
+      await saveFarmer("stripe_pending", overrides);
+      await saveAdminVerification("STRIPE_PENDING", overrides);
     } catch {}
   }
 
@@ -861,24 +831,27 @@ export default function FarmerComplianceUploadScreen() {
         stripe_payouts_enabled: payoutsEnabled,
         stripe_charges_enabled: chargesEnabled,
         uploaded_docs: nextDocs,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
-      await saveLocal(activeId, overrides);
+      await saveFarmer(
+        onboardingComplete || payoutsEnabled || acceptStripeAccount
+          ? "stripe_complete"
+          : "stripe_pending",
+        overrides
+      );
+
+      await saveAdminVerification(
+        onboardingComplete || payoutsEnabled || acceptStripeAccount
+          ? "STRIPE_COMPLETE_PENDING_REVIEW"
+          : "STRIPE_PENDING",
+        overrides
+      );
 
       Alert.alert(
         "Stripe Saved",
         payoutsEnabled
-          ? "Stripe payout is fully enabled. Dashboard is unlocked."
-          : "Stripe account was saved. Dashboard is unlocked."
+          ? "Stripe payout is fully enabled."
+          : "Stripe account was saved for admin review."
       );
     } catch (error: any) {
       Alert.alert(
@@ -948,17 +921,10 @@ export default function FarmerComplianceUploadScreen() {
 
       const overrides = {
         uploaded_docs: nextDocs,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
+      await saveFarmer("documents_in_progress", overrides);
+      await saveAdminVerification("DOCUMENTS_IN_PROGRESS", overrides);
 
       Alert.alert("Uploaded", `${label} saved successfully.`);
     } catch (error: any) {
@@ -984,17 +950,10 @@ export default function FarmerComplianceUploadScreen() {
       const overrides = {
         pickup_delivery_option: option,
         uploaded_docs: nextDocs,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
+      await saveFarmer("pickup_delivery_saved", overrides);
+      await saveAdminVerification("PICKUP_DELIVERY_SAVED", overrides);
 
       Alert.alert("Saved", `${option} saved.`);
     } catch (error: any) {
@@ -1025,17 +984,10 @@ export default function FarmerComplianceUploadScreen() {
       const overrides = {
         legal_checks: legalChecks,
         uploaded_docs: nextDocs,
-        compliance_status: "approved",
-        admin_review_status: "approved",
-        review_decision: "approved",
-        approved: true,
-        reviewed: true,
-        account_active: true,
-        store_unlocked: true,
       };
 
-      await saveFarmer("approved", overrides);
-      await saveAdminVerification("APPROVED", overrides);
+      await saveFarmer("legal_accepted", overrides);
+      await saveAdminVerification("LEGAL_ACCEPTED", overrides);
 
       Alert.alert("Saved", "Legal checklist saved.");
     } catch (error: any) {
@@ -1046,7 +998,7 @@ export default function FarmerComplianceUploadScreen() {
     }
   }
 
-  async function saveApplicationAndUnlockDashboard() {
+  async function saveApplicationForReviewOnly() {
     const activeId = await getOrCreateFarmerId();
     const now = new Date().toISOString();
 
@@ -1087,16 +1039,16 @@ export default function FarmerComplianceUploadScreen() {
       legal_checks: legalChecks,
 
       compliance_submitted: true,
-      compliance_status: "approved",
-      admin_review_status: "approved",
-      review_decision: "approved",
+      compliance_status: "pending_admin_review",
+      admin_review_status: "pending",
+      review_decision: "pending",
 
-      approved: true,
+      approved: false,
       rejected: false,
-      reviewed: true,
+      reviewed: false,
       needs_more_info: false,
-      account_active: true,
-      store_unlocked: true,
+      account_active: false,
+      store_unlocked: false,
 
       submitted_at: now,
       updated_at: now,
@@ -1105,10 +1057,10 @@ export default function FarmerComplianceUploadScreen() {
     saveLocal(activeId, overrides).catch((error) =>
       console.log("LOCAL_SAVE_ERROR:", error)
     );
-    saveFarmer("approved", overrides).catch((error) =>
+    saveFarmer("pending_admin_review", overrides).catch((error) =>
       console.log("FARMER_SAVE_ERROR:", error)
     );
-    saveAdminVerification("APPROVED", overrides).catch((error) =>
+    saveAdminVerification("PENDING_ADMIN_REVIEW", overrides).catch((error) =>
       console.log("ADMIN_QUEUE_SAVE_ERROR:", error)
     );
   }
@@ -1171,10 +1123,10 @@ export default function FarmerComplianceUploadScreen() {
       >
         <View style={styles.hero}>
           <Text style={styles.kicker}>Farm2Home Farmer Compliance</Text>
-          <Text style={styles.heroTitle}>Application & Store Setup</Text>
+          <Text style={styles.heroTitle}>Application Review Center</Text>
           <Text style={styles.heroSub}>
-            Complete your seller details, then open your Farmer Dashboard to
-            setup your Farm2Home store immediately.
+            Complete each step below. Farmer monthly membership starts only
+            after admin approval.
           </Text>
         </View>
 
@@ -1245,7 +1197,7 @@ export default function FarmerComplianceUploadScreen() {
             activeOpacity={0.85}
           >
             <Text style={styles.secondaryText}>
-              I Paid / Continue Store Setup
+              I Paid / Save For Admin Review
             </Text>
           </TouchableOpacity>
         </ActionCard>
@@ -1292,8 +1244,8 @@ export default function FarmerComplianceUploadScreen() {
 
         <ActionCard
           icon="document-attach-outline"
-          title="Documents"
-          subtitle="Upload any seller compliance files you have available."
+          title="Required Documents"
+          subtitle="Upload all required compliance files."
           done={docsComplete}
         >
           {REQUIRED_DOCUMENTS.filter((doc: any) => {
@@ -1418,14 +1370,14 @@ export default function FarmerComplianceUploadScreen() {
           </TouchableOpacity>
         </ActionCard>
 
-        <Link href={farmerDashboardHref} asChild>
+        <Link href={awaitingApprovalHref} asChild>
           <TouchableOpacity
             style={[styles.submitBtn, loading && styles.disabled]}
-            onPress={saveApplicationAndUnlockDashboard}
+            onPress={saveApplicationForReviewOnly}
             activeOpacity={0.85}
           >
             <Text style={styles.submitText}>
-              Submit Application & Open Farmer Dashboard
+              Submit Application For Admin Review
             </Text>
           </TouchableOpacity>
         </Link>
