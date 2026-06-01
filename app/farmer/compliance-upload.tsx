@@ -18,7 +18,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { Link, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
@@ -133,6 +133,15 @@ export default function FarmerComplianceUploadScreen() {
   const stripeComplete = Boolean(stripeAccountId);
   const docsComplete = missingRequiredDocs.length === 0;
   const pickupComplete = Boolean(uploadedDocs.pickup_delivery_agreement);
+
+  const awaitingApprovalHref = {
+    pathname: "/farmer/awaiting-approval",
+    params: {
+      farmerId: farmerId || farmerIdParam || "pending",
+      email: normalizeEmail(farmerEmail),
+      businessName: businessName.trim() || "Farm2Home Farmer",
+    },
+  } as any;
 
   useFocusEffect(
     useCallback(() => {
@@ -989,11 +998,7 @@ export default function FarmerComplianceUploadScreen() {
     }
   }
 
-  async function submitForReview() {
-    if (loading) return;
-
-    setLoading(true);
-
+  async function saveApplicationForReviewOnly() {
     const activeId = await getOrCreateFarmerId();
     const now = new Date().toISOString();
 
@@ -1049,34 +1054,15 @@ export default function FarmerComplianceUploadScreen() {
       updated_at: now,
     };
 
-    try {
-      await saveLocal(activeId, overrides);
-    } catch (error) {
-      console.log("LOCAL_SAVE_ERROR:", error);
-    }
-
-    try {
-      await saveFarmer("pending_admin_review", overrides);
-    } catch (error) {
-      console.log("FARMER_SAVE_ERROR:", error);
-    }
-
-    try {
-      await saveAdminVerification("PENDING_ADMIN_REVIEW", overrides);
-    } catch (error) {
-      console.log("ADMIN_QUEUE_SAVE_ERROR:", error);
-    }
-
-    setLoading(false);
-
-    router.replace({
-      pathname: "/farmer/awaiting-approval",
-      params: {
-        farmerId: activeId,
-        email: safeEmail,
-        businessName: safeBusinessName,
-      },
-    } as any);
+    saveLocal(activeId, overrides).catch((error) =>
+      console.log("LOCAL_SAVE_ERROR:", error)
+    );
+    saveFarmer("pending_admin_review", overrides).catch((error) =>
+      console.log("FARMER_SAVE_ERROR:", error)
+    );
+    saveAdminVerification("PENDING_ADMIN_REVIEW", overrides).catch((error) =>
+      console.log("ADMIN_QUEUE_SAVE_ERROR:", error)
+    );
   }
 
   function StatusPill({ done }: { done: boolean }) {
@@ -1384,20 +1370,17 @@ export default function FarmerComplianceUploadScreen() {
           </TouchableOpacity>
         </ActionCard>
 
-        <TouchableOpacity
-          style={[styles.submitBtn, loading && styles.disabled]}
-          onPress={submitForReview}
-          disabled={loading}
-          activeOpacity={0.85}
-        >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
+        <Link href={awaitingApprovalHref} asChild>
+          <TouchableOpacity
+            style={[styles.submitBtn, loading && styles.disabled]}
+            onPress={saveApplicationForReviewOnly}
+            activeOpacity={0.85}
+          >
             <Text style={styles.submitText}>
               Submit Application For Admin Review
             </Text>
-          )}
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </Link>
       </ScrollView>
     </SafeAreaView>
   );
