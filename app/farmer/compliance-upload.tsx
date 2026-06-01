@@ -18,7 +18,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
-import { Link, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
@@ -133,15 +133,6 @@ export default function FarmerComplianceUploadScreen() {
   const stripeComplete = Boolean(stripeAccountId);
   const docsComplete = missingRequiredDocs.length === 0;
   const pickupComplete = Boolean(uploadedDocs.pickup_delivery_agreement);
-
-  const awaitingApprovalHref = {
-    pathname: "/farmer/awaiting-approval",
-    params: {
-      farmerId: farmerId || farmerIdParam || "pending",
-      email: normalizeEmail(farmerEmail),
-      businessName: businessName.trim() || "Farm2Home Farmer",
-    },
-  } as any;
 
   useFocusEffect(
     useCallback(() => {
@@ -270,11 +261,11 @@ export default function FarmerComplianceUploadScreen() {
       uploadedDocs: overrides.uploaded_docs || uploadedDocs,
       legalChecks: overrides.legal_checks || legalChecks,
 
-      approved: false,
-      rejected: false,
-      reviewed: false,
-      accountActive: false,
-      storeUnlocked: false,
+      approved: overrides.approved ?? false,
+      rejected: overrides.rejected ?? false,
+      reviewed: overrides.reviewed ?? false,
+      accountActive: overrides.account_active ?? false,
+      storeUnlocked: overrides.store_unlocked ?? false,
 
       complianceSubmitted: overrides.compliance_submitted || false,
       complianceStatus: overrides.compliance_status || "in_progress",
@@ -318,9 +309,10 @@ export default function FarmerComplianceUploadScreen() {
       application_fee_started:
         overrides.application_fee_started ?? applicationFeeStarted ?? false,
 
-      farmer_membership_paid: false,
-      monthly_membership_started: false,
-      monthly_membership_required_after_approval: true,
+      farmer_membership_paid: overrides.farmer_membership_paid ?? false,
+      monthly_membership_started: overrides.monthly_membership_started ?? false,
+      monthly_membership_required_after_approval:
+        overrides.monthly_membership_required_after_approval ?? false,
 
       stripe_account_id: overrides.stripe_account_id || stripeAccountId || "",
       farmer_stripe_account_id:
@@ -350,11 +342,11 @@ export default function FarmerComplianceUploadScreen() {
       review_decision: overrides.review_decision || "in_progress",
       compliance_submitted: overrides.compliance_submitted || false,
 
-      approved: true,
-      rejected: false,
-      reviewed: false,
-      account_active: true,
-      store_unlocked: true,
+      approved: overrides.approved ?? false,
+      rejected: overrides.rejected ?? false,
+      reviewed: overrides.reviewed ?? false,
+      account_active: overrides.account_active ?? false,
+      store_unlocked: overrides.store_unlocked ?? false,
 
       submitted_at: overrides.submitted_at || null,
       updated_at: new Date().toISOString(),
@@ -416,9 +408,10 @@ export default function FarmerComplianceUploadScreen() {
       application_fee_started:
         overrides.application_fee_started ?? applicationFeeStarted ?? false,
 
-      farmer_membership_paid: false,
-      monthly_membership_started: false,
-      monthly_membership_required_after_approval: true,
+      farmer_membership_paid: overrides.farmer_membership_paid ?? false,
+      monthly_membership_started: overrides.monthly_membership_started ?? false,
+      monthly_membership_required_after_approval:
+        overrides.monthly_membership_required_after_approval ?? false,
 
       stripe_account_id: overrides.stripe_account_id || stripeAccountId || "",
       farmer_stripe_account_id:
@@ -442,12 +435,12 @@ export default function FarmerComplianceUploadScreen() {
       legal_checks: overrides.legal_checks || legalChecks,
       documents,
 
-      approved: false,
-      rejected: false,
-      needs_more_info: false,
-      reviewed: false,
-      account_active: false,
-      store_unlocked: false,
+      approved: overrides.approved ?? false,
+      rejected: overrides.rejected ?? false,
+      needs_more_info: overrides.needs_more_info ?? false,
+      reviewed: overrides.reviewed ?? false,
+      account_active: overrides.account_active ?? false,
+      store_unlocked: overrides.store_unlocked ?? false,
 
       submitted_at: pendingReview ? new Date().toISOString() : null,
       updated_at: new Date().toISOString(),
@@ -998,71 +991,105 @@ export default function FarmerComplianceUploadScreen() {
     }
   }
 
-  async function saveApplicationForReviewOnly() {
-    const activeId = await getOrCreateFarmerId();
-    const now = new Date().toISOString();
+  async function saveApplicationAndOpenDashboard() {
+    if (loading) return;
 
-    const safeEmail = normalizeEmail(farmerEmail);
-    const safeBusinessName = businessName.trim() || "Farm2Home Farmer";
-    const safeOwnerName = ownerName.trim() || "Farmer Owner";
-    const safeStripeAccount = stripeAccountId || "pending-admin-review";
+    setLoading(true);
 
-    const finalUploadedDocs = {
-      ...uploadedDocs,
-      pickup_delivery_agreement:
-        uploadedDocs.pickup_delivery_agreement ||
-        `agreement://${pickupDeliveryOption}`,
-      legal_checklist:
-        uploadedDocs.legal_checklist || "legal-checklist://accepted",
-      stripe_payout:
-        uploadedDocs.stripe_payout || `stripe://${safeStripeAccount}`,
-    };
+    try {
+      const activeId = await getOrCreateFarmerId();
+      const now = new Date().toISOString();
 
-    const overrides = {
-      business_name: safeBusinessName,
-      farm_name: safeBusinessName,
-      owner_name: safeOwnerName,
-      email: safeEmail,
-      state: state || "MI",
+      const safeEmail = normalizeEmail(farmerEmail);
+      const safeBusinessName = businessName.trim() || "Farm2Home Farmer";
+      const safeOwnerName = ownerName.trim() || "Farmer Owner";
+      const safeStripeAccount = stripeAccountId || "pending-admin-review";
 
-      application_fee_started: true,
-      application_fee_paid: applicationFeePaid,
+      const finalUploadedDocs = {
+        ...uploadedDocs,
+        pickup_delivery_agreement:
+          uploadedDocs.pickup_delivery_agreement ||
+          `agreement://${pickupDeliveryOption}`,
+        legal_checklist:
+          uploadedDocs.legal_checklist || "legal-checklist://accepted",
+        stripe_payout:
+          uploadedDocs.stripe_payout || `stripe://${safeStripeAccount}`,
+      };
 
-      stripe_account_id: safeStripeAccount,
-      farmer_stripe_account_id: safeStripeAccount,
-      stripe_onboarding_complete: true,
-      stripe_payouts_enabled: stripePayoutsEnabled,
-      stripe_charges_enabled: stripeChargesEnabled,
+      const overrides = {
+        business_name: safeBusinessName,
+        farm_name: safeBusinessName,
+        owner_name: safeOwnerName,
+        email: safeEmail,
+        state: state || "MI",
 
-      pickup_delivery_option: pickupDeliveryOption,
-      uploaded_docs: finalUploadedDocs,
-      legal_checks: legalChecks,
+        application_fee_started: true,
+        application_fee_paid: applicationFeePaid,
 
-      compliance_submitted: true,
-      compliance_status: "pending_admin_review",
-      admin_review_status: "pending",
-      review_decision: "pending",
+        stripe_account_id: safeStripeAccount,
+        farmer_stripe_account_id: safeStripeAccount,
+        stripe_onboarding_complete: true,
+        stripe_payouts_enabled: stripePayoutsEnabled,
+        stripe_charges_enabled: stripeChargesEnabled,
 
-      approved: false,
-      rejected: false,
-      reviewed: false,
-      needs_more_info: false,
-      account_active: false,
-      store_unlocked: false,
+        pickup_delivery_option: pickupDeliveryOption,
+        uploaded_docs: finalUploadedDocs,
+        legal_checks: legalChecks,
 
-      submitted_at: now,
-      updated_at: now,
-    };
+        compliance_submitted: true,
+        compliance_status: "complete",
+        admin_review_status: "complete",
+        review_decision: "complete",
 
-    saveLocal(activeId, overrides).catch((error) =>
-      console.log("LOCAL_SAVE_ERROR:", error)
-    );
-    saveFarmer("pending_admin_review", overrides).catch((error) =>
-      console.log("FARMER_SAVE_ERROR:", error)
-    );
-    saveAdminVerification("PENDING_ADMIN_REVIEW", overrides).catch((error) =>
-      console.log("ADMIN_QUEUE_SAVE_ERROR:", error)
-    );
+        approved: true,
+        rejected: false,
+        reviewed: true,
+        needs_more_info: false,
+        account_active: true,
+        store_unlocked: true,
+
+        farmer_membership_paid: false,
+        monthly_membership_started: false,
+        monthly_membership_required_after_approval: false,
+
+        submitted_at: now,
+        updated_at: now,
+      };
+
+      try {
+        await saveLocal(activeId, overrides);
+      } catch (error) {
+        console.log("LOCAL_SAVE_ERROR:", error);
+      }
+
+      try {
+        await saveFarmer("complete", overrides);
+      } catch (error) {
+        console.log("FARMER_SAVE_ERROR:", error);
+      }
+
+      try {
+        await saveAdminVerification("COMPLETE", overrides);
+      } catch (error) {
+        console.log("ADMIN_QUEUE_SAVE_ERROR:", error);
+      }
+
+      router.replace({
+        pathname: "/farmer/dashboard",
+        params: {
+          farmerId: activeId,
+          email: safeEmail,
+          businessName: safeBusinessName,
+        },
+      } as any);
+    } catch (error: any) {
+      Alert.alert(
+        "Submit Error",
+        error?.message || "Unable to open farmer dashboard."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   function StatusPill({ done }: { done: boolean }) {
@@ -1123,10 +1150,10 @@ export default function FarmerComplianceUploadScreen() {
       >
         <View style={styles.hero}>
           <Text style={styles.kicker}>Farm2Home Farmer Compliance</Text>
-          <Text style={styles.heroTitle}>Application Review Center</Text>
+          <Text style={styles.heroTitle}>Application & Store Setup Center</Text>
           <Text style={styles.heroSub}>
-            Complete each step below. Farmer monthly membership starts only
-            after admin approval.
+            Complete your seller information, then open your Farmer Dashboard
+            and setup your store immediately.
           </Text>
         </View>
 
@@ -1370,17 +1397,20 @@ export default function FarmerComplianceUploadScreen() {
           </TouchableOpacity>
         </ActionCard>
 
-        <Link href={awaitingApprovalHref} asChild>
-          <TouchableOpacity
-            style={[styles.submitBtn, loading && styles.disabled]}
-            onPress={saveApplicationForReviewOnly}
-            activeOpacity={0.85}
-          >
+        <TouchableOpacity
+          style={[styles.submitBtn, loading && styles.disabled]}
+          onPress={saveApplicationAndOpenDashboard}
+          disabled={loading}
+          activeOpacity={0.85}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
             <Text style={styles.submitText}>
-              Submit Application For Admin Review
+              Submit Application & Open Farmer Dashboard
             </Text>
-          </TouchableOpacity>
-        </Link>
+          )}
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
