@@ -1070,24 +1070,15 @@ export default function FarmerComplianceUploadScreen() {
       await saveAdminVerification("PENDING_ADMIN_REVIEW", overrides);
       await saveLocal(activeId, overrides);
 
-      Alert.alert(
-        "Application Submitted",
-        "Your Farm2Home farmer application has been submitted and is awaiting admin approval.",
-        [
-          {
-            text: "OK",
-            onPress: () =>
-              router.replace({
-                pathname: "/farmer/awaiting-approval",
-                params: {
-                  farmerId: activeId,
-                  email: normalizeEmail(farmerEmail),
-                  businessName: businessName.trim(),
-                },
-              } as any),
-          },
-        ]
-      );
+      router.replace({
+      pathname: "/farmer/awaiting-approval",
+      params: {
+      farmerId: activeId,
+      email: normalizeEmail(farmerEmail),
+      businessName: businessName.trim(),
+    },
+  } as any);
+          
     } catch (error: any) {
       console.log("SUBMIT_FOR_REVIEW_ERROR:", error);
 
