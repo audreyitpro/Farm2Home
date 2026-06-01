@@ -6,6 +6,8 @@ import {
   Alert,
   Platform,
   Pressable,
+  TouchableOpacity,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -736,18 +738,29 @@ export default function FarmerComplianceUploadScreen() {
   }
 
   async function openExternalUrl(url: string, errorTitle: string) {
+  try {
     if (!url || !url.startsWith("http")) {
       Alert.alert(errorTitle, "No valid URL was returned.");
       return;
     }
 
     if (Platform.OS === "web") {
-      window.location.href = url;
+      window.open(url, "_blank");
       return;
     }
 
-    await WebBrowser.openBrowserAsync(url);
+    const supported = await Linking.canOpenURL(url);
+
+    if (!supported) {
+      Alert.alert(errorTitle, "This device cannot open the Stripe link.");
+      return;
+    }
+
+    await Linking.openURL(url);
+  } catch (error: any) {
+    Alert.alert(errorTitle, error?.message || "Unable to open link.");
   }
+}
 
   async function handleStripeReturn(accountId: string) {
     try {
@@ -894,33 +907,36 @@ export default function FarmerComplianceUploadScreen() {
   }
 
   async function startApplicationFeePayment() {
+  if (applicationFeeLoading) return;
+
+  setApplicationFeeLoading(true);
+
+  try {
+    await openExternalUrl(
+      PAYMENT_LINKS.farmerApplicationProcessFee,
+      "Stripe Application Fee Error"
+    );
+
     try {
       const activeFarmerId = await getOrCreateFarmerId();
-
-      const saved = await saveBusinessInfo(true);
-      if (!saved) return;
-
-      setApplicationFeeLoading(true);
 
       await upsertFarmerProduction(activeFarmerId, "application_fee_started");
       await upsertAdminVerificationProduction(
         activeFarmerId,
         "APPLICATION_FEE_STARTED"
       );
-
-      await openExternalUrl(
-        PAYMENT_LINKS.farmerApplicationProcessFee,
-        "Stripe Error"
-      );
-    } catch (error: any) {
-      Alert.alert(
-        "Application Fee Error",
-        error?.message || "Unable to open Stripe application fee page."
-      );
-    } finally {
-      setApplicationFeeLoading(false);
+    } catch (saveError) {
+      console.log("Application fee save skipped:", saveError);
     }
+  } catch (error: any) {
+    Alert.alert(
+      "Application Fee Error",
+      error?.message || "Unable to open Stripe application fee page."
+    );
+  } finally {
+    setApplicationFeeLoading(false);
   }
+}
 
   async function verifyApplicationFeePayment(sessionIdOverride?: string) {
     try {
@@ -1524,7 +1540,7 @@ export default function FarmerComplianceUploadScreen() {
             const active = selectedQuestion === question;
 
             return (
-              <Pressable
+              <TouchableOpacity
                 key={question}
                 style={[styles.questionChip, active && styles.questionChipActive]}
                 onPress={() => setSelectedQuestion(question)}
@@ -1537,7 +1553,7 @@ export default function FarmerComplianceUploadScreen() {
                 >
                   {question}
                 </Text>
-              </Pressable>
+              </TouchableOpacity>
             );
           })}
         </ScrollView>
@@ -1603,7 +1619,7 @@ export default function FarmerComplianceUploadScreen() {
           </Text>
 
           <View style={styles.buttonRow}>
-            <Pressable
+            <TouchableOpacity
               style={[styles.stripeButton, stripeLoading && styles.disabled]}
               onPress={setupStripePayoutAccount}
               disabled={stripeLoading || stripeChecking}
@@ -1613,9 +1629,9 @@ export default function FarmerComplianceUploadScreen() {
               ) : (
                 <Text style={styles.stripeButtonText}>Setup Stripe Payout</Text>
               )}
-            </Pressable>
+            </TouchableOpacity>
 
-            <Pressable
+            <TouchableOpacity
               style={[styles.saveButton, stripeChecking && styles.disabled]}
               onPress={() => verifyStripePayoutAccount()}
               disabled={stripeLoading || stripeChecking}
@@ -1625,7 +1641,7 @@ export default function FarmerComplianceUploadScreen() {
               ) : (
                 <Text style={styles.saveButtonText}>Verify</Text>
               )}
-            </Pressable>
+            </TouchableOpacity>
           </View>
         </View>
       );
@@ -1642,7 +1658,7 @@ export default function FarmerComplianceUploadScreen() {
 
           <View style={styles.optionRow}>
             {PICKUP_DELIVERY_OPTIONS.map((option) => (
-              <Pressable
+              <TouchableOpacity
                 key={option}
                 style={[
                   styles.optionButton,
@@ -1658,7 +1674,7 @@ export default function FarmerComplianceUploadScreen() {
                 >
                   {option}
                 </Text>
-              </Pressable>
+              </TouchableOpacity>
             ))}
           </View>
         </View>
@@ -1677,9 +1693,9 @@ export default function FarmerComplianceUploadScreen() {
           </Text>
         </View>
 
-        <Pressable style={styles.uploadButton} onPress={() => uploadDocument(doc.type, doc.label)}>
+        <TouchableOpacity style={styles.uploadButton} onPress={() => uploadDocument(doc.type, doc.label)}>
           <Text style={styles.uploadButtonText}>{uploaded ? "Replace" : "Upload"}</Text>
-        </Pressable>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -1792,9 +1808,9 @@ export default function FarmerComplianceUploadScreen() {
           maxLength={2}
         />
 
-        <Pressable style={styles.saveLoginButton} onPress={() => saveBusinessInfo(true)}>
+        <TouchableOpacity style={styles.saveLoginButton} onPress={() => saveBusinessInfo(true)}>
           <Text style={styles.saveLoginButtonText}>Save Business Info</Text>
-        </Pressable>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
@@ -1809,7 +1825,7 @@ export default function FarmerComplianceUploadScreen() {
         </Text>
 
         <View style={styles.buttonRow}>
-          <Pressable
+          <TouchableOpacity
             style={[styles.saveButton, applicationFeeLoading && styles.disabled]}
             onPress={startApplicationFeePayment}
             disabled={applicationFeeLoading || applicationFeeChecking}
@@ -1819,9 +1835,9 @@ export default function FarmerComplianceUploadScreen() {
             ) : (
               <Text style={styles.saveButtonText}>Pay Application Fee</Text>
             )}
-          </Pressable>
+          </TouchableOpacity>
 
-          <Pressable
+          <TouchableOpacity
             style={[styles.testButton, applicationFeeChecking && styles.disabled]}
             onPress={() => verifyApplicationFeePayment()}
             disabled={applicationFeeChecking || applicationFeeLoading}
@@ -1831,7 +1847,7 @@ export default function FarmerComplianceUploadScreen() {
             ) : (
               <Text style={styles.testButtonText}>Verify Payment</Text>
             )}
-          </Pressable>
+          </TouchableOpacity>
         </View>
 
         <Text style={[styles.docStatus, styles.missing, { marginTop: 18 }]}>
@@ -1874,9 +1890,9 @@ export default function FarmerComplianceUploadScreen() {
           setSecurityAnswer3
         )}
 
-        <Pressable style={styles.saveLoginButton} onPress={() => saveLoginCredentials(true)}>
+        <TouchableOpacity style={styles.saveLoginButton} onPress={() => saveLoginCredentials(true)}>
           <Text style={styles.saveLoginButtonText}>Save Login & Security Questions</Text>
-        </Pressable>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
@@ -1891,7 +1907,7 @@ export default function FarmerComplianceUploadScreen() {
           const checked = Boolean(legalChecks[index]);
 
           return (
-            <Pressable
+            <TouchableOpacity
               key={item}
               style={styles.legalRow}
               onPress={() =>
@@ -1906,19 +1922,19 @@ export default function FarmerComplianceUploadScreen() {
               </View>
 
               <Text style={styles.legalText}>{item}</Text>
-            </Pressable>
+            </TouchableOpacity>
           );
         })}
 
-        <Pressable
+        <TouchableOpacity
           style={[styles.saveLegalButton, !allLegalAccepted && styles.disabledSoft]}
           onPress={() => saveLegalChecklist(true)}
         >
           <Text style={styles.saveLegalButtonText}>Save Legal Checklist</Text>
-        </Pressable>
+        </TouchableOpacity>
       </View>
 
-      <Pressable
+      <TouchableOpacity
         style={[styles.verifyButton, loading && styles.disabled]}
         disabled={loading}
         onPress={runVerification}
@@ -1926,7 +1942,7 @@ export default function FarmerComplianceUploadScreen() {
         <Text style={styles.verifyButtonText}>
           {loading ? "Submitting for Admin Review..." : "Submit Application for Admin Review"}
         </Text>
-      </Pressable>
+      </TouchableOpacity>
 
       <View style={{ height: 50 }} />
     </ScrollView>
