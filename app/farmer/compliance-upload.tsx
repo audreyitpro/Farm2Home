@@ -988,108 +988,89 @@ export default function FarmerComplianceUploadScreen() {
       );
     }
   }
+    async function submitForReview() {
+  if (loading) return;
 
-  async function submitForReview() {
-    if (loading) return;
+  try {
+    setLoading(true);
 
-    try {
-      setLoading(true);
+    const activeId = await getOrCreateFarmerId();
+    const now = new Date().toISOString();
 
-      const activeId = await getOrCreateFarmerId();
-      const now = new Date().toISOString();
+    const finalUploadedDocs = {
+      ...uploadedDocs,
+      pickup_delivery_agreement:
+        uploadedDocs.pickup_delivery_agreement ||
+        `agreement://${pickupDeliveryOption}`,
+      legal_checklist:
+        uploadedDocs.legal_checklist || "legal-checklist://accepted",
+      stripe_payout:
+        uploadedDocs.stripe_payout ||
+        (stripeAccountId ? `stripe://${stripeAccountId}` : ""),
+    };
 
-      if (
-        !businessName.trim() ||
-        !ownerName.trim() ||
-        !validEmail(farmerEmail)
-      ) {
-        Alert.alert(
-          "Missing Business Info",
-          "Complete business name, owner name, and farmer email first."
-        );
-        return;
-      }
+    const overrides = {
+      business_name: businessName.trim(),
+      farm_name: businessName.trim(),
+      owner_name: ownerName.trim(),
+      email: normalizeEmail(farmerEmail),
+      state,
 
-      if (!stripeAccountId) {
-        Alert.alert(
-          "Stripe Required",
-          "Stripe account is missing. Click Setup Stripe Payout first."
-        );
-        return;
-      }
+      application_fee_started: true,
+      application_fee_paid: applicationFeePaid,
 
-      const finalUploadedDocs = {
-        ...uploadedDocs,
-        pickup_delivery_agreement:
-          uploadedDocs.pickup_delivery_agreement ||
-          `agreement://${pickupDeliveryOption}`,
-        legal_checklist:
-          uploadedDocs.legal_checklist || "legal-checklist://accepted",
-        stripe_payout:
-          uploadedDocs.stripe_payout ||
-          (stripeAccountId ? `stripe://${stripeAccountId}` : ""),
-      };
+      stripe_account_id: stripeAccountId,
+      farmer_stripe_account_id: stripeAccountId,
+      stripe_onboarding_complete: true,
+      stripe_payouts_enabled: stripePayoutsEnabled,
+      stripe_charges_enabled: stripeChargesEnabled,
 
-      const overrides = {
-        business_name: businessName.trim(),
-        farm_name: businessName.trim(),
-        owner_name: ownerName.trim(),
-        email: normalizeEmail(farmerEmail),
-        state,
+      pickup_delivery_option: pickupDeliveryOption,
+      uploaded_docs: finalUploadedDocs,
+      legal_checks: legalChecks,
 
-        application_fee_started: true,
-        application_fee_paid: applicationFeePaid,
+      compliance_submitted: true,
+      compliance_status: "pending_admin_review",
+      admin_review_status: "pending",
+      review_decision: "pending",
 
-        stripe_account_id: stripeAccountId,
-        farmer_stripe_account_id: stripeAccountId,
-        stripe_onboarding_complete: true,
-        stripe_payouts_enabled: stripePayoutsEnabled,
-        stripe_charges_enabled: stripeChargesEnabled,
+      approved: false,
+      rejected: false,
+      reviewed: false,
+      needs_more_info: false,
+      account_active: false,
+      store_unlocked: false,
 
-        pickup_delivery_option: pickupDeliveryOption,
-        uploaded_docs: finalUploadedDocs,
-        legal_checks: legalChecks,
+      submitted_at: now,
+      updated_at: now,
+    };
 
-        compliance_submitted: true,
-        compliance_status: "pending_admin_review",
-        admin_review_status: "pending",
-        review_decision: "pending",
+    await saveFarmer("pending_admin_review", overrides);
+    await saveAdminVerification("PENDING_ADMIN_REVIEW", overrides);
+    await saveLocal(activeId, overrides);
 
-        approved: false,
-        rejected: false,
-        reviewed: false,
-        needs_more_info: false,
-        account_active: false,
-        store_unlocked: false,
-
-        submitted_at: now,
-        updated_at: now,
-      };
-
-      await saveFarmer("pending_admin_review", overrides);
-      await saveAdminVerification("PENDING_ADMIN_REVIEW", overrides);
-      await saveLocal(activeId, overrides);
-
-      router.replace({
+    router.replace({
       pathname: "/farmer/awaiting-approval",
       params: {
-      farmerId: activeId,
-      email: normalizeEmail(farmerEmail),
-      businessName: businessName.trim(),
-    },
-  } as any);
-          
-    } catch (error: any) {
-      console.log("SUBMIT_FOR_REVIEW_ERROR:", error);
+        farmerId: activeId,
+        email: normalizeEmail(farmerEmail),
+        businessName: businessName.trim(),
+      },
+    } as any);
 
-      Alert.alert(
-        "Submit Error",
-        error?.message || "Unable to submit application for admin review."
-      );
-    } finally {
-      setLoading(false);
-    }
+    return;
+  } catch (error: any) {
+    console.log("SUBMIT_FOR_REVIEW_ERROR:", error);
+
+    Alert.alert(
+      "Submit Error",
+      error?.message || "Unable to submit application for admin review."
+    );
+  } finally {
+    setLoading(false);
   }
+}
+  
 
   function StatusPill({ done }: { done: boolean }) {
     return (
