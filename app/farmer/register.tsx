@@ -1,11 +1,13 @@
 // app/farmer/register.tsx
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -13,9 +15,12 @@ import {
   View,
 } from "react-native";
 import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../services/supabaseClient";
+
+const PENDING_FARMER_KEY = "pendingFarmerApplication";
 
 const productOptions = [
   "Produce",
@@ -37,7 +42,14 @@ const productOptions = [
   "Seasonal Items",
 ];
 
-const PENDING_FARMER_KEY = "pendingFarmerApplication";
+const agreements = [
+  "I understand I am an independent seller and not an employee, agent, or partner of Farm2Home.",
+  "I accept full responsibility for food quality, safety, storage, packaging, labeling, and product accuracy.",
+  "I certify I comply with Michigan and federal laws required to sell my products.",
+  "I agree to resolve customer complaints through refund, replacement, or credit when appropriate.",
+  "I agree to indemnify and hold harmless Farm2Home and ASO Developments LLC from claims related to my products, operations, or legal violations.",
+  "I accept Farm2Home service fees, membership fees, payout terms, and platform policies.",
+];
 
 function normalizeEmail(value: string) {
   return String(value || "").trim().toLowerCase();
@@ -57,21 +69,56 @@ export default function FarmerRegister() {
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+
   const [businessAddress, setBusinessAddress] = useState("");
   const [city, setCity] = useState("");
-  const [stateValue, setStateValue] = useState("");
+  const [stateValue, setStateValue] = useState("MI");
   const [zipCode, setZipCode] = useState("");
+
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
-  const [a1, setA1] = useState(false);
-  const [a2, setA2] = useState(false);
-  const [a3, setA3] = useState(false);
-  const [a4, setA4] = useState(false);
-  const [a5, setA5] = useState(false);
-  const [a6, setA6] = useState(false);
+  const [accepted, setAccepted] = useState<Record<number, boolean>>({});
   const [loading, setLoading] = useState(false);
+
+  const businessComplete = useMemo(
+    () =>
+      Boolean(
+        ownerName.trim() &&
+          farmName.trim() &&
+          businessName.trim() &&
+          isValidEmail(email) &&
+          phone.trim()
+      ),
+    [ownerName, farmName, businessName, email, phone]
+  );
+
+  const loginComplete = useMemo(
+    () =>
+      Boolean(
+        username.trim() &&
+          password.trim().length >= 6 &&
+          confirmPassword.trim() &&
+          password.trim() === confirmPassword.trim()
+      ),
+    [username, password, confirmPassword]
+  );
+
+  const locationComplete = useMemo(
+    () =>
+      Boolean(
+        businessAddress.trim() &&
+          city.trim() &&
+          stateValue.trim() &&
+          zipCode.trim()
+      ),
+    [businessAddress, city, stateValue, zipCode]
+  );
+
+  const productsComplete = selectedProducts.length > 0;
+  const legalComplete = agreements.every((_, index) => accepted[index]);
 
   function toggleProduct(product: string) {
     setSelectedProducts((prev) =>
@@ -106,11 +153,13 @@ export default function FarmerRegister() {
     cleanOwnerName,
     cleanEmail,
     cleanPhone,
+    cleanUsername,
   }: {
     authUserId: string;
     cleanOwnerName: string;
     cleanEmail: string;
     cleanPhone: string;
+    cleanUsername: string;
   }) {
     const { data: existingProfile, error: existingProfileError } =
       await supabase
@@ -128,7 +177,11 @@ export default function FarmerRegister() {
           auth_user_id: authUserId,
           role: "farmer",
           full_name: cleanOwnerName,
+          name: cleanOwnerName,
           phone: cleanPhone,
+          username: cleanUsername,
+          account_active: true,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", existingProfile.id)
         .select("*")
@@ -144,9 +197,13 @@ export default function FarmerRegister() {
         auth_user_id: authUserId,
         role: "farmer",
         full_name: cleanOwnerName,
+        name: cleanOwnerName,
         email: cleanEmail,
         phone: cleanPhone,
+        username: cleanUsername,
+        account_active: true,
         created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .select("*")
       .single();
@@ -160,12 +217,16 @@ export default function FarmerRegister() {
       id: farmer.id,
       farmer_id: farmer.id,
       account_type: "FARMER",
+      role: "farmer",
+      type: "FARMER",
 
       farm_name: farmer.farm_name,
       business_name: farmer.business_name,
+      company_name: farmer.business_name,
       owner_name: farmer.owner_name,
       email: farmer.email,
       phone: farmer.phone,
+      state: farmer.state,
 
       status: "STARTED",
       compliance_status: "in_progress",
@@ -181,6 +242,7 @@ export default function FarmerRegister() {
 
       compliance_submitted: false,
       application_fee_paid: false,
+      application_fee_started: false,
       farmer_membership_paid: false,
       monthly_membership_started: false,
       monthly_membership_required_after_approval: true,
@@ -190,6 +252,10 @@ export default function FarmerRegister() {
       stripe_onboarding_complete: false,
       stripe_payouts_enabled: false,
       stripe_charges_enabled: false,
+
+      uploaded_docs: {},
+      legal_checks: {},
+      documents: [],
 
       created_at: farmer.created_at,
       updated_at: farmer.updated_at,
@@ -204,51 +270,50 @@ export default function FarmerRegister() {
     }
   }
 
-  async function registerFarmer() {
-    if (
-      !ownerName.trim() ||
-      !farmName.trim() ||
-      !businessName.trim() ||
-      !email.trim() ||
-      !phone.trim() ||
-      !username.trim() ||
-      !password.trim() ||
-      !confirmPassword.trim()
-    ) {
+  function validateForm() {
+    if (!businessComplete) {
       Alert.alert(
-        "Missing Info",
-        "Please complete all farmer account fields."
+        "Business Info Required",
+        "Complete owner name, farm name, business name, email, and phone."
       );
-      return;
+      return false;
     }
 
-    if (!isValidEmail(email)) {
-      Alert.alert("Invalid Email", "Please enter a valid email address.");
-      return;
+    if (!loginComplete) {
+      Alert.alert(
+        "Login Required",
+        "Create a username and matching password with at least 6 characters."
+      );
+      return false;
     }
 
-    if (password.trim().length < 6) {
-      Alert.alert("Password Too Short", "Password must be at least 6 characters.");
-      return;
+    if (!locationComplete) {
+      Alert.alert(
+        "Location Required",
+        "Complete business address, city, state, and zip code."
+      );
+      return false;
     }
 
-    if (password.trim() !== confirmPassword.trim()) {
-      Alert.alert("Password Mismatch", "Passwords do not match.");
-      return;
+    if (!productsComplete) {
+      Alert.alert("Products Required", "Select at least one product type.");
+      return false;
     }
 
-    if (selectedProducts.length === 0) {
-      Alert.alert("Missing Products", "Select at least one product type.");
-      return;
-    }
-
-    if (!a1 || !a2 || !a3 || !a4 || !a5 || !a6) {
+    if (!legalComplete) {
       Alert.alert(
         "Agreement Required",
-        "You must accept all legal agreements before continuing."
+        "Accept all Farmer Onboarding Agreement items before continuing."
       );
-      return;
+      return false;
     }
+
+    return true;
+  }
+
+  async function registerFarmer() {
+    if (loading) return;
+    if (!validateForm()) return;
 
     try {
       setLoading(true);
@@ -262,11 +327,13 @@ export default function FarmerRegister() {
       const cleanState = stateValue.trim().toUpperCase().slice(0, 2) || "MI";
       const now = new Date().toISOString();
 
-      const { data: existingFarmer } = await supabase
+      const { data: existingFarmer, error: existingError } = await supabase
         .from("farmers")
         .select("id,email,username")
         .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
         .maybeSingle();
+
+      if (existingError) throw existingError;
 
       if (existingFarmer) {
         Alert.alert(
@@ -310,6 +377,7 @@ export default function FarmerRegister() {
         cleanOwnerName,
         cleanEmail,
         cleanPhone,
+        cleanUsername,
       });
 
       if (!profile?.id) {
@@ -323,11 +391,19 @@ export default function FarmerRegister() {
 
         email: cleanEmail,
         username: cleanUsername,
+        phone: cleanPhone,
 
         owner_name: cleanOwnerName,
         farm_name: cleanFarmName,
         business_name: cleanBusinessName,
+
+        business_address: businessAddress.trim(),
+        city: city.trim(),
         state: cleanState,
+        zip_code: zipCode.trim(),
+
+        selected_products: selectedProducts,
+        legal_agreements: accepted,
 
         compliance_status: "in_progress",
         admin_review_status: "not_submitted",
@@ -343,6 +419,7 @@ export default function FarmerRegister() {
         compliance_submitted: false,
 
         application_fee_paid: false,
+        application_fee_started: false,
         farmer_membership_paid: false,
         monthly_membership_started: false,
         monthly_membership_required_after_approval: true,
@@ -352,6 +429,9 @@ export default function FarmerRegister() {
         stripe_onboarding_complete: false,
         stripe_payouts_enabled: false,
         stripe_charges_enabled: false,
+
+        uploaded_docs: {},
+        legal_checks: {},
 
         created_at: now,
         updated_at: now,
@@ -366,10 +446,7 @@ export default function FarmerRegister() {
         return;
       }
 
-      await createAdminVerificationRecord({
-        ...farmerPayload,
-        phone: cleanPhone,
-      });
+      await createAdminVerificationRecord(farmerPayload);
 
       const localFarmer = {
         id: authUserId,
@@ -403,6 +480,7 @@ export default function FarmerRegister() {
         reviewDecision: "not_submitted",
 
         applicationFeePaid: false,
+        applicationFeeStarted: false,
         farmerMembershipPaid: false,
         monthlyMembershipStarted: false,
         monthlyMembershipRequiredAfterApproval: true,
@@ -413,13 +491,15 @@ export default function FarmerRegister() {
         stripePayoutsEnabled: false,
         stripeChargesEnabled: false,
 
+        uploadedDocs: {},
+        legalChecks: {},
+
         products: [],
         createdAt: now,
         updatedAt: now,
       };
 
       await saveLocalFarmerSession(localFarmer);
-
       notifyAdminFarmerVerification(localFarmer);
 
       router.replace({
@@ -441,367 +521,455 @@ export default function FarmerRegister() {
     }
   }
 
-  return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
-      <Text style={styles.header}>🚜 Farmer Account Setup</Text>
-
-      <Text style={styles.subheader}>
-        Create your farm profile, secure password, accept the Farmer Onboarding
-        Agreement, and begin Farm2Home verification review.
-      </Text>
-
-      <View style={styles.notice}>
-        <Text style={styles.noticeTitle}>Required For Approval</Text>
-        <Text style={styles.noticeText}>
-          Business Registration • Sales Tax/Exemption • Food Safety Registration
-          • W-9 • Liability Insurance
+  function StatusPill({ done }: { done: boolean }) {
+    return (
+      <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
+        <Text
+          style={[
+            styles.pillText,
+            done ? styles.pillTextDone : styles.pillTextMissing,
+          ]}
+        >
+          {done ? "Complete" : "Needed"}
         </Text>
       </View>
+    );
+  }
 
-      <View style={styles.priceBox}>
-        <Text style={styles.priceTitle}>Farmer Pricing</Text>
-        <Text style={styles.priceText}>Application Process Fee: $29.99</Text>
-        <Text style={styles.priceText}>
-          Monthly Membership: $14.99 after approval
-        </Text>
-        <Text style={styles.priceText}>Marketplace Service Fee: 4%</Text>
+  function SectionCard({
+    icon,
+    title,
+    subtitle,
+    done,
+    children,
+  }: {
+    icon: keyof typeof Ionicons.glyphMap;
+    title: string;
+    subtitle: string;
+    done: boolean;
+    children: React.ReactNode;
+  }) {
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardTop}>
+          <View style={styles.iconBox}>
+            <Ionicons name={icon} size={24} color="#FFFFFF" />
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>{title}</Text>
+            <Text style={styles.cardSub}>{subtitle}</Text>
+          </View>
+
+          <StatusPill done={done} />
+        </View>
+
+        {children}
       </View>
+    );
+  }
 
-      <TextInput
-        style={styles.input}
-        placeholder="Owner Name"
-        placeholderTextColor="#8A8F98"
-        value={ownerName}
-        onChangeText={setOwnerName}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Farm Name"
-        placeholderTextColor="#8A8F98"
-        value={farmName}
-        onChangeText={setFarmName}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Business Name"
-        placeholderTextColor="#8A8F98"
-        value={businessName}
-        onChangeText={setBusinessName}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Email Address"
-        placeholderTextColor="#8A8F98"
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Phone Number"
-        placeholderTextColor="#8A8F98"
-        keyboardType="phone-pad"
-        value={phone}
-        onChangeText={setPhone}
-      />
-
-      <Text style={styles.sectionTitle}>Create Farmer Login</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Create Username"
-        placeholderTextColor="#8A8F98"
-        autoCapitalize="none"
-        value={username}
-        onChangeText={setUsername}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Create Password"
-        placeholderTextColor="#8A8F98"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Confirm Password"
-        placeholderTextColor="#8A8F98"
-        secureTextEntry
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Business Address"
-        placeholderTextColor="#8A8F98"
-        value={businessAddress}
-        onChangeText={setBusinessAddress}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="City"
-        placeholderTextColor="#8A8F98"
-        value={city}
-        onChangeText={setCity}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="State"
-        placeholderTextColor="#8A8F98"
-        value={stateValue}
-        onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))}
-        maxLength={2}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Zip Code"
-        placeholderTextColor="#8A8F98"
-        keyboardType="numeric"
-        value={zipCode}
-        onChangeText={setZipCode}
-      />
-
-      <Text style={styles.sectionTitle}>Select Certified Products On Your Farm</Text>
-
-      <View style={styles.grid}>
-        {productOptions.map((product) => {
-          const active = selectedProducts.includes(product);
-
-          return (
-            <TouchableOpacity
-              key={product}
-              style={[styles.productChip, active && styles.productChipActive]}
-              onPress={() => toggleProduct(product)}
-              activeOpacity={0.85}
-            >
-              <Text style={[styles.productText, active && styles.productTextActive]}>
-                {product}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <View style={styles.legalBox}>
-        <Text style={styles.legalTitle}>Farmer Onboarding Agreement</Text>
-
-        <Agreement
-          label="I understand I am an independent seller and not an employee, agent, or partner of Farm2Home."
-          value={a1}
-          onPress={() => setA1(!a1)}
-        />
-        <Agreement
-          label="I accept full responsibility for food quality, safety, storage, packaging, labeling, and product accuracy."
-          value={a2}
-          onPress={() => setA2(!a2)}
-        />
-        <Agreement
-          label="I certify I comply with Michigan and federal laws required to sell my products."
-          value={a3}
-          onPress={() => setA3(!a3)}
-        />
-        <Agreement
-          label="I agree to resolve customer complaints through refund, replacement, or credit when appropriate."
-          value={a4}
-          onPress={() => setA4(!a4)}
-        />
-        <Agreement
-          label="I agree to indemnify and hold harmless Farm2Home and ASO Developments LLC from claims related to my products, operations, or legal violations."
-          value={a5}
-          onPress={() => setA5(!a5)}
-        />
-        <Agreement
-          label="I accept Farm2Home service fees, membership fees, payout terms, and platform policies."
-          value={a6}
-          onPress={() => setA6(!a6)}
-        />
-      </View>
-
-      <TouchableOpacity
-        style={[styles.button, loading && styles.disabledButton]}
-        onPress={registerFarmer}
-        disabled={loading}
-        activeOpacity={0.85}
-      >
-        {loading ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text style={styles.buttonText}>Start Document Verification</Text>
-        )}
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.secondaryButton}
-        onPress={() => router.push("/farmer/login" as any)}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.secondaryText}>Already have account? Farmer Login</Text>
-      </TouchableOpacity>
-    </ScrollView>
-  );
-}
-
-function Agreement({
-  label,
-  value,
-  onPress,
-}: {
-  label: string;
-  value: boolean;
-  onPress: () => void;
-}) {
   return (
-    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.85}>
-      <View style={[styles.fakeCheckbox, value && styles.fakeCheckboxActive]}>
-        <Text style={styles.fakeCheckboxText}>{value ? "✓" : ""}</Text>
-      </View>
-      <Text style={styles.agreementText}>{label}</Text>
-    </TouchableOpacity>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor="#14532D" />
+
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="always"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.hero}>
+          <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
+          <Text style={styles.heroTitle}>Start Your Farmer Application</Text>
+          <Text style={styles.heroSub}>
+            Create your farm profile first. Then complete compliance, pay the
+            application fee, connect Stripe payout, and submit for admin review.
+          </Text>
+        </View>
+
+        <View style={styles.priceCard}>
+          <Text style={styles.priceTitle}>Farmer Pricing</Text>
+          <Text style={styles.priceLine}>Application Process Fee: $29.99</Text>
+          <Text style={styles.priceLine}>
+            Monthly Membership: $14.99 after approval
+          </Text>
+          <Text style={styles.priceLine}>Marketplace Service Fee: 4%</Text>
+        </View>
+
+        <SectionCard
+          icon="business-outline"
+          title="Farm Business Info"
+          subtitle="Basic farm and owner details."
+          done={businessComplete}
+        >
+          <TextInput
+            style={styles.input}
+            placeholder="Owner Name"
+            value={ownerName}
+            onChangeText={setOwnerName}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Farm Name"
+            value={farmName}
+            onChangeText={setFarmName}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Business Name"
+            value={businessName}
+            onChangeText={setBusinessName}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email Address"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Phone Number"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={setPhone}
+          />
+        </SectionCard>
+
+        <SectionCard
+          icon="lock-closed-outline"
+          title="Create Farmer Login"
+          subtitle="Credentials used for future farmer login."
+          done={loginComplete}
+        >
+          <TextInput
+            style={styles.input}
+            placeholder="Create Username"
+            autoCapitalize="none"
+            value={username}
+            onChangeText={setUsername}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Create Password"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Confirm Password"
+            secureTextEntry
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+          />
+        </SectionCard>
+
+        <SectionCard
+          icon="location-outline"
+          title="Farm Location"
+          subtitle="Used for local customer discovery and compliance review."
+          done={locationComplete}
+        >
+          <TextInput
+            style={styles.input}
+            placeholder="Business Address"
+            value={businessAddress}
+            onChangeText={setBusinessAddress}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="City"
+            value={city}
+            onChangeText={setCity}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="State"
+            value={stateValue}
+            onChangeText={(value) =>
+              setStateValue(value.toUpperCase().slice(0, 2))
+            }
+            maxLength={2}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Zip Code"
+            keyboardType="numeric"
+            value={zipCode}
+            onChangeText={setZipCode}
+          />
+        </SectionCard>
+
+        <SectionCard
+          icon="leaf-outline"
+          title="Products You Sell"
+          subtitle="Select at least one category."
+          done={productsComplete}
+        >
+          <View style={styles.grid}>
+            {productOptions.map((product) => {
+              const active = selectedProducts.includes(product);
+
+              return (
+                <TouchableOpacity
+                  key={product}
+                  style={[
+                    styles.productChip,
+                    active && styles.productChipActive,
+                  ]}
+                  onPress={() => toggleProduct(product)}
+                  activeOpacity={0.85}
+                >
+                  <Text
+                    style={[
+                      styles.productText,
+                      active && styles.productTextActive,
+                    ]}
+                  >
+                    {product}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </SectionCard>
+
+        <SectionCard
+          icon="shield-checkmark-outline"
+          title="Farmer Onboarding Agreement"
+          subtitle="Accept all items before continuing."
+          done={legalComplete}
+        >
+          {agreements.map((item, index) => {
+            const checked = Boolean(accepted[index]);
+
+            return (
+              <TouchableOpacity
+                key={item}
+                style={styles.legalRow}
+                onPress={() =>
+                  setAccepted((prev) => ({
+                    ...prev,
+                    [index]: !prev[index],
+                  }))
+                }
+                activeOpacity={0.85}
+              >
+                <View style={[styles.checkbox, checked && styles.checkboxOn]}>
+                  <Text style={styles.checkText}>{checked ? "✓" : ""}</Text>
+                </View>
+
+                <Text style={styles.legalText}>{item}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </SectionCard>
+
+        <TouchableOpacity
+          style={[styles.submitBtn, loading && styles.disabled]}
+          onPress={registerFarmer}
+          disabled={loading}
+          activeOpacity={0.85}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.submitText}>Start Document Verification</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.loginBtn}
+          onPress={() => router.push("/farmer/login" as any)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.loginText}>Already have account? Farmer Login</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#F7F7F2" },
-  content: { padding: 20, paddingBottom: 40 },
-  header: { fontSize: 30, fontWeight: "900", color: "#2F7D32" },
-  subheader: {
-    color: "#666666",
-    marginTop: 6,
-    marginBottom: 18,
-    lineHeight: 21,
+  safe: { flex: 1, backgroundColor: "#F8FAF5" },
+  content: { paddingBottom: 80 },
+  hero: {
+    backgroundColor: "#14532D",
+    paddingHorizontal: 20,
+    paddingTop: 28,
+    paddingBottom: 32,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
   },
-  notice: {
-    backgroundColor: "#E8F5E9",
-    padding: 14,
-    borderRadius: 16,
-    marginBottom: 14,
-    borderLeftWidth: 5,
-    borderLeftColor: "#2F7D32",
+  kicker: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
-  noticeTitle: { fontWeight: "900", color: "#2F7D32", marginBottom: 5 },
-  noticeText: { color: "#444444", lineHeight: 20 },
-  priceBox: {
-    backgroundColor: "#FFF8E1",
-    padding: 14,
-    borderRadius: 16,
-    marginBottom: 16,
-    borderLeftWidth: 5,
-    borderLeftColor: "#D4A017",
-  },
-  priceTitle: { fontWeight: "900", color: "#8A5A00", marginBottom: 5 },
-  priceText: { color: "#444444", marginBottom: 4 },
-  input: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DDDDDD",
-    borderRadius: 14,
-    padding: 15,
-    marginBottom: 12,
-    color: "#111827",
-  },
-  sectionTitle: {
-    fontSize: 18,
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 33,
     fontWeight: "900",
     marginTop: 8,
-    marginBottom: 12,
-    color: "#111111",
+  },
+  heroSub: {
+    color: "#DCFCE7",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+  priceCard: {
+    backgroundColor: "#FFFBEB",
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  priceTitle: {
+    color: "#92400E",
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  priceLine: {
+    color: "#78350F",
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  card: {
+    backgroundColor: "#FFFFFF",
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8DA",
+  },
+  cardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 14,
+  },
+  iconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: "#2E7D32",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardTitle: {
+    color: "#172017",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  cardSub: {
+    color: "#64748B",
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 2,
+  },
+  pill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  pillDone: { backgroundColor: "#DCFCE7" },
+  pillMissing: { backgroundColor: "#FEE2E2" },
+  pillText: { fontSize: 11, fontWeight: "900" },
+  pillTextDone: { color: "#166534" },
+  pillTextMissing: { color: "#B91C1C" },
+  input: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 16,
+    padding: 14,
+    fontWeight: "800",
+    marginBottom: 10,
+    color: "#0F172A",
   },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginBottom: 20,
   },
   productChip: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F8FAFC",
     borderWidth: 1,
-    borderColor: "#DDDDDD",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 22,
+    borderColor: "#CBD5E1",
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderRadius: 999,
   },
-  productChipActive: { backgroundColor: "#2F7D32", borderColor: "#2F7D32" },
-  productText: { color: "#111111", fontWeight: "700" },
-  productTextActive: { color: "#FFFFFF" },
-  legalBox: {
-    backgroundColor: "#FFFFFF",
-    padding: 15,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#EEEEEE",
-    marginBottom: 20,
+  productChipActive: {
+    backgroundColor: "#2E7D32",
+    borderColor: "#2E7D32",
   },
-  legalTitle: {
-    fontSize: 18,
+  productText: {
+    color: "#172017",
     fontWeight: "900",
-    color: "#111111",
-    marginBottom: 12,
   },
-  row: {
+  productTextActive: {
+    color: "#FFFFFF",
+  },
+  legalRow: {
     flexDirection: "row",
+    gap: 10,
     alignItems: "flex-start",
-    marginBottom: 13,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
   },
-  fakeCheckbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
+  checkbox: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
     borderWidth: 2,
-    borderColor: "#2F7D32",
+    borderColor: "#2E7D32",
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
-    marginTop: 1,
-    backgroundColor: "#FFFFFF",
   },
-  fakeCheckboxActive: { backgroundColor: "#2F7D32" },
-  fakeCheckboxText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "900",
-    lineHeight: 18,
-  },
-  agreementText: {
+  checkboxOn: { backgroundColor: "#2E7D32" },
+  checkText: { color: "#FFFFFF", fontWeight: "900" },
+  legalText: {
     flex: 1,
-    marginLeft: 10,
-    color: "#333333",
-    lineHeight: 19,
-    fontSize: 13,
+    color: "#172017",
+    fontWeight: "800",
+    lineHeight: 21,
   },
-  button: {
-    backgroundColor: "#2F7D32",
-    padding: 18,
-    borderRadius: 16,
-    marginTop: 6,
+  submitBtn: {
+    backgroundColor: "#14532D",
+    marginHorizontal: 16,
+    marginTop: 18,
+    borderRadius: 20,
+    paddingVertical: 18,
     alignItems: "center",
   },
-  disabledButton: { backgroundColor: "#9CA3AF" },
-  buttonText: {
-    color: "#FFFFFF",
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 16,
+  submitText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
+  disabled: { opacity: 0.6 },
+  loginBtn: {
+    paddingVertical: 18,
+    alignItems: "center",
   },
-  secondaryButton: { padding: 16 },
-  secondaryText: {
-    textAlign: "center",
-    color: "#2F7D32",
+  loginText: {
+    color: "#14532D",
     fontWeight: "900",
   },
 });
