@@ -58,11 +58,18 @@ export default function FarmerLoginScreen() {
       email: farmer.email || "",
       username: farmer.username || "",
 
-      farmName: farmer.farm_name || farmer.farmName || farmer.business_name || "",
-      businessName: farmer.business_name || farmer.businessName || farmer.farm_name || "",
+      farmName:
+        farmer.farm_name || farmer.farmName || farmer.business_name || "",
+      businessName:
+        farmer.business_name || farmer.businessName || farmer.farm_name || "",
       ownerName: farmer.owner_name || farmer.ownerName || "",
-
       state: farmer.state || "MI",
+
+      status: farmer.status || "",
+      verificationStatus:
+        farmer.verification_status || farmer.verificationStatus || "",
+      complianceStatus:
+        farmer.compliance_status || farmer.complianceStatus || "",
 
       approved: Boolean(farmer.approved),
       rejected: Boolean(farmer.rejected),
@@ -75,9 +82,9 @@ export default function FarmerLoginScreen() {
       complianceSubmitted: Boolean(
         farmer.compliance_submitted || farmer.complianceSubmitted
       ),
-      complianceStatus: farmer.compliance_status || farmer.complianceStatus || "",
-      adminReviewStatus: farmer.admin_review_status || farmer.adminReviewStatus || "",
-      reviewDecision: farmer.review_decision || farmer.reviewDecision || "",
+      hasCompletedCompliance: Boolean(
+        farmer.has_completed_compliance || farmer.hasCompletedCompliance
+      ),
 
       applicationFeePaid: Boolean(
         farmer.application_fee_paid || farmer.applicationFeePaid
@@ -175,33 +182,29 @@ export default function FarmerLoginScreen() {
   }
 
   function routeFarmer(farmer: any) {
-    const rejected =
+    const status = String(
+      farmer.status ||
+        farmer.verification_status ||
+        farmer.verificationStatus ||
+        farmer.compliance_status ||
+        farmer.complianceStatus ||
+        ""
+    ).toUpperCase();
+
+    const isRejected =
       farmer.rejected === true ||
+      status === "REJECTED" ||
       farmer.review_decision === "rejected" ||
-      farmer.admin_review_status === "rejected" ||
-      farmer.compliance_status === "rejected";
+      farmer.admin_review_status === "rejected";
 
     const needsMoreInfo =
       farmer.needs_more_info === true ||
+      farmer.needsMoreInfo === true ||
+      status === "NEEDS_MORE_INFO" ||
       farmer.review_decision === "needs_more_info" ||
-      farmer.admin_review_status === "needs_more_info" ||
-      farmer.compliance_status === "needs_more_info";
+      farmer.admin_review_status === "needs_more_info";
 
-    const approved =
-      farmer.approved === true ||
-      farmer.review_decision === "approved" ||
-      farmer.admin_review_status === "approved" ||
-      farmer.compliance_status === "approved";
-
-    const submitted =
-      farmer.compliance_submitted === true ||
-      farmer.compliance_status === "pending_admin_review" ||
-      farmer.compliance_status === "PENDING_ADMIN_REVIEW" ||
-      farmer.admin_review_status === "pending" ||
-      farmer.admin_review_status === "PENDING_ADMIN_REVIEW" ||
-      farmer.review_decision === "pending";
-
-    if (rejected) {
+    if (isRejected) {
       Alert.alert(
         "Application Rejected",
         "This farmer application was rejected. Contact Farm2Home support."
@@ -222,31 +225,33 @@ export default function FarmerLoginScreen() {
       return;
     }
 
-    if (!approved && submitted) {
-      router.replace({
-        pathname: "/farmer/awaiting-approval",
-        params: {
-          farmerId: farmer.id,
-          email: farmer.email,
-          businessName: farmer.business_name || farmer.farm_name || "",
-        },
-      } as any);
+    const activeOrCompleted =
+      status === "ACTIVE" ||
+      status === "APPROVED" ||
+      status === "COMPLETE" ||
+      farmer.approved === true ||
+      farmer.account_active === true ||
+      farmer.accountActive === true ||
+      farmer.store_unlocked === true ||
+      farmer.storeUnlocked === true ||
+      farmer.compliance_submitted === true ||
+      farmer.complianceSubmitted === true ||
+      farmer.has_completed_compliance === true ||
+      farmer.hasCompletedCompliance === true;
+
+    if (activeOrCompleted) {
+      router.replace("/farmer/dashboard" as any);
       return;
     }
 
-    if (!approved) {
-      router.replace({
-        pathname: "/farmer/compliance-upload",
-        params: {
-          farmerId: farmer.id,
-          email: farmer.email,
-          businessName: farmer.business_name || farmer.farm_name || "",
-        },
-      } as any);
-      return;
-    }
-
-    router.replace("/farmer/dashboard" as any);
+    router.replace({
+      pathname: "/farmer/compliance-upload",
+      params: {
+        farmerId: farmer.id,
+        email: farmer.email,
+        businessName: farmer.business_name || farmer.farm_name || "",
+      },
+    } as any);
   }
 
   async function handleLogin() {
@@ -357,15 +362,16 @@ export default function FarmerLoginScreen() {
           <Text style={styles.heroIcon}>🌾</Text>
           <Text style={styles.heroTitle}>Welcome Back, Farmer</Text>
           <Text style={styles.heroSubtitle}>
-            Manage compliance review, Stripe payout setup, store profile,
-            produce listings, and local orders.
+            Manage your farmer dashboard, store profile, produce listings,
+            Stripe payout setup, inventory, and local orders.
           </Text>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Farmer Login</Text>
           <Text style={styles.cardSubtitle}>
-            Use the same email and password created during farmer registration.
+            Active farmers go straight to the Farmer Dashboard. Compliance is
+            only completed one time during first setup.
           </Text>
 
           <Text style={styles.label}>Email Address</Text>
@@ -401,7 +407,9 @@ export default function FarmerLoginScreen() {
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.loginButtonText}>Login to Farmer Dashboard</Text>
+              <Text style={styles.loginButtonText}>
+                Login to Farmer Dashboard
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -428,10 +436,10 @@ export default function FarmerLoginScreen() {
         </View>
 
         <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>Farmer Approval Flow</Text>
+          <Text style={styles.infoTitle}>Farmer Setup Flow</Text>
           <Text style={styles.infoText}>
-            Register → Complete Compliance → Pay Application Fee → Connect Stripe
-            Payout → Submit for Admin Review → Dashboard Unlocks After Approval.
+            Register → Complete Compliance Once → Pay Application Fee → Pay
+            Membership → Connect Stripe → Submit → Farmer Dashboard.
           </Text>
         </View>
       </ScrollView>
@@ -443,7 +451,8 @@ export default function FarmerLoginScreen() {
               <Text style={styles.modalIcon}>🔐</Text>
               <Text style={styles.modalTitle}>Reset Farmer Password</Text>
               <Text style={styles.modalSubtitle}>
-                Enter your farmer email. Farm2Home will send a secure reset link.
+                Enter your farmer email. Farm2Home will send a secure reset
+                link.
               </Text>
 
               <TextInput
