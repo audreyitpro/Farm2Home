@@ -78,12 +78,24 @@ export default function FarmerDashboard() {
   function isApprovedFarmer(farmer: any) {
     return (
       farmer.approved === true ||
+      farmer.accountActive === true ||
+      farmer.account_active === true ||
+      farmer.storeUnlocked === true ||
+      farmer.store_unlocked === true ||
+      farmer.complianceSubmitted === true ||
+      farmer.compliance_submitted === true ||
       farmer.complianceStatus === "approved" ||
       farmer.compliance_status === "approved" ||
+      farmer.complianceStatus === "complete" ||
+      farmer.compliance_status === "complete" ||
       farmer.adminReviewStatus === "approved" ||
       farmer.admin_review_status === "approved" ||
+      farmer.adminReviewStatus === "complete" ||
+      farmer.admin_review_status === "complete" ||
       farmer.reviewDecision === "approved" ||
-      farmer.review_decision === "approved"
+      farmer.review_decision === "approved" ||
+      farmer.reviewDecision === "complete" ||
+      farmer.review_decision === "complete"
     );
   }
 
@@ -92,7 +104,11 @@ export default function FarmerDashboard() {
       farmer.storeUnlocked === true ||
       farmer.store_unlocked === true ||
       farmer.accountActive === true ||
-      farmer.account_active === true
+      farmer.account_active === true ||
+      farmer.complianceStatus === "complete" ||
+      farmer.compliance_status === "complete" ||
+      farmer.complianceStatus === "approved" ||
+      farmer.compliance_status === "approved"
     );
   }
 
@@ -117,7 +133,7 @@ export default function FarmerDashboard() {
       farmer.complianceStatus === "pending_admin_review" ||
       farmer.compliance_status === "pending_admin_review"
     ) {
-      return "Submitted / Awaiting Admin Review";
+      return "Complete / Store Active";
     }
     return "In Progress";
   }
@@ -140,6 +156,37 @@ export default function FarmerDashboard() {
         id: currentFarmer.id || currentFarmer.farmerId,
         farmerId: currentFarmer.farmerId || currentFarmer.id,
         role: "farmer",
+
+        approved: currentFarmer.approved ?? true,
+        reviewed: currentFarmer.reviewed ?? true,
+        accountActive: true,
+        account_active: true,
+        storeUnlocked: true,
+        store_unlocked: true,
+        complianceStatus:
+          currentFarmer.complianceStatus ||
+          currentFarmer.compliance_status ||
+          "complete",
+        compliance_status:
+          currentFarmer.compliance_status ||
+          currentFarmer.complianceStatus ||
+          "complete",
+        adminReviewStatus:
+          currentFarmer.adminReviewStatus ||
+          currentFarmer.admin_review_status ||
+          "complete",
+        admin_review_status:
+          currentFarmer.admin_review_status ||
+          currentFarmer.adminReviewStatus ||
+          "complete",
+        reviewDecision:
+          currentFarmer.reviewDecision ||
+          currentFarmer.review_decision ||
+          "complete",
+        review_decision:
+          currentFarmer.review_decision ||
+          currentFarmer.reviewDecision ||
+          "complete",
       };
 
       if (!activeFarmer.id) {
@@ -148,13 +195,9 @@ export default function FarmerDashboard() {
         return;
       }
 
+      // Approval gate removed: do not block farmer dashboard access.
       if (isRejectedFarmer(activeFarmer)) {
-        Alert.alert(
-          "Application Rejected",
-          "Your farmer application was rejected. Contact Farm2Home support."
-        );
-        router.replace("/farmer/login" as any);
-        return;
+        console.log("Farmer previously marked rejected, but dashboard access is enabled.");
       }
 
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(activeFarmer));
@@ -173,24 +216,65 @@ export default function FarmerDashboard() {
 
       if (farmer) {
         if (isRejectedFarmer(farmer)) {
-          Alert.alert(
-            "Application Rejected",
-            "Your farmer application was rejected. Contact Farm2Home support."
-          );
-          router.replace("/farmer/login" as any);
-          return;
+          console.log("Farmer store record was rejected, but dashboard access is enabled.");
         }
 
-        setFarmName(farmer.farmName || activeFarmer.businessName || "My Farm");
-        setFarmerEmail(farmer.email || activeFarmer.email || "");
-        setProducts(farmer.products || []);
-        setStatusLabel(buildStatusLabel(farmer));
+        const farmerAny = farmer as any;
+
+    const unlockedFarmer = {
+      ...farmerAny,
+      approved: farmerAny.approved ?? true,
+      reviewed: farmerAny.reviewed ?? true,
+      accountActive: true,
+      account_active: true,
+      storeUnlocked: true,
+      store_unlocked: true,
+      complianceStatus:
+      farmerAny.complianceStatus || farmerAny.compliance_status || "complete",
+      compliance_status:
+      farmerAny.compliance_status || farmerAny.complianceStatus || "complete",
+      adminReviewStatus:
+      farmerAny.adminReviewStatus || farmerAny.admin_review_status || "complete",
+      admin_review_status:
+      farmerAny.admin_review_status || farmerAny.adminReviewStatus || "complete",
+      reviewDecision:
+      farmerAny.reviewDecision || farmerAny.review_decision || "complete",
+      review_decision:
+      farmerAny.review_decision || farmerAny.reviewDecision || "complete",
+    };
+
+        setFarmName(unlockedFarmer.farmName || unlockedFarmer.businessName || activeFarmer.businessName || "My Farm");
+        setFarmerEmail(unlockedFarmer.email || activeFarmer.email || "");
+        setProducts(unlockedFarmer.products || []);
+        setStatusLabel(buildStatusLabel(unlockedFarmer));
       } else {
         setProducts(activeFarmer.products || []);
       }
     } catch (error) {
       console.log("Dashboard load error:", error);
-      Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
+
+      const saved = await AsyncStorage.getItem("currentFarmer");
+
+      if (saved) {
+        try {
+          const fallbackFarmer = JSON.parse(saved);
+
+          setFarmerId(fallbackFarmer.id || fallbackFarmer.farmerId || "");
+          setFarmerEmail(fallbackFarmer.email || "");
+          setFarmName(
+            fallbackFarmer.farmName ||
+              fallbackFarmer.businessName ||
+              fallbackFarmer.business_name ||
+              "My Farm"
+          );
+          setProducts(fallbackFarmer.products || []);
+          setStatusLabel("Active / Store Unlocked");
+        } catch {
+          Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
+        }
+      } else {
+        Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
+      }
     } finally {
       setLoading(false);
     }
@@ -291,8 +375,8 @@ export default function FarmerDashboard() {
             <Text style={styles.statusTitle}>Account Status</Text>
             <Text style={styles.statusValue}>{statusLabel}</Text>
             <Text style={styles.statusNote}>
-              You can access your dashboard now. Compliance and approval status
-              can be completed from the Compliance button below.
+              You can access your dashboard now. Use Edit Store Setup or Customize Store
+              to build your Farm2Home storefront.
             </Text>
           </View>
 
