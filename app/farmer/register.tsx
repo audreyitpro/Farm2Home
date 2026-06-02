@@ -583,11 +583,7 @@ export default function FarmerRegister() {
         updatedAt: now,
       };
 
-      await saveLocalFarmerSession(localFarmer);
-
-      createAdminVerificationRecord(farmerPayload);
-      notifyAdminFarmerVerification(localFarmer);
-
+      
       await saveLocalFarmerSession(localFarmer);
 
 createAdminVerificationRecord(farmerPayload);
