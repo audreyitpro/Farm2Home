@@ -15,10 +15,10 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { addProductToFarmer, Product } from "../data/farmerStore";
 import { supabase } from "../data/supabaseClient";
-import farmTheme from "../styles/farmTheme";
 import {
   FARM_PRODUCT_CATEGORIES,
   FarmProductCategory,
@@ -45,11 +45,7 @@ const PRODUCT_UNITS: FarmProductUnit[] = [
   "flat",
 ];
 
-const DELIVERY_OPTIONS = [
-  "Pickup Only",
-  "Delivery Only",
-  "Pickup and Delivery",
-];
+const DELIVERY_OPTIONS = ["Pickup Only", "Delivery Only", "Pickup and Delivery"];
 
 const PROCESSING_OPTIONS = [
   "Not Applicable",
@@ -74,7 +70,6 @@ function normalizeUnitForCategory(category: string): FarmProductUnit {
   if (category === "Fish & Aquaculture") return "lb";
   if (category === "Meat") return "lb";
   if (category === "Farm Supplies") return "bag";
-  if (category === "Seasonal Products") return "each";
   return "each";
 }
 
@@ -87,8 +82,7 @@ export default function AddProduct() {
 
   const [productName, setProductName] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] =
-    useState<FarmProductCategory>("Vegetables");
+  const [category, setCategory] = useState<FarmProductCategory>("Vegetables");
 
   const [price, setPrice] = useState("");
   const [quantity, setQuantity] = useState("");
@@ -99,11 +93,12 @@ export default function AddProduct() {
   const [processingOption, setProcessingOption] = useState("Not Applicable");
 
   const [harvestDate, setHarvestDate] = useState("");
+  const [image, setImage] = useState("");
+
   const [organic, setOrganic] = useState(false);
   const [local, setLocal] = useState(true);
   const [seasonal, setSeasonal] = useState(false);
-
-  const [image, setImage] = useState("");
+  const [featured, setFeatured] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
@@ -139,19 +134,15 @@ export default function AddProduct() {
     }
   }
 
-  const showProcessingOptions =
-    PROCESSING_REQUIRED_CATEGORIES.includes(category);
-
   function selectCategory(item: FarmProductCategory) {
     setCategory(item);
+    setUnit(normalizeUnitForCategory(item));
 
     if (PROCESSING_REQUIRED_CATEGORIES.includes(item)) {
       setProcessingOption("Traditional");
     } else {
       setProcessingOption("Not Applicable");
     }
-
-    setUnit(normalizeUnitForCategory(item));
 
     if (item === "Seasonal Products") {
       setSeasonal(true);
@@ -162,10 +153,7 @@ export default function AddProduct() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
-      Alert.alert(
-        "Permission Needed",
-        "Please allow photo access to upload product pictures."
-      );
+      Alert.alert("Permission Needed", "Please allow photo access.");
       return;
     }
 
@@ -181,59 +169,109 @@ export default function AddProduct() {
     }
   }
 
-  async function saveProductToSupabase(product: Product) {
-    try {
-      const stock = Number(product.stock || product.quantity || 0);
-      const productAny = product as any;
+  async function saveLocalProduct(product: Product) {
+    const saved =
+      (await AsyncStorage.getItem("currentFarmer")) ||
+      (await AsyncStorage.getItem("currentUser"));
 
-      const { error } = await supabase.from("products").insert({
-        farmer_id: farmerId,
-        farmer_email: farmerEmail,
-        farm_name: farmName,
+    const currentFarmer = saved ? JSON.parse(saved) : {};
+    const existingProducts = Array.isArray(currentFarmer.products)
+      ? currentFarmer.products
+      : [];
 
-        name: product.name,
-        description: product.description,
-        category: product.category,
+    const updatedFarmer = {
+      ...currentFarmer,
+      products: [...existingProducts, product],
+      updatedAt: new Date().toISOString(),
+    };
 
-        price: product.price,
-        unit: product.unit,
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.setItem("currentUserRole", "farmer");
+  }
 
-        inventory: stock,
-        quantity: stock,
-        stock,
+  async function saveProductToMarketplace(product: Product) {
+    const stock = Number(product.stock || product.quantity || 0);
+    const productAny = product as any;
 
-        low_stock_threshold: product.lowStockThreshold,
-        is_sold_out: product.isSoldOut,
+    const fullPayload = {
+      id: product.id,
+      farmer_id: farmerId,
+      farmer_email: farmerEmail,
+      farm_name: farmName,
 
-        image_url: product.image || product.imageUrl || null,
+      name: product.name,
+      description: product.description,
+      category: product.category,
 
-        delivery_option: product.deliveryOption,
-        processing_option: product.processingOption,
+      price: product.price,
+      unit: product.unit,
 
-        harvest_date: productAny.harvestDate || null,
+      inventory: stock,
+      quantity: stock,
+      stock,
 
-        organic: Boolean(productAny.organic),
-        local: Boolean(productAny.local),
-        seasonal: Boolean(productAny.seasonal),
+      low_stock_threshold: product.lowStockThreshold,
+      is_sold_out: product.isSoldOut,
 
-        tags: productAny.tags || [],
+      image_url: product.image || product.imageUrl || null,
 
-        available: stock > 0,
+      delivery_option: product.deliveryOption,
+      processing_option: product.processingOption,
 
-        sold: product.sold || 0,
-        gross_sales: product.grossSales || 0,
+      harvest_date: productAny.harvestDate || null,
 
-        source: "custom_upload",
+      organic: Boolean(productAny.organic),
+      local: Boolean(productAny.local),
+      seasonal: Boolean(productAny.seasonal),
+      featured: Boolean(productAny.featured),
 
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      tags: productAny.tags || [],
 
-      if (error) throw error;
-    } catch (error) {
-      console.log("Supabase save product error:", error);
-      throw error;
-    }
+      available: stock > 0,
+      active: true,
+      marketplace_visible: true,
+      source: "custom_upload",
+
+      sold: product.sold || 0,
+      gross_sales: product.grossSales || 0,
+
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from("products").upsert(fullPayload, {
+      onConflict: "id",
+    });
+
+    if (!error) return;
+
+    console.log("Full marketplace save failed, retrying minimal:", error.message);
+
+    const minimalPayload = {
+      farmer_id: farmerId,
+      farmer_email: farmerEmail,
+      farm_name: farmName,
+      name: product.name,
+      description: product.description,
+      category: product.category,
+      price: product.price,
+      unit: product.unit,
+      quantity: stock,
+      stock,
+      image_url: product.image || product.imageUrl || null,
+      delivery_option: product.deliveryOption,
+      available: stock > 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: minimalError } = await supabase
+      .from("products")
+      .insert(minimalPayload);
+
+    if (minimalError) throw minimalError;
   }
 
   async function submitProduct() {
@@ -245,12 +283,7 @@ export default function AddProduct() {
       return;
     }
 
-    if (
-      !farmName.trim() ||
-      !productName.trim() ||
-      !price.trim() ||
-      !quantity.trim()
-    ) {
+    if (!farmName.trim() || !productName.trim() || !price.trim() || !quantity.trim()) {
       Alert.alert(
         "Missing Info",
         "Farm name, product name, price, and quantity are required."
@@ -263,20 +296,12 @@ export default function AddProduct() {
     const numericThreshold = Number(lowStockThreshold || 5);
 
     if (Number.isNaN(numericPrice) || numericPrice <= 0) {
-      Alert.alert("Invalid Price", "Please enter a valid price greater than 0.");
+      Alert.alert("Invalid Price", "Enter a valid price greater than 0.");
       return;
     }
 
     if (Number.isNaN(numericQuantity) || numericQuantity < 0) {
-      Alert.alert("Invalid Quantity", "Please enter a valid quantity.");
-      return;
-    }
-
-    if (Number.isNaN(numericThreshold) || numericThreshold < 0) {
-      Alert.alert(
-        "Invalid Threshold",
-        "Please enter a valid low-stock threshold."
-      );
+      Alert.alert("Invalid Quantity", "Enter a valid stock quantity.");
       return;
     }
 
@@ -289,6 +314,7 @@ export default function AddProduct() {
         organic ? "organic" : "",
         local ? "local" : "",
         seasonal ? "seasonal" : "",
+        featured ? "featured" : "",
       ].filter(Boolean);
 
       const newProduct: Product = {
@@ -302,7 +328,7 @@ export default function AddProduct() {
         stock: numericQuantity,
         lowStockThreshold: numericThreshold,
         isSoldOut: numericQuantity <= 0,
-        unit: unit.trim() || "each",
+        unit,
         image: image.trim(),
         imageUrl: image.trim(),
         deliveryOption,
@@ -318,48 +344,34 @@ export default function AddProduct() {
         organic,
         local,
         seasonal,
+        featured,
         tags,
         source: "custom_upload",
         active: true,
+        available: numericQuantity > 0,
+        marketplaceVisible: true,
       } as any;
 
       await addProductToFarmer(farmerId, newProduct);
-      await saveProductToSupabase(newProduct);
-
-      const saved =
-        (await AsyncStorage.getItem("currentFarmer")) ||
-        (await AsyncStorage.getItem("currentUser"));
-
-      if (saved) {
-        const currentFarmer = JSON.parse(saved);
-        const existingProducts = Array.isArray(currentFarmer.products)
-          ? currentFarmer.products
-          : [];
-
-        const updatedFarmer = {
-          ...currentFarmer,
-          products: [...existingProducts, newProduct],
-          updatedAt: now,
-        };
-
-        await AsyncStorage.setItem(
-          "currentFarmer",
-          JSON.stringify(updatedFarmer)
-        );
-        await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
-        await AsyncStorage.setItem("userRole", "farmer");
-        await AsyncStorage.setItem("currentUserRole", "farmer");
-      }
+      await saveLocalProduct(newProduct);
+      await saveProductToMarketplace(newProduct);
 
       Alert.alert(
-        "Product Saved",
-        `${productName.trim()} was added with ${numericQuantity} ${unit} in stock.`
+        "Product Posted",
+        `${productName.trim()} was added to your store and posted to the farmer market.`,
+        [
+          {
+            text: "Go to Dashboard",
+            onPress: () => router.replace("/farmer/dashboard"),
+          },
+        ]
       );
-
-      router.replace("/farmer/dashboard");
     } catch (error: any) {
       console.log("Add product error:", error);
-      Alert.alert("Save Error", error?.message || "Unable to save product.");
+      Alert.alert(
+        "Save Error",
+        error?.message || "Unable to save product to farmer market."
+      );
     } finally {
       setLoading(false);
     }
@@ -376,10 +388,10 @@ export default function AddProduct() {
   }) {
     return (
       <TouchableOpacity
-        style={[styles.option, active && styles.optionActive]}
+        style={[styles.chip, active && styles.chipActive]}
         onPress={onPress}
       >
-        <Text style={[styles.optionText, active && styles.optionTextActive]}>
+        <Text style={[styles.chipText, active && styles.chipTextActive]}>
           {label}
         </Text>
       </TouchableOpacity>
@@ -388,222 +400,213 @@ export default function AddProduct() {
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <Text style={styles.header}>Add Custom Farm Product</Text>
+      <View style={styles.hero}>
+        <View style={styles.heroIcon}>
+          <Ionicons name="storefront-outline" size={30} color="#FFFFFF" />
+        </View>
 
-      <Text style={styles.subheader}>
-        {farmName
-          ? `${farmName} · Upload your own product picture, set price, unit, stock, and tags.`
-          : "Upload your own product picture, set price, unit, stock, and tags."}
-      </Text>
-
-      <View style={styles.notice}>
-        <Text style={styles.noticeTitle}>Custom Product Upload</Text>
-
-        <Text style={styles.noticeText}>
-          Use this when your product is not listed in Select Farm Products.
-          Customers will see your uploaded photo, price, unit, stock, pickup /
-          delivery option, and farm tags.
+        <Text style={styles.header}>Add Product to Store</Text>
+        <Text style={styles.subheader}>
+          Create a marketplace-ready product listing with photo, price, stock,
+          delivery, and tags.
         </Text>
       </View>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Farm Name"
-        placeholderTextColor="#8A8F98"
-        value={farmName}
-        onChangeText={setFarmName}
-      />
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Product Photo</Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Product Name"
-        placeholderTextColor="#8A8F98"
-        value={productName}
-        onChangeText={setProductName}
-      />
+        {image ? (
+          <Image source={{ uri: image }} style={styles.previewImage} />
+        ) : (
+          <TouchableOpacity style={styles.imagePlaceholder} onPress={pickImage}>
+            <Ionicons name="image-outline" size={38} color="#2E7D32" />
+            <Text style={styles.imagePlaceholderTitle}>Upload Product Photo</Text>
+            <Text style={styles.imagePlaceholderText}>
+              Add a clear picture so customers can see what they are buying.
+            </Text>
+          </TouchableOpacity>
+        )}
 
-      <TextInput
-        style={[styles.input, styles.textArea]}
-        placeholder="Product Description"
-        placeholderTextColor="#8A8F98"
-        value={description}
-        onChangeText={setDescription}
-        multiline
-      />
+        {image ? (
+          <TouchableOpacity style={styles.secondaryBtn} onPress={pickImage}>
+            <Text style={styles.secondaryText}>Change Photo</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
 
-      <Text style={styles.label}>Product Picture</Text>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Product Details</Text>
 
-      {image ? (
-        <Image source={{ uri: image }} style={styles.previewImage} />
-      ) : (
-        <View style={styles.imagePlaceholder}>
-          <Text style={styles.imagePlaceholderText}>No image selected</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Farm Name"
+          placeholderTextColor="#8A8F98"
+          value={farmName}
+          onChangeText={setFarmName}
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Product Name"
+          placeholderTextColor="#8A8F98"
+          value={productName}
+          onChangeText={setProductName}
+        />
+
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          placeholder="Product Description"
+          placeholderTextColor="#8A8F98"
+          value={description}
+          onChangeText={setDescription}
+          multiline
+        />
+
+        <Text style={styles.label}>Category</Text>
+
+        <View style={styles.chipWrap}>
+          {FARM_PRODUCT_CATEGORIES.map((item) => (
+            <ToggleChip
+              key={item}
+              label={item}
+              active={category === item}
+              onPress={() => selectCategory(item)}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Pricing & Inventory</Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="Price"
+          placeholderTextColor="#8A8F98"
+          value={price}
+          onChangeText={setPrice}
+          keyboardType="numeric"
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Quantity In Stock"
+          placeholderTextColor="#8A8F98"
+          value={quantity}
+          onChangeText={setQuantity}
+          keyboardType="numeric"
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Low Stock Alert Threshold"
+          placeholderTextColor="#8A8F98"
+          value={lowStockThreshold}
+          onChangeText={setLowStockThreshold}
+          keyboardType="numeric"
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Harvest / Available Date"
+          placeholderTextColor="#8A8F98"
+          value={harvestDate}
+          onChangeText={setHarvestDate}
+        />
+
+        <Text style={styles.label}>Unit</Text>
+
+        <View style={styles.chipWrap}>
+          {PRODUCT_UNITS.map((item) => (
+            <ToggleChip
+              key={item}
+              label={item}
+              active={unit === item}
+              onPress={() => setUnit(item)}
+            />
+          ))}
+        </View>
+      </View>
+
+      {PROCESSING_REQUIRED_CATEGORIES.includes(category) && (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Processing Option</Text>
+
+          <View style={styles.chipWrap}>
+            {PROCESSING_OPTIONS.map((item) => (
+              <ToggleChip
+                key={item}
+                label={item}
+                active={processingOption === item}
+                onPress={() => setProcessingOption(item)}
+              />
+            ))}
+          </View>
         </View>
       )}
 
-      <TouchableOpacity style={styles.uploadButton} onPress={pickImage}>
-        <Text style={styles.uploadButtonText}>Upload Product Picture</Text>
-      </TouchableOpacity>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Delivery & Tags</Text>
 
-      <Text style={styles.label}>Category</Text>
+        <Text style={styles.label}>Pickup / Delivery</Text>
 
-      <View style={styles.optionWrap}>
-        {FARM_PRODUCT_CATEGORIES.map((item) => (
-          <TouchableOpacity
-            key={item}
-            style={[styles.option, category === item && styles.optionActive]}
-            onPress={() => selectCategory(item)}
-          >
-            <Text
-              style={[
-                styles.optionText,
-                category === item && styles.optionTextActive,
-              ]}
-            >
-              {item}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+        <View style={styles.chipWrap}>
+          {DELIVERY_OPTIONS.map((item) => (
+            <ToggleChip
+              key={item}
+              label={item}
+              active={deliveryOption === item}
+              onPress={() => setDeliveryOption(item)}
+            />
+          ))}
+        </View>
 
-      {showProcessingOptions && (
-        <>
-          <Text style={styles.label}>Processing / Preparation Option</Text>
+        <Text style={styles.label}>Marketplace Tags</Text>
 
-          <View style={styles.optionWrap}>
-            {PROCESSING_OPTIONS.map((item) => (
-              <TouchableOpacity
-                key={item}
-                style={[
-                  styles.option,
-                  processingOption === item && styles.optionActive,
-                ]}
-                onPress={() => setProcessingOption(item)}
-              >
-                <Text
-                  style={[
-                    styles.optionText,
-                    processingOption === item && styles.optionTextActive,
-                  ]}
-                >
-                  {item}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </>
-      )}
-
-      <TextInput
-        style={styles.input}
-        placeholder="Set Your Price"
-        placeholderTextColor="#8A8F98"
-        value={price}
-        onChangeText={setPrice}
-        keyboardType="numeric"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Quantity In Stock"
-        placeholderTextColor="#8A8F98"
-        value={quantity}
-        onChangeText={setQuantity}
-        keyboardType="numeric"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Low Stock Alert Threshold"
-        placeholderTextColor="#8A8F98"
-        value={lowStockThreshold}
-        onChangeText={setLowStockThreshold}
-        keyboardType="numeric"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Harvest Date / Available Date"
-        placeholderTextColor="#8A8F98"
-        value={harvestDate}
-        onChangeText={setHarvestDate}
-      />
-
-      <Text style={styles.label}>Product Unit</Text>
-
-      <View style={styles.optionWrap}>
-        {PRODUCT_UNITS.map((item) => (
-          <TouchableOpacity
-            key={item}
-            style={[styles.option, unit === item && styles.optionActive]}
-            onPress={() => setUnit(item)}
-          >
-            <Text
-              style={[
-                styles.optionText,
-                unit === item && styles.optionTextActive,
-              ]}
-            >
-              {item}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <Text style={styles.label}>Product Tags</Text>
-
-      <View style={styles.optionWrap}>
-        <ToggleChip
-          label="Organic"
-          active={organic}
-          onPress={() => setOrganic((prev) => !prev)}
-        />
-        <ToggleChip
-          label="Local"
-          active={local}
-          onPress={() => setLocal((prev) => !prev)}
-        />
-        <ToggleChip
-          label="Seasonal"
-          active={seasonal}
-          onPress={() => setSeasonal((prev) => !prev)}
-        />
-      </View>
-
-      <Text style={styles.label}>Pickup / Delivery Options</Text>
-
-      <View style={styles.optionWrap}>
-        {DELIVERY_OPTIONS.map((item) => (
-          <TouchableOpacity
-            key={item}
-            style={[
-              styles.option,
-              deliveryOption === item && styles.optionActive,
-            ]}
-            onPress={() => setDeliveryOption(item)}
-          >
-            <Text
-              style={[
-                styles.optionText,
-                deliveryOption === item && styles.optionTextActive,
-              ]}
-            >
-              {item}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        <View style={styles.chipWrap}>
+          <ToggleChip
+            label="Organic"
+            active={organic}
+            onPress={() => setOrganic((prev) => !prev)}
+          />
+          <ToggleChip
+            label="Local"
+            active={local}
+            onPress={() => setLocal((prev) => !prev)}
+          />
+          <ToggleChip
+            label="Seasonal"
+            active={seasonal}
+            onPress={() => setSeasonal((prev) => !prev)}
+          />
+          <ToggleChip
+            label="Featured"
+            active={featured}
+            onPress={() => setFeatured((prev) => !prev)}
+          />
+        </View>
       </View>
 
       <TouchableOpacity
-        style={[styles.button, loading && styles.disabledButton]}
+        style={[styles.submitBtn, loading && styles.disabledButton]}
         onPress={submitProduct}
         disabled={loading}
       >
         {loading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
-          <Text style={styles.buttonText}>Save Custom Product</Text>
+          <>
+            <Ionicons name="cloud-upload-outline" size={20} color="#FFFFFF" />
+            <Text style={styles.submitText}>Post Product to Farmer Market</Text>
+          </>
         )}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.backBtn}
+        onPress={() => router.push("/farmer/dashboard")}
+      >
+        <Text style={styles.backText}>Back to Farmer Dashboard</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -612,56 +615,71 @@ export default function AddProduct() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: farmTheme.colors.background,
+    backgroundColor: "#F8FAF5",
   },
   content: {
     padding: 18,
-    paddingBottom: 50,
+    paddingBottom: 60,
+  },
+  hero: {
+    backgroundColor: "#14532D",
+    borderRadius: 30,
+    padding: 20,
+    marginBottom: 16,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+    backgroundColor: "#2E7D32",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 14,
   },
   header: {
-    fontSize: 32,
+    fontSize: 31,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
-    marginBottom: 6,
+    color: "#FFFFFF",
   },
   subheader: {
-    color: farmTheme.colors.mutedText,
+    color: "#DCFCE7",
+    marginTop: 8,
     lineHeight: 22,
-    marginBottom: 16,
     fontWeight: "700",
   },
-  notice: {
-    backgroundColor: farmTheme.colors.primaryLight,
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 26,
     padding: 16,
-    borderRadius: 18,
-    marginBottom: 18,
-    borderLeftWidth: 5,
-    borderLeftColor: farmTheme.colors.primary,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8DA",
   },
-  noticeTitle: {
+  sectionTitle: {
+    color: "#172017",
+    fontSize: 21,
     fontWeight: "900",
-    color: farmTheme.colors.primary,
-    marginBottom: 5,
-    fontSize: 16,
-  },
-  noticeText: {
-    color: farmTheme.colors.text,
-    lineHeight: 22,
-    fontWeight: "700",
+    marginBottom: 12,
   },
   label: {
-    fontSize: 17,
+    color: "#172017",
+    fontSize: 15,
     fontWeight: "900",
-    color: farmTheme.colors.text,
-    marginTop: 12,
+    marginTop: 8,
     marginBottom: 8,
   },
   input: {
-    ...farmTheme.inputs.input,
-    marginBottom: 12,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 16,
+    padding: 14,
+    fontWeight: "800",
+    marginBottom: 10,
+    color: "#0F172A",
   },
   textArea: {
-    height: 90,
+    height: 96,
     textAlignVertical: "top",
   },
   previewImage: {
@@ -669,65 +687,91 @@ const styles = StyleSheet.create({
     height: 230,
     borderRadius: 22,
     marginBottom: 12,
+    backgroundColor: "#ECFDF5",
   },
   imagePlaceholder: {
-    height: 180,
+    height: 210,
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    backgroundColor: "#FFFFFF",
+    borderColor: "#86EFAC",
+    backgroundColor: "#ECFDF5",
     alignItems: "center",
     justifyContent: "center",
+    padding: 18,
     marginBottom: 12,
   },
+  imagePlaceholderTitle: {
+    color: "#14532D",
+    fontWeight: "900",
+    fontSize: 17,
+    marginTop: 10,
+  },
   imagePlaceholderText: {
-    color: farmTheme.colors.mutedText,
+    color: "#475569",
     fontWeight: "700",
+    textAlign: "center",
+    marginTop: 6,
+    lineHeight: 20,
   },
-  uploadButton: {
-    ...farmTheme.buttons.secondary,
-    marginBottom: 10,
-  },
-  uploadButtonText: {
-    ...farmTheme.typography.button,
-  },
-  optionWrap: {
+  chipWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginBottom: 10,
   },
-  option: {
-    backgroundColor: "#FFFFFF",
+  chip: {
+    backgroundColor: "#F8FAFC",
     borderWidth: 1,
-    borderColor: farmTheme.colors.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    borderColor: "#2E7D32",
+    paddingVertical: 11,
+    paddingHorizontal: 13,
     borderRadius: 999,
   },
-  optionActive: {
-    backgroundColor: farmTheme.colors.primary,
+  chipActive: {
+    backgroundColor: "#2E7D32",
   },
-  optionText: {
-    color: farmTheme.colors.primary,
-    fontWeight: "800",
+  chipText: {
+    color: "#2E7D32",
+    fontWeight: "900",
   },
-  optionTextActive: {
+  chipTextActive: {
     color: "#FFFFFF",
   },
-  button: {
-    backgroundColor: farmTheme.colors.text,
+  secondaryBtn: {
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+    padding: 14,
+    borderRadius: 16,
+    alignItems: "center",
+  },
+  secondaryText: {
+    color: "#14532D",
+    fontWeight: "900",
+  },
+  submitBtn: {
+    backgroundColor: "#14532D",
+    borderRadius: 20,
     padding: 18,
-    borderRadius: 18,
-    marginTop: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 8,
+  },
+  submitText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 16,
   },
   disabledButton: {
     opacity: 0.6,
   },
-  buttonText: {
-    color: "#FFFFFF",
-    textAlign: "center",
+  backBtn: {
+    paddingVertical: 18,
+    alignItems: "center",
+  },
+  backText: {
+    color: "#14532D",
     fontWeight: "900",
-    fontSize: 16,
   },
 });
