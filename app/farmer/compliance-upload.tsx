@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -128,19 +129,21 @@ function ActionCard({
   );
 }
 
-function BusinessInfoCard({
+function BusinessInfoModalForm({
+  visible,
   initialBusinessName,
   initialOwnerName,
   initialFarmerEmail,
   initialState,
-  done,
+  onCancel,
   onSave,
 }: {
+  visible: boolean;
   initialBusinessName: string;
   initialOwnerName: string;
   initialFarmerEmail: string;
   initialState: string;
-  done: boolean;
+  onCancel: () => void;
   onSave: (values: {
     businessName: string;
     ownerName: string;
@@ -148,72 +151,93 @@ function BusinessInfoCard({
     state: string;
   }) => void;
 }) {
-  const businessNameRef = React.useRef(initialBusinessName || "");
-  const ownerNameRef = React.useRef(initialOwnerName || "");
-  const farmerEmailRef = React.useRef(initialFarmerEmail || "");
-  const stateRef = React.useRef(initialState || "MI");
+  const [draftBusinessName, setDraftBusinessName] = useState("");
+  const [draftOwnerName, setDraftOwnerName] = useState("");
+  const [draftFarmerEmail, setDraftFarmerEmail] = useState("");
+  const [draftState, setDraftState] = useState("MI");
+
+  useEffect(() => {
+    if (visible) {
+      setDraftBusinessName(initialBusinessName || "");
+      setDraftOwnerName(initialOwnerName || "");
+      setDraftFarmerEmail(initialFarmerEmail || "");
+      setDraftState(initialState || "MI");
+    }
+  }, [
+    visible,
+    initialBusinessName,
+    initialOwnerName,
+    initialFarmerEmail,
+    initialState,
+  ]);
 
   return (
-    <ActionCard
-      icon="business-outline"
-      title="Business Information"
-      subtitle="Save farm name, owner name, email, and state."
-      done={done}
-    >
-      <TextInput
-        style={styles.input}
-        placeholder="Farm / Business Name"
-        defaultValue={initialBusinessName}
-        onChangeText={(text) => {
-          businessNameRef.current = text;
-        }}
-      />
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Business Information</Text>
+          <Text style={styles.modalSub}>
+            Enter your farm details, then save.
+          </Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Owner Name"
-        defaultValue={initialOwnerName}
-        onChangeText={(text) => {
-          ownerNameRef.current = text;
-        }}
-      />
+          <TextInput
+            style={styles.input}
+            placeholder="Farm / Business Name"
+            value={draftBusinessName}
+            onChangeText={setDraftBusinessName}
+          />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Farmer Email"
-        defaultValue={initialFarmerEmail}
-        onChangeText={(text) => {
-          farmerEmailRef.current = text;
-        }}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
+          <TextInput
+            style={styles.input}
+            placeholder="Owner Name"
+            value={draftOwnerName}
+            onChangeText={setDraftOwnerName}
+          />
 
-      <TextInput
-        style={styles.input}
-        placeholder="State"
-        defaultValue={initialState || "MI"}
-        onChangeText={(text) => {
-          stateRef.current = text.toUpperCase().slice(0, 2);
-        }}
-        maxLength={2}
-      />
+          <TextInput
+            style={styles.input}
+            placeholder="Farmer Email"
+            value={draftFarmerEmail}
+            onChangeText={setDraftFarmerEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
 
-      <TouchableOpacity
-        style={styles.primaryBtn}
-        onPress={() =>
-          onSave({
-            businessName: businessNameRef.current,
-            ownerName: ownerNameRef.current,
-            farmerEmail: farmerEmailRef.current,
-            state: stateRef.current,
-          })
-        }
-        activeOpacity={0.85}
-      >
-        <Text style={styles.primaryText}>Save Business Info</Text>
-      </TouchableOpacity>
-    </ActionCard>
+          <TextInput
+            style={styles.input}
+            placeholder="State"
+            value={draftState}
+            onChangeText={(value) =>
+              setDraftState(value.toUpperCase().slice(0, 2))
+            }
+            maxLength={2}
+          />
+
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() =>
+              onSave({
+                businessName: draftBusinessName,
+                ownerName: draftOwnerName,
+                farmerEmail: draftFarmerEmail,
+                state: draftState,
+              })
+            }
+            activeOpacity={0.85}
+          >
+            <Text style={styles.primaryText}>Save Business Info</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={onCancel}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.secondaryText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -253,6 +277,7 @@ export default function FarmerComplianceUploadScreen() {
   const [uploadedDocs, setUploadedDocs] = useState<UploadedDocs>({});
   const [legalChecks, setLegalChecks] = useState<LegalChecks>({});
   const [stripeReturnHandled, setStripeReturnHandled] = useState(false);
+  const [businessModalVisible, setBusinessModalVisible] = useState(false);
 
   const requiredDocTypes = useMemo(() => {
     return REQUIRED_DOCUMENTS.filter((doc: any) => {
@@ -448,6 +473,7 @@ export default function FarmerComplianceUploadScreen() {
       setOwnerName(values.ownerName.trim());
       setFarmerEmail(normalizeEmail(values.farmerEmail));
       setState((values.state || "MI").toUpperCase().slice(0, 2));
+      setBusinessModalVisible(false);
 
       Alert.alert("Saved", "Business information saved.");
       return true;
@@ -902,14 +928,31 @@ export default function FarmerComplianceUploadScreen() {
           </Text>
         </View>
 
-        <BusinessInfoCard
-          initialBusinessName={businessName}
-          initialOwnerName={ownerName}
-          initialFarmerEmail={farmerEmail}
-          initialState={state}
+        <ActionCard
+          icon="business-outline"
+          title="Business Information"
+          subtitle="Save farm name, owner name, email, and state."
           done={businessComplete}
-          onSave={saveBusinessWithValues}
-        />
+        >
+          <Text style={styles.smallText}>
+            Farm: {businessName || "Not entered"}
+          </Text>
+          <Text style={styles.smallText}>
+            Owner: {ownerName || "Not entered"}
+          </Text>
+          <Text style={styles.smallText}>
+            Email: {farmerEmail || "Not entered"}
+          </Text>
+          <Text style={styles.smallText}>State: {state || "MI"}</Text>
+
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() => setBusinessModalVisible(true)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.primaryText}>Edit Business Info</Text>
+          </TouchableOpacity>
+        </ActionCard>
 
         <ActionCard
           icon="card-outline"
@@ -1126,6 +1169,16 @@ export default function FarmerComplianceUploadScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      <BusinessInfoModalForm
+        visible={businessModalVisible}
+        initialBusinessName={businessName}
+        initialOwnerName={ownerName}
+        initialFarmerEmail={farmerEmail}
+        initialState={state}
+        onCancel={() => setBusinessModalVisible(false)}
+        onSave={saveBusinessWithValues}
+      />
     </SafeAreaView>
   );
 }
@@ -1314,4 +1367,27 @@ const styles = StyleSheet.create({
   },
   submitText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
   disabled: { opacity: 0.6 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 18,
+    maxHeight: "90%",
+  },
+  modalTitle: {
+    color: "#14532D",
+    fontSize: 24,
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  modalSub: {
+    color: "#64748B",
+    fontWeight: "700",
+    marginBottom: 14,
+  },
 });
