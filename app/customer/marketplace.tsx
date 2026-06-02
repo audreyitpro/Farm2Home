@@ -1,3 +1,5 @@
+// app/customer/marketplace.tsx
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -16,11 +18,9 @@ import { router } from "expo-router";
 
 import { addToCart, getCartItemCount } from "../data/cartStore";
 import { getApprovedFarmers } from "../data/farmerStore";
+import { supabase } from "../data/supabaseClient";
 import { useAuth } from "../providers/AuthProvider";
 import { enforceSubscriptionAccess } from "../services/lockoutGuard";
-
-const GREEN_VALLEY_STRIPE_ACCOUNT_ID = "acct_1TWeOKCqJp7Z8L15";
-const SUNNYBROOK_STRIPE_ACCOUNT_ID = "acct_1TWjGSE1SmOAMwkt";
 
 const COLORS = {
   primary: "#2E7D32",
@@ -39,26 +39,21 @@ const COLORS = {
 
 const DEFAULT_CATEGORIES = [
   "All",
-  "Fresh Produce",
   "Vegetables",
   "Fruits",
-  "Organic",
   "Eggs",
   "Honey",
   "Meat",
   "Poultry",
-  "Fish Farm / Aquaculture",
+  "Fish & Aquaculture",
   "Dairy",
   "Baked Goods",
   "Flowers",
-  "Plants & Herbs",
-  "Hay",
-  "Bale of Hay",
-  "Seasonal",
-  "Animal Feed",
-  "Herbs",
+  "Plants & Nursery",
+  "Hay & Feed",
   "Farm Supplies",
-  "Garden Starters",
+  "Seasonal Products",
+  "Specialty Products",
 ];
 
 type Product = {
@@ -70,10 +65,28 @@ type Product = {
   description?: string;
   image?: string;
   imageUrl?: string;
+  image_url?: string;
   farmerId?: string;
+  farmer_id?: string;
   farmName?: string;
+  farm_name?: string;
+  farmerEmail?: string;
+  farmer_email?: string;
   farmerStripeAccountId?: string;
   stripeAccountId?: string;
+  stripe_account_id?: string;
+  farmer_stripe_account_id?: string;
+  stock?: number;
+  quantity?: number;
+  inventory?: number;
+  available?: boolean;
+  active?: boolean;
+  marketplace_visible?: boolean;
+  organic?: boolean;
+  local?: boolean;
+  seasonal?: boolean;
+  featured?: boolean;
+  tags?: string[];
 };
 
 type Farmer = {
@@ -85,8 +98,13 @@ type Farmer = {
   rating?: number;
   distanceMiles?: number;
   logoUrl?: string;
+  farmLogoUrl?: string;
+  logo_url?: string;
+  farm_logo_url?: string;
   stripeAccountId?: string;
   farmerStripeAccountId?: string;
+  stripe_account_id?: string;
+  farmer_stripe_account_id?: string;
   products?: Product[];
 };
 
@@ -95,17 +113,60 @@ function getFarmerName(farmer: Farmer) {
 }
 
 function getFarmerLocation(farmer: Farmer) {
-  return farmer.farmLocation || farmer.location || "Michigan";
+  return farmer.farmLocation || farmer.location || "Local Farm";
+}
+
+function getFarmerLogo(farmer: Farmer) {
+  return (
+    farmer.logoUrl ||
+    farmer.farmLogoUrl ||
+    farmer.logo_url ||
+    farmer.farm_logo_url ||
+    ""
+  );
+}
+
+function getProductImage(product: Product) {
+  return product.image || product.imageUrl || product.image_url || "";
+}
+
+function getProductStock(product: Product) {
+  return Number(product.stock ?? product.quantity ?? product.inventory ?? 0);
+}
+
+function isProductAvailable(product: Product) {
+  const stock = getProductStock(product);
+  if (product.available === false) return false;
+  if (product.active === false) return false;
+  if (product.marketplace_visible === false) return false;
+  return stock > 0;
 }
 
 function getFarmerStripeAccountId(farmer: Farmer, product?: Product) {
   return (
     product?.farmerStripeAccountId ||
     product?.stripeAccountId ||
+    product?.farmer_stripe_account_id ||
+    product?.stripe_account_id ||
     farmer.farmerStripeAccountId ||
     farmer.stripeAccountId ||
-    GREEN_VALLEY_STRIPE_ACCOUNT_ID
+    farmer.farmer_stripe_account_id ||
+    farmer.stripe_account_id ||
+    ""
   );
+}
+
+function normalizeCategory(category?: string) {
+  const value = String(category || "").trim();
+
+  if (!value) return "Farm Goods";
+  if (value === "Fish Farm / Aquaculture") return "Fish & Aquaculture";
+  if (value === "Bale of Hay") return "Hay & Feed";
+  if (value === "Hay") return "Hay & Feed";
+  if (value === "Plants & Herbs") return "Plants & Nursery";
+  if (value === "Seasonal") return "Seasonal Products";
+
+  return value;
 }
 
 function getProductEmoji(product: Product) {
@@ -117,56 +178,24 @@ function getProductEmoji(product: Product) {
   if (category.includes("egg") || name.includes("egg")) return "🥚";
   if (category.includes("honey") || name.includes("honey")) return "🍯";
   if (category.includes("dairy") || name.includes("milk")) return "🥛";
+  if (category.includes("fish") || name.includes("catfish")) return "🐟";
   if (category.includes("meat") || category.includes("poultry")) return "🥩";
   if (category.includes("fruit") || name.includes("apple")) return "🍎";
+  if (category.includes("seasonal") || name.includes("pumpkin")) return "🎃";
+  if (name.includes("christmas")) return "🎄";
   if (category.includes("vegetable") || category.includes("greens")) return "🥬";
 
   return "🥬";
 }
 
-function getFallbackFarmers(): Farmer[] {
-  return [
-    {
-      id: "farm_1",
-      farmName: "Green Valley Farm",
-      location: "Sterling Heights, MI",
-      rating: 4.8,
-      distanceMiles: 5,
-      stripeAccountId: GREEN_VALLEY_STRIPE_ACCOUNT_ID,
-      products: [
-        { id: "apple_1", name: "Fresh Apples", category: "Fruits", price: 4.99, unit: "bag" },
-        { id: "honey_1", name: "Raw Honey", category: "Honey", price: 9.99, unit: "jar" },
-        { id: "corn_1", name: "Sweet Corn", category: "Vegetables", price: 3.5, unit: "dozen" },
-        { id: "hay_1", name: "Bale of Hay", category: "Bale of Hay", price: 12, unit: "bale" },
-        { id: "flowers_1", name: "Fresh Cut Flowers", category: "Flowers", price: 14.99, unit: "bouquet" },
-      ],
-    },
-    {
-      id: "farm_2",
-      farmName: "Sunnybrook Farm",
-      location: "Royal Oak, MI",
-      rating: 4.9,
-      distanceMiles: 9,
-      stripeAccountId: SUNNYBROOK_STRIPE_ACCOUNT_ID,
-      products: [
-        { id: "egg_1", name: "Farm Eggs", category: "Eggs", price: 5.99, unit: "dozen" },
-        { id: "milk_1", name: "Fresh Milk", category: "Dairy", price: 6.5, unit: "gallon" },
-        { id: "feed_1", name: "Animal Feed Mix", category: "Animal Feed", price: 18, unit: "bag" },
-      ],
-    },
-  ];
-}
-
 function normalizeFarmers(inputFarmers: Farmer[]): Farmer[] {
   return inputFarmers.map((farmer) => {
-    let stripeAccountId =
+    const stripeAccountId =
       farmer.stripeAccountId ||
       farmer.farmerStripeAccountId ||
-      GREEN_VALLEY_STRIPE_ACCOUNT_ID;
-
-    if (farmer.id === "farm_2" || getFarmerName(farmer).includes("Sunnybrook")) {
-      stripeAccountId = SUNNYBROOK_STRIPE_ACCOUNT_ID;
-    }
+      farmer.stripe_account_id ||
+      farmer.farmer_stripe_account_id ||
+      "";
 
     const farmName = getFarmerName(farmer);
 
@@ -174,18 +203,162 @@ function normalizeFarmers(inputFarmers: Farmer[]): Farmer[] {
       ...farmer,
       farmName,
       location: getFarmerLocation(farmer),
+      logoUrl: getFarmerLogo(farmer),
       stripeAccountId,
-      products: (farmer.products || []).map((product) => ({
-        ...product,
-        farmerId: product.farmerId || farmer.id,
-        farmName: product.farmName || farmName,
-        farmerStripeAccountId:
-          product.farmerStripeAccountId ||
-          product.stripeAccountId ||
-          stripeAccountId,
-      })),
+      products: (farmer.products || [])
+        .map((product) => ({
+          ...product,
+          category: normalizeCategory(product.category),
+          farmerId: product.farmerId || product.farmer_id || farmer.id,
+          farmName: product.farmName || product.farm_name || farmName,
+          farmerStripeAccountId:
+            product.farmerStripeAccountId ||
+            product.stripeAccountId ||
+            product.farmer_stripe_account_id ||
+            product.stripe_account_id ||
+            stripeAccountId,
+          image: getProductImage(product),
+          stock: getProductStock(product),
+        }))
+        .filter(isProductAvailable),
     };
   });
+}
+
+async function loadProductsFromSupabase(): Promise<Farmer[]> {
+  try {
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .or("marketplace_visible.is.true,active.is.true,available.is.true")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log("Supabase marketplace products ignored:", error.message);
+      return [];
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+
+    const products = rows
+      .map((row: any): Product => {
+        const farmerId = String(row.farmer_id || row.farmerId || "");
+        const farmName = String(row.farm_name || row.farmName || "Local Farm");
+
+        return {
+          id: String(row.id || `product_${Date.now()}_${Math.random()}`),
+          name: String(row.name || "Farm Product"),
+          description: row.description || "",
+          category: normalizeCategory(row.category),
+          price: Number(row.price || 0),
+          unit: row.unit || "each",
+          image: row.image_url || row.image || row.imageUrl || "",
+          imageUrl: row.image_url || row.image || row.imageUrl || "",
+          farmerId,
+          farmer_id: farmerId,
+          farmName,
+          farm_name: farmName,
+          farmerEmail: row.farmer_email || "",
+          farmer_email: row.farmer_email || "",
+          farmerStripeAccountId:
+            row.farmer_stripe_account_id || row.stripe_account_id || "",
+          farmer_stripe_account_id:
+            row.farmer_stripe_account_id || row.stripe_account_id || "",
+          stock: Number(row.stock ?? row.quantity ?? row.inventory ?? 0),
+          quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? 0),
+          inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? 0),
+          available: row.available !== false,
+          active: row.active !== false,
+          marketplace_visible: row.marketplace_visible !== false,
+          organic: Boolean(row.organic),
+          local: Boolean(row.local),
+          seasonal: Boolean(row.seasonal),
+          featured: Boolean(row.featured),
+          tags: Array.isArray(row.tags) ? row.tags : [],
+        };
+      })
+      .filter((product) => product.farmerId && isProductAvailable(product));
+
+    const farmerIds = Array.from(
+      new Set(products.map((product) => product.farmerId || "").filter(Boolean))
+    );
+
+    let farmerRows: any[] = [];
+
+    if (farmerIds.length > 0) {
+      const { data: farmersData, error: farmersError } = await supabase
+        .from("farmers")
+        .select("*")
+        .in("id", farmerIds);
+
+      if (!farmersError && Array.isArray(farmersData)) {
+        farmerRows = farmersData;
+      }
+    }
+
+    const farmerInfoMap = new Map<string, any>();
+
+    farmerRows.forEach((farmer) => {
+      farmerInfoMap.set(String(farmer.id), farmer);
+    });
+
+    const grouped = new Map<string, Farmer>();
+
+    products.forEach((product) => {
+      const farmerId = product.farmerId || product.farmer_id || "";
+      const farmerInfo = farmerInfoMap.get(farmerId);
+
+      const farmName =
+        farmerInfo?.farm_name ||
+        farmerInfo?.business_name ||
+        product.farmName ||
+        product.farm_name ||
+        "Local Farm";
+
+      const logoUrl =
+        farmerInfo?.logo_url ||
+        farmerInfo?.farm_logo_url ||
+        farmerInfo?.logoUrl ||
+        farmerInfo?.farmLogoUrl ||
+        "";
+
+      const location =
+        farmerInfo?.city && farmerInfo?.state
+          ? `${farmerInfo.city}, ${farmerInfo.state}`
+          : farmerInfo?.state || "Local Farm Market";
+
+      if (!grouped.has(farmerId)) {
+        grouped.set(farmerId, {
+          id: farmerId,
+          farmName,
+          name: farmName,
+          location,
+          logoUrl,
+          farmLogoUrl: logoUrl,
+          rating: 4.8,
+          distanceMiles: 5,
+          stripeAccountId:
+            farmerInfo?.stripe_account_id ||
+            farmerInfo?.farmer_stripe_account_id ||
+            product.farmerStripeAccountId ||
+            "",
+          farmerStripeAccountId:
+            farmerInfo?.stripe_account_id ||
+            farmerInfo?.farmer_stripe_account_id ||
+            product.farmerStripeAccountId ||
+            "",
+          products: [],
+        });
+      }
+
+      grouped.get(farmerId)?.products?.push(product);
+    });
+
+    return Array.from(grouped.values());
+  } catch (error) {
+    console.log("Load products from Supabase error:", error);
+    return [];
+  }
 }
 
 export default function MarketplaceScreen() {
@@ -234,30 +407,102 @@ export default function MarketplaceScreen() {
       setLoading(true);
 
       const approvedFarmers = (await getApprovedFarmers()) || [];
-      const testFarmRaw = await AsyncStorage.getItem("farm2homeFarmers");
-      const testFarmers = testFarmRaw ? JSON.parse(testFarmRaw) : [];
+
+      const localFarmerRaw =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      const currentFarmer = localFarmerRaw ? JSON.parse(localFarmerRaw) : null;
+
+      const localCurrentFarmer =
+        currentFarmer?.role === "farmer" &&
+        currentFarmer?.accountActive === true &&
+        currentFarmer?.storeUnlocked === true &&
+        Array.isArray(currentFarmer.products)
+          ? [
+              {
+                id: currentFarmer.id || currentFarmer.farmerId || "",
+                farmName:
+                  currentFarmer.farmName ||
+                  currentFarmer.businessName ||
+                  currentFarmer.business_name ||
+                  "Local Farm",
+                location:
+                  currentFarmer.city && currentFarmer.state
+                    ? `${currentFarmer.city}, ${currentFarmer.state}`
+                    : currentFarmer.state || "Local Farm",
+                rating: 4.9,
+                distanceMiles: 3,
+                logoUrl:
+                  currentFarmer.logoUrl ||
+                  currentFarmer.farmLogoUrl ||
+                  currentFarmer.logo_url ||
+                  currentFarmer.farm_logo_url ||
+                  "",
+                farmLogoUrl:
+                  currentFarmer.logoUrl ||
+                  currentFarmer.farmLogoUrl ||
+                  currentFarmer.logo_url ||
+                  currentFarmer.farm_logo_url ||
+                  "",
+                stripeAccountId:
+                  currentFarmer.stripeAccountId ||
+                  currentFarmer.farmerStripeAccountId ||
+                  "",
+                farmerStripeAccountId:
+                  currentFarmer.stripeAccountId ||
+                  currentFarmer.farmerStripeAccountId ||
+                  "",
+                products: currentFarmer.products,
+              },
+            ]
+          : [];
+
+      const supabaseFarmers = await loadProductsFromSupabase();
 
       const mergedFarmers: Farmer[] = [
+        ...supabaseFarmers,
+        ...localCurrentFarmer,
         ...(Array.isArray(approvedFarmers) ? approvedFarmers : []),
-        ...(Array.isArray(testFarmers) ? testFarmers : []),
       ];
 
-      const farmersToUse =
-        mergedFarmers.length > 0 ? mergedFarmers : getFallbackFarmers();
+      const farmersToUse = mergedFarmers;
 
       const normalizedFarmers = normalizeFarmers(farmersToUse).filter(
-        (farmer) => farmer.products && farmer.products.length > 0
+        (farmer) => farmer.id && farmer.products && farmer.products.length > 0
       );
 
-      const uniqueFarmers = Array.from(
-        new Map(normalizedFarmers.map((farmer) => [farmer.id, farmer])).values()
-      );
+      const farmerMap = new Map<string, Farmer>();
 
-      setFarmers(uniqueFarmers);
+      normalizedFarmers.forEach((farmer) => {
+        if (!farmerMap.has(farmer.id)) {
+          farmerMap.set(farmer.id, farmer);
+          return;
+        }
+
+        const existing = farmerMap.get(farmer.id);
+        const existingProducts = existing?.products || [];
+        const incomingProducts = farmer.products || [];
+
+        const productMap = new Map<string, Product>();
+
+        [...existingProducts, ...incomingProducts].forEach((product) => {
+          productMap.set(product.id, product);
+        });
+
+        farmerMap.set(farmer.id, {
+          ...(existing || farmer),
+          ...farmer,
+          logoUrl: getFarmerLogo(farmer) || getFarmerLogo(existing || farmer),
+          products: Array.from(productMap.values()),
+        });
+      });
+
+      setFarmers(Array.from(farmerMap.values()));
     } catch (error) {
       console.log("Marketplace load error:", error);
-      setFarmers(normalizeFarmers(getFallbackFarmers()));
-      Alert.alert("Using Test Marketplace", "Test farmers were loaded.");
+      setFarmers([]);
+      Alert.alert("Marketplace Error", "Unable to load active farms.");
     } finally {
       setLoading(false);
     }
@@ -279,11 +524,15 @@ export default function MarketplaceScreen() {
 
     farmers.forEach((farmer) => {
       (farmer.products || []).forEach((product) => {
-        if (product.category) categorySet.add(product.category);
+        if (product.category) categorySet.add(normalizeCategory(product.category));
       });
     });
 
     return Array.from(new Set([...DEFAULT_CATEGORIES, ...Array.from(categorySet)]));
+  }, [farmers]);
+
+  const allProductCount = useMemo(() => {
+    return farmers.reduce((sum, farmer) => sum + (farmer.products || []).length, 0);
   }, [farmers]);
 
   const featuredProducts = useMemo(() => {
@@ -295,7 +544,15 @@ export default function MarketplaceScreen() {
       });
     });
 
-    return allProducts.slice(0, 8);
+    const featured = allProducts.filter(
+      ({ product }) =>
+        product.featured ||
+        product.seasonal ||
+        product.organic ||
+        String(product.tags || "").includes("featured")
+    );
+
+    return (featured.length > 0 ? featured : allProducts).slice(0, 10);
   }, [farmers]);
 
   const filteredFarmers = useMemo(() => {
@@ -304,18 +561,21 @@ export default function MarketplaceScreen() {
     return farmers
       .map((farmer) => {
         const filteredProducts = (farmer.products || []).filter((product) => {
+          const category = normalizeCategory(product.category);
+
           const matchesCategory =
-            selectedCategory === "All" || product.category === selectedCategory;
+            selectedCategory === "All" || category === selectedCategory;
 
           const matchesSearch =
             !search ||
             product.name?.toLowerCase().includes(search) ||
-            product.category?.toLowerCase().includes(search) ||
+            category.toLowerCase().includes(search) ||
             product.unit?.toLowerCase().includes(search) ||
+            product.description?.toLowerCase().includes(search) ||
             farmer.farmName?.toLowerCase().includes(search) ||
             farmer.name?.toLowerCase().includes(search);
 
-          return matchesCategory && matchesSearch;
+          return matchesCategory && matchesSearch && isProductAvailable(product);
         });
 
         return { ...farmer, products: filteredProducts };
@@ -347,7 +607,7 @@ export default function MarketplaceScreen() {
         name: product.name,
         price: Number(product.price || 0),
         quantity: 1,
-        image: product.image || product.imageUrl,
+        image: getProductImage(product),
         farmName: getFarmerName(farmer),
         farmerId: farmer.id,
         farmerStripeAccountId,
@@ -376,7 +636,9 @@ export default function MarketplaceScreen() {
   }
 
   function renderProductCard(farmer: Farmer, product: Product, compact = false) {
-    const imageSource = product.image || product.imageUrl || "";
+    const imageSource = getProductImage(product);
+    const stock = getProductStock(product);
+    const category = normalizeCategory(product.category);
 
     return (
       <View
@@ -398,11 +660,17 @@ export default function MarketplaceScreen() {
             </View>
           )}
 
-          <View style={styles.organicBadge}>
-            <Text style={styles.organicBadgeText}>
-              {product.category || "Farm Goods"}
+          <View style={styles.categoryBadge}>
+            <Text style={styles.categoryBadgeText} numberOfLines={1}>
+              {category}
             </Text>
           </View>
+
+          {product.featured ? (
+            <View style={styles.featuredBadge}>
+              <Text style={styles.featuredBadgeText}>Featured</Text>
+            </View>
+          ) : null}
         </Pressable>
 
         <Text style={styles.productName} numberOfLines={1}>
@@ -413,13 +681,19 @@ export default function MarketplaceScreen() {
           {getFarmerName(farmer)}
         </Text>
 
+        <View style={styles.tagLine}>
+          {product.organic ? <Text style={styles.miniTag}>Organic</Text> : null}
+          {product.local ? <Text style={styles.miniTag}>Local</Text> : null}
+          {product.seasonal ? <Text style={styles.miniTag}>Seasonal</Text> : null}
+        </View>
+
         <View style={styles.priceRow}>
           <View>
             <Text style={styles.productPrice}>
               ${Number(product.price || 0).toFixed(2)}
             </Text>
             <Text style={styles.productUnit}>
-              {product.unit ? `per ${product.unit}` : "each"}
+              {product.unit ? `per ${product.unit}` : "each"} · {stock} left
             </Text>
           </View>
 
@@ -438,6 +712,8 @@ export default function MarketplaceScreen() {
   }
 
   function renderFarmerRow({ item }: { item: Farmer }) {
+    const logo = getFarmerLogo(item);
+
     return (
       <View style={styles.farmSection}>
         <View style={styles.farmHeader}>
@@ -448,8 +724,8 @@ export default function MarketplaceScreen() {
             ]}
             onPress={() => openFarmerShop(item)}
           >
-            {item.logoUrl ? (
-              <Image source={{ uri: item.logoUrl }} style={styles.farmLogo} />
+            {logo ? (
+              <Image source={{ uri: logo }} style={styles.farmLogo} />
             ) : (
               <View style={styles.logoPlaceholder}>
                 <Text style={styles.logoPlaceholderText}>🚜</Text>
@@ -467,6 +743,10 @@ export default function MarketplaceScreen() {
                 <Text style={styles.dot}>•</Text>
                 <Text style={styles.distanceText}>
                   {Number(item.distanceMiles || 5).toFixed(1)} mi
+                </Text>
+                <Text style={styles.dot}>•</Text>
+                <Text style={styles.distanceText}>
+                  {(item.products || []).length} items
                 </Text>
               </View>
             </View>
@@ -499,8 +779,10 @@ export default function MarketplaceScreen() {
       <View>
         <View style={styles.topBar}>
           <View>
-            <Text style={styles.greeting}>Welcome to Farm2Home</Text>
-            <Text style={styles.locationLine}>Fresh local farm goods near you</Text>
+            <Text style={styles.greeting}>Farm2Home Market</Text>
+            <Text style={styles.locationLine}>
+              {allProductCount} local farm goods available
+            </Text>
           </View>
 
           <Pressable
@@ -522,9 +804,10 @@ export default function MarketplaceScreen() {
         <View style={styles.heroCard}>
           <View style={styles.heroTextBlock}>
             <Text style={styles.heroBadge}>Fresh Harvest</Text>
-            <Text style={styles.heroTitle}>Farm goods delivered to your door</Text>
+            <Text style={styles.heroTitle}>Shop directly from local farmers</Text>
             <Text style={styles.heroSubtitle}>
-              Shop produce, eggs, dairy, honey, flowers, hay, and supplies from trusted local farmers.
+              Produce, eggs, honey, meat, fish, hay, flowers, seasonal goods,
+              and farm supplies.
             </Text>
 
             <Pressable
@@ -540,7 +823,24 @@ export default function MarketplaceScreen() {
 
           <View style={styles.heroArt}>
             <Text style={styles.heroArtEmoji}>🥬</Text>
-            <Text style={styles.heroArtEmojiSmall}>🍯 🥚 🌽</Text>
+            <Text style={styles.heroArtEmojiSmall}>🍯 🥚 🌽 🎄</Text>
+          </View>
+        </View>
+
+        <View style={styles.quickStatsRow}>
+          <View style={styles.quickStat}>
+            <Text style={styles.quickStatValue}>{farmers.length}</Text>
+            <Text style={styles.quickStatLabel}>Farms</Text>
+          </View>
+
+          <View style={styles.quickStat}>
+            <Text style={styles.quickStatValue}>{allProductCount}</Text>
+            <Text style={styles.quickStatLabel}>Products</Text>
+          </View>
+
+          <View style={styles.quickStat}>
+            <Text style={styles.quickStatValue}>{categories.length - 1}</Text>
+            <Text style={styles.quickStatLabel}>Categories</Text>
           </View>
         </View>
 
@@ -548,7 +848,7 @@ export default function MarketplaceScreen() {
           <Text style={styles.searchIcon}>🔎</Text>
           <TextInput
             style={styles.searchInput}
-            placeholder="Search produce, farm, flowers, hay..."
+            placeholder="Search pumpkins, fish, hay, honey, farms..."
             placeholderTextColor="#8A9482"
             value={searchText}
             onChangeText={setSearchText}
@@ -590,7 +890,9 @@ export default function MarketplaceScreen() {
             <View style={styles.sectionTitleRow}>
               <View>
                 <Text style={styles.sectionTitle}>Featured Fresh Picks</Text>
-                <Text style={styles.sectionSubtitle}>Popular products from nearby farms</Text>
+                <Text style={styles.sectionSubtitle}>
+                  New and popular products from nearby farms
+                </Text>
               </View>
             </View>
 
@@ -624,7 +926,7 @@ export default function MarketplaceScreen() {
     return (
       <View style={styles.loadingPage}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Checking subscription access...</Text>
+        <Text style={styles.loadingText}>Checking marketplace access...</Text>
       </View>
     );
   }
@@ -646,14 +948,16 @@ export default function MarketplaceScreen() {
         renderItem={renderFarmerRow}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={renderHeader}
+        refreshing={loading}
+        onRefresh={loadMarketplace}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
             <Text style={styles.emptyIcon}>🌾</Text>
             <Text style={styles.emptyTitle}>
-              {loading ? "Loading marketplace..." : "No farmers found"}
+              {loading ? "Loading marketplace..." : "No active farms found"}
             </Text>
             <Text style={styles.emptySubtitle}>
-              Try another search, select a different category, or check back later.
+              Active farms with posted marketplace products will appear here.
             </Text>
           </View>
         }
@@ -727,11 +1031,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
   },
   cartTopIcon: {
     fontSize: 24,
@@ -817,6 +1116,31 @@ const styles = StyleSheet.create({
   heroArtEmojiSmall: {
     fontSize: 18,
     marginTop: 10,
+  },
+  quickStatsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginHorizontal: 18,
+    marginTop: 14,
+  },
+  quickStat: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  quickStatValue: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 21,
+  },
+  quickStatLabel: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 2,
+    fontSize: 12,
   },
   searchBox: {
     marginHorizontal: 18,
@@ -909,11 +1233,6 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
   },
   farmHeader: {
     flexDirection: "row",
@@ -932,6 +1251,7 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 20,
     marginRight: 12,
+    backgroundColor: COLORS.softGreen,
   },
   logoPlaceholder: {
     width: 64,
@@ -963,6 +1283,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginTop: 7,
+    flexWrap: "wrap",
   },
   ratingText: {
     color: "#9A6A00",
@@ -997,7 +1318,7 @@ const styles = StyleSheet.create({
     paddingRight: 6,
   },
   productCard: {
-    width: 178,
+    width: 186,
     backgroundColor: COLORS.lightGreen,
     borderRadius: 24,
     padding: 12,
@@ -1005,7 +1326,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   featuredProductCard: {
-    width: 170,
+    width: 178,
     backgroundColor: COLORS.card,
   },
   productImageWrap: {
@@ -1013,14 +1334,14 @@ const styles = StyleSheet.create({
   },
   productImage: {
     width: "100%",
-    height: 116,
+    height: 122,
     borderRadius: 20,
     marginBottom: 10,
     backgroundColor: COLORS.softGreen,
   },
   productPlaceholder: {
     width: "100%",
-    height: 116,
+    height: 122,
     borderRadius: 20,
     backgroundColor: COLORS.softGreen,
     justifyContent: "center",
@@ -1030,18 +1351,32 @@ const styles = StyleSheet.create({
   productEmoji: {
     fontSize: 48,
   },
-  organicBadge: {
+  categoryBadge: {
     position: "absolute",
     left: 8,
     bottom: 18,
-    backgroundColor: "rgba(255,255,255,0.92)",
+    backgroundColor: "rgba(255,255,255,0.95)",
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 999,
     maxWidth: 130,
   },
-  organicBadgeText: {
+  categoryBadgeText: {
     color: COLORS.primary,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  featuredBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: COLORS.secondary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  featuredBadgeText: {
+    color: COLORS.dark,
     fontSize: 10,
     fontWeight: "900",
   },
@@ -1055,6 +1390,23 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12,
     fontWeight: "700",
+  },
+  tagLine: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+    marginTop: 8,
+    minHeight: 20,
+  },
+  miniTag: {
+    backgroundColor: "#DCFCE7",
+    color: COLORS.primaryDark,
+    fontSize: 10,
+    fontWeight: "900",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    overflow: "hidden",
   },
   priceRow: {
     marginTop: 10,
@@ -1126,11 +1478,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 23,
     paddingVertical: 16,
     borderRadius: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 5,
   },
   cartFloatingText: {
     color: "#FFFFFF",
