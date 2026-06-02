@@ -1,3 +1,5 @@
+// app/farmer/add-product.tsx
+
 import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -17,58 +19,30 @@ import { router, useFocusEffect } from "expo-router";
 import { addProductToFarmer, Product } from "../data/farmerStore";
 import { supabase } from "../data/supabaseClient";
 import farmTheme from "../styles/farmTheme";
+import {
+  FARM_PRODUCT_CATEGORIES,
+  FarmProductCategory,
+  FarmProductUnit,
+} from "../data/farmProductCatalog";
 
-const PRODUCT_CATEGORIES = [
-  "Fresh Produce",
-  "Vegetables",
-  "Fruits",
-  "Organic",
-  "Eggs",
-  "Honey",
-  "Meat",
-  "Poultry",
-  "Fish Farm / Aquaculture",
-  "Catfish",
-  "Trout",
-  "Salmon",
-  "Other Fish",
-  "Dairy",
-  "Baked Goods",
-  "Livestock",
-  "Flowers",
-  "Plants & Herbs",
-  "Bushes & Plants",
-  "Hay",
-  "Bale of Hay",
-  "Seasonal",
-  "Animal Feed",
-  "Herbs",
-  "Farm Supplies",
-  "Bushes",
-  "Garden Starters",
-];
-
-const PRODUCT_UNITS = [
-  "each",
-  "bag",
-  "jar",
+const PRODUCT_UNITS: FarmProductUnit[] = [
+  "lb",
+  "bunch",
   "dozen",
-  "1/2 dozen",
-  "gallon",
-  "pound",
-  "bundle",
+  "each",
   "box",
-  "crate",
+  "bag",
+  "case",
+  "bundle",
+  "gallon",
+  "pint",
+  "quart",
+  "jar",
+  "basket",
   "bale",
-  "bouquet",
-  "bucket",
+  "cord",
   "tray",
   "flat",
-  "stem",
-  "case",
-  "quart",
-  "pint",
-  "bushel",
 ];
 
 const DELIVERY_OPTIONS = [
@@ -78,20 +52,31 @@ const DELIVERY_OPTIONS = [
 ];
 
 const PROCESSING_OPTIONS = [
+  "Not Applicable",
   "Traditional",
   "Halal",
   "Both Traditional and Halal",
 ];
 
-const PROCESSING_REQUIRED_CATEGORIES = [
+const PROCESSING_REQUIRED_CATEGORIES: FarmProductCategory[] = [
   "Meat",
-  "Poultry",
-  "Fish Farm / Aquaculture",
-  "Catfish",
-  "Trout",
-  "Salmon",
-  "Other Fish",
+  "Fish & Aquaculture",
 ];
+
+function normalizeUnitForCategory(category: string): FarmProductUnit {
+  if (category === "Eggs") return "dozen";
+  if (category === "Flowers") return "bunch";
+  if (category === "Hay & Feed") return "bale";
+  if (category === "Plants & Nursery") return "each";
+  if (category === "Dairy") return "gallon";
+  if (category === "Honey & Bee Products") return "jar";
+  if (category === "Bakery & Cottage Foods") return "each";
+  if (category === "Fish & Aquaculture") return "lb";
+  if (category === "Meat") return "lb";
+  if (category === "Farm Supplies") return "bag";
+  if (category === "Seasonal Products") return "each";
+  return "each";
+}
 
 export default function AddProduct() {
   const [loading, setLoading] = useState(false);
@@ -102,15 +87,21 @@ export default function AddProduct() {
 
   const [productName, setProductName] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Fresh Produce");
+  const [category, setCategory] =
+    useState<FarmProductCategory>("Vegetables");
 
   const [price, setPrice] = useState("");
   const [quantity, setQuantity] = useState("");
   const [lowStockThreshold, setLowStockThreshold] = useState("5");
 
-  const [unit, setUnit] = useState("each");
+  const [unit, setUnit] = useState<FarmProductUnit>("each");
   const [deliveryOption, setDeliveryOption] = useState("Pickup and Delivery");
   const [processingOption, setProcessingOption] = useState("Not Applicable");
+
+  const [harvestDate, setHarvestDate] = useState("");
+  const [organic, setOrganic] = useState(false);
+  const [local, setLocal] = useState(true);
+  const [seasonal, setSeasonal] = useState(false);
 
   const [image, setImage] = useState("");
 
@@ -122,7 +113,9 @@ export default function AddProduct() {
 
   async function loadCurrentFarmer() {
     try {
-      const saved = await AsyncStorage.getItem("currentFarmer");
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
 
       if (!saved) {
         router.replace("/farmer/login");
@@ -131,9 +124,15 @@ export default function AddProduct() {
 
       const currentFarmer = JSON.parse(saved);
 
-      setFarmerId(currentFarmer.id || "");
+      setFarmerId(currentFarmer.id || currentFarmer.farmerId || "");
       setFarmerEmail(currentFarmer.email || "");
-      setFarmName(currentFarmer.farmName || currentFarmer.companyName || "");
+      setFarmName(
+        currentFarmer.farmName ||
+          currentFarmer.businessName ||
+          currentFarmer.business_name ||
+          currentFarmer.farm_name ||
+          ""
+      );
     } catch (error) {
       console.log("Load current farmer error:", error);
       router.replace("/farmer/login");
@@ -143,27 +142,19 @@ export default function AddProduct() {
   const showProcessingOptions =
     PROCESSING_REQUIRED_CATEGORIES.includes(category);
 
-  function selectCategory(item: string) {
+  function selectCategory(item: FarmProductCategory) {
     setCategory(item);
 
     if (PROCESSING_REQUIRED_CATEGORIES.includes(item)) {
       setProcessingOption("Traditional");
-      setUnit("pound");
-      return;
+    } else {
+      setProcessingOption("Not Applicable");
     }
 
-    setProcessingOption("Not Applicable");
+    setUnit(normalizeUnitForCategory(item));
 
-    if (item === "Eggs") {
-      setUnit("dozen");
-    } else if (item === "Flowers") {
-      setUnit("bouquet");
-    } else if (item === "Hay" || item === "Bale of Hay") {
-      setUnit("bale");
-    } else if (item === "Plants & Herbs" || item === "Garden Starters") {
-      setUnit("flat");
-    } else {
-      setUnit("each");
+    if (item === "Seasonal Products") {
+      setSeasonal(true);
     }
   }
 
@@ -193,6 +184,7 @@ export default function AddProduct() {
   async function saveProductToSupabase(product: Product) {
     try {
       const stock = Number(product.stock || product.quantity || 0);
+      const productAny = product as any;
 
       const { error } = await supabase.from("products").insert({
         farmer_id: farmerId,
@@ -213,16 +205,25 @@ export default function AddProduct() {
         low_stock_threshold: product.lowStockThreshold,
         is_sold_out: product.isSoldOut,
 
-        image_url: product.image || null,
+        image_url: product.image || product.imageUrl || null,
 
         delivery_option: product.deliveryOption,
         processing_option: product.processingOption,
 
-        organic: product.category?.toLowerCase().includes("organic") || false,
+        harvest_date: productAny.harvestDate || null,
+
+        organic: Boolean(productAny.organic),
+        local: Boolean(productAny.local),
+        seasonal: Boolean(productAny.seasonal),
+
+        tags: productAny.tags || [],
+
         available: stock > 0,
 
         sold: product.sold || 0,
         gross_sales: product.grossSales || 0,
+
+        source: "custom_upload",
 
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -284,8 +285,14 @@ export default function AddProduct() {
 
       const now = new Date().toISOString();
 
+      const tags = [
+        organic ? "organic" : "",
+        local ? "local" : "",
+        seasonal ? "seasonal" : "",
+      ].filter(Boolean);
+
       const newProduct: Product = {
-        id: `p_${Date.now()}`,
+        id: `custom_${Date.now()}`,
         farmerId,
         name: productName.trim(),
         description: description.trim(),
@@ -306,17 +313,50 @@ export default function AddProduct() {
         updatedAt: now,
         farmName,
         farmerName: farmerEmail,
-      };
+
+        harvestDate: harvestDate.trim(),
+        organic,
+        local,
+        seasonal,
+        tags,
+        source: "custom_upload",
+        active: true,
+      } as any;
 
       await addProductToFarmer(farmerId, newProduct);
       await saveProductToSupabase(newProduct);
+
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      if (saved) {
+        const currentFarmer = JSON.parse(saved);
+        const existingProducts = Array.isArray(currentFarmer.products)
+          ? currentFarmer.products
+          : [];
+
+        const updatedFarmer = {
+          ...currentFarmer,
+          products: [...existingProducts, newProduct],
+          updatedAt: now,
+        };
+
+        await AsyncStorage.setItem(
+          "currentFarmer",
+          JSON.stringify(updatedFarmer)
+        );
+        await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
+        await AsyncStorage.setItem("userRole", "farmer");
+        await AsyncStorage.setItem("currentUserRole", "farmer");
+      }
 
       Alert.alert(
         "Product Saved",
         `${productName.trim()} was added with ${numericQuantity} ${unit} in stock.`
       );
 
-      router.push("/farmer/dashboard");
+      router.replace("/farmer/dashboard");
     } catch (error: any) {
       console.log("Add product error:", error);
       Alert.alert("Save Error", error?.message || "Unable to save product.");
@@ -325,23 +365,44 @@ export default function AddProduct() {
     }
   }
 
+  function ToggleChip({
+    label,
+    active,
+    onPress,
+  }: {
+    label: string;
+    active: boolean;
+    onPress: () => void;
+  }) {
+    return (
+      <TouchableOpacity
+        style={[styles.option, active && styles.optionActive]}
+        onPress={onPress}
+      >
+        <Text style={[styles.optionText, active && styles.optionTextActive]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <Text style={styles.header}>Add Farmer Product</Text>
+      <Text style={styles.header}>Add Custom Farm Product</Text>
 
       <Text style={styles.subheader}>
         {farmName
-          ? `${farmName} · Upload product pictures, set stock quantity, and choose delivery options.`
-          : "Upload product pictures, set stock quantity, and choose delivery options."}
+          ? `${farmName} · Upload your own product picture, set price, unit, stock, and tags.`
+          : "Upload your own product picture, set price, unit, stock, and tags."}
       </Text>
 
       <View style={styles.notice}>
-        <Text style={styles.noticeTitle}>Inventory Control</Text>
+        <Text style={styles.noticeTitle}>Custom Product Upload</Text>
 
         <Text style={styles.noticeText}>
-          When customers checkout, stock decreases automatically. When stock
-          reaches your alert threshold, it will show as low stock. At 0, it
-          becomes sold out.
+          Use this when your product is not listed in Select Farm Products.
+          Customers will see your uploaded photo, price, unit, stock, pickup /
+          delivery option, and farm tags.
         </Text>
       </View>
 
@@ -387,7 +448,7 @@ export default function AddProduct() {
       <Text style={styles.label}>Category</Text>
 
       <View style={styles.optionWrap}>
-        {PRODUCT_CATEGORIES.map((item) => (
+        {FARM_PRODUCT_CATEGORIES.map((item) => (
           <TouchableOpacity
             key={item}
             style={[styles.option, category === item && styles.optionActive]}
@@ -460,6 +521,14 @@ export default function AddProduct() {
         keyboardType="numeric"
       />
 
+      <TextInput
+        style={styles.input}
+        placeholder="Harvest Date / Available Date"
+        placeholderTextColor="#8A8F98"
+        value={harvestDate}
+        onChangeText={setHarvestDate}
+      />
+
       <Text style={styles.label}>Product Unit</Text>
 
       <View style={styles.optionWrap}>
@@ -479,6 +548,26 @@ export default function AddProduct() {
             </Text>
           </TouchableOpacity>
         ))}
+      </View>
+
+      <Text style={styles.label}>Product Tags</Text>
+
+      <View style={styles.optionWrap}>
+        <ToggleChip
+          label="Organic"
+          active={organic}
+          onPress={() => setOrganic((prev) => !prev)}
+        />
+        <ToggleChip
+          label="Local"
+          active={local}
+          onPress={() => setLocal((prev) => !prev)}
+        />
+        <ToggleChip
+          label="Seasonal"
+          active={seasonal}
+          onPress={() => setSeasonal((prev) => !prev)}
+        />
       </View>
 
       <Text style={styles.label}>Pickup / Delivery Options</Text>
@@ -513,7 +602,7 @@ export default function AddProduct() {
         {loading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
-          <Text style={styles.buttonText}>Save Product</Text>
+          <Text style={styles.buttonText}>Save Custom Product</Text>
         )}
       </TouchableOpacity>
     </ScrollView>
@@ -539,6 +628,7 @@ const styles = StyleSheet.create({
     color: farmTheme.colors.mutedText,
     lineHeight: 22,
     marginBottom: 16,
+    fontWeight: "700",
   },
   notice: {
     backgroundColor: farmTheme.colors.primaryLight,
@@ -557,6 +647,7 @@ const styles = StyleSheet.create({
   noticeText: {
     color: farmTheme.colors.text,
     lineHeight: 22,
+    fontWeight: "700",
   },
   label: {
     fontSize: 17,

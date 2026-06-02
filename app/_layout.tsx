@@ -69,13 +69,9 @@ export default function RootLayout() {
           return;
         }
 
-        if (type === "HIGH_DELAY_RISK") {
-          router.push("/admin/live-operations-center");
+        if (type === "HIGH_DELAY_RISK" || type === "ADMIN_ALERT") {
+          console.log("Admin-only notification ignored for user app:", type);
           return;
-        }
-
-        if (type === "ADMIN_ALERT") {
-          router.push("/admin/dashboard");
         }
       }
     );
@@ -92,7 +88,8 @@ export default function RootLayout() {
 
       <Stack
         screenOptions={{
-          animation: "slide_from_right",
+          animation: "none",
+          headerBackTitle: "Back",
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
@@ -100,6 +97,9 @@ export default function RootLayout() {
         {/* AUTH */}
         <Stack.Screen name="auth/login" options={{ title: "Login", headerShown: false }} />
         <Stack.Screen name="auth/register" options={{ title: "Create Account", headerShown: false }} />
+
+        {/* GENERAL */}
+        <Stack.Screen name="compliance-center" options={{ title: "Compliance Resources" }} />
 
         {/* ONBOARDING */}
         <Stack.Screen name="onboarding/index" options={{ title: "Account Setup", headerShown: false }} />
@@ -149,9 +149,10 @@ export default function RootLayout() {
         <Stack.Screen name="farmer/login" options={{ title: "Farmer Login" }} />
         <Stack.Screen name="farmer/password-recovery" options={{ title: "Farmer Recovery" }} />
         <Stack.Screen name="farmer/register" options={{ title: "Farmer Registration" }} />
-        <Stack.Screen name="farmer/compliance-upload" options={{ title: "Farmer Compliance" }} />
+        <Stack.Screen name="farmer/compliance-upload" options={{ title: "Farmer Compliance", animation: "none" }} />
         <Stack.Screen name="farmer/awaiting-approval" options={{ title: "Awaiting Approval" }} />
         <Stack.Screen name="farmer/setup-store" options={{ title: "Setup Farmer Store" }} />
+        <Stack.Screen name="farmer/select-produce" options={{ title: "Select Farm Products" }} />
         <Stack.Screen name="farmer/subscription-success" options={{ title: "Farmer Membership Active" }} />
         <Stack.Screen name="farmer/dashboard" options={{ title: "Farmer Dashboard" }} />
         <Stack.Screen name="farmer/profile" options={{ title: "Farmer Profile" }} />
@@ -194,9 +195,9 @@ export default function RootLayout() {
         <Stack.Screen name="driver/earnings" options={{ title: "Driver Earnings" }} />
         <Stack.Screen name="driver/notifications" options={{ title: "Driver Notifications" }} />
 
-        {/* ADMIN */}
-        <Stack.Screen name="admin/login" options={{ title: "Admin Login" }} />
-        <Stack.Screen name="admin/dashboard" options={{ title: "Admin Dashboard" }} />
+        {/* ADMIN ROUTES EXIST BUT SHOULD NOT BE LINKED FROM USER UI */}
+        <Stack.Screen name="admin/login" options={{ title: "Admin Login", headerShown: false }} />
+        <Stack.Screen name="admin/dashboard" options={{ title: "Admin Dashboard", headerShown: false }} />
 
         {/* CHAT */}
         <Stack.Screen name="chat/chat-center" options={{ title: "Farm2Home Chat" }} />

@@ -43,7 +43,12 @@ const COLORS = {
 const reviews = [
   { id: 1, customer: "Angela", rating: 5, text: "Fresh eggs and fast pickup!" },
   { id: 2, customer: "Marcus", rating: 5, text: "Great greens. Very fresh." },
-  { id: 3, customer: "Tanya", rating: 4, text: "Good quality and friendly farmer." },
+  {
+    id: 3,
+    customer: "Tanya",
+    rating: 4,
+    text: "Good quality and friendly farmer.",
+  },
 ];
 
 function getStock(product: Product) {
@@ -66,7 +71,9 @@ export default function FarmerDashboard() {
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
   const [statusLabel, setStatusLabel] = useState("Active Account");
-  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>({});
+  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>(
+    {}
+  );
   const [loading, setLoading] = useState(true);
 
   useFocusEffect(
@@ -75,74 +82,30 @@ export default function FarmerDashboard() {
     }, [])
   );
 
-  function isApprovedFarmer(farmer: any) {
-    return (
-      farmer.approved === true ||
-      farmer.accountActive === true ||
-      farmer.account_active === true ||
-      farmer.storeUnlocked === true ||
-      farmer.store_unlocked === true ||
-      farmer.complianceSubmitted === true ||
-      farmer.compliance_submitted === true ||
-      farmer.complianceStatus === "approved" ||
-      farmer.compliance_status === "approved" ||
-      farmer.complianceStatus === "complete" ||
-      farmer.compliance_status === "complete" ||
-      farmer.adminReviewStatus === "approved" ||
-      farmer.admin_review_status === "approved" ||
-      farmer.adminReviewStatus === "complete" ||
-      farmer.admin_review_status === "complete" ||
-      farmer.reviewDecision === "approved" ||
-      farmer.review_decision === "approved" ||
-      farmer.reviewDecision === "complete" ||
-      farmer.review_decision === "complete"
-    );
-  }
-
-  function isStoreUnlocked(farmer: any) {
-    return (
-      farmer.storeUnlocked === true ||
-      farmer.store_unlocked === true ||
-      farmer.accountActive === true ||
-      farmer.account_active === true ||
-      farmer.complianceStatus === "complete" ||
-      farmer.compliance_status === "complete" ||
-      farmer.complianceStatus === "approved" ||
-      farmer.compliance_status === "approved"
-    );
-  }
-
   function isRejectedFarmer(farmer: any) {
     return (
       farmer.rejected === true ||
-      farmer.complianceStatus === "rejected" ||
-      farmer.compliance_status === "rejected" ||
-      farmer.adminReviewStatus === "rejected" ||
-      farmer.admin_review_status === "rejected" ||
-      farmer.reviewDecision === "rejected" ||
-      farmer.review_decision === "rejected"
+      String(farmer.complianceStatus || "").toLowerCase() === "rejected" ||
+      String(farmer.compliance_status || "").toLowerCase() === "rejected" ||
+      String(farmer.adminReviewStatus || "").toLowerCase() === "rejected" ||
+      String(farmer.admin_review_status || "").toLowerCase() === "rejected" ||
+      String(farmer.reviewDecision || "").toLowerCase() === "rejected" ||
+      String(farmer.review_decision || "").toLowerCase() === "rejected"
     );
   }
 
   function buildStatusLabel(farmer: any) {
-    if (isRejectedFarmer(farmer)) return "Rejected";
-    if (isApprovedFarmer(farmer) || isStoreUnlocked(farmer)) return "Approved / Store Active";
-    if (
-      farmer.complianceSubmitted ||
-      farmer.compliance_submitted ||
-      farmer.complianceStatus === "pending_admin_review" ||
-      farmer.compliance_status === "pending_admin_review"
-    ) {
-      return "Complete / Store Active";
-    }
-    return "In Progress";
+    if (isRejectedFarmer(farmer)) return "Active / Store Open";
+    return "Active / Store Open";
   }
 
   async function loadFarmerProducts() {
     try {
       setLoading(true);
 
-      const saved = await AsyncStorage.getItem("currentFarmer");
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
 
       if (!saved) {
         router.replace("/farmer/login" as any);
@@ -157,47 +120,31 @@ export default function FarmerDashboard() {
         farmerId: currentFarmer.farmerId || currentFarmer.id,
         role: "farmer",
 
-        approved: currentFarmer.approved ?? true,
-        reviewed: currentFarmer.reviewed ?? true,
+        approved: true,
+        reviewed: true,
+        rejected: false,
+        needsMoreInfo: false,
+        needs_more_info: false,
+
         accountActive: true,
         account_active: true,
         storeUnlocked: true,
         store_unlocked: true,
-        complianceStatus:
-          currentFarmer.complianceStatus ||
-          currentFarmer.compliance_status ||
-          "complete",
-        compliance_status:
-          currentFarmer.compliance_status ||
-          currentFarmer.complianceStatus ||
-          "complete",
-        adminReviewStatus:
-          currentFarmer.adminReviewStatus ||
-          currentFarmer.admin_review_status ||
-          "complete",
-        admin_review_status:
-          currentFarmer.admin_review_status ||
-          currentFarmer.adminReviewStatus ||
-          "complete",
-        reviewDecision:
-          currentFarmer.reviewDecision ||
-          currentFarmer.review_decision ||
-          "complete",
-        review_decision:
-          currentFarmer.review_decision ||
-          currentFarmer.reviewDecision ||
-          "complete",
+
+        complianceSubmitted: true,
+        compliance_submitted: true,
+        complianceStatus: "ACTIVE",
+        compliance_status: "ACTIVE",
+        adminReviewStatus: "ACTIVE",
+        admin_review_status: "ACTIVE",
+        reviewDecision: "APPROVED",
+        review_decision: "APPROVED",
       };
 
       if (!activeFarmer.id) {
         Alert.alert("Session Error", "Please login again.");
         router.replace("/farmer/login" as any);
         return;
-      }
-
-      // Approval gate removed: do not block farmer dashboard access.
-      if (isRejectedFarmer(activeFarmer)) {
-        console.log("Farmer previously marked rejected, but dashboard access is enabled.");
       }
 
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(activeFarmer));
@@ -209,41 +156,51 @@ export default function FarmerDashboard() {
 
       setFarmerId(id);
       setFarmerEmail(activeFarmer.email || "");
-      setFarmName(activeFarmer.farmName || activeFarmer.businessName || "My Farm");
+      setFarmName(
+        activeFarmer.farmName ||
+          activeFarmer.businessName ||
+          activeFarmer.business_name ||
+          activeFarmer.farm_name ||
+          "My Farm"
+      );
       setStatusLabel(buildStatusLabel(activeFarmer));
 
       const farmer = id ? await getFarmerById(id) : null;
 
       if (farmer) {
-        if (isRejectedFarmer(farmer)) {
-          console.log("Farmer store record was rejected, but dashboard access is enabled.");
-        }
-
         const farmerAny = farmer as any;
 
-    const unlockedFarmer = {
-      ...farmerAny,
-      approved: farmerAny.approved ?? true,
-      reviewed: farmerAny.reviewed ?? true,
-      accountActive: true,
-      account_active: true,
-      storeUnlocked: true,
-      store_unlocked: true,
-      complianceStatus:
-      farmerAny.complianceStatus || farmerAny.compliance_status || "complete",
-      compliance_status:
-      farmerAny.compliance_status || farmerAny.complianceStatus || "complete",
-      adminReviewStatus:
-      farmerAny.adminReviewStatus || farmerAny.admin_review_status || "complete",
-      admin_review_status:
-      farmerAny.admin_review_status || farmerAny.adminReviewStatus || "complete",
-      reviewDecision:
-      farmerAny.reviewDecision || farmerAny.review_decision || "complete",
-      review_decision:
-      farmerAny.review_decision || farmerAny.reviewDecision || "complete",
-    };
+        const unlockedFarmer = {
+          ...farmerAny,
+          approved: true,
+          reviewed: true,
+          rejected: false,
+          needsMoreInfo: false,
+          needs_more_info: false,
 
-        setFarmName(unlockedFarmer.farmName || unlockedFarmer.businessName || activeFarmer.businessName || "My Farm");
+          accountActive: true,
+          account_active: true,
+          storeUnlocked: true,
+          store_unlocked: true,
+
+          complianceSubmitted: true,
+          compliance_submitted: true,
+          complianceStatus: "ACTIVE",
+          compliance_status: "ACTIVE",
+          adminReviewStatus: "ACTIVE",
+          admin_review_status: "ACTIVE",
+          reviewDecision: "APPROVED",
+          review_decision: "APPROVED",
+        };
+
+        setFarmName(
+          unlockedFarmer.farmName ||
+            unlockedFarmer.businessName ||
+            unlockedFarmer.business_name ||
+            unlockedFarmer.farm_name ||
+            activeFarmer.businessName ||
+            "My Farm"
+        );
         setFarmerEmail(unlockedFarmer.email || activeFarmer.email || "");
         setProducts(unlockedFarmer.products || []);
         setStatusLabel(buildStatusLabel(unlockedFarmer));
@@ -253,7 +210,9 @@ export default function FarmerDashboard() {
     } catch (error) {
       console.log("Dashboard load error:", error);
 
-      const saved = await AsyncStorage.getItem("currentFarmer");
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
 
       if (saved) {
         try {
@@ -265,10 +224,11 @@ export default function FarmerDashboard() {
             fallbackFarmer.farmName ||
               fallbackFarmer.businessName ||
               fallbackFarmer.business_name ||
+              fallbackFarmer.farm_name ||
               "My Farm"
           );
           setProducts(fallbackFarmer.products || []);
-          setStatusLabel("Active / Store Unlocked");
+          setStatusLabel("Active / Store Open");
         } catch {
           Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
         }
@@ -323,11 +283,16 @@ export default function FarmerDashboard() {
     Alert.alert("Inventory Updated", "Your product inventory was updated.");
   }
 
-  const totalSold = products.reduce((sum, item) => sum + Number(item.sold || 0), 0);
+  const totalSold = products.reduce(
+    (sum, item) => sum + Number(item.sold || 0),
+    0
+  );
+
   const totalGrossSales = products.reduce(
     (sum, item) => sum + Number(item.grossSales || 0),
     0
   );
+
   const totalStock = products.reduce((sum, item) => sum + getStock(item), 0);
 
   const lowStockProducts = products.filter((item) => {
@@ -349,7 +314,10 @@ export default function FarmerDashboard() {
 
   return (
     <View style={styles.page}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+      >
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.farmAvatar}>
@@ -357,7 +325,10 @@ export default function FarmerDashboard() {
             </View>
 
             <Pressable
-              style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.logoutButton,
+                pressed && styles.pressed,
+              ]}
               onPress={logoutFarmer}
             >
               <Text style={styles.logoutText}>Logout</Text>
@@ -367,16 +338,16 @@ export default function FarmerDashboard() {
           <Text style={styles.header}>Farmer Dashboard</Text>
 
           <Text style={styles.subheader}>
-            {farmName} · Manage your Farm2Home storefront, products, inventory,
-            compliance, and customer activity.
+            {farmName} · Manage your Farm2Home storefront, produce catalog,
+            inventory, orders, delivery, and customer activity.
           </Text>
 
           <View style={styles.statusCard}>
             <Text style={styles.statusTitle}>Account Status</Text>
             <Text style={styles.statusValue}>{statusLabel}</Text>
             <Text style={styles.statusNote}>
-              You can access your dashboard now. Use Edit Store Setup or Customize Store
-              to build your Farm2Home storefront.
+              Your farmer store is open. Use Select Produce, Add Product, or
+              Customize Store to build your Farm2Home marketplace.
             </Text>
           </View>
 
@@ -392,27 +363,80 @@ export default function FarmerDashboard() {
             </View>
 
             <View style={styles.storeMeta}>
-              <Text style={styles.storeMetaValue}>${totalGrossSales.toFixed(2)}</Text>
+              <Text style={styles.storeMetaValue}>
+                ${totalGrossSales.toFixed(2)}
+              </Text>
               <Text style={styles.storeMetaLabel}>Sales</Text>
             </View>
           </View>
 
           <Pressable
-            style={({ pressed }) => [styles.setupStoreButton, pressed && styles.pressed]}
-            onPress={() => goTo("/farmer/setup-store")}
+            style={({ pressed }) => [
+              styles.setupStoreButton,
+              pressed && styles.pressed,
+            ]}
+            onPress={() => goTo("/farmer/select-produce")}
           >
-            <Text style={styles.setupStoreText}>🏪 Edit Store Setup</Text>
+            <Text style={styles.setupStoreText}>🥬 Select Produce</Text>
           </Pressable>
         </View>
 
         <View style={styles.actionGrid}>
-          <ActionButton label="Add Product" icon="➕" color={COLORS.primary} onPress={() => goTo("/farmer/add-product")} />
-          <ActionButton label="Customize Store" icon="🏪" color={COLORS.primaryDark} onPress={() => goTo("/farmer/setup-store")} />
-          <ActionButton label="Compliance" icon="🛡️" color={COLORS.purple} onPress={() => goTo("/farmer/compliance-upload")} />
-          <ActionButton label="Orders" icon="📦" color={COLORS.blue} onPress={() => goTo("/farmer/orders")} />
-          <ActionButton label="Delivery" icon="🚚" color={COLORS.orange} onPress={() => goTo("/farmer/delivery-orders")} />
-          <ActionButton label="Payout Status" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/connect-bank")} />
-          <ActionButton label="Preview Market" icon="🛒" color={COLORS.dark} onPress={() => goTo("/customer/marketplace")} />
+          <ActionButton
+            label="Select Produce"
+            icon="🥬"
+            color={COLORS.primary}
+            onPress={() => goTo("/farmer/select-produce")}
+          />
+
+          <ActionButton
+            label="Add Product"
+            icon="➕"
+            color={COLORS.primaryDark}
+            onPress={() => goTo("/farmer/add-product")}
+          />
+
+          <ActionButton
+            label="Customize Store"
+            icon="🏪"
+            color={COLORS.dark}
+            onPress={() => goTo("/farmer/setup-store")}
+          />
+
+          <ActionButton
+            label="Orders"
+            icon="📦"
+            color={COLORS.blue}
+            onPress={() => goTo("/farmer/orders")}
+          />
+
+          <ActionButton
+            label="Delivery"
+            icon="🚚"
+            color={COLORS.orange}
+            onPress={() => goTo("/farmer/delivery-orders")}
+          />
+
+          <ActionButton
+            label="Payout Status"
+            icon="💳"
+            color={COLORS.stripe}
+            onPress={() => goTo("/farmer/stripe-banking")}
+          />
+
+          <ActionButton
+            label="Profile"
+            icon="👤"
+            color={COLORS.purple}
+            onPress={() => goTo("/farmer/profile")}
+          />
+
+          <ActionButton
+            label="Preview Market"
+            icon="🛒"
+            color={COLORS.secondary}
+            onPress={() => goTo("/customer/marketplace")}
+          />
         </View>
 
         <View style={styles.notice}>
@@ -421,18 +445,22 @@ export default function FarmerDashboard() {
           </View>
 
           <View style={styles.noticeTextBlock}>
-            <Text style={styles.noticeTitle}>Dashboard Active</Text>
+            <Text style={styles.noticeTitle}>Store Active</Text>
 
             <Text style={styles.noticeText}>
-              Add products, manage inventory, restock items, and monitor your
-              Farm2Home storefront.
+              Start by selecting common produce from the Farm2Home catalog. If
+              the product is not listed, use Add Product to upload your own
+              picture and details.
             </Text>
 
             <Pressable
-              style={({ pressed }) => [styles.previewButton, pressed && styles.pressed]}
-              onPress={() => goTo("/farmer/add-product")}
+              style={({ pressed }) => [
+                styles.previewButton,
+                pressed && styles.pressed,
+              ]}
+              onPress={() => goTo("/farmer/select-produce")}
             >
-              <Text style={styles.previewButtonText}>Add / Manage Produce</Text>
+              <Text style={styles.previewButtonText}>Select Produce</Text>
             </Pressable>
           </View>
         </View>
@@ -441,7 +469,10 @@ export default function FarmerDashboard() {
           <StatCard label="Products" value={String(products.length)} />
           <StatCard label="In Stock" value={String(totalStock)} />
           <StatCard label="Sold" value={String(totalSold)} />
-          <StatCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} />
+          <StatCard
+            label="Gross Sales"
+            value={`$${totalGrossSales.toFixed(2)}`}
+          />
           <StatCard label="Low Stock" value={String(lowStockProducts.length)} />
           <StatCard label="Sold Out" value={String(soldOutProducts.length)} />
         </View>
@@ -452,7 +483,8 @@ export default function FarmerDashboard() {
 
             {lowStockProducts.map((item) => (
               <Text key={`low-${item.id}`} style={styles.alertText}>
-                ⚠️ {item.name} is low: {getStock(item)} {item.unit || "each"} left.
+                ⚠️ {item.name} is low: {getStock(item)} {item.unit || "each"}{" "}
+                left.
               </Text>
             ))}
 
@@ -465,25 +497,42 @@ export default function FarmerDashboard() {
         )}
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Inventory / Restock</Text>
-          <Text style={styles.sectionSubtitle}>Update stock counts and product availability</Text>
+          <Text style={styles.sectionTitle}>Farm Inventory</Text>
+          <Text style={styles.sectionSubtitle}>
+            Update stock counts and product availability
+          </Text>
         </View>
 
         {products.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>🥬</Text>
-            <Text style={styles.emptyTitle}>No products yet</Text>
+            <Text style={styles.emptyTitle}>No farmer products yet</Text>
 
             <Text style={styles.meta}>
-              Add products to your store so customers can shop your produce,
-              meat, dairy, eggs, flowers, and farm goods.
+              Select common produce from the Farm2Home catalog or add your own
+              custom farm product.
             </Text>
 
             <Pressable
-              style={({ pressed }) => [styles.emptyActionButton, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.emptyActionButton,
+                pressed && styles.pressed,
+              ]}
+              onPress={() => goTo("/farmer/select-produce")}
+            >
+              <Text style={styles.emptyActionText}>Select Produce</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.emptySecondaryButton,
+                pressed && styles.pressed,
+              ]}
               onPress={() => goTo("/farmer/add-product")}
             >
-              <Text style={styles.emptyActionText}>Add Your First Product</Text>
+              <Text style={styles.emptySecondaryText}>
+                Add Custom Product / Upload Photo
+              </Text>
             </Pressable>
           </View>
         ) : (
@@ -495,7 +544,10 @@ export default function FarmerDashboard() {
 
             return (
               <View key={item.id} style={styles.productCard}>
-                <Image source={{ uri: getProductImage(item) }} style={styles.productImage} />
+                <Image
+                  source={{ uri: getProductImage(item) }}
+                  style={styles.productImage}
+                />
 
                 <View style={styles.productBody}>
                   <View style={styles.productHeader}>
@@ -514,12 +566,26 @@ export default function FarmerDashboard() {
                   </View>
 
                   <View style={styles.detailGrid}>
-                    <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)} / ${item.unit || "each"}`} />
-                    <Detail label="Stock" value={`${stock} ${item.unit || "each"}`} />
+                    <Detail
+                      label="Price"
+                      value={`$${Number(item.price || 0).toFixed(2)} / ${
+                        item.unit || "each"
+                      }`}
+                    />
+                    <Detail
+                      label="Stock"
+                      value={`${stock} ${item.unit || "each"}`}
+                    />
                     <Detail label="Low Alert" value={String(threshold)} />
                     <Detail label="Sold" value={String(Number(item.sold || 0))} />
-                    <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
-                    <Detail label="Delivery" value={item.deliveryOption || "Not set"} />
+                    <Detail
+                      label="Gross"
+                      value={`$${Number(item.grossSales || 0).toFixed(2)}`}
+                    />
+                    <Detail
+                      label="Delivery"
+                      value={item.deliveryOption || "Not set"}
+                    />
                   </View>
 
                   <TextInput
@@ -537,10 +603,15 @@ export default function FarmerDashboard() {
                   />
 
                   <Pressable
-                    style={({ pressed }) => [styles.restockButton, pressed && styles.pressed]}
+                    style={({ pressed }) => [
+                      styles.restockButton,
+                      pressed && styles.pressed,
+                    ]}
                     onPress={() => restockProduct(item.id)}
                   >
-                    <Text style={styles.restockText}>Restock / Update Inventory</Text>
+                    <Text style={styles.restockText}>
+                      Restock / Update Inventory
+                    </Text>
                   </Pressable>
                 </View>
               </View>
@@ -556,7 +627,9 @@ export default function FarmerDashboard() {
         {reviews.map((review) => (
           <View key={review.id} style={styles.reviewCard}>
             <View style={styles.reviewAvatar}>
-              <Text style={styles.reviewAvatarText}>{review.customer.slice(0, 1)}</Text>
+              <Text style={styles.reviewAvatarText}>
+                {review.customer.slice(0, 1)}
+              </Text>
             </View>
 
             <View style={styles.reviewBody}>
@@ -876,6 +949,21 @@ const styles = StyleSheet.create({
     alignSelf: "stretch",
   },
   emptyActionText: { color: "#FFFFFF", fontWeight: "900" },
+  emptySecondaryButton: {
+    backgroundColor: COLORS.lightGreen,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    padding: 15,
+    borderRadius: 18,
+    marginTop: 10,
+    alignItems: "center",
+    alignSelf: "stretch",
+  },
+  emptySecondaryText: {
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   productCard: {
     backgroundColor: COLORS.card,
     borderRadius: 30,
