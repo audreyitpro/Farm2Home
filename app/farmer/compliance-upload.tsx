@@ -148,28 +148,10 @@ function BusinessInfoCard({
     state: string;
   }) => void;
 }) {
-  const [draftBusinessName, setDraftBusinessName] =
-    useState(initialBusinessName);
-  const [draftOwnerName, setDraftOwnerName] = useState(initialOwnerName);
-  const [draftFarmerEmail, setDraftFarmerEmail] =
-    useState(initialFarmerEmail);
-  const [draftState, setDraftState] = useState(initialState || "MI");
-
-  useEffect(() => {
-    setDraftBusinessName(initialBusinessName);
-  }, [initialBusinessName]);
-
-  useEffect(() => {
-    setDraftOwnerName(initialOwnerName);
-  }, [initialOwnerName]);
-
-  useEffect(() => {
-    setDraftFarmerEmail(initialFarmerEmail);
-  }, [initialFarmerEmail]);
-
-  useEffect(() => {
-    setDraftState(initialState || "MI");
-  }, [initialState]);
+  const businessNameRef = React.useRef(initialBusinessName || "");
+  const ownerNameRef = React.useRef(initialOwnerName || "");
+  const farmerEmailRef = React.useRef(initialFarmerEmail || "");
+  const stateRef = React.useRef(initialState || "MI");
 
   return (
     <ActionCard
@@ -181,22 +163,28 @@ function BusinessInfoCard({
       <TextInput
         style={styles.input}
         placeholder="Farm / Business Name"
-        value={draftBusinessName}
-        onChangeText={setDraftBusinessName}
+        defaultValue={initialBusinessName}
+        onChangeText={(text) => {
+          businessNameRef.current = text;
+        }}
       />
 
       <TextInput
         style={styles.input}
         placeholder="Owner Name"
-        value={draftOwnerName}
-        onChangeText={setDraftOwnerName}
+        defaultValue={initialOwnerName}
+        onChangeText={(text) => {
+          ownerNameRef.current = text;
+        }}
       />
 
       <TextInput
         style={styles.input}
         placeholder="Farmer Email"
-        value={draftFarmerEmail}
-        onChangeText={setDraftFarmerEmail}
+        defaultValue={initialFarmerEmail}
+        onChangeText={(text) => {
+          farmerEmailRef.current = text;
+        }}
         autoCapitalize="none"
         keyboardType="email-address"
       />
@@ -204,10 +192,10 @@ function BusinessInfoCard({
       <TextInput
         style={styles.input}
         placeholder="State"
-        value={draftState}
-        onChangeText={(value) =>
-          setDraftState(value.toUpperCase().slice(0, 2))
-        }
+        defaultValue={initialState || "MI"}
+        onChangeText={(text) => {
+          stateRef.current = text.toUpperCase().slice(0, 2);
+        }}
         maxLength={2}
       />
 
@@ -215,10 +203,10 @@ function BusinessInfoCard({
         style={styles.primaryBtn}
         onPress={() =>
           onSave({
-            businessName: draftBusinessName,
-            ownerName: draftOwnerName,
-            farmerEmail: draftFarmerEmail,
-            state: draftState,
+            businessName: businessNameRef.current,
+            ownerName: ownerNameRef.current,
+            farmerEmail: farmerEmailRef.current,
+            state: stateRef.current,
           })
         }
         activeOpacity={0.85}
