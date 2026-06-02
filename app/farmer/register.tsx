@@ -5,6 +5,7 @@ import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -191,161 +192,6 @@ export default function FarmerRegister() {
     );
   }
 
-  function goToFarmerSetup(farmerId: string, cleanEmail: string, cleanBusinessName: string) {
-    router.replace({
-      pathname: "/farmer/compliance-upload",
-      params: {
-        farmerId,
-        email: cleanEmail,
-        businessName: cleanBusinessName,
-      },
-    } as any);
-  }
-
-  async function notifyAdminFarmerVerification(farmer: any) {
-    try {
-      await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(farmer),
-      });
-    } catch (error) {
-      console.log("Farmer admin email ignored:", error);
-    }
-  }
-
-  async function saveLocalFarmerSession(farmer: any) {
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
-    await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(farmer));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
-    await AsyncStorage.setItem("userRole", "farmer");
-    await AsyncStorage.setItem("currentUserRole", "farmer");
-  }
-
-  async function createOrUpdateProfile({
-    authUserId,
-    cleanOwnerName,
-    cleanEmail,
-    cleanPhone,
-    cleanUsername,
-  }: {
-    authUserId: string;
-    cleanOwnerName: string;
-    cleanEmail: string;
-    cleanPhone: string;
-    cleanUsername: string;
-  }) {
-    const { data: existingProfile, error: existingProfileError } =
-      await supabase
-        .from("profiles")
-        .select("*")
-        .eq("email", cleanEmail)
-        .maybeSingle();
-
-    if (existingProfileError) throw existingProfileError;
-
-    if (existingProfile?.id) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({
-          auth_user_id: authUserId,
-          role: "farmer",
-          full_name: cleanOwnerName,
-          name: cleanOwnerName,
-          phone: cleanPhone,
-          username: cleanUsername,
-          account_active: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingProfile.id)
-        .select("*")
-        .single();
-
-      if (error) throw error;
-      return data;
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .insert({
-        auth_user_id: authUserId,
-        role: "farmer",
-        full_name: cleanOwnerName,
-        name: cleanOwnerName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-        account_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .select("*")
-      .single();
-
-    if (error) throw error;
-    return data;
-  }
-
-  async function createAdminVerificationRecord(farmer: any) {
-    try {
-      const adminRecord = {
-        id: farmer.id,
-        farmer_id: farmer.id,
-        account_type: "FARMER",
-        role: "farmer",
-        type: "FARMER",
-
-        farm_name: farmer.farm_name,
-        business_name: farmer.business_name,
-        company_name: farmer.business_name,
-        owner_name: farmer.owner_name,
-        email: farmer.email,
-        phone: farmer.phone,
-        state: farmer.state,
-
-        status: "STARTED",
-        compliance_status: "in_progress",
-        admin_review_status: "not_submitted",
-        review_decision: "not_submitted",
-
-        approved: false,
-        rejected: false,
-        reviewed: false,
-        needs_more_info: false,
-        account_active: false,
-        store_unlocked: false,
-
-        compliance_submitted: false,
-        application_fee_paid: false,
-        farmer_membership_paid: false,
-        monthly_membership_started: false,
-
-        stripe_account_id: "",
-        farmer_stripe_account_id: "",
-        stripe_onboarding_complete: false,
-        stripe_payouts_enabled: false,
-        stripe_charges_enabled: false,
-
-        uploaded_docs: {},
-        legal_checks: {},
-        documents: [],
-
-        created_at: farmer.created_at,
-        updated_at: farmer.updated_at,
-      };
-
-      const { error } = await supabase
-        .from("admin_verifications")
-        .upsert(adminRecord, { onConflict: "id" });
-
-      if (error) {
-        console.log("Admin verification save ignored:", error.message);
-      }
-    } catch (error) {
-      console.log("Admin verification ignored:", error);
-    }
-  }
-
   function validateForm() {
     if (!businessComplete) {
       Alert.alert(
@@ -387,109 +233,91 @@ export default function FarmerRegister() {
     return true;
   }
 
-  async function registerFarmer() {
-    if (loading) return;
-    if (!validateForm()) return;
+  async function saveLocalFarmerSession(farmer: any) {
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
+    await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(farmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
+    await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.setItem("currentUserRole", "farmer");
+  }
 
-    let routeFarmerId = "";
-    let routeEmail = "";
-    let routeBusinessName = "";
+  function goToCompliance(farmerId: string, cleanEmail: string, cleanBusinessName: string) {
+    const url = `/farmer/compliance-upload?farmerId=${encodeURIComponent(
+      farmerId
+    )}&email=${encodeURIComponent(cleanEmail)}&businessName=${encodeURIComponent(
+      cleanBusinessName
+    )}`;
 
+    if (Platform.OS === "web") {
+      window.location.href = url;
+      return;
+    }
+
+    router.replace(url as any);
+  }
+
+  async function saveSupabaseInBackground(localFarmer: any, cleanPassword: string) {
     try {
-      setLoading(true);
-
-      const cleanOwnerName = ownerName.trim();
-      const cleanFarmName = farmName.trim();
-      const cleanBusinessName = businessName.trim();
-      const cleanEmail = normalizeEmail(email);
-      const cleanPhone = phone.trim();
-      const cleanUsername = normalizeUsername(username);
-      const cleanState = stateValue.trim().toUpperCase().slice(0, 2) || "MI";
-      const now = new Date().toISOString();
-
-      routeEmail = cleanEmail;
-      routeBusinessName = cleanBusinessName;
-
-      const { data: existingFarmer, error: existingError } = await supabase
-        .from("farmers")
-        .select("id,email,username")
-        .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-        .maybeSingle();
-
-      if (existingError) throw existingError;
-
-      if (existingFarmer) {
-        Alert.alert(
-          "Account Already Exists",
-          "A farmer account with this email or username already exists. Please login instead."
-        );
-        return;
-      }
-
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: password.trim(),
+        email: localFarmer.email,
+        password: cleanPassword,
         options: {
           data: {
             role: "farmer",
-            username: cleanUsername,
-            owner_name: cleanOwnerName,
-            business_name: cleanBusinessName,
-            farm_name: cleanFarmName,
+            username: localFarmer.username,
+            owner_name: localFarmer.ownerName,
+            business_name: localFarmer.businessName,
+            farm_name: localFarmer.farmName,
           },
         },
       });
 
       if (authError) {
-        Alert.alert("Registration Error", authError.message);
+        console.log("Supabase auth signup ignored:", authError.message);
         return;
       }
 
-      const authUserId = authData?.user?.id;
+      const authUserId = authData?.user?.id || localFarmer.id;
 
-      if (!authUserId) {
-        Alert.alert(
-          "Registration Error",
-          "Unable to create authentication account."
-        );
-        return;
-      }
+      const profilePayload = {
+        auth_user_id: authUserId,
+        role: "farmer",
+        full_name: localFarmer.ownerName,
+        name: localFarmer.ownerName,
+        email: localFarmer.email,
+        phone: localFarmer.phone,
+        username: localFarmer.username,
+        account_active: true,
+        created_at: localFarmer.createdAt,
+        updated_at: new Date().toISOString(),
+      };
 
-      routeFarmerId = authUserId;
-
-      const profile = await createOrUpdateProfile({
-        authUserId,
-        cleanOwnerName,
-        cleanEmail,
-        cleanPhone,
-        cleanUsername,
-      });
-
-      if (!profile?.id) {
-        Alert.alert("Profile Error", "Unable to create profile record.");
-        return;
-      }
+      const { data: profile } = await supabase
+        .from("profiles")
+        .upsert(profilePayload, { onConflict: "email" })
+        .select("*")
+        .maybeSingle();
 
       const farmerPayload = {
         id: authUserId,
-        profile_id: profile.id,
+        profile_id: profile?.id || authUserId,
 
-        email: cleanEmail,
-        username: cleanUsername,
-        phone: cleanPhone,
+        email: localFarmer.email,
+        username: localFarmer.username,
+        phone: localFarmer.phone,
 
-        owner_name: cleanOwnerName,
-        farm_name: cleanFarmName,
-        business_name: cleanBusinessName,
+        owner_name: localFarmer.ownerName,
+        farm_name: localFarmer.farmName,
+        business_name: localFarmer.businessName,
 
-        business_address: businessAddress.trim(),
-        city: city.trim(),
-        state: cleanState,
-        zip_code: zipCode.trim(),
+        business_address: localFarmer.businessAddress,
+        city: localFarmer.city,
+        state: localFarmer.state,
+        zip_code: localFarmer.zipCode,
 
-        selected_products: selectedProducts,
-        selected_product_categories: selectedProducts,
-        legal_agreements: accepted,
+        selected_products: localFarmer.selectedProducts,
+        selected_product_categories: localFarmer.selectedProductCategories,
+        legal_agreements: localFarmer.legalAgreements,
 
         compliance_status: "in_progress",
         admin_review_status: "not_submitted",
@@ -516,26 +344,88 @@ export default function FarmerRegister() {
 
         uploaded_docs: {},
         legal_checks: {},
-
         products: [],
 
-        created_at: now,
-        updated_at: now,
+        created_at: localFarmer.createdAt,
+        updated_at: new Date().toISOString(),
       };
 
-      const { error: farmerError } = await supabase
-        .from("farmers")
-        .upsert(farmerPayload, { onConflict: "id" });
+      await supabase.from("farmers").upsert(farmerPayload, { onConflict: "id" });
 
-      if (farmerError) {
-        Alert.alert("Farmer Profile Error", farmerError.message);
-        return;
-      }
+      await supabase.from("admin_verifications").upsert(
+        {
+          id: authUserId,
+          farmer_id: authUserId,
+          account_type: "FARMER",
+          role: "farmer",
+          type: "FARMER",
+          farm_name: localFarmer.farmName,
+          business_name: localFarmer.businessName,
+          company_name: localFarmer.businessName,
+          owner_name: localFarmer.ownerName,
+          email: localFarmer.email,
+          phone: localFarmer.phone,
+          state: localFarmer.state,
+          status: "STARTED",
+          compliance_status: "in_progress",
+          admin_review_status: "not_submitted",
+          review_decision: "not_submitted",
+          approved: false,
+          rejected: false,
+          reviewed: false,
+          needs_more_info: false,
+          account_active: false,
+          store_unlocked: false,
+          compliance_submitted: false,
+          application_fee_paid: false,
+          farmer_membership_paid: false,
+          monthly_membership_started: false,
+          stripe_account_id: "",
+          farmer_stripe_account_id: "",
+          stripe_onboarding_complete: false,
+          stripe_payouts_enabled: false,
+          stripe_charges_enabled: false,
+          uploaded_docs: {},
+          legal_checks: {},
+          documents: [],
+          created_at: localFarmer.createdAt,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" }
+      );
+
+      fetch(`${API_BASE_URL}/notify/farmer-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(localFarmer),
+      }).catch(() => {});
+    } catch (error) {
+      console.log("Background farmer save ignored:", error);
+    }
+  }
+
+  async function registerFarmer() {
+    if (loading) return;
+    if (!validateForm()) return;
+
+    try {
+      setLoading(true);
+
+      const cleanOwnerName = ownerName.trim();
+      const cleanFarmName = farmName.trim();
+      const cleanBusinessName = businessName.trim();
+      const cleanEmail = normalizeEmail(email);
+      const cleanPhone = phone.trim();
+      const cleanUsername = normalizeUsername(username);
+      const cleanState = stateValue.trim().toUpperCase().slice(0, 2) || "MI";
+      const now = new Date().toISOString();
+
+      const farmerId = `farmer_${Date.now()}`;
 
       const localFarmer = {
-        id: authUserId,
-        farmerId: authUserId,
-        profileId: profile.id,
+        id: farmerId,
+        farmerId,
+        profileId: farmerId,
         role: "farmer",
 
         ownerName: cleanOwnerName,
@@ -552,6 +442,7 @@ export default function FarmerRegister() {
 
         selectedProducts,
         selectedProductCategories: selectedProducts,
+        legalAgreements: accepted,
 
         approved: false,
         rejected: false,
@@ -583,31 +474,20 @@ export default function FarmerRegister() {
         updatedAt: now,
       };
 
-      
       await saveLocalFarmerSession(localFarmer);
 
-createAdminVerificationRecord(farmerPayload);
-notifyAdminFarmerVerification(localFarmer);
+      setLoading(false);
 
-setLoading(false);
+      saveSupabaseInBackground(localFarmer, password.trim());
 
-router.push({
-  pathname: "/farmer/compliance-upload",
-  params: {
-    farmerId: authUserId,
-    email: cleanEmail,
-    businessName: cleanBusinessName,
-  },
-} as any);
-
-return;
+      goToCompliance(farmerId, cleanEmail, cleanBusinessName);
     } catch (error: any) {
-      console.log("Farmer registration error:", error);
+      console.log("Farmer registration route error:", error);
+      setLoading(false);
       Alert.alert(
         "Registration Error",
-        error?.message || "Unable to create farmer application."
+        error?.message || "Unable to continue to farmer setup."
       );
-      setLoading(false);
     }
   }
 
@@ -643,209 +523,60 @@ return;
           subtitle="Basic farm and owner details."
           done={businessComplete}
         >
-          <TextInput
-            style={styles.input}
-            placeholder="Owner Name"
-            value={ownerName}
-            onChangeText={setOwnerName}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Farm Name"
-            value={farmName}
-            onChangeText={setFarmName}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Business Name"
-            value={businessName}
-            onChangeText={setBusinessName}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email Address"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Phone Number"
-            keyboardType="phone-pad"
-            value={phone}
-            onChangeText={setPhone}
-          />
+          <TextInput style={styles.input} placeholder="Owner Name" value={ownerName} onChangeText={setOwnerName} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Farm Name" value={farmName} onChangeText={setFarmName} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Business Name" value={businessName} onChangeText={setBusinessName} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Email Address" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
         </SectionCard>
 
-        <SectionCard
-          icon="lock-closed-outline"
-          title="Create Farmer Login"
-          subtitle="Credentials used for future farmer login."
-          done={loginComplete}
-        >
-          <TextInput
-            style={styles.input}
-            placeholder="Create Username"
-            autoCapitalize="none"
-            value={username}
-            onChangeText={setUsername}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Create Password"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Confirm Password"
-            secureTextEntry
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            autoCorrect={false}
-          />
+        <SectionCard icon="lock-closed-outline" title="Create Farmer Login" subtitle="Credentials used for future farmer login." done={loginComplete}>
+          <TextInput style={styles.input} placeholder="Create Username" autoCapitalize="none" value={username} onChangeText={setUsername} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Create Password" secureTextEntry value={password} onChangeText={setPassword} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} autoCorrect={false} />
         </SectionCard>
 
-        <SectionCard
-          icon="location-outline"
-          title="Farm Location"
-          subtitle="Used for local customer discovery."
-          done={locationComplete}
-        >
-          <TextInput
-            style={styles.input}
-            placeholder="Business Address"
-            value={businessAddress}
-            onChangeText={setBusinessAddress}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="City"
-            value={city}
-            onChangeText={setCity}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="State"
-            value={stateValue}
-            onChangeText={(value) =>
-              setStateValue(value.toUpperCase().slice(0, 2))
-            }
-            maxLength={2}
-            autoCapitalize="characters"
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Zip Code"
-            keyboardType="numeric"
-            value={zipCode}
-            onChangeText={setZipCode}
-          />
+        <SectionCard icon="location-outline" title="Farm Location" subtitle="Used for local customer discovery." done={locationComplete}>
+          <TextInput style={styles.input} placeholder="Business Address" value={businessAddress} onChangeText={setBusinessAddress} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="City" value={city} onChangeText={setCity} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="State" value={stateValue} onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))} maxLength={2} autoCapitalize="characters" autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Zip Code" keyboardType="numeric" value={zipCode} onChangeText={setZipCode} />
         </SectionCard>
 
-        <SectionCard
-          icon="leaf-outline"
-          title="Products You Sell"
-          subtitle="Select at least one category."
-          done={productsComplete}
-        >
+        <SectionCard icon="leaf-outline" title="Products You Sell" subtitle="Select at least one category." done={productsComplete}>
           <View style={styles.grid}>
             {productOptions.map((product) => {
               const active = selectedProducts.includes(product);
 
               return (
-                <TouchableOpacity
-                  key={product}
-                  style={[
-                    styles.productChip,
-                    active && styles.productChipActive,
-                  ]}
-                  onPress={() => toggleProduct(product)}
-                  activeOpacity={0.85}
-                >
-                  <Text
-                    style={[
-                      styles.productText,
-                      active && styles.productTextActive,
-                    ]}
-                  >
-                    {product}
-                  </Text>
+                <TouchableOpacity key={product} style={[styles.productChip, active && styles.productChipActive]} onPress={() => toggleProduct(product)} activeOpacity={0.85}>
+                  <Text style={[styles.productText, active && styles.productTextActive]}>{product}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
         </SectionCard>
 
-        <SectionCard
-          icon="shield-checkmark-outline"
-          title="Farmer Onboarding Agreement"
-          subtitle="Accept all items before continuing."
-          done={legalComplete}
-        >
+        <SectionCard icon="shield-checkmark-outline" title="Farmer Onboarding Agreement" subtitle="Accept all items before continuing." done={legalComplete}>
           {agreements.map((item, index) => {
             const checked = Boolean(accepted[index]);
 
             return (
-              <TouchableOpacity
-                key={item}
-                style={styles.legalRow}
-                onPress={() =>
-                  setAccepted((prev) => ({
-                    ...prev,
-                    [index]: !prev[index],
-                  }))
-                }
-                activeOpacity={0.85}
-              >
+              <TouchableOpacity key={item} style={styles.legalRow} onPress={() => setAccepted((prev) => ({ ...prev, [index]: !prev[index] }))} activeOpacity={0.85}>
                 <View style={[styles.checkbox, checked && styles.checkboxOn]}>
                   <Text style={styles.checkText}>{checked ? "✓" : ""}</Text>
                 </View>
-
                 <Text style={styles.legalText}>{item}</Text>
               </TouchableOpacity>
             );
           })}
         </SectionCard>
 
-        <TouchableOpacity
-          style={[styles.submitBtn, loading && styles.disabled]}
-          onPress={registerFarmer}
-          disabled={loading}
-          activeOpacity={0.85}
-        >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.submitText}>Continue to Farmer Setup</Text>
-          )}
+        <TouchableOpacity style={[styles.submitBtn, loading && styles.disabled]} onPress={registerFarmer} disabled={loading} activeOpacity={0.85}>
+          {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitText}>Continue to Farmer Setup</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.loginBtn}
-          onPress={() => router.push("/farmer/login" as any)}
-          activeOpacity={0.85}
-        >
+        <TouchableOpacity style={styles.loginBtn} onPress={() => router.push("/farmer/login" as any)} activeOpacity={0.85}>
           <Text style={styles.loginText}>Already have account? Farmer Login</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -957,11 +688,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: "#0F172A",
   },
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   productChip: {
     backgroundColor: "#F8FAFC",
     borderWidth: 1,
@@ -974,13 +701,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#2E7D32",
     borderColor: "#2E7D32",
   },
-  productText: {
-    color: "#172017",
-    fontWeight: "900",
-  },
-  productTextActive: {
-    color: "#FFFFFF",
-  },
+  productText: { color: "#172017", fontWeight: "900" },
+  productTextActive: { color: "#FFFFFF" },
   legalRow: {
     flexDirection: "row",
     gap: 10,
@@ -1016,12 +738,6 @@ const styles = StyleSheet.create({
   },
   submitText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
   disabled: { opacity: 0.6 },
-  loginBtn: {
-    paddingVertical: 18,
-    alignItems: "center",
-  },
-  loginText: {
-    color: "#14532D",
-    fontWeight: "900",
-  },
+  loginBtn: { paddingVertical: 18, alignItems: "center" },
+  loginText: { color: "#14532D", fontWeight: "900" },
 });
