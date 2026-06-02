@@ -588,16 +588,23 @@ export default function FarmerRegister() {
       createAdminVerificationRecord(farmerPayload);
       notifyAdminFarmerVerification(localFarmer);
 
-      setLoading(false);
+      await saveLocalFarmerSession(localFarmer);
 
-      Alert.alert("Account Created", "Continue to farmer setup.", [
-        {
-          text: "Continue",
-          onPress: () => {
-            goToFarmerSetup(authUserId, cleanEmail, cleanBusinessName);
-          },
-        },
-      ]);
+createAdminVerificationRecord(farmerPayload);
+notifyAdminFarmerVerification(localFarmer);
+
+setLoading(false);
+
+router.push({
+  pathname: "/farmer/compliance-upload",
+  params: {
+    farmerId: authUserId,
+    email: cleanEmail,
+    businessName: cleanBusinessName,
+  },
+} as any);
+
+return;
     } catch (error: any) {
       console.log("Farmer registration error:", error);
       Alert.alert(
