@@ -1,6 +1,6 @@
 // app/farmer/compliance-upload.tsx
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
@@ -145,20 +145,16 @@ export default function FarmerComplianceUploadScreen() {
   const docsComplete = missingRequiredDocs.length === 0;
   const pickupComplete = Boolean(uploadedDocs.pickup_delivery_agreement);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadFarmer();
-    }, [farmerIdParam])
-  );
+  useEffect(() => {
+  loadFarmer();
+}, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (stripeReturn && returnedAccountId && !stripeReturnHandled) {
-        setStripeReturnHandled(true);
-        saveStripeReturn(returnedAccountId);
-      }
-    }, [stripeReturn, returnedAccountId, stripeReturnHandled])
-  );
+  useEffect(() => {
+  if (stripeReturn && returnedAccountId && !stripeReturnHandled) {
+    setStripeReturnHandled(true);
+    saveStripeReturn(returnedAccountId);
+  }
+}, [stripeReturn, returnedAccountId, stripeReturnHandled]);
 
   async function getAuthUser() {
     const { data } = await supabase.auth.getUser();
