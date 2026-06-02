@@ -128,6 +128,107 @@ function ActionCard({
   );
 }
 
+function BusinessInfoCard({
+  initialBusinessName,
+  initialOwnerName,
+  initialFarmerEmail,
+  initialState,
+  done,
+  onSave,
+}: {
+  initialBusinessName: string;
+  initialOwnerName: string;
+  initialFarmerEmail: string;
+  initialState: string;
+  done: boolean;
+  onSave: (values: {
+    businessName: string;
+    ownerName: string;
+    farmerEmail: string;
+    state: string;
+  }) => void;
+}) {
+  const [draftBusinessName, setDraftBusinessName] =
+    useState(initialBusinessName);
+  const [draftOwnerName, setDraftOwnerName] = useState(initialOwnerName);
+  const [draftFarmerEmail, setDraftFarmerEmail] =
+    useState(initialFarmerEmail);
+  const [draftState, setDraftState] = useState(initialState || "MI");
+
+  useEffect(() => {
+    setDraftBusinessName(initialBusinessName);
+  }, [initialBusinessName]);
+
+  useEffect(() => {
+    setDraftOwnerName(initialOwnerName);
+  }, [initialOwnerName]);
+
+  useEffect(() => {
+    setDraftFarmerEmail(initialFarmerEmail);
+  }, [initialFarmerEmail]);
+
+  useEffect(() => {
+    setDraftState(initialState || "MI");
+  }, [initialState]);
+
+  return (
+    <ActionCard
+      icon="business-outline"
+      title="Business Information"
+      subtitle="Save farm name, owner name, email, and state."
+      done={done}
+    >
+      <TextInput
+        style={styles.input}
+        placeholder="Farm / Business Name"
+        value={draftBusinessName}
+        onChangeText={setDraftBusinessName}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Owner Name"
+        value={draftOwnerName}
+        onChangeText={setDraftOwnerName}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Farmer Email"
+        value={draftFarmerEmail}
+        onChangeText={setDraftFarmerEmail}
+        autoCapitalize="none"
+        keyboardType="email-address"
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="State"
+        value={draftState}
+        onChangeText={(value) =>
+          setDraftState(value.toUpperCase().slice(0, 2))
+        }
+        maxLength={2}
+      />
+
+      <TouchableOpacity
+        style={styles.primaryBtn}
+        onPress={() =>
+          onSave({
+            businessName: draftBusinessName,
+            ownerName: draftOwnerName,
+            farmerEmail: draftFarmerEmail,
+            state: draftState,
+          })
+        }
+        activeOpacity={0.85}
+      >
+        <Text style={styles.primaryText}>Save Business Info</Text>
+      </TouchableOpacity>
+    </ActionCard>
+  );
+}
+
 export default function FarmerComplianceUploadScreen() {
   const params = useLocalSearchParams();
 
@@ -325,12 +426,17 @@ export default function FarmerComplianceUploadScreen() {
     }
   }
 
-  async function saveBusiness() {
+  async function saveBusinessWithValues(values: {
+    businessName: string;
+    ownerName: string;
+    farmerEmail: string;
+    state: string;
+  }) {
     try {
       if (
-        !businessName.trim() ||
-        !ownerName.trim() ||
-        !validEmail(farmerEmail)
+        !values.businessName.trim() ||
+        !values.ownerName.trim() ||
+        !validEmail(values.farmerEmail)
       ) {
         Alert.alert(
           "Business Info Required",
@@ -344,11 +450,16 @@ export default function FarmerComplianceUploadScreen() {
       await saveFarmerBusinessInfo({
         farmerId: activeId,
         profileId,
-        businessName: businessName.trim(),
-        ownerName: ownerName.trim(),
-        email: normalizeEmail(farmerEmail),
-        state,
+        businessName: values.businessName.trim(),
+        ownerName: values.ownerName.trim(),
+        email: normalizeEmail(values.farmerEmail),
+        state: values.state || "MI",
       });
+
+      setBusinessName(values.businessName.trim());
+      setOwnerName(values.ownerName.trim());
+      setFarmerEmail(normalizeEmail(values.farmerEmail));
+      setState((values.state || "MI").toUpperCase().slice(0, 2));
 
       Alert.alert("Saved", "Business information saved.");
       return true;
@@ -803,51 +914,14 @@ export default function FarmerComplianceUploadScreen() {
           </Text>
         </View>
 
-        <ActionCard
-          icon="business-outline"
-          title="Business Information"
-          subtitle="Save farm name, owner name, email, and state."
+        <BusinessInfoCard
+          initialBusinessName={businessName}
+          initialOwnerName={ownerName}
+          initialFarmerEmail={farmerEmail}
+          initialState={state}
           done={businessComplete}
-        >
-          <TextInput
-            style={styles.input}
-            placeholder="Farm / Business Name"
-            value={businessName}
-            onChangeText={setBusinessName}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Owner Name"
-            value={ownerName}
-            onChangeText={setOwnerName}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Farmer Email"
-            value={farmerEmail}
-            onChangeText={setFarmerEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="State"
-            value={state}
-            onChangeText={(value) => setState(value.toUpperCase().slice(0, 2))}
-            maxLength={2}
-          />
-
-          <TouchableOpacity
-            style={styles.primaryBtn}
-            onPress={saveBusiness}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.primaryText}>Save Business Info</Text>
-          </TouchableOpacity>
-        </ActionCard>
+          onSave={saveBusinessWithValues}
+        />
 
         <ActionCard
           icon="card-outline"
