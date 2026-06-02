@@ -83,12 +83,82 @@ function appendQueryParams(baseUrl, params) {
   return url.toString();
 }
 
-function getConnectRefreshUrl() {
+function getConnectRefreshUrl(role = "farmer") {
+  const normalizedRole = normalizeRole(role);
+
+  if (normalizedRole === "freight") {
+    return process.env.STRIPE_CONNECT_REFRESH_URL_FREIGHT || `${APP_URL}/freight/compliance-upload`;
+  }
+
+  if (normalizedRole === "driver") {
+    return process.env.STRIPE_CONNECT_REFRESH_URL_DRIVER || `${APP_URL}/driver/profile`;
+  }
+
   return process.env.STRIPE_CONNECT_REFRESH_URL || `${APP_URL}/farmer/compliance-upload`;
 }
 
-function getConnectReturnUrl() {
+function getConnectReturnUrl(role = "farmer") {
+  const normalizedRole = normalizeRole(role);
+
+  if (normalizedRole === "freight") {
+    return process.env.STRIPE_CONNECT_RETURN_URL_FREIGHT || `${APP_URL}/freight/compliance-upload`;
+  }
+
+  if (normalizedRole === "driver") {
+    return process.env.STRIPE_CONNECT_RETURN_URL_DRIVER || `${APP_URL}/driver/profile`;
+  }
+
   return process.env.STRIPE_CONNECT_RETURN_URL || `${APP_URL}/farmer/compliance-upload`;
+}
+
+function getProfileStripeConfig(role) {
+  const normalizedRole = normalizeRole(role);
+
+  if (normalizedRole === "freight") {
+    return {
+      role: "freight",
+      table: "freight_carriers",
+      idParamName: "freightId",
+      stripeColumn: "stripe_account_id",
+      altStripeColumn: "freight_stripe_account_id",
+      defaultName: "Farm2Home Freight Carrier",
+      adminType: "FREIGHT",
+    };
+  }
+
+  if (normalizedRole === "driver") {
+    return {
+      role: "driver",
+      table: "drivers",
+      idParamName: "driverId",
+      stripeColumn: "stripe_account_id",
+      altStripeColumn: "driver_stripe_account_id",
+      defaultName: "Farm2Home Driver",
+      adminType: "DRIVER",
+    };
+  }
+
+  if (normalizedRole === "customer") {
+    return {
+      role: "customer",
+      table: "customers",
+      idParamName: "customerId",
+      stripeColumn: "stripe_customer_id",
+      altStripeColumn: "customer_stripe_id",
+      defaultName: "Farm2Home Customer",
+      adminType: "CUSTOMER",
+    };
+  }
+
+  return {
+    role: "farmer",
+    table: "farmers",
+    idParamName: "farmerId",
+    stripeColumn: "stripe_account_id",
+    altStripeColumn: "farmer_stripe_account_id",
+    defaultName: "Farm2Home Farmer",
+    adminType: "FARMER",
+  };
 }
 
 function getSubscriptionConfig(role) {
@@ -234,21 +304,66 @@ async function stripeAccountExists(accountId) {
   }
 }
 
-async function updateFarmerStripeInSupabase({
-  farmerId,
+async function findProfileRow({ role = "farmer", profileId, email }) {
+  if (!supabase) return null;
+
+  const config = getProfileStripeConfig(role);
+  const cleanProfileId = cleanString(profileId);
+  const cleanEmail = cleanString(email).toLowerCase();
+
+  if (cleanProfileId) {
+    const byId = await supabase
+      .from(config.table)
+      .select("*")
+      .eq("id", cleanProfileId)
+      .maybeSingle();
+
+    if (!byId.error && byId.data) return byId.data;
+  }
+
+  if (cleanProfileId) {
+    const byProfile = await supabase
+      .from(config.table)
+      .select("*")
+      .eq("profile_id", cleanProfileId)
+      .maybeSingle();
+
+    if (!byProfile.error && byProfile.data) return byProfile.data;
+  }
+
+  if (cleanEmail) {
+    const byEmail = await supabase
+      .from(config.table)
+      .select("*")
+      .eq("email", cleanEmail)
+      .maybeSingle();
+
+    if (!byEmail.error && byEmail.data) return byEmail.data;
+  }
+
+  return null;
+}
+
+async function updateProfileStripeInSupabase({
+  role = "farmer",
+  profileId,
   email,
-  farmName,
+  businessName,
   stripeAccountId,
   payoutsEnabled = false,
   chargesEnabled = false,
   onboardingComplete = false,
   complianceStatus = "stripe_pending",
 }) {
-  if (!supabase || !farmerId) return;
+  if (!supabase) return;
+
+  const config = getProfileStripeConfig(role);
+  const cleanProfileId = cleanString(profileId);
+  const cleanEmail = cleanString(email).toLowerCase();
 
   const payload = {
-    stripe_account_id: stripeAccountId || "",
-    farmer_stripe_account_id: stripeAccountId || "",
+    [config.stripeColumn]: stripeAccountId || "",
+    [config.altStripeColumn]: stripeAccountId || "",
     stripe_payouts_enabled: Boolean(payoutsEnabled),
     stripe_charges_enabled: Boolean(chargesEnabled),
     stripe_onboarding_complete: Boolean(onboardingComplete),
@@ -256,27 +371,124 @@ async function updateFarmerStripeInSupabase({
     updated_at: new Date().toISOString(),
   };
 
-  if (email) payload.email = String(email).trim().toLowerCase();
+  if (cleanEmail) payload.email = cleanEmail;
 
-  if (farmName) {
-    payload.business_name = farmName;
-    payload.farm_name = farmName;
+  if (businessName) {
+    payload.business_name = businessName;
+    if (config.role === "farmer") payload.farm_name = businessName;
+    if (config.role === "freight") payload.company_name = businessName;
   }
 
-  await supabase.from("farmers").upsert({
-    id: farmerId,
-    ...payload,
+  let updated = false;
+  let matchedId = cleanProfileId;
+
+  if (cleanProfileId) {
+    const byId = await supabase
+      .from(config.table)
+      .update(payload)
+      .eq("id", cleanProfileId)
+      .select("id");
+
+    if (byId.error) {
+      console.log(`Stripe save by ${config.table}.id failed:`, byId.error.message);
+    }
+
+    if (byId.data?.length) {
+      updated = true;
+      matchedId = byId.data[0].id;
+    }
+  }
+
+  if (!updated && cleanProfileId) {
+    const byProfile = await supabase
+      .from(config.table)
+      .update(payload)
+      .eq("profile_id", cleanProfileId)
+      .select("id");
+
+    if (byProfile.error) {
+      console.log(`Stripe save by ${config.table}.profile_id failed:`, byProfile.error.message);
+    }
+
+    if (byProfile.data?.length) {
+      updated = true;
+      matchedId = byProfile.data[0].id;
+    }
+  }
+
+  if (!updated && cleanEmail) {
+    const byEmail = await supabase
+      .from(config.table)
+      .update(payload)
+      .eq("email", cleanEmail)
+      .select("id");
+
+    if (byEmail.error) {
+      console.log(`Stripe save by ${config.table}.email failed:`, byEmail.error.message);
+    }
+
+    if (byEmail.data?.length) {
+      updated = true;
+      matchedId = byEmail.data[0].id;
+    }
+  }
+
+  if (!updated && cleanProfileId) {
+    const insertPayload = {
+      id: cleanProfileId,
+      profile_id: cleanProfileId,
+      email: cleanEmail || null,
+      business_name: businessName || config.defaultName,
+      approved: true,
+      ...payload,
+    };
+
+    if (config.role === "farmer") insertPayload.farm_name = businessName || config.defaultName;
+    if (config.role === "freight") insertPayload.company_name = businessName || config.defaultName;
+
+    const insertResult = await supabase
+      .from(config.table)
+      .upsert(insertPayload, { onConflict: "id" })
+      .select("id");
+
+    if (insertResult.error) {
+      console.log(`Stripe fallback upsert into ${config.table} failed:`, insertResult.error.message);
+    }
+
+    if (insertResult.data?.length) {
+      updated = true;
+      matchedId = insertResult.data[0].id;
+    }
+  }
+
+  console.log("STRIPE PROFILE SAVE RESULT:", {
+    role: config.role,
+    table: config.table,
+    profileId: cleanProfileId,
+    matchedId,
+    email: cleanEmail,
+    stripeAccountId,
+    updated,
   });
 
-  await supabase.from("admin_verifications").update(payload).eq("farmer_id", farmerId);
+  if (config.role === "farmer" && (matchedId || cleanProfileId)) {
+    await supabase
+      .from("admin_verifications")
+      .update(payload)
+      .or(`farmer_id.eq.${matchedId || cleanProfileId},id.eq.${matchedId || cleanProfileId}`);
+  }
 }
 
-async function clearFarmerStripeInSupabase({ farmerId }) {
-  if (!supabase || !farmerId) return;
+async function clearProfileStripeInSupabase({ role = "farmer", profileId, email }) {
+  if (!supabase) return;
+
+  const config = getProfileStripeConfig(role);
+  const cleanProfileId = cleanString(profileId);
+  const cleanEmail = cleanString(email).toLowerCase();
 
   const payload = {
-    stripe_account_id: "",
-    farmer_stripe_account_id: "",
+    [config.stripeColumn]: "",
+    [config.altStripeColumn]: "",
     stripe_payouts_enabled: false,
     stripe_charges_enabled: false,
     stripe_onboarding_complete: false,
@@ -284,8 +496,57 @@ async function clearFarmerStripeInSupabase({ farmerId }) {
     updated_at: new Date().toISOString(),
   };
 
-  await supabase.from("farmers").update(payload).eq("id", farmerId);
-  await supabase.from("admin_verifications").update(payload).eq("farmer_id", farmerId);
+  let cleared = false;
+
+  if (cleanProfileId) {
+    const byId = await supabase
+      .from(config.table)
+      .update(payload)
+      .eq("id", cleanProfileId)
+      .select("id");
+
+    if (byId.data?.length) cleared = true;
+  }
+
+  if (!cleared && cleanProfileId) {
+    const byProfile = await supabase
+      .from(config.table)
+      .update(payload)
+      .eq("profile_id", cleanProfileId)
+      .select("id");
+
+    if (byProfile.data?.length) cleared = true;
+  }
+
+  if (!cleared && cleanEmail) {
+    await supabase.from(config.table).update(payload).eq("email", cleanEmail);
+  }
+
+  if (config.role === "farmer" && cleanProfileId) {
+    await supabase.from("admin_verifications").update(payload).eq("farmer_id", cleanProfileId);
+  }
+}
+
+async function updateFarmerStripeInSupabase(args) {
+  return updateProfileStripeInSupabase({
+    role: "farmer",
+    profileId: args.farmerId,
+    email: args.email,
+    businessName: args.farmName,
+    stripeAccountId: args.stripeAccountId,
+    payoutsEnabled: args.payoutsEnabled,
+    chargesEnabled: args.chargesEnabled,
+    onboardingComplete: args.onboardingComplete,
+    complianceStatus: args.complianceStatus,
+  });
+}
+
+async function clearFarmerStripeInSupabase({ farmerId, email }) {
+  return clearProfileStripeInSupabase({
+    role: "farmer",
+    profileId: farmerId,
+    email,
+  });
 }
 
 router.get("/health", (req, res) => {
@@ -713,21 +974,51 @@ router.post("/verify-checkout-session", async (req, res) => {
   }
 });
 
-router.post("/create-farmer-connect-account", async (req, res) => {
+/* =====================================================
+   GENERIC CONNECT ACCOUNT ROUTE
+   Supports farmer, freight, driver.
+   Customers usually store stripe_customer_id through checkout/billing,
+   not Connect acct_ unless you choose to onboard customers as payout recipients.
+===================================================== */
+
+router.post("/create-connect-account", async (req, res) => {
   try {
     if (!requireStripe(res)) return;
 
-    const { farmerId, email, farmName, businessName, existingStripeAccountId } =
-      req.body || {};
+    const {
+      role = "farmer",
+      profileId,
+      userId,
+      farmerId,
+      freightId,
+      driverId,
+      email,
+      businessName,
+      farmName,
+      companyName,
+      existingStripeAccountId,
+    } = req.body || {};
 
-    const finalFarmerId = cleanString(farmerId);
+    const normalizedRole = normalizeRole(role);
+    const config = getProfileStripeConfig(normalizedRole);
+
+    const finalProfileId =
+      cleanString(profileId) ||
+      cleanString(userId) ||
+      cleanString(farmerId) ||
+      cleanString(freightId) ||
+      cleanString(driverId);
+
     const finalEmail = cleanString(email).toLowerCase();
-    const finalFarmName = cleanString(farmName || businessName);
 
-    if (!finalFarmerId) {
+    const finalBusinessName = cleanString(
+      businessName || farmName || companyName || config.defaultName
+    );
+
+    if (!finalProfileId) {
       return res.status(400).json({
         success: false,
-        error: "farmerId is required.",
+        error: "profileId/userId/farmerId/freightId/driverId is required.",
       });
     }
 
@@ -738,24 +1029,32 @@ router.post("/create-farmer-connect-account", async (req, res) => {
 
       if (!exists) {
         accountId = "";
-        await clearFarmerStripeInSupabase({ farmerId: finalFarmerId });
+        await clearProfileStripeInSupabase({
+          role: normalizedRole,
+          profileId: finalProfileId,
+          email: finalEmail,
+        });
       }
     }
 
     if (!accountId && supabase) {
-      const { data } = await supabase
-        .from("farmers")
-        .select("stripe_account_id, farmer_stripe_account_id")
-        .eq("id", finalFarmerId)
-        .maybeSingle();
+      const row = await findProfileRow({
+        role: normalizedRole,
+        profileId: finalProfileId,
+        email: finalEmail,
+      });
 
       const savedAccountId =
-        data?.stripe_account_id || data?.farmer_stripe_account_id || "";
+        row?.[config.stripeColumn] || row?.[config.altStripeColumn] || "";
 
       if (savedAccountId && (await stripeAccountExists(savedAccountId))) {
         accountId = savedAccountId;
       } else if (savedAccountId) {
-        await clearFarmerStripeInSupabase({ farmerId: finalFarmerId });
+        await clearProfileStripeInSupabase({
+          role: normalizedRole,
+          profileId: finalProfileId,
+          email: finalEmail,
+        });
       }
     }
 
@@ -769,12 +1068,17 @@ router.post("/create-farmer-connect-account", async (req, res) => {
           transfers: { requested: true },
         },
         business_profile: {
-          name: finalFarmName || "Farm2Home Farmer",
-          product_description: "Farm2Home local farm marketplace seller",
+          name: finalBusinessName,
+          product_description: `Farm2Home ${normalizedRole} payout account`,
         },
         metadata: {
-          farmerId: finalFarmerId,
-          farmName: finalFarmName,
+          role: normalizedRole,
+          profileId: finalProfileId,
+          userId: finalProfileId,
+          farmerId: normalizedRole === "farmer" ? finalProfileId : "",
+          freightId: normalizedRole === "freight" ? finalProfileId : "",
+          driverId: normalizedRole === "driver" ? finalProfileId : "",
+          businessName: finalBusinessName,
           email: finalEmail,
         },
       });
@@ -782,44 +1086,184 @@ router.post("/create-farmer-connect-account", async (req, res) => {
       accountId = account.id;
     }
 
-    await updateFarmerStripeInSupabase({
-      farmerId: finalFarmerId,
+    await updateProfileStripeInSupabase({
+      role: normalizedRole,
+      profileId: finalProfileId,
       email: finalEmail,
-      farmName: finalFarmName,
+      businessName: finalBusinessName,
       stripeAccountId: accountId,
       complianceStatus: "stripe_pending",
     });
 
     const accountLink = await stripe.accountLinks.create({
       account: accountId,
-      refresh_url: appendQueryParams(getConnectRefreshUrl(), {
+      refresh_url: appendQueryParams(getConnectRefreshUrl(normalizedRole), {
         stripeReturn: "false",
-        farmerId: finalFarmerId,
+        role: normalizedRole,
+        profileId: finalProfileId,
+        [config.idParamName]: finalProfileId,
         accountId,
       }),
-      return_url: appendQueryParams(getConnectReturnUrl(), {
+      return_url: appendQueryParams(getConnectReturnUrl(normalizedRole), {
         stripeReturn: "true",
-        farmerId: finalFarmerId,
+        role: normalizedRole,
+        profileId: finalProfileId,
+        [config.idParamName]: finalProfileId,
         accountId,
       }),
       type: "account_onboarding",
     });
 
+    console.log("CREATE CONNECT RETURN:", {
+      role: normalizedRole,
+      profileId: finalProfileId,
+      email: finalEmail,
+      accountId,
+    });
+
     return res.json({
       success: true,
+      role: normalizedRole,
+      profileId: finalProfileId,
       accountId,
       stripeAccountId: accountId,
       onboardingUrl: accountLink.url,
       url: accountLink.url,
     });
   } catch (error) {
-    console.error("create-farmer-connect-account error:", error);
+    console.error("create-connect-account error:", error);
 
     return res.status(500).json({
       success: false,
       error: error.message,
     });
   }
+});
+
+router.post("/check-connect-account", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const {
+      role = "farmer",
+      profileId,
+      userId,
+      farmerId,
+      freightId,
+      driverId,
+      email,
+      stripeAccountId,
+      accountId,
+    } = req.body || {};
+
+    const normalizedRole = normalizeRole(role);
+    const config = getProfileStripeConfig(normalizedRole);
+
+    const finalProfileId =
+      cleanString(profileId) ||
+      cleanString(userId) ||
+      cleanString(farmerId) ||
+      cleanString(freightId) ||
+      cleanString(driverId);
+
+    const finalEmail = cleanString(email).toLowerCase();
+
+    let activeAccountId = cleanString(stripeAccountId) || cleanString(accountId);
+
+    if (!activeAccountId && supabase && finalProfileId) {
+      const row = await findProfileRow({
+        role: normalizedRole,
+        profileId: finalProfileId,
+        email: finalEmail,
+      });
+
+      activeAccountId =
+        row?.[config.stripeColumn] || row?.[config.altStripeColumn] || "";
+    }
+
+    if (!activeAccountId) {
+      return res.json({
+        success: true,
+        role: normalizedRole,
+        exists: false,
+        onboardingComplete: false,
+        payoutsEnabled: false,
+        chargesEnabled: false,
+        detailsSubmitted: false,
+      });
+    }
+
+    let account;
+
+    try {
+      account = await stripe.accounts.retrieve(activeAccountId);
+    } catch (error) {
+      await clearProfileStripeInSupabase({
+        role: normalizedRole,
+        profileId: finalProfileId,
+        email: finalEmail,
+      });
+
+      return res.status(404).json({
+        success: false,
+        role: normalizedRole,
+        exists: false,
+        error: "No such Stripe account. Please restart Stripe setup.",
+      });
+    }
+
+    const onboardingComplete = Boolean(account.details_submitted);
+
+    await updateProfileStripeInSupabase({
+      role: normalizedRole,
+      profileId: finalProfileId,
+      email: finalEmail,
+      stripeAccountId: activeAccountId,
+      payoutsEnabled: account.payouts_enabled,
+      chargesEnabled: account.charges_enabled,
+      onboardingComplete,
+      complianceStatus: onboardingComplete ? "stripe_complete" : "stripe_pending",
+    });
+
+    return res.json({
+      success: true,
+      role: normalizedRole,
+      exists: true,
+      accountId: activeAccountId,
+      stripeAccountId: activeAccountId,
+      onboardingComplete,
+      payoutsEnabled: account.payouts_enabled,
+      chargesEnabled: account.charges_enabled,
+      detailsSubmitted: account.details_submitted,
+      account,
+    });
+  } catch (error) {
+    console.error("check-connect-account error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/* =====================================================
+   FARMER CONNECT ROUTES
+   Kept for existing frontend compatibility.
+===================================================== */
+
+router.post("/create-farmer-connect-account", async (req, res) => {
+  req.body = {
+    ...(req.body || {}),
+    role: "farmer",
+    profileId: req.body?.profileId || req.body?.userId || req.body?.farmerId,
+    businessName: req.body?.businessName || req.body?.farmName,
+  };
+
+  return router.handle(
+    { ...req, method: "POST", url: "/create-connect-account" },
+    res
+  );
 });
 
 router.post("/create-farmer-account-link", async (req, res) => {
@@ -832,13 +1276,13 @@ router.post("/create-farmer-account-link", async (req, res) => {
     let accountId = cleanString(stripeAccountId);
 
     if (!accountId && supabase && finalFarmerId) {
-      const { data } = await supabase
-        .from("farmers")
-        .select("stripe_account_id, farmer_stripe_account_id")
-        .eq("id", finalFarmerId)
-        .maybeSingle();
+      const row = await findProfileRow({
+        role: "farmer",
+        profileId: finalFarmerId,
+        email: "",
+      });
 
-      accountId = data?.stripe_account_id || data?.farmer_stripe_account_id || "";
+      accountId = row?.stripe_account_id || row?.farmer_stripe_account_id || "";
     }
 
     if (!accountId) {
@@ -859,12 +1303,12 @@ router.post("/create-farmer-account-link", async (req, res) => {
 
     const accountLink = await stripe.accountLinks.create({
       account: accountId,
-      refresh_url: appendQueryParams(getConnectRefreshUrl(), {
+      refresh_url: appendQueryParams(getConnectRefreshUrl("farmer"), {
         stripeReturn: "false",
         farmerId: finalFarmerId,
         accountId,
       }),
-      return_url: appendQueryParams(getConnectReturnUrl(), {
+      return_url: appendQueryParams(getConnectReturnUrl("farmer"), {
         stripeReturn: "true",
         farmerId: finalFarmerId,
         accountId,
@@ -890,86 +1334,21 @@ router.post("/create-farmer-account-link", async (req, res) => {
 });
 
 router.post("/check-farmer-connect-account", async (req, res) => {
-  try {
-    if (!requireStripe(res)) return;
+  req.body = {
+    ...(req.body || {}),
+    role: "farmer",
+    profileId: req.body?.profileId || req.body?.userId || req.body?.farmerId,
+  };
 
-    const { farmerId, stripeAccountId, accountId } = req.body || {};
-
-    const finalFarmerId = cleanString(farmerId);
-
-    let activeAccountId = cleanString(stripeAccountId) || cleanString(accountId);
-
-    if (!activeAccountId && supabase && finalFarmerId) {
-      const { data } = await supabase
-        .from("farmers")
-        .select("stripe_account_id, farmer_stripe_account_id")
-        .eq("id", finalFarmerId)
-        .maybeSingle();
-
-      activeAccountId =
-        data?.stripe_account_id || data?.farmer_stripe_account_id || "";
-    }
-
-    if (!activeAccountId) {
-      return res.json({
-        success: true,
-        exists: false,
-        onboardingComplete: false,
-        payoutsEnabled: false,
-        chargesEnabled: false,
-        detailsSubmitted: false,
-      });
-    }
-
-    let account;
-
-    try {
-      account = await stripe.accounts.retrieve(activeAccountId);
-    } catch (error) {
-      if (finalFarmerId) {
-        await clearFarmerStripeInSupabase({ farmerId: finalFarmerId });
-      }
-
-      return res.status(404).json({
-        success: false,
-        exists: false,
-        error: "No such Stripe account. Please restart Stripe setup.",
-      });
-    }
-
-    const onboardingComplete = Boolean(account.details_submitted);
-
-    if (finalFarmerId) {
-      await updateFarmerStripeInSupabase({
-        farmerId: finalFarmerId,
-        stripeAccountId: activeAccountId,
-        payoutsEnabled: account.payouts_enabled,
-        chargesEnabled: account.charges_enabled,
-        onboardingComplete,
-        complianceStatus: onboardingComplete ? "stripe_complete" : "stripe_pending",
-      });
-    }
-
-    return res.json({
-      success: true,
-      exists: true,
-      accountId: activeAccountId,
-      stripeAccountId: activeAccountId,
-      onboardingComplete,
-      payoutsEnabled: account.payouts_enabled,
-      chargesEnabled: account.charges_enabled,
-      detailsSubmitted: account.details_submitted,
-      account,
-    });
-  } catch (error) {
-    console.error("check-farmer-connect-account error:", error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
+  return router.handle(
+    { ...req, method: "POST", url: "/check-connect-account" },
+    res
+  );
 });
+
+/* =====================================================
+   MARKETPLACE CHECKOUT
+===================================================== */
 
 router.post("/create-marketplace-checkout", async (req, res) => {
   try {
@@ -1218,13 +1597,27 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
 
     if (event.type === "account.updated") {
       const account = event.data.object;
-      const farmerId = account.metadata?.farmerId || "";
+      const metadata = account.metadata || {};
+      const role = normalizeRole(metadata.role || "farmer");
 
-      if (farmerId) {
+      const profileId =
+        cleanString(metadata.profileId) ||
+        cleanString(metadata.userId) ||
+        cleanString(metadata.farmerId) ||
+        cleanString(metadata.freightId) ||
+        cleanString(metadata.driverId);
+
+      const email = cleanString(metadata.email).toLowerCase();
+      const businessName = cleanString(metadata.businessName || metadata.farmName);
+
+      if (profileId || email) {
         const onboardingComplete = Boolean(account.details_submitted);
 
-        await updateFarmerStripeInSupabase({
-          farmerId,
+        await updateProfileStripeInSupabase({
+          role,
+          profileId,
+          email,
+          businessName,
           stripeAccountId: account.id,
           payoutsEnabled: account.payouts_enabled,
           chargesEnabled: account.charges_enabled,
