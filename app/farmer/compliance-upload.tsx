@@ -80,6 +80,54 @@ function makeUuid() {
   });
 }
 
+function StatusPill({ done }: { done: boolean }) {
+  return (
+    <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
+      <Text
+        style={[
+          styles.pillText,
+          done ? styles.pillTextDone : styles.pillTextMissing,
+        ]}
+      >
+        {done ? "Complete" : "Needed"}
+      </Text>
+    </View>
+  );
+}
+
+function ActionCard({
+  icon,
+  title,
+  subtitle,
+  done,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  done: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardTop}>
+        <View style={styles.iconBox}>
+          <Ionicons name={icon} size={24} color="#FFFFFF" />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>{title}</Text>
+          <Text style={styles.cardSub}>{subtitle}</Text>
+        </View>
+
+        <StatusPill done={done} />
+      </View>
+
+      {children}
+    </View>
+  );
+}
+
 export default function FarmerComplianceUploadScreen() {
   const params = useLocalSearchParams();
 
@@ -146,15 +194,15 @@ export default function FarmerComplianceUploadScreen() {
   const pickupComplete = Boolean(uploadedDocs.pickup_delivery_agreement);
 
   useEffect(() => {
-  loadFarmer();
-}, []);
+    loadFarmer();
+  }, []);
 
   useEffect(() => {
-  if (stripeReturn && returnedAccountId && !stripeReturnHandled) {
-    setStripeReturnHandled(true);
-    saveStripeReturn(returnedAccountId);
-  }
-}, [stripeReturn, returnedAccountId, stripeReturnHandled]);
+    if (stripeReturn && returnedAccountId && !stripeReturnHandled) {
+      setStripeReturnHandled(true);
+      saveStripeReturn(returnedAccountId);
+    }
+  }, [stripeReturn, returnedAccountId, stripeReturnHandled]);
 
   async function getAuthUser() {
     const { data } = await supabase.auth.getUser();
@@ -566,7 +614,8 @@ export default function FarmerComplianceUploadScreen() {
       setVerifyStripeLoading(false);
     }
   }
-    async function uploadDocument(type: ComplianceDocumentType, label: string) {
+
+  async function uploadDocument(type: ComplianceDocumentType, label: string) {
     try {
       setUploadingType(String(type));
 
@@ -735,54 +784,6 @@ export default function FarmerComplianceUploadScreen() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function StatusPill({ done }: { done: boolean }) {
-    return (
-      <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
-        <Text
-          style={[
-            styles.pillText,
-            done ? styles.pillTextDone : styles.pillTextMissing,
-          ]}
-        >
-          {done ? "Complete" : "Needed"}
-        </Text>
-      </View>
-    );
-  }
-
-  function ActionCard({
-    icon,
-    title,
-    subtitle,
-    done,
-    children,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    title: string;
-    subtitle: string;
-    done: boolean;
-    children: React.ReactNode;
-  }) {
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardTop}>
-          <View style={styles.iconBox}>
-            <Ionicons name={icon} size={24} color="#FFFFFF" />
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>{title}</Text>
-            <Text style={styles.cardSub}>{subtitle}</Text>
-          </View>
-
-          <StatusPill done={done} />
-        </View>
-
-        {children}
-      </View>
-    );
   }
 
   return (
