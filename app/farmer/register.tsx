@@ -24,28 +24,43 @@ const PENDING_FARMER_KEY = "pendingFarmerApplication";
 
 const productOptions = [
   "Produce",
+  "Vegetables",
+  "Fruit",
   "Eggs",
   "Honey",
   "Beef",
   "Chicken",
+  "Turkey",
   "Goat",
   "Lamb",
   "Halal Meat",
   "Dairy",
+  "Fish / Aquaculture",
+  "Catfish",
+  "Tilapia",
+  "Trout",
+  "Shrimp",
+  "Crawfish",
   "Herbs",
   "Baked Goods",
   "Jams",
+  "Sauces",
   "Bale of Hay",
-  "Live Stock",
+  "Alfalfa Hay",
+  "Straw Bale",
+  "Animal Feed",
   "Flowers",
   "Plants",
+  "Christmas Trees",
+  "Pumpkins",
   "Seasonal Items",
+  "Farm Supplies",
 ];
 
 const agreements = [
   "I understand I am an independent seller and not an employee, agent, or partner of Farm2Home.",
   "I accept full responsibility for food quality, safety, storage, packaging, labeling, and product accuracy.",
-  "I certify I comply with Michigan and federal laws required to sell my products.",
+  "I certify I comply with state and federal laws required to sell my products.",
   "I agree to resolve customer complaints through refund, replacement, or credit when appropriate.",
   "I agree to indemnify and hold harmless Farm2Home and ASO Developments LLC from claims related to my products, operations, or legal violations.",
   "I accept Farm2Home service fees, membership fees, payout terms, and platform policies.",
@@ -61,6 +76,54 @@ function normalizeUsername(value: string) {
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
+}
+
+function StatusPill({ done }: { done: boolean }) {
+  return (
+    <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
+      <Text
+        style={[
+          styles.pillText,
+          done ? styles.pillTextDone : styles.pillTextMissing,
+        ]}
+      >
+        {done ? "Complete" : "Needed"}
+      </Text>
+    </View>
+  );
+}
+
+function SectionCard({
+  icon,
+  title,
+  subtitle,
+  done,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  done: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardTop}>
+        <View style={styles.iconBox}>
+          <Ionicons name={icon} size={24} color="#FFFFFF" />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>{title}</Text>
+          <Text style={styles.cardSub}>{subtitle}</Text>
+        </View>
+
+        <StatusPill done={done} />
+      </View>
+
+      {children}
+    </View>
+  );
 }
 
 export default function FarmerRegister() {
@@ -242,10 +305,8 @@ export default function FarmerRegister() {
 
       compliance_submitted: false,
       application_fee_paid: false,
-      application_fee_started: false,
       farmer_membership_paid: false,
       monthly_membership_started: false,
-      monthly_membership_required_after_approval: true,
 
       stripe_account_id: "",
       farmer_stripe_account_id: "",
@@ -403,6 +464,7 @@ export default function FarmerRegister() {
         zip_code: zipCode.trim(),
 
         selected_products: selectedProducts,
+        selected_product_categories: selectedProducts,
         legal_agreements: accepted,
 
         compliance_status: "in_progress",
@@ -419,10 +481,8 @@ export default function FarmerRegister() {
         compliance_submitted: false,
 
         application_fee_paid: false,
-        application_fee_started: false,
         farmer_membership_paid: false,
         monthly_membership_started: false,
-        monthly_membership_required_after_approval: true,
 
         stripe_account_id: "",
         farmer_stripe_account_id: "",
@@ -432,6 +492,8 @@ export default function FarmerRegister() {
 
         uploaded_docs: {},
         legal_checks: {},
+
+        products: [],
 
         created_at: now,
         updated_at: now,
@@ -465,7 +527,9 @@ export default function FarmerRegister() {
         city: city.trim(),
         state: cleanState,
         zipCode: zipCode.trim(),
+
         selectedProducts,
+        selectedProductCategories: selectedProducts,
 
         approved: false,
         rejected: false,
@@ -480,10 +544,8 @@ export default function FarmerRegister() {
         reviewDecision: "not_submitted",
 
         applicationFeePaid: false,
-        applicationFeeStarted: false,
         farmerMembershipPaid: false,
         monthlyMembershipStarted: false,
-        monthlyMembershipRequiredAfterApproval: true,
 
         stripeAccountId: "",
         farmerStripeAccountId: "",
@@ -493,8 +555,8 @@ export default function FarmerRegister() {
 
         uploadedDocs: {},
         legalChecks: {},
-
         products: [],
+
         createdAt: now,
         updatedAt: now,
       };
@@ -521,78 +583,29 @@ export default function FarmerRegister() {
     }
   }
 
-  function StatusPill({ done }: { done: boolean }) {
-    return (
-      <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
-        <Text
-          style={[
-            styles.pillText,
-            done ? styles.pillTextDone : styles.pillTextMissing,
-          ]}
-        >
-          {done ? "Complete" : "Needed"}
-        </Text>
-      </View>
-    );
-  }
-
-  function SectionCard({
-    icon,
-    title,
-    subtitle,
-    done,
-    children,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    title: string;
-    subtitle: string;
-    done: boolean;
-    children: React.ReactNode;
-  }) {
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardTop}>
-          <View style={styles.iconBox}>
-            <Ionicons name={icon} size={24} color="#FFFFFF" />
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>{title}</Text>
-            <Text style={styles.cardSub}>{subtitle}</Text>
-          </View>
-
-          <StatusPill done={done} />
-        </View>
-
-        {children}
-      </View>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#14532D" />
 
       <ScrollView
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="always"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
           <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
           <Text style={styles.heroTitle}>Start Your Farmer Application</Text>
           <Text style={styles.heroSub}>
-            Create your farm profile first. Then complete compliance, pay the
-            application fee, connect Stripe payout, and submit for admin review.
+            Create your farm profile first. Then complete payment, Stripe payout,
+            pickup/delivery, and seller agreement.
           </Text>
         </View>
 
         <View style={styles.priceCard}>
           <Text style={styles.priceTitle}>Farmer Pricing</Text>
           <Text style={styles.priceLine}>Application Process Fee: $29.99</Text>
-          <Text style={styles.priceLine}>
-            Monthly Membership: $14.99 after approval
-          </Text>
+          <Text style={styles.priceLine}>Monthly Membership: $14.99</Text>
           <Text style={styles.priceLine}>Marketplace Service Fee: 4%</Text>
         </View>
 
@@ -607,6 +620,7 @@ export default function FarmerRegister() {
             placeholder="Owner Name"
             value={ownerName}
             onChangeText={setOwnerName}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -614,6 +628,7 @@ export default function FarmerRegister() {
             placeholder="Farm Name"
             value={farmName}
             onChangeText={setFarmName}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -621,6 +636,7 @@ export default function FarmerRegister() {
             placeholder="Business Name"
             value={businessName}
             onChangeText={setBusinessName}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -630,6 +646,7 @@ export default function FarmerRegister() {
             keyboardType="email-address"
             value={email}
             onChangeText={setEmail}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -653,6 +670,7 @@ export default function FarmerRegister() {
             autoCapitalize="none"
             value={username}
             onChangeText={setUsername}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -661,6 +679,7 @@ export default function FarmerRegister() {
             secureTextEntry
             value={password}
             onChangeText={setPassword}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -669,13 +688,14 @@ export default function FarmerRegister() {
             secureTextEntry
             value={confirmPassword}
             onChangeText={setConfirmPassword}
+            autoCorrect={false}
           />
         </SectionCard>
 
         <SectionCard
           icon="location-outline"
           title="Farm Location"
-          subtitle="Used for local customer discovery and compliance review."
+          subtitle="Used for local customer discovery."
           done={locationComplete}
         >
           <TextInput
@@ -683,6 +703,7 @@ export default function FarmerRegister() {
             placeholder="Business Address"
             value={businessAddress}
             onChangeText={setBusinessAddress}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -690,6 +711,7 @@ export default function FarmerRegister() {
             placeholder="City"
             value={city}
             onChangeText={setCity}
+            autoCorrect={false}
           />
 
           <TextInput
@@ -700,6 +722,8 @@ export default function FarmerRegister() {
               setStateValue(value.toUpperCase().slice(0, 2))
             }
             maxLength={2}
+            autoCapitalize="characters"
+            autoCorrect={false}
           />
 
           <TextInput
@@ -785,7 +809,7 @@ export default function FarmerRegister() {
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.submitText}>Start Document Verification</Text>
+            <Text style={styles.submitText}>Continue to Farmer Setup</Text>
           )}
         </TouchableOpacity>
 
