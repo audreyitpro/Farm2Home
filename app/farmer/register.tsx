@@ -191,6 +191,17 @@ export default function FarmerRegister() {
     );
   }
 
+  function goToFarmerSetup(farmerId: string, cleanEmail: string, cleanBusinessName: string) {
+    router.replace({
+      pathname: "/farmer/compliance-upload",
+      params: {
+        farmerId,
+        email: cleanEmail,
+        businessName: cleanBusinessName,
+      },
+    } as any);
+  }
+
   async function notifyAdminFarmerVerification(farmer: any) {
     try {
       await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
@@ -276,58 +287,62 @@ export default function FarmerRegister() {
   }
 
   async function createAdminVerificationRecord(farmer: any) {
-    const adminRecord = {
-      id: farmer.id,
-      farmer_id: farmer.id,
-      account_type: "FARMER",
-      role: "farmer",
-      type: "FARMER",
+    try {
+      const adminRecord = {
+        id: farmer.id,
+        farmer_id: farmer.id,
+        account_type: "FARMER",
+        role: "farmer",
+        type: "FARMER",
 
-      farm_name: farmer.farm_name,
-      business_name: farmer.business_name,
-      company_name: farmer.business_name,
-      owner_name: farmer.owner_name,
-      email: farmer.email,
-      phone: farmer.phone,
-      state: farmer.state,
+        farm_name: farmer.farm_name,
+        business_name: farmer.business_name,
+        company_name: farmer.business_name,
+        owner_name: farmer.owner_name,
+        email: farmer.email,
+        phone: farmer.phone,
+        state: farmer.state,
 
-      status: "STARTED",
-      compliance_status: "in_progress",
-      admin_review_status: "not_submitted",
-      review_decision: "not_submitted",
+        status: "STARTED",
+        compliance_status: "in_progress",
+        admin_review_status: "not_submitted",
+        review_decision: "not_submitted",
 
-      approved: false,
-      rejected: false,
-      reviewed: false,
-      needs_more_info: false,
-      account_active: false,
-      store_unlocked: false,
+        approved: false,
+        rejected: false,
+        reviewed: false,
+        needs_more_info: false,
+        account_active: false,
+        store_unlocked: false,
 
-      compliance_submitted: false,
-      application_fee_paid: false,
-      farmer_membership_paid: false,
-      monthly_membership_started: false,
+        compliance_submitted: false,
+        application_fee_paid: false,
+        farmer_membership_paid: false,
+        monthly_membership_started: false,
 
-      stripe_account_id: "",
-      farmer_stripe_account_id: "",
-      stripe_onboarding_complete: false,
-      stripe_payouts_enabled: false,
-      stripe_charges_enabled: false,
+        stripe_account_id: "",
+        farmer_stripe_account_id: "",
+        stripe_onboarding_complete: false,
+        stripe_payouts_enabled: false,
+        stripe_charges_enabled: false,
 
-      uploaded_docs: {},
-      legal_checks: {},
-      documents: [],
+        uploaded_docs: {},
+        legal_checks: {},
+        documents: [],
 
-      created_at: farmer.created_at,
-      updated_at: farmer.updated_at,
-    };
+        created_at: farmer.created_at,
+        updated_at: farmer.updated_at,
+      };
 
-    const { error } = await supabase
-      .from("admin_verifications")
-      .upsert(adminRecord, { onConflict: "id" });
+      const { error } = await supabase
+        .from("admin_verifications")
+        .upsert(adminRecord, { onConflict: "id" });
 
-    if (error) {
-      console.log("Admin verification save ignored:", error.message);
+      if (error) {
+        console.log("Admin verification save ignored:", error.message);
+      }
+    } catch (error) {
+      console.log("Admin verification ignored:", error);
     }
   }
 
@@ -376,6 +391,10 @@ export default function FarmerRegister() {
     if (loading) return;
     if (!validateForm()) return;
 
+    let routeFarmerId = "";
+    let routeEmail = "";
+    let routeBusinessName = "";
+
     try {
       setLoading(true);
 
@@ -387,6 +406,9 @@ export default function FarmerRegister() {
       const cleanUsername = normalizeUsername(username);
       const cleanState = stateValue.trim().toUpperCase().slice(0, 2) || "MI";
       const now = new Date().toISOString();
+
+      routeEmail = cleanEmail;
+      routeBusinessName = cleanBusinessName;
 
       const { data: existingFarmer, error: existingError } = await supabase
         .from("farmers")
@@ -432,6 +454,8 @@ export default function FarmerRegister() {
         );
         return;
       }
+
+      routeFarmerId = authUserId;
 
       const profile = await createOrUpdateProfile({
         authUserId,
@@ -508,8 +532,6 @@ export default function FarmerRegister() {
         return;
       }
 
-      await createAdminVerificationRecord(farmerPayload);
-
       const localFarmer = {
         id: authUserId,
         farmerId: authUserId,
@@ -562,23 +584,26 @@ export default function FarmerRegister() {
       };
 
       await saveLocalFarmerSession(localFarmer);
+
+      createAdminVerificationRecord(farmerPayload);
       notifyAdminFarmerVerification(localFarmer);
 
-      router.replace({
-        pathname: "/farmer/compliance-upload",
-        params: {
-          farmerId: authUserId,
-          email: cleanEmail,
-          businessName: cleanBusinessName,
+      setLoading(false);
+
+      Alert.alert("Account Created", "Continue to farmer setup.", [
+        {
+          text: "Continue",
+          onPress: () => {
+            goToFarmerSetup(authUserId, cleanEmail, cleanBusinessName);
+          },
         },
-      } as any);
+      ]);
     } catch (error: any) {
       console.log("Farmer registration error:", error);
       Alert.alert(
         "Registration Error",
         error?.message || "Unable to create farmer application."
       );
-    } finally {
       setLoading(false);
     }
   }
