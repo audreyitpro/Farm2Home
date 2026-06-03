@@ -158,14 +158,12 @@ function getFarmerStripeAccountId(farmer: Farmer, product?: Product) {
 
 function normalizeCategory(category?: string) {
   const value = String(category || "").trim();
-
   if (!value) return "Farm Goods";
   if (value === "Fish Farm / Aquaculture") return "Fish & Aquaculture";
   if (value === "Bale of Hay") return "Hay & Feed";
   if (value === "Hay") return "Hay & Feed";
   if (value === "Plants & Herbs") return "Plants & Nursery";
   if (value === "Seasonal") return "Seasonal Products";
-
   return value;
 }
 
@@ -184,7 +182,6 @@ function getProductEmoji(product: Product) {
   if (category.includes("seasonal") || name.includes("pumpkin")) return "🎃";
   if (name.includes("christmas")) return "🎄";
   if (category.includes("vegetable") || category.includes("greens")) return "🥬";
-
   return "🥬";
 }
 
@@ -407,7 +404,6 @@ export default function MarketplaceScreen() {
       setLoading(true);
 
       const approvedFarmers = (await getApprovedFarmers()) || [];
-
       const localFarmerRaw =
         (await AsyncStorage.getItem("currentFarmer")) ||
         (await AsyncStorage.getItem("currentUser"));
@@ -466,9 +462,7 @@ export default function MarketplaceScreen() {
         ...(Array.isArray(approvedFarmers) ? approvedFarmers : []),
       ];
 
-      const farmersToUse = mergedFarmers;
-
-      const normalizedFarmers = normalizeFarmers(farmersToUse).filter(
+      const normalizedFarmers = normalizeFarmers(mergedFarmers).filter(
         (farmer) => farmer.id && farmer.products && farmer.products.length > 0
       );
 
@@ -483,7 +477,6 @@ export default function MarketplaceScreen() {
         const existing = farmerMap.get(farmer.id);
         const existingProducts = existing?.products || [];
         const incomingProducts = farmer.products || [];
-
         const productMap = new Map<string, Product>();
 
         [...existingProducts, ...incomingProducts].forEach((product) => {
@@ -716,60 +709,47 @@ export default function MarketplaceScreen() {
 
     return (
       <View style={styles.farmSection}>
-        <View style={styles.farmHeader}>
+        <View style={styles.farmMarketRow}>
           <Pressable
             style={({ pressed }) => [
-              styles.farmIdentity,
+              styles.farmSideCard,
               pressed && styles.pressedButton,
             ]}
             onPress={() => openFarmerShop(item)}
           >
             {logo ? (
-              <Image source={{ uri: logo }} style={styles.farmLogo} />
+              <Image source={{ uri: logo }} style={styles.farmLogoLarge} />
             ) : (
-              <View style={styles.logoPlaceholder}>
+              <View style={styles.logoPlaceholderLarge}>
                 <Text style={styles.logoPlaceholderText}>🚜</Text>
               </View>
             )}
 
-            <View style={styles.farmTitleBlock}>
-              <Text style={styles.farmName}>{getFarmerName(item)}</Text>
-              <Text style={styles.farmLocation}>{getFarmerLocation(item)}</Text>
+            <Text style={styles.farmNameSide} numberOfLines={2}>
+              {getFarmerName(item)}
+            </Text>
 
-              <View style={styles.farmMetaRow}>
-                <Text style={styles.ratingText}>
-                  ⭐ {Number(item.rating || 4.8).toFixed(1)}
-                </Text>
-                <Text style={styles.dot}>•</Text>
-                <Text style={styles.distanceText}>
-                  {Number(item.distanceMiles || 5).toFixed(1)} mi
-                </Text>
-                <Text style={styles.dot}>•</Text>
-                <Text style={styles.distanceText}>
-                  {(item.products || []).length} items
-                </Text>
-              </View>
-            </View>
+            <Text style={styles.farmLocationSide} numberOfLines={1}>
+              {getFarmerLocation(item)}
+            </Text>
+
+            <Text style={styles.farmMetaSide}>
+              ⭐ {Number(item.rating || 4.8).toFixed(1)}
+            </Text>
+
+            <Text style={styles.viewFarmText}>View Farm →</Text>
           </Pressable>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.visitFarmButton,
-              pressed && styles.pressedButton,
-            ]}
-            onPress={() => openFarmerShop(item)}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.productsRowSide}
           >
-            <Text style={styles.visitFarmButtonText}>View</Text>
-          </Pressable>
+            {(item.products || []).map((product) =>
+              renderProductCard(item, product)
+            )}
+          </ScrollView>
         </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.productsRow}
-        >
-          {(item.products || []).map((product) => renderProductCard(item, product))}
-        </ScrollView>
       </View>
     );
   }
@@ -977,10 +957,7 @@ export default function MarketplaceScreen() {
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
+  page: { flex: 1, backgroundColor: COLORS.background },
   loadingPage: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -1000,9 +977,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textAlign: "center",
   },
-  listContent: {
-    paddingBottom: 120,
-  },
+  listContent: { paddingBottom: 120 },
   topBar: {
     paddingTop: 18,
     paddingHorizontal: 18,
@@ -1011,11 +986,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  greeting: {
-    color: COLORS.text,
-    fontSize: 24,
-    fontWeight: "900",
-  },
+  greeting: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
   locationLine: {
     color: COLORS.muted,
     fontSize: 14,
@@ -1032,9 +1003,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  cartTopIcon: {
-    fontSize: 24,
-  },
+  cartTopIcon: { fontSize: 24 },
   cartBadge: {
     position: "absolute",
     top: -5,
@@ -1049,11 +1018,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: COLORS.card,
   },
-  cartBadgeText: {
-    color: COLORS.dark,
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  cartBadgeText: { color: COLORS.dark, fontWeight: "900", fontSize: 12 },
   heroCard: {
     marginHorizontal: 18,
     marginTop: 8,
@@ -1064,10 +1029,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     minHeight: 190,
   },
-  heroTextBlock: {
-    flex: 1,
-    paddingRight: 8,
-  },
+  heroTextBlock: { flex: 1, paddingRight: 8 },
   heroBadge: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.18)",
@@ -1100,23 +1062,10 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     marginTop: 16,
   },
-  heroButtonText: {
-    color: COLORS.dark,
-    fontWeight: "900",
-    fontSize: 14,
-  },
-  heroArt: {
-    width: 110,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  heroArtEmoji: {
-    fontSize: 66,
-  },
-  heroArtEmojiSmall: {
-    fontSize: 18,
-    marginTop: 10,
-  },
+  heroButtonText: { color: COLORS.dark, fontWeight: "900", fontSize: 14 },
+  heroArt: { width: 110, justifyContent: "center", alignItems: "center" },
+  heroArtEmoji: { fontSize: 66 },
+  heroArtEmojiSmall: { fontSize: 18, marginTop: 10 },
   quickStatsRow: {
     flexDirection: "row",
     gap: 10,
@@ -1131,11 +1080,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  quickStatValue: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 21,
-  },
+  quickStatValue: { color: COLORS.primary, fontWeight: "900", fontSize: 21 },
   quickStatLabel: {
     color: COLORS.muted,
     fontWeight: "800",
@@ -1154,10 +1099,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  searchIcon: {
-    fontSize: 18,
-    marginRight: 10,
-  },
+  searchIcon: { fontSize: 18, marginRight: 10 },
   searchInput: {
     flex: 1,
     fontSize: 15,
@@ -1187,12 +1129,8 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 14,
   },
-  categoryChipTextActive: {
-    color: "#FFFFFF",
-  },
-  featuredSection: {
-    marginTop: 8,
-  },
+  categoryChipTextActive: { color: "#FFFFFF" },
+  featuredSection: { marginTop: 8 },
   sectionTitleRow: {
     paddingHorizontal: 18,
     paddingTop: 10,
@@ -1209,22 +1147,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-end",
   },
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 22,
-    fontWeight: "900",
-  },
+  sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900" },
   sectionSubtitle: {
     color: COLORS.muted,
     marginTop: 4,
     fontSize: 13,
     fontWeight: "700",
   },
-  featuredRow: {
-    paddingLeft: 18,
-    paddingRight: 18,
-    gap: 14,
-  },
+  featuredRow: { paddingLeft: 18, paddingRight: 18, gap: 14 },
   farmSection: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
@@ -1234,86 +1164,66 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  farmHeader: {
+  farmMarketRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
+    alignItems: "stretch",
+    gap: 12,
   },
-  farmIdentity: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingRight: 10,
-  },
-  farmLogo: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    marginRight: 12,
-    backgroundColor: COLORS.softGreen,
-  },
-  logoPlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: COLORS.softGreen,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  logoPlaceholderText: {
-    fontSize: 31,
-  },
-  farmTitleBlock: {
-    flex: 1,
-  },
-  farmName: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  farmLocation: {
-    color: COLORS.muted,
-    marginTop: 3,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  farmMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 7,
-    flexWrap: "wrap",
-  },
-  ratingText: {
-    color: "#9A6A00",
-    fontWeight: "900",
-    fontSize: 13,
-  },
-  dot: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    marginHorizontal: 7,
-  },
-  distanceText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 13,
-  },
-  visitFarmButton: {
+  farmSideCard: {
+    width: 118,
     backgroundColor: COLORS.lightGreen,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    borderRadius: 999,
+    borderRadius: 24,
+    padding: 12,
+    alignItems: "center",
+    justifyContent: "flex-start",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  visitFarmButtonText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 13,
+  farmLogoLarge: {
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: COLORS.softGreen,
+    marginBottom: 10,
   },
-  productsRow: {
+  logoPlaceholderLarge: {
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  logoPlaceholderText: { fontSize: 31 },
+  farmNameSide: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: "900",
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  farmLocationSide: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 4,
+    textAlign: "center",
+  },
+  farmMetaSide: {
+    color: "#9A6A00",
+    fontSize: 12,
+    fontWeight: "900",
+    marginTop: 7,
+  },
+  viewFarmText: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  productsRowSide: {
     gap: 14,
     paddingRight: 6,
   },
@@ -1325,13 +1235,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  featuredProductCard: {
-    width: 178,
-    backgroundColor: COLORS.card,
-  },
-  productImageWrap: {
-    position: "relative",
-  },
+  featuredProductCard: { width: 178, backgroundColor: COLORS.card },
+  productImageWrap: { position: "relative" },
   productImage: {
     width: "100%",
     height: 122,
@@ -1348,9 +1253,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  productEmoji: {
-    fontSize: 48,
-  },
+  productEmoji: { fontSize: 48 },
   categoryBadge: {
     position: "absolute",
     left: 8,
@@ -1375,16 +1278,8 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 999,
   },
-  featuredBadgeText: {
-    color: COLORS.dark,
-    fontSize: 10,
-    fontWeight: "900",
-  },
-  productName: {
-    fontWeight: "900",
-    fontSize: 15,
-    color: COLORS.text,
-  },
+  featuredBadgeText: { color: COLORS.dark, fontSize: 10, fontWeight: "900" },
+  productName: { fontWeight: "900", fontSize: 15, color: COLORS.text },
   productFarmName: {
     color: COLORS.muted,
     marginTop: 4,
@@ -1414,11 +1309,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  productPrice: {
-    fontWeight: "900",
-    fontSize: 17,
-    color: COLORS.primary,
-  },
+  productPrice: { fontWeight: "900", fontSize: 17, color: COLORS.primary },
   productUnit: {
     color: COLORS.muted,
     marginTop: 2,
@@ -1439,9 +1330,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     marginTop: -2,
   },
-  pressedButton: {
-    opacity: 0.75,
-  },
+  pressedButton: { opacity: 0.75 },
   emptyBox: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
@@ -1452,10 +1341,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     alignItems: "center",
   },
-  emptyIcon: {
-    fontSize: 42,
-    marginBottom: 12,
-  },
+  emptyIcon: { fontSize: 42, marginBottom: 12 },
   emptyTitle: {
     fontWeight: "900",
     fontSize: 20,
@@ -1479,9 +1365,5 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 999,
   },
-  cartFloatingText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 15,
-  },
+  cartFloatingText: { color: "#FFFFFF", fontWeight: "900", fontSize: 15 },
 });

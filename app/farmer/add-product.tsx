@@ -73,12 +73,22 @@ function normalizeUnitForCategory(category: string): FarmProductUnit {
   return "each";
 }
 
+function getCleanFarmName(value: string, fallback?: string) {
+  const clean = String(value || "").trim();
+  if (clean) return clean;
+
+  const fallbackClean = String(fallback || "").trim();
+  if (fallbackClean) return fallbackClean;
+
+  return "Farm2Home Farm";
+}
+
 export default function AddProduct() {
   const [loading, setLoading] = useState(false);
 
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
-  const [farmName, setFarmName] = useState("");
+  const [farmName, setFarmName] = useState("Farm2Home Farm");
 
   const [productName, setProductName] = useState("");
   const [description, setDescription] = useState("");
@@ -119,15 +129,17 @@ export default function AddProduct() {
 
       const currentFarmer = JSON.parse(saved);
 
-      setFarmerId(currentFarmer.id || currentFarmer.farmerId || "");
-      setFarmerEmail(currentFarmer.email || "");
-      setFarmName(
+      const loadedFarmName = getCleanFarmName(
         currentFarmer.farmName ||
           currentFarmer.businessName ||
           currentFarmer.business_name ||
           currentFarmer.farm_name ||
-          ""
+          currentFarmer.name
       );
+
+      setFarmerId(currentFarmer.id || currentFarmer.farmerId || "");
+      setFarmerEmail(currentFarmer.email || "");
+      setFarmName(loadedFarmName);
     } catch (error) {
       console.log("Load current farmer error:", error);
       router.replace("/farmer/login");
@@ -179,8 +191,12 @@ export default function AddProduct() {
       ? currentFarmer.products
       : [];
 
+    const cleanFarmName = getCleanFarmName(farmName, (product as any).farmName);
+
     const updatedFarmer = {
       ...currentFarmer,
+      farmName: cleanFarmName,
+      businessName: currentFarmer.businessName || cleanFarmName,
       products: [...existingProducts, product],
       updatedAt: new Date().toISOString(),
     };
@@ -194,12 +210,13 @@ export default function AddProduct() {
   async function saveProductToMarketplace(product: Product) {
     const stock = Number(product.stock || product.quantity || 0);
     const productAny = product as any;
+    const cleanFarmName = getCleanFarmName(farmName, productAny.farmName);
 
     const fullPayload = {
       id: product.id,
       farmer_id: farmerId,
       farmer_email: farmerEmail,
-      farm_name: farmName,
+      farm_name: cleanFarmName,
 
       name: product.name,
       description: product.description,
@@ -252,7 +269,7 @@ export default function AddProduct() {
     const minimalPayload = {
       farmer_id: farmerId,
       farmer_email: farmerEmail,
-      farm_name: farmName,
+      farm_name: cleanFarmName,
       name: product.name,
       description: product.description,
       category: product.category,
@@ -283,7 +300,9 @@ export default function AddProduct() {
       return;
     }
 
-    if (!farmName.trim() || !productName.trim() || !price.trim() || !quantity.trim()) {
+    const cleanFarmName = getCleanFarmName(farmName);
+
+    if (!cleanFarmName || !productName.trim() || !price.trim() || !quantity.trim()) {
       Alert.alert(
         "Missing Info",
         "Farm name, product name, price, and quantity are required."
@@ -337,7 +356,7 @@ export default function AddProduct() {
         grossSales: 0,
         lastUpdatedBy: farmerEmail,
         updatedAt: now,
-        farmName,
+        farmName: cleanFarmName,
         farmerName: farmerEmail,
 
         harvestDate: harvestDate.trim(),

@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, router } from "expo-router";
 import { createClient } from "@supabase/supabase-js";
+import * as ImagePicker from "expo-image-picker";
 
 import {
   Farmer,
@@ -68,6 +70,7 @@ export default function FarmerSetupStoreScreen() {
   const [phone, setPhone] = useState("");
   const [farmLocation, setFarmLocation] = useState("");
   const [about, setAbout] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
 
   const [pickup, setPickup] = useState(true);
   const [delivery, setDelivery] = useState(true);
@@ -137,10 +140,22 @@ export default function FarmerSetupStoreScreen() {
       securityQuestion3: row.security_question_3 || row.securityQuestion3 || "",
       securityAnswer3: row.security_answer_3 || row.securityAnswer3 || "",
 
-      farmLocation:
-        row.farm_location || row.farmLocation || row.location || "",
+      farmLocation: row.farm_location || row.farmLocation || row.location || "",
       location: row.location || row.farm_location || row.farmLocation || "",
       about: row.about || "",
+
+      logoUrl:
+        row.logo_url ||
+        row.farm_logo_url ||
+        row.logoUrl ||
+        row.farmLogoUrl ||
+        "",
+      farmLogoUrl:
+        row.farm_logo_url ||
+        row.logo_url ||
+        row.farmLogoUrl ||
+        row.logoUrl ||
+        "",
 
       pickup: row.pickup !== false,
       delivery: row.delivery !== false,
@@ -226,8 +241,11 @@ export default function FarmerSetupStoreScreen() {
       const approved =
         farmer.approved === true ||
         farmer.complianceStatus === "approved" ||
+        farmer.complianceStatus === "ACTIVE" ||
         (farmer as any).adminReviewStatus === "approved" ||
-        (farmer as any).reviewDecision === "approved";
+        (farmer as any).adminReviewStatus === "ACTIVE" ||
+        (farmer as any).reviewDecision === "approved" ||
+        (farmer as any).reviewDecision === "APPROVED";
 
       const storeUnlocked =
         (farmer as any).storeUnlocked === true ||
@@ -253,6 +271,13 @@ export default function FarmerSetupStoreScreen() {
         return;
       }
 
+      const loadedLogo =
+        (farmer as any).logoUrl ||
+        (farmer as any).farmLogoUrl ||
+        (farmer as any).logo_url ||
+        (farmer as any).farm_logo_url ||
+        "";
+
       setCurrentFarmer(farmer);
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
 
@@ -262,12 +287,33 @@ export default function FarmerSetupStoreScreen() {
       setPhone(farmer.phone || "");
       setFarmLocation(farmer.farmLocation || farmer.location || "");
       setAbout(farmer.about || "");
+      setLogoUrl(loadedLogo);
 
       setPickup(farmer.pickup !== false);
       setDelivery(farmer.delivery !== false);
     } catch (error: any) {
       console.log("Load farmer error:", error);
       Alert.alert("Error", error?.message || "Unable to load farmer setup.");
+    }
+  }
+
+  async function pickLogo() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert("Permission Needed", "Please allow photo access to upload logo.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+      allowsEditing: true,
+      aspect: [1, 1],
+    });
+
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      setLogoUrl(result.assets[0].uri);
     }
   }
 
@@ -307,6 +353,8 @@ export default function FarmerSetupStoreScreen() {
 
       setLoading(true);
 
+      const cleanedLogo = logoUrl.trim();
+
       const farmerPayload: Farmer = {
         ...currentFarmer,
 
@@ -314,6 +362,7 @@ export default function FarmerSetupStoreScreen() {
 
         ownerName: ownerName.trim(),
         farmName: farmName.trim(),
+        businessName: farmName.trim(),
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
 
@@ -328,6 +377,11 @@ export default function FarmerSetupStoreScreen() {
         farmLocation: farmLocation.trim(),
         location: farmLocation.trim(),
         about: about.trim(),
+
+        logoUrl: cleanedLogo,
+        farmLogoUrl: cleanedLogo,
+        logo_url: cleanedLogo,
+        farm_logo_url: cleanedLogo,
 
         pickup,
         delivery,
@@ -352,6 +406,10 @@ export default function FarmerSetupStoreScreen() {
         farm_location: farmLocation.trim(),
         location: farmLocation.trim(),
         about: about.trim(),
+
+        logo_url: cleanedLogo,
+        farm_logo_url: cleanedLogo,
+
         pickup,
         delivery,
         approved: true,
@@ -455,8 +513,8 @@ export default function FarmerSetupStoreScreen() {
             <Text style={styles.heroBadge}>Approved Farmer</Text>
             <Text style={styles.heroTitle}>Complete your farm profile</Text>
             <Text style={styles.heroText}>
-              Your compliance review is approved. Set your public store details
-              and start uploading produce.
+              Your compliance review is approved. Set your public store details,
+              upload your farm logo, and start uploading produce.
             </Text>
           </View>
         </View>
@@ -478,6 +536,39 @@ export default function FarmerSetupStoreScreen() {
               <Text style={styles.statusText}>
                 Membership: Starts after approval
               </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Farm Logo</Text>
+
+          <View style={styles.logoRow}>
+            {logoUrl ? (
+              <Image source={{ uri: logoUrl }} style={styles.logoPreview} />
+            ) : (
+              <View style={styles.logoEmpty}>
+                <Text style={styles.logoEmptyText}>🚜</Text>
+              </View>
+            )}
+
+            <View style={styles.logoTextBlock}>
+              <Text style={styles.logoTitle}>Upload your farm logo</Text>
+              <Text style={styles.logoSubtitle}>
+                This appears beside your farm name in the customer marketplace.
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.logoButton,
+                  pressed && styles.pressed,
+                ]}
+                onPress={pickLogo}
+              >
+                <Text style={styles.logoButtonText}>
+                  {logoUrl ? "Change Logo" : "Upload Logo"}
+                </Text>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -725,11 +816,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
   },
   statusHeader: {
     flexDirection: "row",
@@ -769,17 +855,59 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
   },
   sectionTitle: {
     fontSize: 21,
     fontWeight: "900",
     color: COLORS.text,
     marginBottom: 14,
+  },
+  logoRow: {
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "center",
+  },
+  logoPreview: {
+    width: 92,
+    height: 92,
+    borderRadius: 28,
+    backgroundColor: COLORS.softGreen,
+  },
+  logoEmpty: {
+    width: 92,
+    height: 92,
+    borderRadius: 28,
+    backgroundColor: COLORS.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  logoEmptyText: {
+    fontSize: 38,
+  },
+  logoTextBlock: {
+    flex: 1,
+  },
+  logoTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 17,
+  },
+  logoSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 19,
+    marginTop: 5,
+  },
+  logoButton: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 16,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  logoButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
   label: {
     fontSize: 13,
