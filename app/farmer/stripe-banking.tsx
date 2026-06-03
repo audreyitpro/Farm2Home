@@ -1,3 +1,5 @@
+// app/farmer/connect-bank.tsx
+
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -16,6 +18,75 @@ import { router } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
 import { getFarmerById, updateFarmerStore } from "../data/farmerStore";
+import { supabase } from "../data/supabaseClient";
+
+type FarmerStripeUpdate = {
+  id?: string;
+  email?: string;
+  farmName?: string;
+  businessName?: string;
+  stripeAccountId?: string;
+  farmerStripeAccountId?: string;
+  stripePayoutAccount?: string;
+  stripePayoutAccountLast4?: string;
+  stripePayoutBankName?: string;
+  stripeOnboardingComplete?: boolean;
+  stripeChargesEnabled?: boolean;
+  stripePayoutsEnabled?: boolean;
+  payoutsEnabled?: boolean;
+  chargesEnabled?: boolean;
+  detailsSubmitted?: boolean;
+  complianceStatus?: string;
+};
+
+function normalizeEmail(value: string) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getStripeAccountId(farmer: any) {
+  return (
+    farmer?.stripeAccountId ||
+    farmer?.farmerStripeAccountId ||
+    farmer?.stripe_account_id ||
+    farmer?.farmer_stripe_account_id ||
+    ""
+  );
+}
+
+function mapSupabaseFarmer(row: any) {
+  return {
+    id: row.id,
+    profileId: row.profile_id || row.profileId || "",
+    role: "farmer",
+
+    farmName: row.farm_name || row.farmName || row.business_name || "",
+    businessName: row.business_name || row.businessName || row.farm_name || "",
+    ownerName: row.owner_name || row.ownerName || "",
+    email: row.email || "",
+    phone: row.phone || "",
+
+    approved: Boolean(row.approved),
+    accountActive: Boolean(row.account_active || row.accountActive),
+    storeUnlocked: Boolean(row.store_unlocked || row.storeUnlocked),
+    complianceSubmitted: Boolean(row.compliance_submitted),
+    complianceStatus: row.compliance_status || "",
+    adminReviewStatus: row.admin_review_status || "",
+    reviewDecision: row.review_decision || "",
+
+    stripeAccountId: row.stripe_account_id || "",
+    farmerStripeAccountId: row.farmer_stripe_account_id || row.stripe_account_id || "",
+    stripeOnboardingComplete: Boolean(row.stripe_onboarding_complete),
+    stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
+    stripePayoutsEnabled: Boolean(row.stripe_payouts_enabled),
+
+    stripePayoutAccount: row.stripe_payout_account || "",
+    stripePayoutAccountLast4: row.stripe_payout_account_last4 || "",
+    stripePayoutBankName: row.stripe_payout_bank_name || "",
+
+    products: row.products || [],
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
 
 export default function FarmerStripeBankingScreen() {
   const [farmerId, setFarmerId] = useState("");
@@ -27,6 +98,8 @@ export default function FarmerStripeBankingScreen() {
   const [payoutsEnabled, setPayoutsEnabled] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [payoutAccount, setPayoutAccount] = useState("");
+  const [payoutLast4, setPayoutLast4] = useState("");
+  const [payoutBankName, setPayoutBankName] = useState("");
 
   const [loading, setLoading] = useState(false);
 
@@ -50,43 +123,111 @@ export default function FarmerStripeBankingScreen() {
       }
 
       const currentFarmer = JSON.parse(saved);
-      const farmer = await getFarmerById(currentFarmer.id);
+      const activeFarmerId = currentFarmer.id || currentFarmer.farmerId || "";
 
-      const activeFarmer = farmer || currentFarmer;
+      let activeFarmer: any = currentFarmer;
 
-      setFarmerId(activeFarmer.id || "");
+      if (activeFarmerId) {
+        const { data, error } = await supabase
+          .from("farmers")
+          .select("*")
+          .eq("id", activeFarmerId)
+          .maybeSingle();
 
+        if (!error && data) {
+          activeFarmer = {
+            ...currentFarmer,
+            ...mapSupabaseFarmer(data),
+          };
+        }
+      }
+
+      if (!activeFarmer?.id && currentFarmer.email) {
+        const { data, error } = await supabase
+          .from("farmers")
+          .select("*")
+          .eq("email", normalizeEmail(currentFarmer.email))
+          .maybeSingle();
+
+        if (!error && data) {
+          activeFarmer = {
+            ...currentFarmer,
+            ...mapSupabaseFarmer(data),
+          };
+        }
+      }
+
+      const localFarmer = await getFarmerById(activeFarmer.id);
+      if (localFarmer) {
+        activeFarmer = {
+          ...localFarmer,
+          ...activeFarmer,
+          stripeAccountId:
+            getStripeAccountId(activeFarmer) || getStripeAccountId(localFarmer),
+        };
+      }
+
+      const loadedAccountId = getStripeAccountId(activeFarmer);
+
+      setFarmerId(activeFarmer.id || activeFarmer.farmerId || "");
       setFarmerName(
         activeFarmer.farmName ||
           activeFarmer.businessName ||
           activeFarmer.ownerName ||
           ""
       );
-
       setEmail(activeFarmer.email || "");
-
-      setAccountId(
-        activeFarmer.stripeAccountId ||
-          activeFarmer.farmerStripeAccountId ||
-          ""
-      );
+      setAccountId(loadedAccountId);
 
       setChargesEnabled(
-        Boolean(activeFarmer.stripeChargesEnabled || activeFarmer.chargesEnabled)
+        Boolean(
+          activeFarmer.stripeChargesEnabled ||
+            activeFarmer.stripe_charges_enabled ||
+            activeFarmer.chargesEnabled
+        )
       );
 
       setPayoutsEnabled(
-        Boolean(activeFarmer.stripePayoutsEnabled || activeFarmer.payoutsEnabled)
+        Boolean(
+          activeFarmer.stripePayoutsEnabled ||
+            activeFarmer.stripe_payouts_enabled ||
+            activeFarmer.payoutsEnabled
+        )
       );
 
       setOnboardingComplete(
         Boolean(
           activeFarmer.stripeOnboardingComplete ||
+            activeFarmer.stripe_onboarding_complete ||
             activeFarmer.detailsSubmitted
         )
       );
 
-      setPayoutAccount(activeFarmer.stripePayoutAccount || "");
+      setPayoutAccount(
+        activeFarmer.stripePayoutAccount ||
+          activeFarmer.stripe_payout_account ||
+          ""
+      );
+
+      setPayoutLast4(
+        activeFarmer.stripePayoutAccountLast4 ||
+          activeFarmer.stripe_payout_account_last4 ||
+          ""
+      );
+
+      setPayoutBankName(
+        activeFarmer.stripePayoutBankName ||
+          activeFarmer.stripe_payout_bank_name ||
+          ""
+      );
+
+      await saveLocalFarmer({
+        ...activeFarmer,
+        id: activeFarmer.id || activeFarmerId,
+        farmerId: activeFarmer.id || activeFarmerId,
+        stripeAccountId: loadedAccountId,
+        farmerStripeAccountId: loadedAccountId,
+      });
     } catch (error: any) {
       console.log("Load farmer banking error:", error);
 
@@ -97,19 +238,122 @@ export default function FarmerStripeBankingScreen() {
     }
   }
 
-  async function syncFarmerStripeStatus(update: any) {
-    if (!farmerId) return;
+  async function saveLocalFarmer(update: any) {
+    const saved =
+      (await AsyncStorage.getItem("currentFarmer")) ||
+      (await AsyncStorage.getItem("currentUser"));
 
-    await updateFarmerStore(farmerId, update as any);
+    const current = saved ? JSON.parse(saved) : {};
 
-    const latestFarmer = await getFarmerById(farmerId);
+    const updated = {
+      ...current,
+      ...update,
+      id: update.id || current.id || farmerId,
+      farmerId: update.farmerId || update.id || current.farmerId || farmerId,
+      role: "farmer",
+      updatedAt: new Date().toISOString(),
+    };
 
-    if (latestFarmer) {
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(latestFarmer));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(latestFarmer));
-      await AsyncStorage.setItem("currentUserRole", "farmer");
-      await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(updated));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(updated));
+    await AsyncStorage.setItem("currentUserRole", "farmer");
+    await AsyncStorage.setItem("userRole", "farmer");
+
+    return updated;
+  }
+
+  async function syncFarmerStripeStatus(update: FarmerStripeUpdate) {
+    const activeFarmerId = update.id || farmerId;
+
+    if (!activeFarmerId) {
+      Alert.alert("Missing Farmer", "Farmer ID is missing. Please login again.");
+      return;
     }
+
+    const cleanAccountId =
+      update.stripeAccountId ||
+      update.farmerStripeAccountId ||
+      accountId ||
+      "";
+
+    const localUpdate = {
+      id: activeFarmerId,
+      farmerId: activeFarmerId,
+
+      email: update.email || email,
+      farmName: update.farmName || farmerName,
+      businessName: update.businessName || update.farmName || farmerName,
+
+      stripeAccountId: cleanAccountId,
+      farmerStripeAccountId: cleanAccountId,
+
+      stripePayoutAccount: update.stripePayoutAccount ?? payoutAccount,
+      stripePayoutAccountLast4:
+        update.stripePayoutAccountLast4 ?? payoutLast4,
+      stripePayoutBankName: update.stripePayoutBankName ?? payoutBankName,
+
+      stripeOnboardingComplete:
+        update.stripeOnboardingComplete ?? onboardingComplete,
+      stripeChargesEnabled: update.stripeChargesEnabled ?? chargesEnabled,
+      stripePayoutsEnabled: update.stripePayoutsEnabled ?? payoutsEnabled,
+
+      payoutsEnabled: update.payoutsEnabled ?? update.stripePayoutsEnabled,
+      chargesEnabled: update.chargesEnabled ?? update.stripeChargesEnabled,
+      detailsSubmitted:
+        update.detailsSubmitted ?? update.stripeOnboardingComplete,
+
+      complianceStatus: update.complianceStatus || "stripe_pending",
+      updatedAt: new Date().toISOString(),
+    };
+
+    const supabasePayload: any = {
+      stripe_account_id: cleanAccountId,
+      farmer_stripe_account_id: cleanAccountId,
+      stripe_onboarding_complete: Boolean(
+        localUpdate.stripeOnboardingComplete
+      ),
+      stripe_charges_enabled: Boolean(localUpdate.stripeChargesEnabled),
+      stripe_payouts_enabled: Boolean(localUpdate.stripePayoutsEnabled),
+      stripe_payout_account: localUpdate.stripePayoutAccount || "",
+      stripe_payout_account_last4: localUpdate.stripePayoutAccountLast4 || "",
+      stripe_payout_bank_name: localUpdate.stripePayoutBankName || "",
+      compliance_status: localUpdate.complianceStatus,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (localUpdate.email) supabasePayload.email = normalizeEmail(localUpdate.email);
+    if (localUpdate.farmName) {
+      supabasePayload.farm_name = localUpdate.farmName;
+      supabasePayload.business_name = localUpdate.farmName;
+    }
+
+    const { error } = await supabase
+      .from("farmers")
+      .update(supabasePayload)
+      .eq("id", activeFarmerId);
+
+    if (error) {
+      throw error;
+    }
+
+    try {
+      await updateFarmerStore(activeFarmerId, localUpdate as any);
+    } catch (error) {
+      console.log("Local farmerStore update skipped:", error);
+    }
+
+    const updatedLocal = await saveLocalFarmer(localUpdate);
+
+    setFarmerId(activeFarmerId);
+    setAccountId(cleanAccountId);
+    setPayoutAccount(localUpdate.stripePayoutAccount || "");
+    setPayoutLast4(localUpdate.stripePayoutAccountLast4 || "");
+    setPayoutBankName(localUpdate.stripePayoutBankName || "");
+    setOnboardingComplete(Boolean(localUpdate.stripeOnboardingComplete));
+    setChargesEnabled(Boolean(localUpdate.stripeChargesEnabled));
+    setPayoutsEnabled(Boolean(localUpdate.stripePayoutsEnabled));
+
+    return updatedLocal;
   }
 
   async function openStripeUrl(url: string) {
@@ -156,8 +400,9 @@ export default function FarmerStripeBankingScreen() {
           },
           body: JSON.stringify({
             farmerId: activeFarmerId,
-            email: email.trim().toLowerCase(),
+            email: normalizeEmail(email),
             farmName: farmerName.trim(),
+            businessName: farmerName.trim(),
             existingStripeAccountId: accountId || "",
           }),
         }
@@ -176,21 +421,22 @@ export default function FarmerStripeBankingScreen() {
       const onboardingUrl = data.onboardingUrl || data.url;
       const returnedAccountId = data.accountId || data.stripeAccountId;
 
-      if (!response.ok || !data.success || !onboardingUrl || !returnedAccountId) {
+      if (!response.ok || !onboardingUrl || !returnedAccountId) {
         throw new Error(
           data.error || data.message || "Unable to create Stripe onboarding."
         );
       }
 
-      setFarmerId(activeFarmerId);
-      setAccountId(returnedAccountId);
-
       await syncFarmerStripeStatus({
         id: activeFarmerId,
+        email: normalizeEmail(email),
+        farmName: farmerName.trim(),
+        businessName: farmerName.trim(),
         stripeAccountId: returnedAccountId,
         farmerStripeAccountId: returnedAccountId,
-        email: email.trim().toLowerCase(),
-        farmName: farmerName.trim(),
+        stripePayoutAccount: payoutAccount,
+        stripePayoutAccountLast4: payoutLast4,
+        stripePayoutBankName: payoutBankName,
         complianceStatus: "stripe_pending",
         stripeOnboardingComplete: false,
         stripeChargesEnabled: false,
@@ -230,6 +476,8 @@ export default function FarmerStripeBankingScreen() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            farmerId,
+            email: normalizeEmail(email),
             stripeAccountId: accountId.trim(),
             accountId: accountId.trim(),
           }),
@@ -246,7 +494,7 @@ export default function FarmerStripeBankingScreen() {
         throw new Error(`Backend returned invalid response: ${text}`);
       }
 
-      if (!response.ok || !data.success) {
+      if (!response.ok) {
         throw new Error(
           data.error || data.message || "Unable to check account status."
         );
@@ -255,26 +503,65 @@ export default function FarmerStripeBankingScreen() {
       const returnedAccountId =
         data.accountId || data.stripeAccountId || accountId.trim();
 
-      const statusChargesEnabled = Boolean(data.chargesEnabled);
-      const statusPayoutsEnabled = Boolean(data.payoutsEnabled);
-      const statusOnboardingComplete = Boolean(
-        data.onboardingComplete || data.detailsSubmitted
+      const statusChargesEnabled = Boolean(
+        data.chargesEnabled ||
+          data.charges_enabled ||
+          data.account?.charges_enabled
       );
 
-      const payoutLabel = statusPayoutsEnabled
-        ? "Stripe Express payout account connected"
-        : "Stripe Express setup pending";
+      const statusPayoutsEnabled = Boolean(
+        data.payoutsEnabled ||
+          data.payouts_enabled ||
+          data.account?.payouts_enabled
+      );
 
-      setAccountId(returnedAccountId);
-      setChargesEnabled(statusChargesEnabled);
-      setPayoutsEnabled(statusPayoutsEnabled);
-      setOnboardingComplete(statusOnboardingComplete);
-      setPayoutAccount(payoutLabel);
+      const statusOnboardingComplete = Boolean(
+        data.onboardingComplete ||
+          data.detailsSubmitted ||
+          data.details_submitted ||
+          data.account?.details_submitted
+      );
+
+      const externalAccount =
+        data.externalAccount ||
+        data.external_account ||
+        data.payoutAccount ||
+        data.payout_account ||
+        data.account?.external_accounts?.data?.[0] ||
+        null;
+
+      const bankName =
+        data.bankName ||
+        data.bank_name ||
+        externalAccount?.bank_name ||
+        payoutBankName ||
+        "";
+
+      const last4 =
+        data.last4 ||
+        data.accountLast4 ||
+        data.payoutLast4 ||
+        externalAccount?.last4 ||
+        payoutLast4 ||
+        "";
+
+      const payoutLabel =
+        bankName && last4
+          ? `${bankName} ****${last4}`
+          : statusPayoutsEnabled
+          ? "Stripe Express payout account connected"
+          : "Stripe Express setup pending";
 
       await syncFarmerStripeStatus({
+        id: farmerId,
+        email: normalizeEmail(email),
+        farmName: farmerName.trim(),
+        businessName: farmerName.trim(),
         stripeAccountId: returnedAccountId,
         farmerStripeAccountId: returnedAccountId,
         stripePayoutAccount: payoutLabel,
+        stripePayoutAccountLast4: last4,
+        stripePayoutBankName: bankName,
         stripeOnboardingComplete: statusOnboardingComplete,
         stripeChargesEnabled: statusChargesEnabled,
         stripePayoutsEnabled: statusPayoutsEnabled,
@@ -372,7 +659,9 @@ export default function FarmerStripeBankingScreen() {
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.buttonText}>Set Up Farmer Banking</Text>
+            <Text style={styles.buttonText}>
+              {accountId ? "Continue Farmer Banking Setup" : "Set Up Farmer Banking"}
+            </Text>
           )}
         </TouchableOpacity>
       </View>
@@ -426,21 +715,18 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: "#F7F7F2",
   },
-
   title: {
     fontSize: 30,
     fontWeight: "900",
     color: "#1f7a3f",
     marginBottom: 12,
   },
-
   note: {
     fontSize: 15,
     color: "#555",
     marginBottom: 20,
     lineHeight: 22,
   },
-
   statusCard: {
     backgroundColor: "#EAF6EC",
     borderRadius: 16,
@@ -449,14 +735,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#B7DDBE",
   },
-
   statusLine: {
     color: "#14532D",
     fontWeight: "800",
     marginBottom: 6,
     lineHeight: 20,
   },
-
   card: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -465,20 +749,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E2D8",
   },
-
   label: {
     fontWeight: "900",
     color: "#333",
     marginBottom: 6,
   },
-
   sectionTitle: {
     fontSize: 20,
     fontWeight: "900",
     color: "#1f7a3f",
     marginBottom: 12,
   },
-
   input: {
     backgroundColor: "#fff",
     padding: 14,
@@ -488,7 +769,6 @@ const styles = StyleSheet.create({
     borderColor: "#ddd",
     color: "#111827",
   },
-
   button: {
     backgroundColor: "#2F7D32",
     padding: 16,
@@ -496,16 +776,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
   },
-
   buttonDisabled: {
     opacity: 0.6,
   },
-
   buttonText: {
     color: "#fff",
     fontWeight: "900",
   },
-
   secondaryButton: {
     backgroundColor: "#EAF6EC",
     borderWidth: 1,
@@ -514,19 +791,16 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
   },
-
   secondaryButtonText: {
     color: "#1f7a3f",
     fontWeight: "900",
   },
-
   accountText: {
     marginTop: 14,
     color: "#333",
     fontWeight: "700",
     lineHeight: 22,
   },
-
   complianceButton: {
     backgroundColor: "#14532D",
     padding: 16,
@@ -534,7 +808,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 30,
   },
-
   complianceButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
