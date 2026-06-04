@@ -20,6 +20,7 @@ import {
   getFarmerById,
   updateFarmerProductStock,
 } from "../data/farmerStore";
+import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
   primary: "#2E7D32",
@@ -38,17 +39,16 @@ const COLORS = {
   purple: "#7C3AED",
   orange: "#EF6C00",
   stripe: "#635BFF",
+  yellow: "#FEF3C7",
+  yellowText: "#92400E",
+  redSoft: "#FEE2E2",
+  redText: "#991B1B",
 };
 
 const reviews = [
   { id: 1, customer: "Angela", rating: 5, text: "Fresh eggs and fast pickup!" },
   { id: 2, customer: "Marcus", rating: 5, text: "Great greens. Very fresh." },
-  {
-    id: 3,
-    customer: "Tanya",
-    rating: 4,
-    text: "Good quality and friendly farmer.",
-  },
+  { id: 3, customer: "Tanya", rating: 4, text: "Good quality and friendly farmer." },
 ];
 
 function getStock(product: Product) {
@@ -65,15 +65,24 @@ function getProductImage(product: Product) {
   return "https://images.unsplash.com/photo-1542838132-92c53300491e";
 }
 
+function getStockStatus(product: Product) {
+  const stock = getStock(product);
+  const threshold = getThreshold(product);
+
+  if (stock <= 0) return "soldout";
+  if (stock <= threshold) return "critical";
+  if (stock <= threshold + 3) return "warning";
+  return "available";
+}
+
 export default function FarmerDashboard() {
   const [products, setProducts] = useState<Product[]>([]);
   const [farmName, setFarmName] = useState("My Farm");
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
   const [statusLabel, setStatusLabel] = useState("Active Account");
-  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>(
-    {}
-  );
+  const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>({});
+  const [removeAmounts, setRemoveAmounts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   useFocusEffect(
@@ -99,6 +108,39 @@ export default function FarmerDashboard() {
     return "Active / Store Open";
   }
 
+  async function saveProductsLocally(updatedProducts: Product[]) {
+    const saved =
+      (await AsyncStorage.getItem("currentFarmer")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    const current = saved ? JSON.parse(saved) : {};
+
+    const updatedFarmer = {
+      ...current,
+      id: current.id || farmerId,
+      farmerId: current.farmerId || farmerId,
+      products: updatedProducts,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.setItem("currentUserRole", "farmer");
+  }
+
+  async function saveProductsToSupabase(updatedProducts: Product[]) {
+    if (!farmerId) return;
+
+    await supabase
+      .from("farmers")
+      .update({
+        products: updatedProducts,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", farmerId);
+  }
+
   async function loadFarmerProducts() {
     try {
       setLoading(true);
@@ -119,18 +161,15 @@ export default function FarmerDashboard() {
         id: currentFarmer.id || currentFarmer.farmerId,
         farmerId: currentFarmer.farmerId || currentFarmer.id,
         role: "farmer",
-
         approved: true,
         reviewed: true,
         rejected: false,
         needsMoreInfo: false,
         needs_more_info: false,
-
         accountActive: true,
         account_active: true,
         storeUnlocked: true,
         store_unlocked: true,
-
         complianceSubmitted: true,
         compliance_submitted: true,
         complianceStatus: "ACTIVE",
@@ -177,12 +216,10 @@ export default function FarmerDashboard() {
           rejected: false,
           needsMoreInfo: false,
           needs_more_info: false,
-
           accountActive: true,
           account_active: true,
           storeUnlocked: true,
           store_unlocked: true,
-
           complianceSubmitted: true,
           compliance_submitted: true,
           complianceStatus: "ACTIVE",
@@ -273,14 +310,145 @@ export default function FarmerDashboard() {
       farmerEmail || "farmer"
     );
 
-    setRestockAmounts((prev) => ({
-      ...prev,
-      [productId]: "",
-    }));
+    const updatedProducts = products.map((item) => {
+      if (item.id !== productId) return item;
+      const newStock = getStock(item) + amount;
 
-    await loadFarmerProducts();
+      return {
+        ...item,
+        stock: newStock,
+        quantity: newStock,
+        isSoldOut: newStock <= 0,
+        available: newStock > 0,
+        active: true,
+        updatedAt: new Date().toISOString(),
+      } as any;
+    });
+
+    setProducts(updatedProducts);
+    await saveProductsLocally(updatedProducts);
+    await saveProductsToSupabase(updatedProducts);
+
+    const updatedItem = updatedProducts.find((item) => item.id === productId);
+    if (updatedItem) {
+      await supabase
+        .from("products")
+        .update({
+          stock: getStock(updatedItem),
+          quantity: getStock(updatedItem),
+          inventory: getStock(updatedItem),
+          is_sold_out: getStock(updatedItem) <= 0,
+          available: getStock(updatedItem) > 0,
+          active: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", productId);
+    }
+
+    setRestockAmounts((prev) => ({ ...prev, [productId]: "" }));
 
     Alert.alert("Inventory Updated", "Your product inventory was updated.");
+  }
+
+  async function removeInventory(productId: string) {
+    const amount = Number(removeAmounts[productId] || 0);
+
+    if (!farmerId) {
+      Alert.alert("Session Error", "Please login again.");
+      router.replace("/farmer/login" as any);
+      return;
+    }
+
+    if (!amount || amount <= 0) {
+      Alert.alert("Invalid Amount", "Enter quantity to remove.");
+      return;
+    }
+
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+
+    const currentStock = getStock(product);
+    const removeQty = Math.min(amount, currentStock);
+    const newStock = Math.max(currentStock - removeQty, 0);
+
+    const updatedProducts = products.map((item) => {
+      if (item.id !== productId) return item;
+
+      return {
+        ...item,
+        stock: newStock,
+        quantity: newStock,
+        isSoldOut: newStock <= 0,
+        available: newStock > 0,
+        active: true,
+        updatedAt: new Date().toISOString(),
+      } as any;
+    });
+
+    setProducts(updatedProducts);
+    await saveProductsLocally(updatedProducts);
+    await saveProductsToSupabase(updatedProducts);
+
+    await supabase
+      .from("products")
+      .update({
+        stock: newStock,
+        quantity: newStock,
+        inventory: newStock,
+        is_sold_out: newStock <= 0,
+        available: newStock > 0,
+        active: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", productId);
+
+    setRemoveAmounts((prev) => ({ ...prev, [productId]: "" }));
+
+    Alert.alert("Inventory Updated", `${product.name} stock was reduced.`);
+  }
+
+  async function deleteProduct(productId: string) {
+    const product = products.find((item) => item.id === productId);
+
+    Alert.alert(
+      "Remove Product",
+      `Remove ${product?.name || "this product"} from farm inventory and marketplace?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const updatedProducts = products.filter(
+                (item) => item.id !== productId
+              );
+
+              setProducts(updatedProducts);
+              await saveProductsLocally(updatedProducts);
+              await saveProductsToSupabase(updatedProducts);
+
+              await supabase
+                .from("products")
+                .update({
+                  active: false,
+                  available: false,
+                  marketplace_visible: false,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", productId);
+
+              Alert.alert("Product Removed", "Item removed from inventory.");
+            } catch (error: any) {
+              Alert.alert(
+                "Remove Error",
+                error?.message || "Unable to remove product."
+              );
+            }
+          },
+        },
+      ]
+    );
   }
 
   const totalSold = products.reduce(
@@ -295,13 +463,19 @@ export default function FarmerDashboard() {
 
   const totalStock = products.reduce((sum, item) => sum + getStock(item), 0);
 
-  const lowStockProducts = products.filter((item) => {
-    const stock = getStock(item);
-    const threshold = getThreshold(item);
-    return stock > 0 && stock <= threshold;
-  });
+  const warningProducts = products.filter(
+    (item) => getStockStatus(item) === "warning"
+  );
 
-  const soldOutProducts = products.filter((item) => getStock(item) <= 0);
+  const criticalLowProducts = products.filter(
+    (item) => getStockStatus(item) === "critical"
+  );
+
+  const lowStockProducts = [...criticalLowProducts, ...warningProducts];
+
+  const soldOutProducts = products.filter(
+    (item) => getStockStatus(item) === "soldout"
+  );
 
   if (loading) {
     return (
@@ -346,20 +520,20 @@ export default function FarmerDashboard() {
             <Text style={styles.statusTitle}>Account Status</Text>
             <Text style={styles.statusValue}>{statusLabel}</Text>
             <Text style={styles.statusNote}>
-              Your farmer store is open. Use Select Produce, Add Product, or
-              Customize Store to build your Farm2Home marketplace.
+              Your farmer store is open. Inventory shows total units by product,
+              low-stock warnings, and sold-out items.
             </Text>
           </View>
 
           <View style={styles.storeMetaRow}>
             <View style={styles.storeMeta}>
               <Text style={styles.storeMetaValue}>{products.length}</Text>
-              <Text style={styles.storeMetaLabel}>Products</Text>
+              <Text style={styles.storeMetaLabel}>Products Listed</Text>
             </View>
 
             <View style={styles.storeMeta}>
               <Text style={styles.storeMetaValue}>{totalStock}</Text>
-              <Text style={styles.storeMetaLabel}>Stock</Text>
+              <Text style={styles.storeMetaLabel}>Total Inventory Units</Text>
             </View>
 
             <View style={styles.storeMeta}>
@@ -382,124 +556,44 @@ export default function FarmerDashboard() {
         </View>
 
         <View style={styles.actionGrid}>
-          <ActionButton
-            label="Select Produce"
-            icon="🥬"
-            color={COLORS.primary}
-            onPress={() => goTo("/farmer/select-produce")}
-          />
-
-          <ActionButton
-            label="Add Product"
-            icon="➕"
-            color={COLORS.primaryDark}
-            onPress={() => goTo("/farmer/add-product")}
-          />
-
-          <ActionButton
-            label="Customize Store"
-            icon="🏪"
-            color={COLORS.dark}
-            onPress={() => goTo("/farmer/setup-store")}
-          />
-
-          <ActionButton
-            label="Orders"
-            icon="📦"
-            color={COLORS.blue}
-            onPress={() => goTo("/farmer/orders")}
-          />
-
-          <ActionButton
-            label="Delivery"
-            icon="🚚"
-            color={COLORS.orange}
-            onPress={() => goTo("/farmer/delivery-orders")}
-          />
-
-          <ActionButton
-            label="Payout Status"
-            icon="💳"
-            color={COLORS.stripe}
-            onPress={() => goTo("/farmer/stripe-banking")}
-          />
-
-          <ActionButton
-            label="Profile"
-            icon="👤"
-            color={COLORS.purple}
-            onPress={() => goTo("/farmer/profile")}
-          />
-
-          <ActionButton
-            label="Preview Market"
-            icon="🛒"
-            color={COLORS.secondary}
-            onPress={() => goTo("/customer/marketplace")}
-          />
-        </View>
-
-        <View style={styles.notice}>
-          <View style={styles.noticeIconBox}>
-            <Text style={styles.noticeIcon}>✅</Text>
-          </View>
-
-          <View style={styles.noticeTextBlock}>
-            <Text style={styles.noticeTitle}>Store Active</Text>
-
-            <Text style={styles.noticeText}>
-              Start by selecting common produce from the Farm2Home catalog. If
-              the product is not listed, use Add Product to upload your own
-              picture and details.
-            </Text>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.previewButton,
-                pressed && styles.pressed,
-              ]}
-              onPress={() => goTo("/farmer/select-produce")}
-            >
-              <Text style={styles.previewButtonText}>Select Produce</Text>
-            </Pressable>
-          </View>
+          <ActionButton label="Select Produce" icon="🥬" color={COLORS.primary} onPress={() => goTo("/farmer/select-produce")} />
+          <ActionButton label="Add Product" icon="➕" color={COLORS.primaryDark} onPress={() => goTo("/farmer/add-product")} />
+          <ActionButton label="Customize Store" icon="🏪" color={COLORS.dark} onPress={() => goTo("/farmer/setup-store")} />
+          <ActionButton label="Orders" icon="📦" color={COLORS.blue} onPress={() => goTo("/farmer/orders")} />
+          <ActionButton label="Delivery" icon="🚚" color={COLORS.orange} onPress={() => goTo("/farmer/delivery-orders")} />
+          <ActionButton label="Payout Status" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/stripe-banking")} />
+          <ActionButton label="Profile" icon="👤" color={COLORS.purple} onPress={() => goTo("/farmer/profile")} />
+          <ActionButton label="Preview Market" icon="🛒" color={COLORS.secondary} onPress={() => goTo("/customer/marketplace")} />
         </View>
 
         <View style={styles.statsGrid}>
-          <StatCard label="Products" value={String(products.length)} />
-          <StatCard label="In Stock" value={String(totalStock)} />
-          <StatCard label="Sold" value={String(totalSold)} />
-          <StatCard
-            label="Gross Sales"
-            value={`$${totalGrossSales.toFixed(2)}`}
-          />
-          <StatCard label="Low Stock" value={String(lowStockProducts.length)} />
-          <StatCard label="Sold Out" value={String(soldOutProducts.length)} />
+          <StatCard label="Products Listed" value={String(products.length)} />
+          <StatCard label="Total Inventory Units" value={String(totalStock)} />
+          <StatCard label="Units Sold" value={String(totalSold)} />
+          <StatCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} />
+          <StatCard label="Low Stock Items" value={String(lowStockProducts.length)} />
+          <StatCard label="Sold Out Items" value={String(soldOutProducts.length)} />
         </View>
 
-        {(lowStockProducts.length > 0 || soldOutProducts.length > 0) && (
-          <View style={styles.alertBox}>
-            <Text style={styles.alertTitle}>Action Needed</Text>
+        <InventoryAlertSection
+          title="⚠️ Low Stock Items"
+          products={lowStockProducts}
+          emptyText="No low-stock items."
+          type="low"
+        />
 
-            {lowStockProducts.map((item) => (
-              <Text key={`low-${item.id}`} style={styles.alertText}>
-                ⚠️ {item.name} is low: {getStock(item)} {item.unit || "each"}{" "}
-                left.
-              </Text>
-            ))}
-
-            {soldOutProducts.map((item) => (
-              <Text key={`sold-${item.id}`} style={styles.alertText}>
-                🔴 {item.name} is sold out. Restock to show it available again.
-              </Text>
-            ))}
-          </View>
-        )}
+        <InventoryAlertSection
+          title="🔴 Sold Out Items"
+          products={soldOutProducts}
+          emptyText="No sold-out items."
+          type="sold"
+        />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Farm Inventory</Text>
           <Text style={styles.sectionSubtitle}>
-            Update stock counts and product availability
+            Total inventory is shown per product. Yellow means near threshold,
+            orange means at/below threshold, and red means sold out.
           </Text>
         </View>
 
@@ -539,11 +633,21 @@ export default function FarmerDashboard() {
           products.map((item) => {
             const stock = getStock(item);
             const threshold = getThreshold(item);
-            const isSoldOut = stock <= 0;
-            const isLowStock = stock > 0 && stock <= threshold;
+            const status = getStockStatus(item);
+            const isSoldOut = status === "soldout";
+            const isCritical = status === "critical";
+            const isWarning = status === "warning";
 
             return (
-              <View key={item.id} style={styles.productCard}>
+              <View
+                key={item.id}
+                style={[
+                  styles.productCard,
+                  isWarning && styles.productWarningCard,
+                  isCritical && styles.productCriticalCard,
+                  isSoldOut && styles.productSoldOutCard,
+                ]}
+              >
                 <Image
                   source={{ uri: getProductImage(item) }}
                   style={styles.productImage}
@@ -558,47 +662,49 @@ export default function FarmerDashboard() {
 
                     {isSoldOut ? (
                       <Text style={styles.soldOutBadge}>Sold Out</Text>
-                    ) : isLowStock ? (
-                      <Text style={styles.lowStockBadge}>Low Stock</Text>
+                    ) : isCritical ? (
+                      <Text style={styles.criticalBadge}>Critical Low</Text>
+                    ) : isWarning ? (
+                      <Text style={styles.lowStockBadge}>Near Threshold</Text>
                     ) : (
                       <Text style={styles.availableBadge}>Available</Text>
                     )}
                   </View>
 
+                  <View style={styles.inventoryTotalBox}>
+                    <Text style={styles.inventoryTotalLabel}>
+                      Total In Stock For This Item
+                    </Text>
+                    <Text
+                      style={[
+                        styles.inventoryTotalValue,
+                        isWarning && styles.inventoryWarningText,
+                        isCritical && styles.inventoryCriticalText,
+                        isSoldOut && styles.inventorySoldText,
+                      ]}
+                    >
+                      {stock} {item.unit || "each"}
+                    </Text>
+                    <Text style={styles.inventoryThresholdText}>
+                      Low-stock threshold: {threshold}
+                    </Text>
+                  </View>
+
                   <View style={styles.detailGrid}>
-                    <Detail
-                      label="Price"
-                      value={`$${Number(item.price || 0).toFixed(2)} / ${
-                        item.unit || "each"
-                      }`}
-                    />
-                    <Detail
-                      label="Stock"
-                      value={`${stock} ${item.unit || "each"}`}
-                    />
-                    <Detail label="Low Alert" value={String(threshold)} />
+                    <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)} / ${item.unit || "each"}`} />
                     <Detail label="Sold" value={String(Number(item.sold || 0))} />
-                    <Detail
-                      label="Gross"
-                      value={`$${Number(item.grossSales || 0).toFixed(2)}`}
-                    />
-                    <Detail
-                      label="Delivery"
-                      value={item.deliveryOption || "Not set"}
-                    />
+                    <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
+                    <Detail label="Delivery" value={item.deliveryOption || "Not set"} />
                   </View>
 
                   <TextInput
                     style={styles.input}
-                    placeholder="Restock amount"
+                    placeholder="Add stock amount"
                     placeholderTextColor="#8A9482"
                     keyboardType="numeric"
                     value={restockAmounts[item.id] || ""}
                     onChangeText={(text) =>
-                      setRestockAmounts((prev) => ({
-                        ...prev,
-                        [item.id]: text,
-                      }))
+                      setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))
                     }
                   />
 
@@ -609,8 +715,39 @@ export default function FarmerDashboard() {
                     ]}
                     onPress={() => restockProduct(item.id)}
                   >
-                    <Text style={styles.restockText}>
-                      Restock / Update Inventory
+                    <Text style={styles.restockText}>Add Inventory</Text>
+                  </Pressable>
+
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Remove stock amount"
+                    placeholderTextColor="#8A9482"
+                    keyboardType="numeric"
+                    value={removeAmounts[item.id] || ""}
+                    onChangeText={(text) =>
+                      setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))
+                    }
+                  />
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.removeStockButton,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => removeInventory(item.id)}
+                  >
+                    <Text style={styles.removeStockText}>Remove Inventory</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.deleteButton,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => deleteProduct(item.id)}
+                  >
+                    <Text style={styles.deleteText}>
+                      Remove Product From Farm Inventory
                     </Text>
                   </Pressable>
                 </View>
@@ -643,6 +780,64 @@ export default function FarmerDashboard() {
           </View>
         ))}
       </ScrollView>
+    </View>
+  );
+}
+
+function InventoryAlertSection({
+  title,
+  products,
+  emptyText,
+  type,
+}: {
+  title: string;
+  products: Product[];
+  emptyText: string;
+  type: "low" | "sold";
+}) {
+  return (
+    <View style={type === "sold" ? styles.soldOutSection : styles.lowStockSection}>
+      <Text style={type === "sold" ? styles.soldOutSectionTitle : styles.lowStockSectionTitle}>
+        {title}
+      </Text>
+
+      {products.length === 0 ? (
+        <Text style={styles.alertEmptyText}>{emptyText}</Text>
+      ) : (
+        products.map((item) => {
+          const stock = getStock(item);
+          const threshold = getThreshold(item);
+          const status = getStockStatus(item);
+
+          return (
+            <View
+              key={`${type}-${item.id}`}
+              style={[
+                styles.alertItemRow,
+                status === "warning" && styles.alertWarningRow,
+                status === "critical" && styles.alertCriticalRow,
+                status === "soldout" && styles.alertSoldRow,
+              ]}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.alertItemName}>{item.name}</Text>
+                <Text style={styles.alertItemSub}>
+                  Threshold: {threshold} · Unit: {item.unit || "each"}
+                </Text>
+              </View>
+
+              <Text
+                style={[
+                  styles.alertItemQty,
+                  status === "soldout" && styles.alertSoldQty,
+                ]}
+              >
+                {stock}
+              </Text>
+            </View>
+          );
+        })
+      )}
     </View>
   );
 }
@@ -825,49 +1020,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 14,
   },
-  notice: {
-    backgroundColor: COLORS.card,
-    padding: 16,
-    borderRadius: 28,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flexDirection: "row",
-    gap: 13,
-  },
-  noticeIconBox: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: COLORS.softGreen,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  noticeIcon: { fontSize: 27 },
-  noticeTextBlock: { flex: 1 },
-  noticeTitle: {
-    fontWeight: "900",
-    color: COLORS.text,
-    marginBottom: 5,
-    fontSize: 18,
-  },
-  noticeText: {
-    color: COLORS.muted,
-    lineHeight: 22,
-    fontWeight: "700",
-  },
-  previewButton: {
-    backgroundColor: COLORS.primaryDark,
-    padding: 14,
-    borderRadius: 18,
-    marginTop: 14,
-  },
-  previewButtonText: {
-    color: "#FFFFFF",
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 15,
-  },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -893,25 +1045,78 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
-  alertBox: {
-    backgroundColor: "#FFF7ED",
-    borderColor: "#FDBA74",
+  lowStockSection: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FBBF24",
+    borderWidth: 1,
+    padding: 16,
+    borderRadius: 24,
+    marginBottom: 14,
+  },
+  lowStockSectionTitle: {
+    color: "#92400E",
+    fontWeight: "900",
+    fontSize: 18,
+    marginBottom: 10,
+  },
+  soldOutSection: {
+    backgroundColor: "#FEF2F2",
+    borderColor: "#FCA5A5",
     borderWidth: 1,
     padding: 16,
     borderRadius: 24,
     marginBottom: 18,
   },
-  alertTitle: {
-    color: "#9A3412",
+  soldOutSectionTitle: {
+    color: "#991B1B",
     fontWeight: "900",
     fontSize: 18,
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  alertText: {
-    color: "#7C2D12",
+  alertEmptyText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+  },
+  alertItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  alertWarningRow: {
+    backgroundColor: "#FEF3C7",
+    borderColor: "#FBBF24",
+  },
+  alertCriticalRow: {
+    backgroundColor: "#FFEDD5",
+    borderColor: "#FDBA74",
+  },
+  alertSoldRow: {
+    backgroundColor: "#FEE2E2",
+    borderColor: "#FCA5A5",
+  },
+  alertItemName: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  alertItemSub: {
+    color: COLORS.muted,
     fontWeight: "700",
-    marginBottom: 6,
-    lineHeight: 20,
+    fontSize: 12,
+    marginTop: 3,
+  },
+  alertItemQty: {
+    color: "#92400E",
+    fontWeight: "900",
+    fontSize: 20,
+  },
+  alertSoldQty: {
+    color: "#991B1B",
   },
   sectionHeader: { marginTop: 6, marginBottom: 12 },
   sectionTitle: {
@@ -969,8 +1174,20 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     marginBottom: 16,
     overflow: "hidden",
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: COLORS.border,
+  },
+  productWarningCard: {
+    borderColor: "#FBBF24",
+    backgroundColor: "#FFFBEB",
+  },
+  productCriticalCard: {
+    borderColor: "#FDBA74",
+    backgroundColor: "#FFF7ED",
+  },
+  productSoldOutCard: {
+    borderColor: "#FCA5A5",
+    backgroundColor: "#FEF2F2",
   },
   productImage: {
     width: "100%",
@@ -995,6 +1212,39 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: "700",
     textAlign: "center",
+  },
+  inventoryTotalBox: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 20,
+    padding: 14,
+    marginBottom: 12,
+  },
+  inventoryTotalLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  inventoryTotalValue: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 28,
+    marginTop: 4,
+  },
+  inventoryWarningText: {
+    color: "#92400E",
+  },
+  inventoryCriticalText: {
+    color: "#C2410C",
+  },
+  inventorySoldText: {
+    color: "#991B1B",
+  },
+  inventoryThresholdText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 4,
   },
   detailGrid: {
     flexDirection: "row",
@@ -1022,8 +1272,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   soldOutBadge: {
-    backgroundColor: "#FEE2E2",
-    color: "#991B1B",
+    backgroundColor: COLORS.redSoft,
+    color: COLORS.redText,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  criticalBadge: {
+    backgroundColor: "#FFEDD5",
+    color: "#C2410C",
     fontWeight: "900",
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -1031,8 +1290,8 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   lowStockBadge: {
-    backgroundColor: "#FEF3C7",
-    color: "#92400E",
+    backgroundColor: COLORS.yellow,
+    color: COLORS.yellowText,
     fontWeight: "900",
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -1066,6 +1325,30 @@ const styles = StyleSheet.create({
   },
   restockText: {
     color: "#FFFFFF",
+    textAlign: "center",
+    fontWeight: "900",
+  },
+  removeStockButton: {
+    backgroundColor: COLORS.orange,
+    padding: 15,
+    borderRadius: 18,
+    marginTop: 10,
+  },
+  removeStockText: {
+    color: "#FFFFFF",
+    textAlign: "center",
+    fontWeight: "900",
+  },
+  deleteButton: {
+    backgroundColor: COLORS.redSoft,
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+    padding: 15,
+    borderRadius: 18,
+    marginTop: 10,
+  },
+  deleteText: {
+    color: COLORS.redText,
     textAlign: "center",
     fontWeight: "900",
   },
