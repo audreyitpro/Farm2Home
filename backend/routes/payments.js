@@ -8,7 +8,6 @@ const ws = require("ws");
 const router = express.Router();
 
 const APP_URL = process.env.APP_URL || "https://farm2home-rho.vercel.app";
-
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   process.env.API_BASE_URL ||
@@ -85,29 +84,23 @@ function appendQueryParams(baseUrl, params) {
 
 function getConnectRefreshUrl(role = "farmer") {
   const normalizedRole = normalizeRole(role);
-
   if (normalizedRole === "freight") {
     return process.env.STRIPE_CONNECT_REFRESH_URL_FREIGHT || `${APP_URL}/freight/compliance-upload`;
   }
-
   if (normalizedRole === "driver") {
     return process.env.STRIPE_CONNECT_REFRESH_URL_DRIVER || `${APP_URL}/driver/profile`;
   }
-
   return process.env.STRIPE_CONNECT_REFRESH_URL || `${APP_URL}/farmer/compliance-upload`;
 }
 
 function getConnectReturnUrl(role = "farmer") {
   const normalizedRole = normalizeRole(role);
-
   if (normalizedRole === "freight") {
     return process.env.STRIPE_CONNECT_RETURN_URL_FREIGHT || `${APP_URL}/freight/compliance-upload`;
   }
-
   if (normalizedRole === "driver") {
     return process.env.STRIPE_CONNECT_RETURN_URL_DRIVER || `${APP_URL}/driver/profile`;
   }
-
   return process.env.STRIPE_CONNECT_RETURN_URL || `${APP_URL}/farmer/compliance-upload`;
 }
 
@@ -122,7 +115,6 @@ function getProfileStripeConfig(role) {
       stripeColumn: "stripe_account_id",
       altStripeColumn: "freight_stripe_account_id",
       defaultName: "Farm2Home Freight Carrier",
-      adminType: "FREIGHT",
     };
   }
 
@@ -134,7 +126,6 @@ function getProfileStripeConfig(role) {
       stripeColumn: "stripe_account_id",
       altStripeColumn: "driver_stripe_account_id",
       defaultName: "Farm2Home Driver",
-      adminType: "DRIVER",
     };
   }
 
@@ -146,7 +137,6 @@ function getProfileStripeConfig(role) {
       stripeColumn: "stripe_customer_id",
       altStripeColumn: "customer_stripe_id",
       defaultName: "Farm2Home Customer",
-      adminType: "CUSTOMER",
     };
   }
 
@@ -157,7 +147,6 @@ function getProfileStripeConfig(role) {
     stripeColumn: "stripe_account_id",
     altStripeColumn: "farmer_stripe_account_id",
     defaultName: "Farm2Home Farmer",
-    adminType: "FARMER",
   };
 }
 
@@ -170,6 +159,7 @@ function getSubscriptionConfig(role) {
       table: "farmer_subscriptions",
       idColumn: "farmer_id",
       emailColumn: "farmer_email",
+      profileTable: "farmers",
     };
   }
 
@@ -179,6 +169,7 @@ function getSubscriptionConfig(role) {
       table: "freight_subscriptions",
       idColumn: "freight_id",
       emailColumn: "freight_email",
+      profileTable: "freight_carriers",
     };
   }
 
@@ -188,6 +179,7 @@ function getSubscriptionConfig(role) {
       table: "driver_subscriptions",
       idColumn: "driver_id",
       emailColumn: "driver_email",
+      profileTable: "drivers",
     };
   }
 
@@ -196,6 +188,7 @@ function getSubscriptionConfig(role) {
     table: "customer_subscriptions",
     idColumn: "customer_id",
     emailColumn: "customer_email",
+    profileTable: "customers",
   };
 }
 
@@ -266,40 +259,12 @@ function getMembershipPriceConfig(planType) {
   };
 }
 
-async function updateFarmerPaymentStatus({ farmerId, paymentType, paid = true }) {
-  if (!supabase || !farmerId) return;
-
-  const payload = {
-    updated_at: new Date().toISOString(),
-  };
-
-  if (paymentType === "farmer_application_fee") {
-    payload.application_fee_paid = paid;
-    payload.farmer_membership_paid = false;
-    payload.farmer_monthly_subscription_paid = false;
-  }
-
-  if (paymentType === "farmer_monthly_subscription") {
-    payload.farmer_monthly_subscription_paid = paid;
-    payload.farmer_membership_paid = paid;
-    payload.monthly_membership_started = paid;
-  }
-
-  await supabase.from("farmers").update(payload).eq("id", farmerId);
-  await supabase.from("admin_verifications").update(payload).eq("farmer_id", farmerId);
-}
-
 async function stripeAccountExists(accountId) {
   if (!stripe || !accountId) return false;
-
   try {
     await stripe.accounts.retrieve(accountId);
     return true;
-  } catch (error) {
-    console.log("Stored Stripe account invalid:", {
-      accountId,
-      message: error.message,
-    });
+  } catch {
     return false;
   }
 }
@@ -389,10 +354,6 @@ async function updateProfileStripeInSupabase({
       .eq("id", cleanProfileId)
       .select("id");
 
-    if (byId.error) {
-      console.log(`Stripe save by ${config.table}.id failed:`, byId.error.message);
-    }
-
     if (byId.data?.length) {
       updated = true;
       matchedId = byId.data[0].id;
@@ -406,10 +367,6 @@ async function updateProfileStripeInSupabase({
       .eq("profile_id", cleanProfileId)
       .select("id");
 
-    if (byProfile.error) {
-      console.log(`Stripe save by ${config.table}.profile_id failed:`, byProfile.error.message);
-    }
-
     if (byProfile.data?.length) {
       updated = true;
       matchedId = byProfile.data[0].id;
@@ -422,10 +379,6 @@ async function updateProfileStripeInSupabase({
       .update(payload)
       .eq("email", cleanEmail)
       .select("id");
-
-    if (byEmail.error) {
-      console.log(`Stripe save by ${config.table}.email failed:`, byEmail.error.message);
-    }
 
     if (byEmail.data?.length) {
       updated = true;
@@ -443,33 +396,23 @@ async function updateProfileStripeInSupabase({
       ...payload,
     };
 
-    if (config.role === "farmer") insertPayload.farm_name = businessName || config.defaultName;
-    if (config.role === "freight") insertPayload.company_name = businessName || config.defaultName;
+    if (config.role === "farmer") {
+      insertPayload.farm_name = businessName || config.defaultName;
+    }
 
-    const insertResult = await supabase
+    if (config.role === "freight") {
+      insertPayload.company_name = businessName || config.defaultName;
+    }
+
+    const inserted = await supabase
       .from(config.table)
       .upsert(insertPayload, { onConflict: "id" })
       .select("id");
 
-    if (insertResult.error) {
-      console.log(`Stripe fallback upsert into ${config.table} failed:`, insertResult.error.message);
-    }
-
-    if (insertResult.data?.length) {
-      updated = true;
-      matchedId = insertResult.data[0].id;
+    if (inserted.data?.length) {
+      matchedId = inserted.data[0].id;
     }
   }
-
-  console.log("STRIPE PROFILE SAVE RESULT:", {
-    role: config.role,
-    table: config.table,
-    profileId: cleanProfileId,
-    matchedId,
-    email: cleanEmail,
-    stripeAccountId,
-    updated,
-  });
 
   if (config.role === "farmer" && (matchedId || cleanProfileId)) {
     await supabase
@@ -496,57 +439,225 @@ async function clearProfileStripeInSupabase({ role = "farmer", profileId, email 
     updated_at: new Date().toISOString(),
   };
 
-  let cleared = false;
-
   if (cleanProfileId) {
-    const byId = await supabase
-      .from(config.table)
-      .update(payload)
-      .eq("id", cleanProfileId)
-      .select("id");
-
-    if (byId.data?.length) cleared = true;
+    await supabase.from(config.table).update(payload).eq("id", cleanProfileId);
+    await supabase.from(config.table).update(payload).eq("profile_id", cleanProfileId);
   }
 
-  if (!cleared && cleanProfileId) {
-    const byProfile = await supabase
-      .from(config.table)
-      .update(payload)
-      .eq("profile_id", cleanProfileId)
-      .select("id");
-
-    if (byProfile.data?.length) cleared = true;
-  }
-
-  if (!cleared && cleanEmail) {
+  if (cleanEmail) {
     await supabase.from(config.table).update(payload).eq("email", cleanEmail);
   }
+}
 
-  if (config.role === "farmer" && cleanProfileId) {
-    await supabase.from("admin_verifications").update(payload).eq("farmer_id", cleanProfileId);
+async function updateFarmerPaymentStatus({
+  farmerId,
+  email,
+  paymentType,
+  paid = true,
+  stripeCustomerId,
+  stripeSubscriptionId,
+  subscriptionStatus,
+}) {
+  if (!supabase || (!farmerId && !email)) return;
+
+  const payload = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (stripeCustomerId) payload.stripe_customer_id = stripeCustomerId;
+
+  if (paymentType === "farmer_application_fee") {
+    payload.application_fee_paid = paid;
+    payload.farmer_membership_paid = false;
+    payload.monthly_membership_started = false;
+  }
+
+  if (paymentType === "farmer_monthly_subscription") {
+    if (stripeSubscriptionId) payload.stripe_subscription_id = stripeSubscriptionId;
+    if (subscriptionStatus) payload.subscription_status = subscriptionStatus;
+
+    payload.farmer_membership_paid = paid;
+    payload.monthly_membership_started = paid;
+    payload.farmer_monthly_subscription_paid = paid;
+    payload.subscription_updated_at = new Date().toISOString();
+
+    if (paid) payload.membership_started_at = new Date().toISOString();
+  }
+
+  if (farmerId) {
+    await supabase.from("farmers").update(payload).eq("id", farmerId);
+    await supabase.from("admin_verifications").update(payload).eq("farmer_id", farmerId);
+  }
+
+  if (email) {
+    await supabase
+      .from("farmers")
+      .update(payload)
+      .eq("email", cleanString(email).toLowerCase());
+
+    await supabase
+      .from("admin_verifications")
+      .update(payload)
+      .eq("email", cleanString(email).toLowerCase());
   }
 }
 
-async function updateFarmerStripeInSupabase(args) {
-  return updateProfileStripeInSupabase({
-    role: "farmer",
-    profileId: args.farmerId,
-    email: args.email,
-    businessName: args.farmName,
-    stripeAccountId: args.stripeAccountId,
-    payoutsEnabled: args.payoutsEnabled,
-    chargesEnabled: args.chargesEnabled,
-    onboardingComplete: args.onboardingComplete,
-    complianceStatus: args.complianceStatus,
+async function saveFarmerApplicationPaymentFromSession(session) {
+  if (!supabase) return;
+
+  const metadata = session.metadata || {};
+  const farmerId = cleanString(metadata.farmerId || metadata.userId);
+  const farmerEmail = cleanString(metadata.email || session.customer_details?.email || session.customer_email).toLowerCase();
+
+  const payload = {
+    farmer_id: farmerId || null,
+    farmer_email: farmerEmail || null,
+    stripe_session_id: session.id,
+    stripe_customer_id: typeof session.customer === "string" ? session.customer : session.customer?.id || null,
+    payment_status: session.payment_status || "paid",
+    application_status: "payment_completed",
+    paid_at: new Date((session.created || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("farmer_application_payments")
+    .upsert(payload, {
+      onConflict: farmerId ? "farmer_id" : "stripe_session_id",
+    });
+
+  if (error) {
+    console.log("farmer_application_payments upsert failed:", error.message);
+  }
+
+  await updateFarmerPaymentStatus({
+    farmerId,
+    email: farmerEmail,
+    paymentType: "farmer_application_fee",
+    paid: session.payment_status === "paid",
+    stripeCustomerId: payload.stripe_customer_id,
   });
 }
 
-async function clearFarmerStripeInSupabase({ farmerId, email }) {
-  return clearProfileStripeInSupabase({
-    role: "farmer",
-    profileId: farmerId,
-    email,
-  });
+async function saveSubscriptionFromStripe({ subscription, session, roleOverride }) {
+  if (!supabase) return;
+
+  const metadata = {
+    ...(subscription?.metadata || {}),
+    ...(session?.metadata || {}),
+  };
+
+  const role = normalizeRole(roleOverride || metadata.role || "customer");
+  const config = getSubscriptionConfig(role);
+
+  const userId =
+    cleanString(metadata.userId) ||
+    cleanString(metadata.farmerId) ||
+    cleanString(metadata.customerId) ||
+    cleanString(metadata.freightId) ||
+    cleanString(metadata.driverId);
+
+  const email = cleanString(metadata.email || session?.customer_details?.email || session?.customer_email).toLowerCase();
+
+  const stripeCustomerId =
+    typeof subscription?.customer === "string"
+      ? subscription.customer
+      : typeof session?.customer === "string"
+      ? session.customer
+      : "";
+
+  const stripeSubscriptionId =
+    typeof subscription?.id === "string"
+      ? subscription.id
+      : typeof session?.subscription === "string"
+      ? session.subscription
+      : "";
+
+  const item = subscription?.items?.data?.[0];
+  const priceId = item?.price?.id || metadata.priceId || "";
+
+  const currentPeriodStart = subscription?.current_period_start
+    ? new Date(subscription.current_period_start * 1000).toISOString()
+    : null;
+
+  const currentPeriodEnd = subscription?.current_period_end
+    ? new Date(subscription.current_period_end * 1000).toISOString()
+    : null;
+
+  const status = subscription?.status || "active";
+
+  const payload = {
+    [config.idColumn]: userId || null,
+    [config.emailColumn]: email || null,
+    email: email || null,
+    stripe_customer_id: stripeCustomerId || null,
+    stripe_subscription_id: stripeSubscriptionId || null,
+    subscription_status: status,
+    status,
+    price_id: priceId || null,
+    current_period_start: currentPeriodStart,
+    current_period_end: currentPeriodEnd,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from(config.table)
+    .upsert(payload, {
+      onConflict: "stripe_subscription_id",
+    });
+
+  if (error) {
+    console.log(`${config.table} subscription upsert failed:`, error.message);
+  }
+
+  if (role === "farmer") {
+    await updateFarmerPaymentStatus({
+      farmerId: userId,
+      email,
+      paymentType: "farmer_monthly_subscription",
+      paid: ["active", "trialing"].includes(status),
+      stripeCustomerId,
+      stripeSubscriptionId,
+      subscriptionStatus: status,
+    });
+  }
+}
+
+async function handleCheckoutSessionCompleted(session) {
+  const metadata = session.metadata || {};
+  const role = normalizeRole(metadata.role);
+  const paymentType = metadata.paymentType || "subscription";
+
+  if (role === "farmer" && paymentType === "farmer_application_fee") {
+    await saveFarmerApplicationPaymentFromSession(session);
+    return;
+  }
+
+  if (session.mode === "subscription" || paymentType.includes("subscription")) {
+    let subscription = null;
+
+    if (session.subscription && stripe) {
+      subscription = await stripe.subscriptions.retrieve(session.subscription);
+    }
+
+    await saveSubscriptionFromStripe({
+      subscription,
+      session,
+      roleOverride: role,
+    });
+    return;
+  }
+
+  if (role === "farmer") {
+    await updateFarmerPaymentStatus({
+      farmerId: metadata.farmerId || metadata.userId,
+      email: metadata.email,
+      paymentType,
+      paid: session.payment_status === "paid",
+      stripeCustomerId:
+        typeof session.customer === "string" ? session.customer : session.customer?.id,
+    });
+  }
 }
 
 router.get("/health", (req, res) => {
@@ -671,7 +782,6 @@ async function createSubscriptionCheckoutSession(req, res, forcedPlanType) {
     });
   } catch (error) {
     console.error("create checkout error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to create checkout session.",
@@ -698,10 +808,6 @@ router.post("/create-freight-subscription-checkout", async (req, res) => {
 router.post("/create-customer-subscription-checkout", async (req, res) => {
   return createSubscriptionCheckoutSession(req, res, "customer");
 });
-
-/* =====================================================
-   FARMER APPLICATION FEE CHECKOUT
-===================================================== */
 
 async function createFarmerApplicationFeeCheckout(req, res) {
   try {
@@ -773,7 +879,6 @@ async function createFarmerApplicationFeeCheckout(req, res) {
     });
   } catch (error) {
     console.error("create-farmer-application-fee-checkout error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to create application fee checkout.",
@@ -781,26 +886,14 @@ async function createFarmerApplicationFeeCheckout(req, res) {
   }
 }
 
-router.post(
-  "/create-farmer-application-fee-checkout",
-  createFarmerApplicationFeeCheckout
-);
-
-router.post(
-  "/payments/create-farmer-application-fee-checkout",
-  createFarmerApplicationFeeCheckout
-);
-
-/* =====================================================
-   VERIFY FARMER APPLICATION FEE
-===================================================== */
+router.post("/create-farmer-application-fee-checkout", createFarmerApplicationFeeCheckout);
+router.post("/payments/create-farmer-application-fee-checkout", createFarmerApplicationFeeCheckout);
 
 router.post("/verify-farmer-application-fee", async (req, res) => {
   try {
     if (!requireSupabase(res)) return;
 
     const { farmerId, farmerEmail, email, sessionId } = req.body || {};
-
     const finalFarmerId = cleanString(farmerId);
     const finalEmail = cleanString(farmerEmail || email).toLowerCase();
 
@@ -808,20 +901,7 @@ router.post("/verify-farmer-application-fee", async (req, res) => {
       const session = await stripe.checkout.sessions.retrieve(sessionId);
 
       if (session.payment_status === "paid") {
-        const metadata = session.metadata || {};
-
-        const paidFarmerId =
-          cleanString(metadata.farmerId) ||
-          cleanString(metadata.userId) ||
-          finalFarmerId;
-
-        if (paidFarmerId) {
-          await updateFarmerPaymentStatus({
-            farmerId: paidFarmerId,
-            paymentType: "farmer_application_fee",
-            paid: true,
-          });
-        }
+        await saveFarmerApplicationPaymentFromSession(session);
 
         return res.json({
           success: true,
@@ -832,19 +912,19 @@ router.post("/verify-farmer-application-fee", async (req, res) => {
       }
     }
 
-    if (!finalFarmerId && !finalEmail) {
+    let query = supabase
+      .from("farmer_application_payments")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (finalFarmerId) query = query.eq("farmer_id", finalFarmerId);
+    else if (finalEmail) query = query.eq("farmer_email", finalEmail);
+    else {
       return res.status(400).json({
         success: false,
         error: "farmerId or email required.",
       });
-    }
-
-    let query = supabase.from("admin_verifications").select("*").limit(1);
-
-    if (finalFarmerId) {
-      query = query.eq("farmer_id", finalFarmerId);
-    } else {
-      query = query.eq("email", finalEmail);
     }
 
     const { data, error } = await query.maybeSingle();
@@ -856,16 +936,13 @@ router.post("/verify-farmer-application-fee", async (req, res) => {
       });
     }
 
-    const paid = Boolean(data?.application_fee_paid);
-
     return res.json({
       success: true,
-      paid,
-      verification: data || null,
+      paid: Boolean(data?.payment_status === "paid"),
+      payment: data || null,
     });
   } catch (error) {
     console.error("verify-farmer-application-fee error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to verify application fee.",
@@ -878,7 +955,6 @@ router.post("/check-subscription", async (req, res) => {
     if (!requireSupabase(res)) return;
 
     const { role = "customer", userId, email } = req.body || {};
-
     const config = getSubscriptionConfig(role);
 
     let query = supabase
@@ -903,9 +979,8 @@ router.post("/check-subscription", async (req, res) => {
     }
 
     const { data } = await query.maybeSingle();
-
-    const status = data?.subscription_status || "";
-    const active = String(status).toLowerCase() === "active";
+    const status = data?.subscription_status || data?.status || "";
+    const active = ["active", "trialing"].includes(String(status).toLowerCase());
 
     return res.json({
       success: true,
@@ -918,7 +993,6 @@ router.post("/check-subscription", async (req, res) => {
     });
   } catch (error) {
     console.error("check-subscription error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message,
@@ -943,43 +1017,25 @@ router.post("/verify-checkout-session", async (req, res) => {
       expand: ["subscription", "payment_intent"],
     });
 
-    const metadata = session.metadata || {};
-    const role = normalizeRole(metadata.role);
-    const paymentType = metadata.paymentType || "subscription";
-
-    if (session.payment_status === "paid" && role === "farmer") {
-      await updateFarmerPaymentStatus({
-        farmerId: metadata.farmerId || metadata.userId,
-        paymentType,
-        paid: true,
-      });
-    }
+    await handleCheckoutSessionCompleted(session);
 
     return res.json({
       success: true,
       paid: session.payment_status === "paid",
       paymentStatus: session.payment_status,
       mode: session.mode,
-      role,
-      paymentType,
+      role: normalizeRole(session.metadata?.role),
+      paymentType: session.metadata?.paymentType || "",
       session,
     });
   } catch (error) {
     console.error("verify-checkout-session error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message,
     });
   }
 });
-
-/* =====================================================
-   GENERIC CONNECT ACCOUNT ROUTE
-   Supports farmer, freight, driver.
-   Customers usually store stripe_customer_id through checkout/billing,
-   not Connect acct_ unless you choose to onboard customers as payout recipients.
-===================================================== */
 
 router.post("/create-connect-account", async (req, res) => {
   try {
@@ -1015,27 +1071,14 @@ router.post("/create-connect-account", async (req, res) => {
       businessName || farmName || companyName || config.defaultName
     );
 
-    if (!finalProfileId) {
+    if (!finalProfileId && !finalEmail) {
       return res.status(400).json({
         success: false,
-        error: "profileId/userId/farmerId/freightId/driverId is required.",
+        error: "profileId/farmerId/email is required.",
       });
     }
 
     let accountId = cleanString(existingStripeAccountId);
-
-    if (accountId) {
-      const exists = await stripeAccountExists(accountId);
-
-      if (!exists) {
-        accountId = "";
-        await clearProfileStripeInSupabase({
-          role: normalizedRole,
-          profileId: finalProfileId,
-          email: finalEmail,
-        });
-      }
-    }
 
     if (!accountId && supabase) {
       const row = await findProfileRow({
@@ -1049,13 +1092,16 @@ router.post("/create-connect-account", async (req, res) => {
 
       if (savedAccountId && (await stripeAccountExists(savedAccountId))) {
         accountId = savedAccountId;
-      } else if (savedAccountId) {
-        await clearProfileStripeInSupabase({
-          role: normalizedRole,
-          profileId: finalProfileId,
-          email: finalEmail,
-        });
       }
+    }
+
+    if (accountId && !(await stripeAccountExists(accountId))) {
+      await clearProfileStripeInSupabase({
+        role: normalizedRole,
+        profileId: finalProfileId,
+        email: finalEmail,
+      });
+      accountId = "";
     }
 
     if (!accountId) {
@@ -1073,8 +1119,8 @@ router.post("/create-connect-account", async (req, res) => {
         },
         metadata: {
           role: normalizedRole,
-          profileId: finalProfileId,
-          userId: finalProfileId,
+          profileId: finalProfileId || "",
+          userId: finalProfileId || "",
           farmerId: normalizedRole === "farmer" ? finalProfileId : "",
           freightId: normalizedRole === "freight" ? finalProfileId : "",
           driverId: normalizedRole === "driver" ? finalProfileId : "",
@@ -1114,13 +1160,6 @@ router.post("/create-connect-account", async (req, res) => {
       type: "account_onboarding",
     });
 
-    console.log("CREATE CONNECT RETURN:", {
-      role: normalizedRole,
-      profileId: finalProfileId,
-      email: finalEmail,
-      accountId,
-    });
-
     return res.json({
       success: true,
       role: normalizedRole,
@@ -1129,10 +1168,10 @@ router.post("/create-connect-account", async (req, res) => {
       stripeAccountId: accountId,
       onboardingUrl: accountLink.url,
       url: accountLink.url,
+      reusedExistingAccount: Boolean(accountId),
     });
   } catch (error) {
     console.error("create-connect-account error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message,
@@ -1170,7 +1209,7 @@ router.post("/check-connect-account", async (req, res) => {
 
     let activeAccountId = cleanString(stripeAccountId) || cleanString(accountId);
 
-    if (!activeAccountId && supabase && finalProfileId) {
+    if (!activeAccountId && supabase) {
       const row = await findProfileRow({
         role: normalizedRole,
         profileId: finalProfileId,
@@ -1197,7 +1236,7 @@ router.post("/check-connect-account", async (req, res) => {
 
     try {
       account = await stripe.accounts.retrieve(activeAccountId);
-    } catch (error) {
+    } catch {
       await clearProfileStripeInSupabase({
         role: normalizedRole,
         profileId: finalProfileId,
@@ -1239,18 +1278,12 @@ router.post("/check-connect-account", async (req, res) => {
     });
   } catch (error) {
     console.error("check-connect-account error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message,
     });
   }
 });
-
-/* =====================================================
-   FARMER CONNECT ROUTES
-   Kept for existing frontend compatibility.
-===================================================== */
 
 router.post("/create-farmer-connect-account", async (req, res) => {
   req.body = {
@@ -1266,71 +1299,38 @@ router.post("/create-farmer-connect-account", async (req, res) => {
   );
 });
 
+router.post("/create-farmer-onboarding-link", async (req, res) => {
+  req.body = {
+    ...(req.body || {}),
+    role: "farmer",
+    profileId: req.body?.profileId || req.body?.userId || req.body?.farmerId,
+    existingStripeAccountId:
+      req.body?.existingStripeAccountId ||
+      req.body?.stripeAccountId ||
+      req.body?.accountId,
+  };
+
+  return router.handle(
+    { ...req, method: "POST", url: "/create-connect-account" },
+    res
+  );
+});
+
 router.post("/create-farmer-account-link", async (req, res) => {
-  try {
-    if (!requireStripe(res)) return;
+  req.body = {
+    ...(req.body || {}),
+    role: "farmer",
+    profileId: req.body?.profileId || req.body?.userId || req.body?.farmerId,
+    existingStripeAccountId:
+      req.body?.existingStripeAccountId ||
+      req.body?.stripeAccountId ||
+      req.body?.accountId,
+  };
 
-    const { farmerId, stripeAccountId } = req.body || {};
-
-    const finalFarmerId = cleanString(farmerId);
-    let accountId = cleanString(stripeAccountId);
-
-    if (!accountId && supabase && finalFarmerId) {
-      const row = await findProfileRow({
-        role: "farmer",
-        profileId: finalFarmerId,
-        email: "",
-      });
-
-      accountId = row?.stripe_account_id || row?.farmer_stripe_account_id || "";
-    }
-
-    if (!accountId) {
-      return res.status(400).json({
-        success: false,
-        error: "stripeAccountId or farmerId with saved Stripe account is required.",
-      });
-    }
-
-    if (!(await stripeAccountExists(accountId))) {
-      await clearFarmerStripeInSupabase({ farmerId: finalFarmerId });
-
-      return res.status(400).json({
-        success: false,
-        error: "Saved Stripe account no longer exists. Please restart Stripe setup.",
-      });
-    }
-
-    const accountLink = await stripe.accountLinks.create({
-      account: accountId,
-      refresh_url: appendQueryParams(getConnectRefreshUrl("farmer"), {
-        stripeReturn: "false",
-        farmerId: finalFarmerId,
-        accountId,
-      }),
-      return_url: appendQueryParams(getConnectReturnUrl("farmer"), {
-        stripeReturn: "true",
-        farmerId: finalFarmerId,
-        accountId,
-      }),
-      type: "account_onboarding",
-    });
-
-    return res.json({
-      success: true,
-      accountId,
-      stripeAccountId: accountId,
-      onboardingUrl: accountLink.url,
-      url: accountLink.url,
-    });
-  } catch (error) {
-    console.error("create-farmer-account-link error:", error);
-
-    return res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
+  return router.handle(
+    { ...req, method: "POST", url: "/create-connect-account" },
+    res
+  );
 });
 
 router.post("/check-farmer-connect-account", async (req, res) => {
@@ -1345,10 +1345,6 @@ router.post("/check-farmer-connect-account", async (req, res) => {
     res
   );
 });
-
-/* =====================================================
-   MARKETPLACE CHECKOUT
-===================================================== */
 
 router.post("/create-marketplace-checkout", async (req, res) => {
   try {
@@ -1369,33 +1365,6 @@ router.post("/create-marketplace-checkout", async (req, res) => {
         success: false,
         error: "Cart is required.",
       });
-    }
-
-    const groupedFarmers = {};
-
-    for (const item of cart) {
-      const farmerStripeAccountId =
-        item.farmerStripeAccountId ||
-        item.stripeAccountId ||
-        item.farmer_stripe_account_id ||
-        "";
-
-      if (!farmerStripeAccountId) {
-        throw new Error(`Missing farmerStripeAccountId for cart item: ${item.name || item.id}`);
-      }
-
-      if (!groupedFarmers[farmerStripeAccountId]) {
-        groupedFarmers[farmerStripeAccountId] = {
-          farmerStripeAccountId,
-          farmName: item.farmName || item.farmerName || item.farm_name || "Farm2Home Farm",
-          items: [],
-          subtotal: 0,
-        };
-      }
-
-      groupedFarmers[farmerStripeAccountId].items.push(item);
-      groupedFarmers[farmerStripeAccountId].subtotal +=
-        safeNumber(item.price, 0) * safeNumber(item.quantity, 1);
     }
 
     const lineItems = cart.map((item) => ({
@@ -1449,8 +1418,6 @@ router.post("/create-marketplace-checkout", async (req, res) => {
       orderId: finalOrderId,
       customerId: cleanString(customerId),
       customerEmail: cleanString(customerEmail).toLowerCase(),
-      groupedFarmers: Object.values(groupedFarmers),
-      deliveryFee: safeNumber(deliveryFee, 0),
       processed: false,
     });
 
@@ -1463,7 +1430,6 @@ router.post("/create-marketplace-checkout", async (req, res) => {
     });
   } catch (error) {
     console.error("create-marketplace-checkout error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message,
@@ -1495,7 +1461,6 @@ router.post("/create-customer-portal-session", async (req, res) => {
     });
   } catch (error) {
     console.error("create-customer-portal-session error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to create billing portal session.",
@@ -1539,6 +1504,8 @@ router.post("/cancel-subscription", async (req, res) => {
         farmerId: finalUserId,
         paymentType: "farmer_monthly_subscription",
         paid: false,
+        stripeSubscriptionId: subscriptionId,
+        subscriptionStatus: subscription.status,
       });
     }
 
@@ -1549,7 +1516,6 @@ router.post("/cancel-subscription", async (req, res) => {
     });
   } catch (error) {
     console.error("cancel-subscription error:", error);
-
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to cancel subscription.",
@@ -1580,19 +1546,18 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
 
   try {
     if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const metadata = session.metadata || {};
+      await handleCheckoutSessionCompleted(event.data.object);
+    }
 
-      const role = normalizeRole(metadata.role);
-      const paymentType = metadata.paymentType || "subscription";
-
-      if (role === "farmer") {
-        await updateFarmerPaymentStatus({
-          farmerId: metadata.farmerId || metadata.userId,
-          paymentType,
-          paid: true,
-        });
-      }
+    if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      await saveSubscriptionFromStripe({
+        subscription: event.data.object,
+        roleOverride: normalizeRole(event.data.object.metadata?.role),
+      });
     }
 
     if (event.type === "account.updated") {
@@ -1630,7 +1595,6 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
     return res.json({ received: true });
   } catch (error) {
     console.error("Webhook handler error:", error);
-
     return res.status(500).json({
       received: false,
       error: error.message,
