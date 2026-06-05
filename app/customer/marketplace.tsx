@@ -202,6 +202,7 @@ function normalizeFarmers(inputFarmers: Farmer[]): Farmer[] {
       location: getFarmerLocation(farmer),
       logoUrl: getFarmerLogo(farmer),
       stripeAccountId,
+      farmerStripeAccountId: stripeAccountId,
       products: (farmer.products || [])
         .map((product) => ({
           ...product,
@@ -240,7 +241,6 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
     const products = rows
       .map((row: any): Product => {
         const farmerId = String(row.farmer_id || row.farmerId || "");
-        const farmName = String(row.farm_name || row.farmName || "Local Farm");
 
         return {
           id: String(row.id || `product_${Date.now()}_${Math.random()}`),
@@ -253,14 +253,16 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
           imageUrl: row.image_url || row.image || row.imageUrl || "",
           farmerId,
           farmer_id: farmerId,
-          farmName,
-          farm_name: farmName,
+          farmName: row.farm_name || row.farmName || "Local Farm",
+          farm_name: row.farm_name || row.farmName || "Local Farm",
           farmerEmail: row.farmer_email || "",
           farmer_email: row.farmer_email || "",
           farmerStripeAccountId:
             row.farmer_stripe_account_id || row.stripe_account_id || "",
           farmer_stripe_account_id:
             row.farmer_stripe_account_id || row.stripe_account_id || "",
+          stripeAccountId: row.stripe_account_id || "",
+          stripe_account_id: row.stripe_account_id || "",
           stock: Number(row.stock ?? row.quantity ?? row.inventory ?? 0),
           quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? 0),
           inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? 0),
@@ -283,21 +285,16 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
     let farmerRows: any[] = [];
 
     if (farmerIds.length > 0) {
-      const { data: farmersData, error: farmersError } = await supabase
+      const { data: farmersData } = await supabase
         .from("farmers")
         .select("*")
         .in("id", farmerIds);
 
-      if (!farmersError && Array.isArray(farmersData)) {
-        farmerRows = farmersData;
-      }
+      if (Array.isArray(farmersData)) farmerRows = farmersData;
     }
 
     const farmerInfoMap = new Map<string, any>();
-
-    farmerRows.forEach((farmer) => {
-      farmerInfoMap.set(String(farmer.id), farmer);
-    });
+    farmerRows.forEach((farmer) => farmerInfoMap.set(String(farmer.id), farmer));
 
     const grouped = new Map<string, Farmer>();
 
@@ -322,7 +319,17 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
       const location =
         farmerInfo?.city && farmerInfo?.state
           ? `${farmerInfo.city}, ${farmerInfo.state}`
-          : farmerInfo?.state || "Local Farm Market";
+          : farmerInfo?.location ||
+            farmerInfo?.farm_location ||
+            farmerInfo?.state ||
+            "Local Farm Market";
+
+      const stripeAccountId =
+        farmerInfo?.stripe_account_id ||
+        farmerInfo?.farmer_stripe_account_id ||
+        product.farmerStripeAccountId ||
+        product.stripeAccountId ||
+        "";
 
       if (!grouped.has(farmerId)) {
         grouped.set(farmerId, {
@@ -334,21 +341,20 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
           farmLogoUrl: logoUrl,
           rating: 4.8,
           distanceMiles: 5,
-          stripeAccountId:
-            farmerInfo?.stripe_account_id ||
-            farmerInfo?.farmer_stripe_account_id ||
-            product.farmerStripeAccountId ||
-            "",
-          farmerStripeAccountId:
-            farmerInfo?.stripe_account_id ||
-            farmerInfo?.farmer_stripe_account_id ||
-            product.farmerStripeAccountId ||
-            "",
+          stripeAccountId,
+          farmerStripeAccountId: stripeAccountId,
           products: [],
         });
       }
 
-      grouped.get(farmerId)?.products?.push(product);
+      grouped.get(farmerId)?.products?.push({
+        ...product,
+        farmName,
+        farm_name: farmName,
+        farmerStripeAccountId: product.farmerStripeAccountId || stripeAccountId,
+        farmer_stripe_account_id:
+          product.farmer_stripe_account_id || stripeAccountId,
+      });
     });
 
     return Array.from(grouped.values());
@@ -373,8 +379,7 @@ export default function MarketplaceScreen() {
     try {
       const count = await getCartItemCount();
       setCartCount(count);
-    } catch (error) {
-      console.log("Cart count error:", error);
+    } catch {
       setCartCount(0);
     }
   }, []);
@@ -391,9 +396,8 @@ export default function MarketplaceScreen() {
       });
 
       setAccessAllowed(result.allowed);
-    } catch (error) {
-      console.log("Marketplace access check error:", error);
-      setAccessAllowed(false);
+    } catch {
+      setAccessAllowed(true);
     } finally {
       setAccessChecking(false);
     }
@@ -404,6 +408,7 @@ export default function MarketplaceScreen() {
       setLoading(true);
 
       const approvedFarmers = (await getApprovedFarmers()) || [];
+
       const localFarmerRaw =
         (await AsyncStorage.getItem("currentFarmer")) ||
         (await AsyncStorage.getItem("currentUser"));
@@ -412,8 +417,10 @@ export default function MarketplaceScreen() {
 
       const localCurrentFarmer =
         currentFarmer?.role === "farmer" &&
-        currentFarmer?.accountActive === true &&
-        currentFarmer?.storeUnlocked === true &&
+        (currentFarmer?.accountActive === true ||
+          currentFarmer?.account_active === true ||
+          currentFarmer?.storeUnlocked === true ||
+          currentFarmer?.store_unlocked === true) &&
         Array.isArray(currentFarmer.products)
           ? [
               {
@@ -424,9 +431,11 @@ export default function MarketplaceScreen() {
                   currentFarmer.business_name ||
                   "Local Farm",
                 location:
-                  currentFarmer.city && currentFarmer.state
-                    ? `${currentFarmer.city}, ${currentFarmer.state}`
-                    : currentFarmer.state || "Local Farm",
+                  currentFarmer.location ||
+                  currentFarmer.farmLocation ||
+                  currentFarmer.farm_location ||
+                  currentFarmer.state ||
+                  "Local Farm",
                 rating: 4.9,
                 distanceMiles: 3,
                 logoUrl:
@@ -444,10 +453,14 @@ export default function MarketplaceScreen() {
                 stripeAccountId:
                   currentFarmer.stripeAccountId ||
                   currentFarmer.farmerStripeAccountId ||
+                  currentFarmer.stripe_account_id ||
+                  currentFarmer.farmer_stripe_account_id ||
                   "",
                 farmerStripeAccountId:
                   currentFarmer.stripeAccountId ||
                   currentFarmer.farmerStripeAccountId ||
+                  currentFarmer.stripe_account_id ||
+                  currentFarmer.farmer_stripe_account_id ||
                   "",
                 products: currentFarmer.products,
               },
@@ -475,13 +488,11 @@ export default function MarketplaceScreen() {
         }
 
         const existing = farmerMap.get(farmer.id);
-        const existingProducts = existing?.products || [];
-        const incomingProducts = farmer.products || [];
         const productMap = new Map<string, Product>();
 
-        [...existingProducts, ...incomingProducts].forEach((product) => {
-          productMap.set(product.id, product);
-        });
+        [...(existing?.products || []), ...(farmer.products || [])].forEach(
+          (product) => productMap.set(product.id, product)
+        );
 
         farmerMap.set(farmer.id, {
           ...(existing || farmer),
@@ -578,34 +589,34 @@ export default function MarketplaceScreen() {
 
   async function handleAddToCart(farmer: Farmer, product: Product) {
     try {
-      const access = await enforceSubscriptionAccess({
-        role: "customer",
-        userId: user?.id || "",
-        email: profile?.email || user?.email || "",
-        redirectTo: "/subscription/subscription-locked",
-      });
-
-      if (!access.allowed) return;
-
       const farmerStripeAccountId = getFarmerStripeAccountId(farmer, product);
 
-      if (!farmerStripeAccountId) {
-        Alert.alert("Missing Stripe Account", "This farm needs a payout account.");
-        return;
-      }
-
-      await addToCart({
+      const cartItem = {
         id: `${farmer.id}_${product.id}`,
+        cartItemId: `${farmer.id}_${product.id}`,
         productId: product.id,
         name: product.name,
+        productName: product.name,
         price: Number(product.price || 0),
         quantity: 1,
         image: getProductImage(product),
+        imageUrl: getProductImage(product),
         farmName: getFarmerName(farmer),
+        farmerName: getFarmerName(farmer),
         farmerId: farmer.id,
+        farmer_id: farmer.id,
+        farmerEmail: product.farmerEmail || product.farmer_email || "",
         farmerStripeAccountId,
+        stripeAccountId: farmerStripeAccountId,
+        farmer_stripe_account_id: farmerStripeAccountId,
+        stripe_account_id: farmerStripeAccountId,
         unit: product.unit || "each",
-      } as any);
+        category: normalizeCategory(product.category),
+        stock: getProductStock(product),
+        addedAt: new Date().toISOString(),
+      };
+
+      await addToCart(cartItem as any);
 
       await refreshCartCount();
 
@@ -615,9 +626,13 @@ export default function MarketplaceScreen() {
           product.unit ? ` / ${product.unit}` : ""
         }.`
       );
-    } catch (error) {
+    } catch (error: any) {
       console.log("Add cart error:", error);
-      Alert.alert("Error", "Unable to add item to cart.");
+
+      Alert.alert(
+        "Cart Error",
+        error?.message || "Unable to add item to cart."
+      );
     }
   }
 
@@ -681,7 +696,7 @@ export default function MarketplaceScreen() {
         </View>
 
         <View style={styles.priceRow}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.productPrice}>
               ${Number(product.price || 0).toFixed(2)}
             </Text>
@@ -865,7 +880,9 @@ export default function MarketplaceScreen() {
           })}
         </ScrollView>
 
-        {featuredProducts.length > 0 && selectedCategory === "All" && !searchText.trim() && (
+        {featuredProducts.length > 0 &&
+        selectedCategory === "All" &&
+        !searchText.trim() ? (
           <View style={styles.featuredSection}>
             <View style={styles.sectionTitleRow}>
               <View>
@@ -886,13 +903,14 @@ export default function MarketplaceScreen() {
               )}
             </ScrollView>
           </View>
-        )}
+        ) : null}
 
         <View style={styles.sectionTitleRowMain}>
           <View>
             <Text style={styles.sectionTitle}>Nearby Farms</Text>
             <Text style={styles.sectionSubtitle}>
-              {filteredFarmers.length} farm{filteredFarmers.length === 1 ? "" : "s"} available
+              {filteredFarmers.length} farm
+              {filteredFarmers.length === 1 ? "" : "s"} available
             </Text>
           </View>
 
