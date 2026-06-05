@@ -251,7 +251,11 @@ function mapProductRow(row: any): Product {
 
 function mapFarmerRow(row: any, products: Product[]): Farmer {
   const farmName =
-    row?.farm_name || row?.business_name || row?.farmName || row?.businessName || "Local Farm";
+    row?.farm_name ||
+    row?.business_name ||
+    row?.farmName ||
+    row?.businessName ||
+    "Local Farm";
 
   const location =
     row?.city && row?.state
@@ -386,7 +390,8 @@ export default function FarmerShopScreen() {
     ];
 
     const selected = localFarmers.find(
-      (item: any) => item?.id === activeFarmerId || item?.farmerId === activeFarmerId
+      (item: any) =>
+        item?.id === activeFarmerId || item?.farmerId === activeFarmerId
     );
 
     if (!selected) return null;
@@ -472,7 +477,10 @@ export default function FarmerShopScreen() {
         <Text style={styles.loadingIcon}>🌾</Text>
         <Text style={styles.loadingText}>Farmer shop not found.</Text>
         <Pressable
-          style={({ pressed }) => [styles.backToMarketButton, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.backToMarketButton,
+            pressed && styles.pressed,
+          ]}
           onPress={() => router.replace("/customer/marketplace" as any)}
         >
           <Text style={styles.backToMarketText}>Back to Marketplace</Text>
@@ -493,7 +501,10 @@ export default function FarmerShopScreen() {
       >
         <View style={styles.topBar}>
           <Pressable
-            style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.backCircle,
+              pressed && styles.pressed,
+            ]}
             onPress={() => router.push("/customer/marketplace" as any)}
           >
             <Text style={styles.backCircleText}>‹</Text>
@@ -505,7 +516,10 @@ export default function FarmerShopScreen() {
           </View>
 
           <Pressable
-            style={({ pressed }) => [styles.cartTopButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.cartTopButton,
+              pressed && styles.pressed,
+            ]}
             onPress={() => router.push("/customer/cart" as any)}
           >
             <Text style={styles.cartTopText}>🛒</Text>
@@ -561,7 +575,10 @@ export default function FarmerShopScreen() {
           </Text>
 
           <Pressable
-            style={({ pressed }) => [styles.viewCartButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.viewCartButton,
+              pressed && styles.pressed,
+            ]}
             onPress={() => router.push("/customer/cart" as any)}
           >
             <Text style={styles.viewCartButtonText}>View Cart ({cartCount})</Text>
@@ -587,21 +604,30 @@ export default function FarmerShopScreen() {
                 </Text>
               </View>
 
-              {groupedProducts[category].map((product) => {
-                const imageSource = getProductImage(product);
-                const stock = getProductStock(product);
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.horizontalProductsRow}
+              >
+                {groupedProducts[category].map((product) => {
+                  const imageSource = getProductImage(product);
+                  const stock = getProductStock(product);
 
-                return (
-                  <View key={product.id} style={styles.productCard}>
-                    {imageSource ? (
-                      <Image source={{ uri: imageSource }} style={styles.productImage} />
-                    ) : (
-                      <View style={styles.imagePlaceholder}>
-                        <Text style={styles.imageEmoji}>{getProductEmoji(product)}</Text>
-                      </View>
-                    )}
+                  return (
+                    <View key={product.id} style={styles.productCardHorizontal}>
+                      {imageSource ? (
+                        <Image
+                          source={{ uri: imageSource }}
+                          style={styles.productImageHorizontal}
+                        />
+                      ) : (
+                        <View style={styles.imagePlaceholderHorizontal}>
+                          <Text style={styles.imageEmoji}>
+                            {getProductEmoji(product)}
+                          </Text>
+                        </View>
+                      )}
 
-                    <View style={styles.productInfo}>
                       <Text style={styles.productCategory}>
                         {normalizeCategory(product.category)}
                       </Text>
@@ -615,18 +641,25 @@ export default function FarmerShopScreen() {
                       </Text>
 
                       <View style={styles.tagLine}>
-                        {product.organic ? <Text style={styles.miniTag}>Organic</Text> : null}
-                        {product.local ? <Text style={styles.miniTag}>Local</Text> : null}
-                        {product.seasonal ? <Text style={styles.miniTag}>Seasonal</Text> : null}
+                        {product.organic ? (
+                          <Text style={styles.miniTag}>Organic</Text>
+                        ) : null}
+                        {product.local ? (
+                          <Text style={styles.miniTag}>Local</Text>
+                        ) : null}
+                        {product.seasonal ? (
+                          <Text style={styles.miniTag}>Seasonal</Text>
+                        ) : null}
                       </View>
 
                       <View style={styles.priceRow}>
-                        <View>
+                        <View style={{ flex: 1 }}>
                           <Text style={styles.price}>
                             ${Number(product.price || 0).toFixed(2)}
                           </Text>
                           <Text style={styles.unit}>
-                            {product.unit ? `per ${product.unit}` : "each"} · {stock} left
+                            {product.unit ? `per ${product.unit}` : "each"} ·{" "}
+                            {stock} left
                           </Text>
                         </View>
 
@@ -641,15 +674,18 @@ export default function FarmerShopScreen() {
                         </Pressable>
                       </View>
                     </View>
-                  </View>
-                );
-              })}
+                  );
+                })}
+              </ScrollView>
             </View>
           ))
         )}
 
         <Pressable
-          style={({ pressed }) => [styles.goCartButton, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.goCartButton,
+            pressed && styles.pressed,
+          ]}
           onPress={() => router.push("/customer/cart" as any)}
         >
           <Text style={styles.goCartButtonText}>Go To Cart ({cartCount})</Text>
@@ -824,7 +860,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   viewCartButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  categorySection: { marginTop: 8 },
+  categorySection: { marginTop: 10, marginBottom: 8 },
   categoryHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -833,32 +869,37 @@ const styles = StyleSheet.create({
   },
   categoryTitle: { fontSize: 23, fontWeight: "900", color: COLORS.text },
   categoryCount: { color: COLORS.muted, fontWeight: "800", fontSize: 13 },
-  productCard: {
+  horizontalProductsRow: {
+    gap: 14,
+    paddingRight: 18,
+    paddingBottom: 4,
+  },
+  productCardHorizontal: {
+    width: 190,
     backgroundColor: COLORS.card,
     marginBottom: 14,
     borderRadius: 28,
     padding: 13,
-    flexDirection: "row",
     borderWidth: 1,
     borderColor: COLORS.border,
-    gap: 12,
   },
-  productImage: {
-    width: 112,
-    height: 126,
+  productImageHorizontal: {
+    width: "100%",
+    height: 122,
     borderRadius: 22,
     backgroundColor: COLORS.softGreen,
+    marginBottom: 10,
   },
-  imagePlaceholder: {
-    width: 112,
-    height: 126,
+  imagePlaceholderHorizontal: {
+    width: "100%",
+    height: 122,
     borderRadius: 22,
     backgroundColor: COLORS.softGreen,
     justifyContent: "center",
     alignItems: "center",
+    marginBottom: 10,
   },
   imageEmoji: { fontSize: 44 },
-  productInfo: { flex: 1 },
   productCategory: {
     color: COLORS.primary,
     fontWeight: "900",
@@ -872,6 +913,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 19,
     fontSize: 12,
+    minHeight: 38,
   },
   tagLine: {
     flexDirection: "row",

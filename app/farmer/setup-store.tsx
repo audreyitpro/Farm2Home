@@ -17,7 +17,6 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, router } from "expo-router";
-import { createClient } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
 
 import {
@@ -26,16 +25,9 @@ import {
   getFarmerById,
   updateFarmerStore,
 } from "../data/farmerStore";
+import { supabase } from "../data/supabaseClient";
 
-const expoEnv = (globalThis as any)?.process?.env || {};
-const supabaseUrl =
-  expoEnv.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey =
-  expoEnv.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-  "";
-
-const supabase: any = createClient(supabaseUrl, supabaseAnonKey);
+const LOGO_BUCKET = "farm-logos";
 
 const COLORS = {
   primary: "#2E7D32",
@@ -62,6 +54,7 @@ export default function FarmerSetupStoreScreen() {
   }, [params]);
 
   const [loading, setLoading] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
   const [currentFarmer, setCurrentFarmer] = useState<Farmer | null>(null);
 
   const [ownerName, setOwnerName] = useState("");
@@ -81,7 +74,9 @@ export default function FarmerSetupStoreScreen() {
 
   async function initializeScreen() {
     try {
-      const saved = await AsyncStorage.getItem("currentFarmer");
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
 
       if (!saved && !farmerIdFromParams) {
         Alert.alert("Session Needed", "Please login again.");
@@ -92,13 +87,14 @@ export default function FarmerSetupStoreScreen() {
       await loadFarmer();
     } catch (error) {
       console.log("Initialize setup store error:", error);
-      Alert.alert("Access Error", "Unable to verify farmer approval.");
+      Alert.alert("Access Error", "Unable to verify farmer profile.");
     }
   }
 
   function mapSupabaseFarmer(row: any): Farmer {
     return {
       id: row.id,
+      farmerId: row.id,
 
       ownerName: row.owner_name || row.ownerName || "",
       farmName: row.farm_name || row.farmName || row.business_name || "",
@@ -133,13 +129,6 @@ export default function FarmerSetupStoreScreen() {
         row.monthly_membership_started || row.monthlyMembershipStarted
       ),
 
-      securityQuestion1: row.security_question_1 || row.securityQuestion1 || "",
-      securityAnswer1: row.security_answer_1 || row.securityAnswer1 || "",
-      securityQuestion2: row.security_question_2 || row.securityQuestion2 || "",
-      securityAnswer2: row.security_answer_2 || row.securityAnswer2 || "",
-      securityQuestion3: row.security_question_3 || row.securityQuestion3 || "",
-      securityAnswer3: row.security_answer_3 || row.securityAnswer3 || "",
-
       farmLocation: row.farm_location || row.farmLocation || row.location || "",
       location: row.location || row.farm_location || row.farmLocation || "",
       about: row.about || "",
@@ -151,6 +140,18 @@ export default function FarmerSetupStoreScreen() {
         row.farmLogoUrl ||
         "",
       farmLogoUrl:
+        row.farm_logo_url ||
+        row.logo_url ||
+        row.farmLogoUrl ||
+        row.logoUrl ||
+        "",
+      logo_url:
+        row.logo_url ||
+        row.farm_logo_url ||
+        row.logoUrl ||
+        row.farmLogoUrl ||
+        "",
+      farm_logo_url:
         row.farm_logo_url ||
         row.logo_url ||
         row.farmLogoUrl ||
@@ -183,7 +184,10 @@ export default function FarmerSetupStoreScreen() {
     } as any;
   }
 
-  async function getFarmerFromSupabase(activeFarmerId: string, savedEmail?: string) {
+  async function getFarmerFromSupabase(
+    activeFarmerId: string,
+    savedEmail?: string
+  ) {
     if (activeFarmerId) {
       const { data, error } = await supabase
         .from("farmers")
@@ -191,8 +195,7 @@ export default function FarmerSetupStoreScreen() {
         .eq("id", activeFarmerId)
         .maybeSingle();
 
-      if (error) throw error;
-      if (data) return mapSupabaseFarmer(data);
+      if (!error && data) return mapSupabaseFarmer(data);
     }
 
     if (savedEmail) {
@@ -202,8 +205,7 @@ export default function FarmerSetupStoreScreen() {
         .eq("email", String(savedEmail).trim().toLowerCase())
         .maybeSingle();
 
-      if (error) throw error;
-      if (data) return mapSupabaseFarmer(data);
+      if (!error && data) return mapSupabaseFarmer(data);
     }
 
     return null;
@@ -211,7 +213,10 @@ export default function FarmerSetupStoreScreen() {
 
   async function loadFarmer() {
     try {
-      const saved = await AsyncStorage.getItem("currentFarmer");
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
       const parsed = saved ? JSON.parse(saved) : null;
 
       const activeFarmerId =
@@ -229,91 +234,143 @@ export default function FarmerSetupStoreScreen() {
       }
 
       if (!farmer) {
-        Alert.alert(
-          "Farmer Not Found",
-          "Please complete farmer compliance first."
-        );
-
-        router.replace("/farmer/compliance-upload" as any);
+        Alert.alert("Farmer Not Found", "Please login again.");
+        router.replace("/farmer/login" as any);
         return;
       }
 
-      const approved =
-        farmer.approved === true ||
-        farmer.complianceStatus === "approved" ||
-        farmer.complianceStatus === "ACTIVE" ||
-        (farmer as any).adminReviewStatus === "approved" ||
-        (farmer as any).adminReviewStatus === "ACTIVE" ||
-        (farmer as any).reviewDecision === "approved" ||
-        (farmer as any).reviewDecision === "APPROVED";
-
-      const storeUnlocked =
-        (farmer as any).storeUnlocked === true ||
-        (farmer as any).store_unlocked === true ||
-        farmer.accountActive === true ||
-        approved;
-
-      if (!approved || !storeUnlocked) {
-        Alert.alert(
-          "Awaiting Approval",
-          "Your compliance review must be approved before setting up your store."
-        );
-
-        router.replace({
-          pathname: "/farmer/awaiting-approval",
-          params: {
-            farmerId: farmer.id,
-            email: farmer.email,
-            businessName:
-              (farmer as any).businessName || farmer.farmName || "",
-          },
-        } as any);
-        return;
-      }
+      const farmerAny = farmer as any;
 
       const loadedLogo =
-        (farmer as any).logoUrl ||
-        (farmer as any).farmLogoUrl ||
-        (farmer as any).logo_url ||
-        (farmer as any).farm_logo_url ||
+        farmerAny.logoUrl ||
+        farmerAny.farmLogoUrl ||
+        farmerAny.logo_url ||
+        farmerAny.farm_logo_url ||
         "";
 
-      setCurrentFarmer(farmer);
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
+      const fixedFarmer = {
+        ...farmer,
+        id: farmer.id || farmerAny.farmerId || activeFarmerId,
+        farmerId: farmerAny.farmerId || farmer.id || activeFarmerId,
+        role: "farmer",
+        logoUrl: loadedLogo,
+        farmLogoUrl: loadedLogo,
+        logo_url: loadedLogo,
+        farm_logo_url: loadedLogo,
+        accountActive: true,
+        account_active: true,
+        storeUnlocked: true,
+        store_unlocked: true,
+      } as any;
 
-      setOwnerName(farmer.ownerName || "");
-      setFarmName(farmer.farmName || (farmer as any).businessName || "");
-      setEmail(farmer.email || "");
-      setPhone(farmer.phone || "");
-      setFarmLocation(farmer.farmLocation || farmer.location || "");
-      setAbout(farmer.about || "");
+      setCurrentFarmer(fixedFarmer);
+
+      await AsyncStorage.setItem("currentFarmer", JSON.stringify(fixedFarmer));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(fixedFarmer));
+      await AsyncStorage.setItem("userRole", "farmer");
+      await AsyncStorage.setItem("currentUserRole", "farmer");
+
+      setOwnerName(fixedFarmer.ownerName || fixedFarmer.owner_name || "");
+      setFarmName(
+        fixedFarmer.farmName ||
+          fixedFarmer.farm_name ||
+          fixedFarmer.businessName ||
+          fixedFarmer.business_name ||
+          ""
+      );
+      setEmail(String(fixedFarmer.email || "").trim().toLowerCase());
+      setPhone(fixedFarmer.phone || "");
+      setFarmLocation(
+        fixedFarmer.farmLocation ||
+          fixedFarmer.farm_location ||
+          fixedFarmer.location ||
+          ""
+      );
+      setAbout(fixedFarmer.about || "");
       setLogoUrl(loadedLogo);
 
-      setPickup(farmer.pickup !== false);
-      setDelivery(farmer.delivery !== false);
+      setPickup(fixedFarmer.pickup !== false);
+      setDelivery(fixedFarmer.delivery !== false);
     } catch (error: any) {
       console.log("Load farmer error:", error);
       Alert.alert("Error", error?.message || "Unable to load farmer setup.");
     }
   }
 
-  async function pickLogo() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  async function uriToBlob(uri: string): Promise<Blob> {
+    const response = await fetch(uri);
+    return await response.blob();
+  }
 
-    if (!permission.granted) {
-      Alert.alert("Permission Needed", "Please allow photo access to upload logo.");
-      return;
+  function getFileExt(uri: string) {
+    const clean = uri.split("?")[0];
+    const ext = clean.split(".").pop()?.toLowerCase();
+    if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "webp") {
+      return ext === "jpg" ? "jpeg" : ext;
+    }
+    return "jpeg";
+  }
+
+  async function uploadLogoToStorage(localUri: string) {
+    if (!localUri || localUri.startsWith("http")) return localUri;
+
+    if (!currentFarmer?.id) {
+      throw new Error("Farmer ID missing. Please login again.");
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-      allowsEditing: true,
-      aspect: [1, 1],
-    });
+    setLogoUploading(true);
 
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setLogoUrl(result.assets[0].uri);
+    const ext = getFileExt(localUri);
+    const contentType = `image/${ext}`;
+    const filePath = `${currentFarmer.id}/farm-logo-${Date.now()}.${ext}`;
+    const blob = await uriToBlob(localUri);
+
+    const { error } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .upload(filePath, blob, {
+        contentType,
+        upsert: true,
+      });
+
+    if (error) {
+      throw new Error(error.message || "Unable to upload logo.");
+    }
+
+    const { data } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(filePath);
+
+    if (!data?.publicUrl) {
+      throw new Error("Logo uploaded but public URL was not returned.");
+    }
+
+    setLogoUploading(false);
+
+    return data.publicUrl;
+  }
+
+  async function pickLogo() {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          "Permission Needed",
+          "Please allow photo access to upload logo."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setLogoUrl(result.assets[0].uri);
+      }
+    } catch (error: any) {
+      Alert.alert("Logo Error", error?.message || "Unable to select logo.");
     }
   }
 
@@ -343,6 +400,7 @@ export default function FarmerSetupStoreScreen() {
 
   async function saveFarmerProfile(): Promise<Farmer | null> {
     try {
+      if (loading) return null;
       if (!validateRequiredFields()) return null;
 
       if (!currentFarmer?.id) {
@@ -353,12 +411,21 @@ export default function FarmerSetupStoreScreen() {
 
       setLoading(true);
 
-      const cleanedLogo = logoUrl.trim();
+      let finalLogoUrl = logoUrl.trim();
+
+      if (finalLogoUrl && !finalLogoUrl.startsWith("http")) {
+        finalLogoUrl = await uploadLogoToStorage(finalLogoUrl);
+        setLogoUrl(finalLogoUrl);
+      }
+
+      const now = new Date().toISOString();
 
       const farmerPayload: Farmer = {
         ...currentFarmer,
 
         id: currentFarmer.id,
+        farmerId: (currentFarmer as any).farmerId || currentFarmer.id,
+        role: "farmer",
 
         ownerName: ownerName.trim(),
         farmName: farmName.trim(),
@@ -366,35 +433,48 @@ export default function FarmerSetupStoreScreen() {
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
 
-        username: currentFarmer.username || email.trim().toLowerCase(),
-        password: currentFarmer.password || "",
+        username:
+          (currentFarmer as any).username || email.trim().toLowerCase(),
+        password: (currentFarmer as any).password || "",
 
         accountActive: true,
+        account_active: true,
         approved: true,
-        complianceStatus: "approved",
+        reviewed: true,
+        rejected: false,
+        complianceStatus: "ACTIVE",
+        compliance_status: "ACTIVE",
+        adminReviewStatus: "ACTIVE",
+        admin_review_status: "ACTIVE",
+        reviewDecision: "APPROVED",
+        review_decision: "APPROVED",
         storeUnlocked: true,
+        store_unlocked: true,
 
         farmLocation: farmLocation.trim(),
         location: farmLocation.trim(),
         about: about.trim(),
 
-        logoUrl: cleanedLogo,
-        farmLogoUrl: cleanedLogo,
-        logo_url: cleanedLogo,
-        farm_logo_url: cleanedLogo,
+        logoUrl: finalLogoUrl,
+        farmLogoUrl: finalLogoUrl,
+        logo_url: finalLogoUrl,
+        farm_logo_url: finalLogoUrl,
 
         pickup,
         delivery,
 
-        products: currentFarmer.products || [],
-        reviews: currentFarmer.reviews || 0,
-        rating: currentFarmer.rating || 4.8,
-        distanceMiles: currentFarmer.distanceMiles || 5,
-        itemsSold: currentFarmer.itemsSold || 0,
-        revenue: currentFarmer.revenue || 0,
+        products: (currentFarmer as any).products || [],
+        reviews: (currentFarmer as any).reviews || 0,
+        rating: (currentFarmer as any).rating || 4.8,
+        distanceMiles: (currentFarmer as any).distanceMiles || 5,
+        itemsSold: (currentFarmer as any).itemsSold || 0,
+        revenue: (currentFarmer as any).revenue || 0,
 
-        createdAt: currentFarmer.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt:
+          (currentFarmer as any).createdAt ||
+          (currentFarmer as any).created_at ||
+          now,
+        updatedAt: now,
       } as any;
 
       const supabasePayload = {
@@ -407,24 +487,47 @@ export default function FarmerSetupStoreScreen() {
         location: farmLocation.trim(),
         about: about.trim(),
 
-        logo_url: cleanedLogo,
-        farm_logo_url: cleanedLogo,
+        logo_url: finalLogoUrl,
+        farm_logo_url: finalLogoUrl,
 
         pickup,
         delivery,
+
         approved: true,
+        reviewed: true,
+        rejected: false,
         account_active: true,
         store_unlocked: true,
-        compliance_status: "approved",
-        updated_at: new Date().toISOString(),
+        compliance_status: "ACTIVE",
+        admin_review_status: "ACTIVE",
+        review_decision: "APPROVED",
+
+        updated_at: now,
       };
 
-      const { error } = await supabase
+      const { data: updatedRows, error } = await supabase
         .from("farmers")
         .update(supabasePayload)
-        .eq("id", currentFarmer.id);
+        .eq("id", currentFarmer.id)
+        .select("*");
 
       if (error) throw error;
+
+      if (!updatedRows || updatedRows.length === 0) {
+        const { error: upsertError } = await supabase.from("farmers").upsert(
+          {
+            id: currentFarmer.id,
+            ...supabasePayload,
+            created_at:
+              (currentFarmer as any).createdAt ||
+              (currentFarmer as any).created_at ||
+              now,
+          },
+          { onConflict: "id" }
+        );
+
+        if (upsertError) throw upsertError;
+      }
 
       let savedFarmer = farmerPayload;
 
@@ -454,6 +557,7 @@ export default function FarmerSetupStoreScreen() {
       return null;
     } finally {
       setLoading(false);
+      setLogoUploading(false);
     }
   }
 
@@ -462,7 +566,7 @@ export default function FarmerSetupStoreScreen() {
     if (!farmer?.id) return;
 
     router.push({
-      pathname: "/farmer/post-produce",
+      pathname: "/farmer/add-product",
       params: { farmerId: farmer.id },
     } as any);
   }
@@ -478,7 +582,8 @@ export default function FarmerSetupStoreScreen() {
   }
 
   const stripeConnected = Boolean(
-    currentFarmer?.stripeAccountId || currentFarmer?.farmerStripeAccountId
+    (currentFarmer as any)?.stripeAccountId ||
+      (currentFarmer as any)?.farmerStripeAccountId
   );
 
   return (
@@ -489,6 +594,7 @@ export default function FarmerSetupStoreScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
       >
         <View style={styles.topBar}>
           <Pressable
@@ -513,8 +619,8 @@ export default function FarmerSetupStoreScreen() {
             <Text style={styles.heroBadge}>Approved Farmer</Text>
             <Text style={styles.heroTitle}>Complete your farm profile</Text>
             <Text style={styles.heroText}>
-              Your compliance review is approved. Set your public store details,
-              upload your farm logo, and start uploading produce.
+              Set your public store details, upload your farm logo, and start
+              uploading produce.
             </Text>
           </View>
         </View>
@@ -526,15 +632,15 @@ export default function FarmerSetupStoreScreen() {
             </View>
 
             <View style={styles.statusBody}>
-              <Text style={styles.statusTitle}>Compliance Approved</Text>
+              <Text style={styles.statusTitle}>Store Access Active</Text>
               <Text style={styles.statusText}>
                 Stripe: {stripeConnected ? "Connected" : "Pending"}
               </Text>
               <Text style={styles.statusText}>
-                Status: {currentFarmer?.complianceStatus || "approved"}
+                Status: {(currentFarmer as any)?.complianceStatus || "ACTIVE"}
               </Text>
               <Text style={styles.statusText}>
-                Membership: Starts after approval
+                Logo: {logoUrl ? "Selected" : "Not uploaded"}
               </Text>
             </View>
           </View>
@@ -562,11 +668,17 @@ export default function FarmerSetupStoreScreen() {
                 style={({ pressed }) => [
                   styles.logoButton,
                   pressed && styles.pressed,
+                  logoUploading && styles.disabledButton,
                 ]}
                 onPress={pickLogo}
+                disabled={logoUploading || loading}
               >
                 <Text style={styles.logoButtonText}>
-                  {logoUrl ? "Change Logo" : "Upload Logo"}
+                  {logoUploading
+                    ? "Uploading..."
+                    : logoUrl
+                    ? "Change Logo"
+                    : "Upload Logo"}
                 </Text>
               </Pressable>
             </View>
@@ -721,14 +833,8 @@ export default function FarmerSetupStoreScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  container: {
-    padding: 18,
-    paddingBottom: 44,
-  },
+  screen: { flex: 1, backgroundColor: COLORS.background },
+  container: { padding: 18, paddingBottom: 44 },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -751,19 +857,9 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: -4,
   },
-  topTitleBlock: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
+  topTitleBlock: { flex: 1 },
+  title: { fontSize: 30, fontWeight: "900", color: COLORS.text },
+  subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   heroCard: {
     backgroundColor: COLORS.primary,
     borderRadius: 32,
@@ -780,12 +876,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  heroIconText: {
-    fontSize: 34,
-  },
-  heroTextBlock: {
-    flex: 1,
-  },
+  heroIconText: { fontSize: 34 },
+  heroTextBlock: { flex: 1 },
   heroBadge: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.18)",
@@ -817,11 +909,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  statusHeader: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-  },
+  statusHeader: { flexDirection: "row", gap: 12, alignItems: "center" },
   statusIcon: {
     width: 54,
     height: 54,
@@ -830,12 +918,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  statusIconText: {
-    fontSize: 27,
-  },
-  statusBody: {
-    flex: 1,
-  },
+  statusIconText: { fontSize: 27 },
+  statusBody: { flex: 1 },
   statusTitle: {
     fontSize: 20,
     fontWeight: "900",
@@ -862,11 +946,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 14,
   },
-  logoRow: {
-    flexDirection: "row",
-    gap: 14,
-    alignItems: "center",
-  },
+  logoRow: { flexDirection: "row", gap: 14, alignItems: "center" },
   logoPreview: {
     width: 92,
     height: 92,
@@ -881,17 +961,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  logoEmptyText: {
-    fontSize: 38,
-  },
-  logoTextBlock: {
-    flex: 1,
-  },
-  logoTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 17,
-  },
+  logoEmptyText: { fontSize: 38 },
+  logoTextBlock: { flex: 1 },
+  logoTitle: { color: COLORS.text, fontWeight: "900", fontSize: 17 },
   logoSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -905,10 +977,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
-  logoButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  logoButtonText: { color: "#FFFFFF", fontWeight: "900" },
   label: {
     fontSize: 13,
     fontWeight: "900",
@@ -928,10 +997,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     fontWeight: "800",
   },
-  textArea: {
-    height: 100,
-    textAlignVertical: "top",
-  },
+  textArea: { height: 100, textAlignVertical: "top" },
   optionCard: {
     backgroundColor: COLORS.lightGreen,
     borderRadius: 22,
@@ -951,17 +1017,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  optionIconText: {
-    fontSize: 25,
-  },
-  optionTextBlock: {
-    flex: 1,
-  },
-  optionTitle: {
-    fontSize: 16,
-    color: COLORS.text,
-    fontWeight: "900",
-  },
+  optionIconText: { fontSize: 25 },
+  optionTextBlock: { flex: 1 },
+  optionTitle: { fontSize: 16, color: COLORS.text, fontWeight: "900" },
   optionSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -976,11 +1034,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 4,
   },
-  saveButtonText: {
-    color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "900",
-  },
+  saveButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
   primaryButton: {
     backgroundColor: COLORS.primaryDark,
     borderRadius: 20,
@@ -988,11 +1042,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "900",
-  },
+  primaryButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
   dashboardButton: {
     backgroundColor: COLORS.blue,
     borderRadius: 20,
@@ -1000,24 +1050,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
-  dashboardButtonText: {
-    color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "900",
-  },
-  secondaryButton: {
-    paddingVertical: 16,
-    alignItems: "center",
-  },
+  dashboardButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
+  secondaryButton: { paddingVertical: 16, alignItems: "center" },
   secondaryButtonText: {
     color: COLORS.primary,
     fontSize: 15,
     fontWeight: "900",
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  pressed: {
-    opacity: 0.75,
-  },
+  disabledButton: { opacity: 0.6 },
+  pressed: { opacity: 0.75 },
 });
