@@ -23,26 +23,29 @@ import {
 import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
+  bg: "#F5F7F2",
+  card: "#FFFFFF",
+  text: "#102015",
+  muted: "#6F7D68",
+  border: "#E4E9DC",
   primary: "#2E7D32",
   primaryDark: "#14532D",
-  secondary: "#F9A825",
-  background: "#F8FAF5",
-  card: "#FFFFFF",
-  text: "#172017",
-  muted: "#75806F",
-  border: "#E2E8DA",
-  softGreen: "#EAF5E6",
-  lightGreen: "#F1FAED",
-  danger: "#DC2626",
-  dark: "#111827",
-  blue: "#1565C0",
-  purple: "#7C3AED",
+  primarySoft: "#EAF6E8",
+  yellow: "#F9A825",
   orange: "#EF6C00",
-  stripe: "#635BFF",
-  yellow: "#FEF3C7",
-  yellowText: "#92400E",
+  red: "#DC2626",
   redSoft: "#FEE2E2",
   redText: "#991B1B",
+  blue: "#1565C0",
+  purple: "#7C3AED",
+  dark: "#111827",
+  stripe: "#635BFF",
+  warningBg: "#FFFBEB",
+  warningText: "#92400E",
+  criticalBg: "#FFF7ED",
+  criticalText: "#C2410C",
+  successBg: "#DCFCE7",
+  successText: "#166534",
 };
 
 const reviews = [
@@ -60,6 +63,10 @@ function cleanProducts(items: Product[]) {
     if (name === "null") return false;
     return true;
   });
+}
+
+function removeNonNumber(value: string) {
+  return String(value || "").replace(/[^0-9.]/g, "");
 }
 
 function getStock(product: any) {
@@ -143,9 +150,7 @@ export default function FarmerDashboard() {
       })
       .eq("id", farmerId);
 
-    if (error) {
-      console.log("Save farmer products error:", error.message);
-    }
+    if (error) console.log("Save farmer products error:", error.message);
   }
 
   async function hideProductInSupabase(product: any) {
@@ -161,11 +166,7 @@ export default function FarmerDashboard() {
     };
 
     if (productId) {
-      const { error } = await supabase
-        .from("products")
-        .update(payload)
-        .eq("id", productId);
-
+      const { error } = await supabase.from("products").update(payload).eq("id", productId);
       if (!error) return;
       console.log("Hide product by id failed:", error.message);
     }
@@ -177,9 +178,7 @@ export default function FarmerDashboard() {
         .eq("farmer_id", farmerId)
         .eq("name", productName);
 
-      if (error) {
-        console.log("Hide product by farmer/name failed:", error.message);
-      }
+      if (error) console.log("Hide product by farmer/name failed:", error.message);
     }
   }
 
@@ -199,11 +198,7 @@ export default function FarmerDashboard() {
     };
 
     if (productId) {
-      const { error } = await supabase
-        .from("products")
-        .update(payload)
-        .eq("id", productId);
-
+      const { error } = await supabase.from("products").update(payload).eq("id", productId);
       if (!error) return;
       console.log("Update stock by id failed:", error.message);
     }
@@ -215,9 +210,7 @@ export default function FarmerDashboard() {
         .eq("farmer_id", farmerId)
         .eq("name", productName);
 
-      if (error) {
-        console.log("Update stock by farmer/name failed:", error.message);
-      }
+      if (error) console.log("Update stock by farmer/name failed:", error.message);
     }
   }
 
@@ -447,12 +440,9 @@ export default function FarmerDashboard() {
         (item: any) => String(item.id) === String(productId)
       );
 
-      if (updatedItem) {
-        await updateProductStockInSupabase(updatedItem, getStock(updatedItem));
-      }
+      if (updatedItem) await updateProductStockInSupabase(updatedItem, getStock(updatedItem));
 
       setRestockAmounts((prev) => ({ ...prev, [productId]: "" }));
-
       Alert.alert("Inventory Updated", "Your product inventory was updated.");
     } catch (error: any) {
       Alert.alert("Inventory Error", error?.message || "Unable to update inventory.");
@@ -509,18 +499,10 @@ export default function FarmerDashboard() {
         (item: any) => String(item.id) === String(productId)
       );
 
-      if (updatedItem) {
-        await updateProductStockInSupabase(updatedItem, newStock);
-      } else {
-        await updateProductStockInSupabase(product, newStock);
-      }
+      await updateProductStockInSupabase(updatedItem || product, newStock);
 
       setRemoveAmounts((prev) => ({ ...prev, [productId]: "" }));
-
-      Alert.alert(
-        "Inventory Updated",
-        `${product.name} stock was reduced by ${removeQty}.`
-      );
+      Alert.alert("Inventory Updated", `${product.name} stock was reduced by ${removeQty}.`);
     } catch (error: any) {
       Alert.alert("Inventory Error", error?.message || "Unable to remove inventory.");
     }
@@ -559,10 +541,7 @@ export default function FarmerDashboard() {
               );
             } catch (error: any) {
               console.log("Remove product error:", error);
-              Alert.alert(
-                "Remove Error",
-                error?.message || "Unable to remove product."
-              );
+              Alert.alert("Remove Error", error?.message || "Unable to remove product.");
             }
           },
         },
@@ -598,11 +577,13 @@ export default function FarmerDashboard() {
     (item) => getStockStatus(item) === "soldout"
   );
 
+  const topProducts = visibleProducts.slice(0, 4);
+
   if (loading) {
     return (
-      <View style={styles.lockContainer}>
+      <View style={styles.loadingPage}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.lockText}>Loading farmer dashboard...</Text>
+        <Text style={styles.loadingTitle}>Loading farmer dashboard...</Text>
       </View>
     );
   }
@@ -610,110 +591,118 @@ export default function FarmerDashboard() {
   return (
     <View style={styles.page}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <View style={styles.heroCard}>
-          <View style={styles.heroTopRow}>
-            <View style={styles.farmAvatar}>
-              <Text style={styles.farmAvatarText}>🚜</Text>
+        <View style={styles.hero}>
+          <View style={styles.heroTop}>
+            <View>
+              <Text style={styles.kicker}>Farm2Home Seller Center</Text>
+              <Text style={styles.heroTitle}>{farmName}</Text>
+              <Text style={styles.heroSubtitle}>
+                Manage your storefront, inventory, orders, delivery, and payout status.
+              </Text>
             </View>
 
-            <Pressable
-              style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
-              onPress={logoutFarmer}
-            >
+            <Pressable style={styles.logoutPill} onPress={logoutFarmer}>
               <Text style={styles.logoutText}>Logout</Text>
             </Pressable>
           </View>
 
-          <Text style={styles.header}>Farmer Dashboard</Text>
-
-          <Text style={styles.subheader}>
-            {farmName} · Manage your Farm2Home storefront, produce catalog,
-            inventory, orders, delivery, and customer activity.
-          </Text>
-
-          <View style={styles.statusCard}>
-            <Text style={styles.statusTitle}>Account Status</Text>
-            <Text style={styles.statusValue}>{statusLabel}</Text>
-            <Text style={styles.statusNote}>
-              Your farmer store is open. Admin review is now document-review only.
-            </Text>
+          <View style={styles.statusPill}>
+            <Text style={styles.statusDot}>●</Text>
+            <Text style={styles.statusText}>{statusLabel}</Text>
           </View>
 
-          <View style={styles.storeMetaRow}>
-            <View style={styles.storeMeta}>
-              <Text style={styles.storeMetaValue}>{visibleProducts.length}</Text>
-              <Text style={styles.storeMetaLabel}>Products Listed</Text>
-            </View>
-
-            <View style={styles.storeMeta}>
-              <Text style={styles.storeMetaValue}>{totalStock}</Text>
-              <Text style={styles.storeMetaLabel}>Total Inventory Units</Text>
-            </View>
-
-            <View style={styles.storeMeta}>
-              <Text style={styles.storeMetaValue}>${totalGrossSales.toFixed(2)}</Text>
-              <Text style={styles.storeMetaLabel}>Sales</Text>
-            </View>
+          <View style={styles.heroStatsRow}>
+            <HeroStat value={String(visibleProducts.length)} label="Listed" />
+            <HeroStat value={String(totalStock)} label="Units" />
+            <HeroStat value={`$${totalGrossSales.toFixed(0)}`} label="Sales" />
           </View>
 
-          <Pressable
-            style={({ pressed }) => [styles.setupStoreButton, pressed && styles.pressed]}
-            onPress={() => goTo("/farmer/select-produce")}
-          >
-            <Text style={styles.setupStoreText}>🥬 Select Produce</Text>
-          </Pressable>
+          <View style={styles.heroButtons}>
+            <Pressable style={styles.primaryButton} onPress={() => goTo("/farmer/select-produce")}>
+              <Text style={styles.primaryButtonText}>🥬 Select Produce</Text>
+            </Pressable>
+
+            <Pressable style={styles.secondaryButton} onPress={() => goTo("/farmer/add-product")}>
+              <Text style={styles.secondaryButtonText}>＋ Add Product</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.sectionHeaderRow}>
+          <View>
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+            <Text style={styles.sectionSub}>Run your farm store from one place.</Text>
+          </View>
         </View>
 
         <View style={styles.actionGrid}>
-          <ActionButton label="Select Produce" icon="🥬" color={COLORS.primary} onPress={() => goTo("/farmer/select-produce")} />
-          <ActionButton label="Add Product" icon="➕" color={COLORS.primaryDark} onPress={() => goTo("/farmer/add-product")} />
-          <ActionButton label="Customize Store" icon="🏪" color={COLORS.dark} onPress={() => goTo("/farmer/setup-store")} />
+          <ActionButton label="Store Setup" icon="🏪" color={COLORS.primaryDark} onPress={() => goTo("/farmer/setup-store")} />
           <ActionButton label="Orders" icon="📦" color={COLORS.blue} onPress={() => goTo("/farmer/orders")} />
           <ActionButton label="Delivery" icon="🚚" color={COLORS.orange} onPress={() => goTo("/farmer/delivery-orders")} />
-          <ActionButton label="Payout Status" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/connect-bank")} />
+          <ActionButton label="Payouts" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/connect-bank")} />
           <ActionButton label="Profile" icon="👤" color={COLORS.purple} onPress={() => goTo("/farmer/profile")} />
-          <ActionButton label="Preview Market" icon="🛒" color={COLORS.secondary} onPress={() => goTo("/customer/marketplace")} />
+          <ActionButton label="Market Preview" icon="🛒" color={COLORS.yellow} onPress={() => goTo("/customer/marketplace")} />
         </View>
 
-        <View style={styles.statsGrid}>
-          <StatCard label="Products Listed" value={String(visibleProducts.length)} />
-          <StatCard label="Total Inventory Units" value={String(totalStock)} />
-          <StatCard label="Units Sold" value={String(totalSold)} />
-          <StatCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} />
-          <StatCard label="Low Stock Items" value={String(lowStockProducts.length)} />
-          <StatCard label="Sold Out Items" value={String(soldOutProducts.length)} />
+        <View style={styles.insightGrid}>
+          <InsightCard label="Products Listed" value={String(visibleProducts.length)} icon="🥬" />
+          <InsightCard label="Total Inventory" value={String(totalStock)} icon="📦" />
+          <InsightCard label="Units Sold" value={String(totalSold)} icon="📈" />
+          <InsightCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} icon="💵" />
+          <InsightCard label="Low Stock" value={String(lowStockProducts.length)} icon="⚠️" />
+          <InsightCard label="Sold Out" value={String(soldOutProducts.length)} icon="🔴" />
         </View>
 
-        <InventoryAlertSection title="⚠️ Low Stock Items" products={lowStockProducts} emptyText="No low-stock items." type="low" />
-        <InventoryAlertSection title="🔴 Sold Out Items" products={soldOutProducts} emptyText="No sold-out items." type="sold" />
+        <InventoryAlertSection
+          title="Inventory Alerts"
+          products={lowStockProducts}
+          soldOutProducts={soldOutProducts}
+        />
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Farm Inventory</Text>
-          <Text style={styles.sectionSubtitle}>
-            Remove Inventory reduces stock. Remove Product hides it from marketplace and removes it from your dashboard.
-          </Text>
+        {topProducts.length > 0 && (
+          <>
+            <View style={styles.sectionHeaderRow}>
+              <View>
+                <Text style={styles.sectionTitle}>Top Inventory Snapshot</Text>
+                <Text style={styles.sectionSub}>Your first listed products.</Text>
+              </View>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.topProductsScroller}>
+              {topProducts.map((item: any) => (
+                <View key={`top-${item.id}`} style={styles.topProductCard}>
+                  <Image source={{ uri: getProductImage(item) }} style={styles.topProductImage} />
+                  <Text style={styles.topProductName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.topProductMeta}>{getStock(item)} {item.unit || "each"} available</Text>
+                </View>
+              ))}
+            </ScrollView>
+          </>
+        )}
+
+        <View style={styles.sectionHeaderRow}>
+          <View>
+            <Text style={styles.sectionTitle}>Farm Inventory</Text>
+            <Text style={styles.sectionSub}>
+              Add stock, reduce stock, or remove unwanted products from your farm list.
+            </Text>
+          </View>
         </View>
 
         {visibleProducts.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>🥬</Text>
             <Text style={styles.emptyTitle}>No farmer products yet</Text>
-            <Text style={styles.meta}>
+            <Text style={styles.emptyText}>
               Select common produce from the Farm2Home catalog or add your own custom farm product.
             </Text>
 
-            <Pressable
-              style={({ pressed }) => [styles.emptyActionButton, pressed && styles.pressed]}
-              onPress={() => goTo("/farmer/select-produce")}
-            >
-              <Text style={styles.emptyActionText}>Select Produce</Text>
+            <Pressable style={styles.emptyPrimary} onPress={() => goTo("/farmer/select-produce")}>
+              <Text style={styles.emptyPrimaryText}>Select Produce</Text>
             </Pressable>
 
-            <Pressable
-              style={({ pressed }) => [styles.emptySecondaryButton, pressed && styles.pressed]}
-              onPress={() => goTo("/farmer/add-product")}
-            >
-              <Text style={styles.emptySecondaryText}>Add Custom Product / Upload Photo</Text>
+            <Pressable style={styles.emptySecondary} onPress={() => goTo("/farmer/add-product")}>
+              <Text style={styles.emptySecondaryText}>Add Custom Product</Text>
             </Pressable>
           </View>
         ) : (
@@ -721,113 +710,94 @@ export default function FarmerDashboard() {
             const stock = getStock(item);
             const threshold = getThreshold(item);
             const status = getStockStatus(item);
-            const isSoldOut = status === "soldout";
-            const isCritical = status === "critical";
-            const isWarning = status === "warning";
+            const badge = getBadge(status);
 
             return (
-              <View
-                key={item.id}
-                style={[
-                  styles.productCard,
-                  isWarning && styles.productWarningCard,
-                  isCritical && styles.productCriticalCard,
-                  isSoldOut && styles.productSoldOutCard,
-                ]}
-              >
-                <Image source={{ uri: getProductImage(item) }} style={styles.productImage} />
+              <View key={item.id} style={styles.inventoryCard}>
+                <Image source={{ uri: getProductImage(item) }} style={styles.inventoryImage} />
 
-                <View style={styles.productBody}>
-                  <View style={styles.productHeader}>
+                <View style={styles.inventoryBody}>
+                  <View style={styles.inventoryTopRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.productName}>{item.name}</Text>
-                      <Text style={styles.meta}>{item.category || "Farm Goods"}</Text>
+                      <Text style={styles.productCategory}>{item.category || "Farm Goods"}</Text>
                     </View>
 
-                    {isSoldOut ? (
-                      <Text style={styles.soldOutBadge}>Sold Out</Text>
-                    ) : isCritical ? (
-                      <Text style={styles.criticalBadge}>Critical Low</Text>
-                    ) : isWarning ? (
-                      <Text style={styles.lowStockBadge}>Near Threshold</Text>
-                    ) : (
-                      <Text style={styles.availableBadge}>Available</Text>
-                    )}
+                    <View style={[styles.badge, { backgroundColor: badge.bg }]}>
+                      <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
+                    </View>
                   </View>
 
-                  <View style={styles.inventoryTotalBox}>
-                    <Text style={styles.inventoryTotalLabel}>Total In Stock For This Item</Text>
-                    <Text
-                      style={[
-                        styles.inventoryTotalValue,
-                        isWarning && styles.inventoryWarningText,
-                        isCritical && styles.inventoryCriticalText,
-                        isSoldOut && styles.inventorySoldText,
-                      ]}
-                    >
-                      {stock} {item.unit || "each"}
-                    </Text>
-                    <Text style={styles.inventoryThresholdText}>Low-stock threshold: {threshold}</Text>
+                  <View style={styles.stockBox}>
+                    <View>
+                      <Text style={styles.stockLabel}>Current Stock</Text>
+                      <Text style={styles.stockValue}>{stock} {item.unit || "each"}</Text>
+                    </View>
+                    <View style={styles.thresholdBox}>
+                      <Text style={styles.thresholdLabel}>Low Alert</Text>
+                      <Text style={styles.thresholdValue}>{threshold}</Text>
+                    </View>
                   </View>
 
-                  <View style={styles.detailGrid}>
-                    <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)} / ${item.unit || "each"}`} />
-                    <Detail label="Sold" value={String(Number(item.sold || 0))} />
-                    <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
-                    <Detail label="Delivery" value={item.deliveryOption || item.delivery_option || "Not set"} />
+                  <View style={styles.productMetrics}>
+                    <Metric label="Price" value={`$${Number(item.price || 0).toFixed(2)}`} />
+                    <Metric label="Sold" value={String(Number(item.sold || 0))} />
+                    <Metric label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
+                    <Metric label="Delivery" value={item.deliveryOption || item.delivery_option || "Not set"} />
                   </View>
 
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Add stock amount"
-                    placeholderTextColor="#8A9482"
-                    keyboardType="numeric"
-                    value={restockAmounts[item.id] || ""}
-                    onChangeText={(text) =>
-                      setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))
-                    }
-                  />
+                  <View style={styles.stockControlBox}>
+                    <Text style={styles.controlTitle}>Inventory Controls</Text>
 
-                  <Pressable
-                    style={({ pressed }) => [styles.restockButton, pressed && styles.pressed]}
-                    onPress={() => restockProduct(item.id)}
-                  >
-                    <Text style={styles.restockText}>Add Inventory</Text>
-                  </Pressable>
+                    <View style={styles.controlRow}>
+                      <TextInput
+                        style={styles.controlInput}
+                        placeholder="Add qty"
+                        placeholderTextColor="#8A9482"
+                        keyboardType="numeric"
+                        value={restockAmounts[item.id] || ""}
+                        onChangeText={(text) =>
+                          setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))
+                        }
+                      />
 
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Remove stock amount"
-                    placeholderTextColor="#8A9482"
-                    keyboardType="numeric"
-                    value={removeAmounts[item.id] || ""}
-                    onChangeText={(text) =>
-                      setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))
-                    }
-                  />
+                      <Pressable style={styles.addStockButton} onPress={() => restockProduct(item.id)}>
+                        <Text style={styles.addStockText}>Add</Text>
+                      </Pressable>
+                    </View>
 
-                  <Pressable
-                    style={({ pressed }) => [styles.removeStockButton, pressed && styles.pressed]}
-                    onPress={() => removeInventory(item.id)}
-                  >
-                    <Text style={styles.removeStockText}>Remove Inventory</Text>
-                  </Pressable>
+                    <View style={styles.controlRow}>
+                      <TextInput
+                        style={styles.controlInput}
+                        placeholder="Remove qty"
+                        placeholderTextColor="#8A9482"
+                        keyboardType="numeric"
+                        value={removeAmounts[item.id] || ""}
+                        onChangeText={(text) =>
+                          setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))
+                        }
+                      />
 
-                  <Pressable
-                    style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
-                    onPress={() => deleteProduct(item.id)}
-                  >
-                    <Text style={styles.deleteText}>Remove Product From Farm Inventory</Text>
-                  </Pressable>
+                      <Pressable style={styles.reduceStockButton} onPress={() => removeInventory(item.id)}>
+                        <Text style={styles.reduceStockText}>Reduce</Text>
+                      </Pressable>
+                    </View>
+
+                    <Pressable style={styles.deleteProductButton} onPress={() => deleteProduct(item.id)}>
+                      <Text style={styles.deleteProductText}>Remove Product From Farm Inventory</Text>
+                    </Pressable>
+                  </View>
                 </View>
               </View>
             );
           })
         )}
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Customer Reviews</Text>
-          <Text style={styles.sectionSubtitle}>Recent customer feedback</Text>
+        <View style={styles.sectionHeaderRow}>
+          <View>
+            <Text style={styles.sectionTitle}>Customer Reviews</Text>
+            <Text style={styles.sectionSub}>Recent customer feedback.</Text>
+          </View>
         </View>
 
         {reviews.map((review) => (
@@ -837,7 +807,7 @@ export default function FarmerDashboard() {
             </View>
 
             <View style={styles.reviewBody}>
-              <View style={styles.reviewHeader}>
+              <View style={styles.reviewTop}>
                 <Text style={styles.reviewName}>{review.customer}</Text>
                 <Text style={styles.reviewRating}>⭐ {review.rating}</Text>
               </View>
@@ -850,59 +820,27 @@ export default function FarmerDashboard() {
   );
 }
 
-function removeNonNumber(value: string) {
-  return String(value || "").replace(/[^0-9.]/g, "");
+function getBadge(status: string) {
+  if (status === "soldout") {
+    return { label: "Sold Out", bg: COLORS.redSoft, text: COLORS.redText };
+  }
+
+  if (status === "critical") {
+    return { label: "Critical", bg: COLORS.criticalBg, text: COLORS.criticalText };
+  }
+
+  if (status === "warning") {
+    return { label: "Low Stock", bg: COLORS.warningBg, text: COLORS.warningText };
+  }
+
+  return { label: "Available", bg: COLORS.successBg, text: COLORS.successText };
 }
 
-function InventoryAlertSection({
-  title,
-  products,
-  emptyText,
-  type,
-}: {
-  title: string;
-  products: Product[];
-  emptyText: string;
-  type: "low" | "sold";
-}) {
+function HeroStat({ value, label }: { value: string; label: string }) {
   return (
-    <View style={type === "sold" ? styles.soldOutSection : styles.lowStockSection}>
-      <Text style={type === "sold" ? styles.soldOutSectionTitle : styles.lowStockSectionTitle}>
-        {title}
-      </Text>
-
-      {products.length === 0 ? (
-        <Text style={styles.alertEmptyText}>{emptyText}</Text>
-      ) : (
-        products.map((item: any) => {
-          const stock = getStock(item);
-          const threshold = getThreshold(item);
-          const status = getStockStatus(item);
-
-          return (
-            <View
-              key={`${type}-${item.id}`}
-              style={[
-                styles.alertItemRow,
-                status === "warning" && styles.alertWarningRow,
-                status === "critical" && styles.alertCriticalRow,
-                status === "soldout" && styles.alertSoldRow,
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.alertItemName}>{item.name}</Text>
-                <Text style={styles.alertItemSub}>
-                  Threshold: {threshold} · Unit: {item.unit || "each"}
-                </Text>
-              </View>
-
-              <Text style={[styles.alertItemQty, status === "soldout" && styles.alertSoldQty]}>
-                {stock}
-              </Text>
-            </View>
-          );
-        })
-      )}
+    <View style={styles.heroStat}>
+      <Text style={styles.heroStatValue}>{value}</Text>
+      <Text style={styles.heroStatLabel}>{label}</Text>
     </View>
   );
 }
@@ -919,544 +857,642 @@ function ActionButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.actionButton,
-        { backgroundColor: color },
-        pressed && styles.pressed,
-      ]}
-      onPress={onPress}
-    >
-      <Text style={styles.actionIcon}>{icon}</Text>
+    <Pressable style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]} onPress={onPress}>
+      <View style={[styles.actionIconCircle, { backgroundColor: color }]}>
+        <Text style={styles.actionIcon}>{icon}</Text>
+      </View>
       <Text style={styles.actionText}>{label}</Text>
     </Pressable>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function InsightCard({ label, value, icon }: { label: string; value: string; icon: string }) {
   return (
-    <View style={styles.statCard}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={styles.insightCard}>
+      <Text style={styles.insightIcon}>{icon}</Text>
+      <Text style={styles.insightValue}>{value}</Text>
+      <Text style={styles.insightLabel}>{label}</Text>
     </View>
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.detailTile}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+    <View style={styles.metricCard}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
+
+function InventoryAlertSection({
+  title,
+  products,
+  soldOutProducts,
+}: {
+  title: string;
+  products: Product[];
+  soldOutProducts: Product[];
+}) {
+  const allAlerts = [...products, ...soldOutProducts];
+
+  return (
+    <View style={styles.alertPanel}>
+      <View style={styles.alertPanelTop}>
+        <View>
+          <Text style={styles.alertTitle}>{title}</Text>
+          <Text style={styles.alertSub}>Low stock and sold-out products.</Text>
+        </View>
+        <Text style={styles.alertCount}>{allAlerts.length}</Text>
+      </View>
+
+      {allAlerts.length === 0 ? (
+        <Text style={styles.alertEmpty}>No urgent inventory alerts right now.</Text>
+      ) : (
+        allAlerts.map((item: any) => {
+          const status = getStockStatus(item);
+          const badge = getBadge(status);
+
+          return (
+            <View key={`alert-${item.id}`} style={styles.alertRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.alertProductName}>{item.name}</Text>
+                <Text style={styles.alertProductSub}>
+                  Stock: {getStock(item)} · Threshold: {getThreshold(item)}
+                </Text>
+              </View>
+
+              <View style={[styles.smallBadge, { backgroundColor: badge.bg }]}>
+                <Text style={[styles.smallBadgeText, { color: badge.text }]}>{badge.label}</Text>
+              </View>
+            </View>
+          );
+        })
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: COLORS.background },
-  lockContainer: {
+  page: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: COLORS.bg,
+  },
+  loadingPage: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
-  lockText: {
+  loadingTitle: {
     marginTop: 14,
     color: COLORS.muted,
     fontWeight: "900",
     textAlign: "center",
   },
-  content: { padding: 18, paddingBottom: 44 },
-  heroCard: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 32,
-    padding: 20,
-    marginBottom: 16,
+  content: {
+    padding: 18,
+    paddingBottom: 44,
   },
-  heroTopRow: {
+  hero: {
+    backgroundColor: COLORS.primaryDark,
+    borderRadius: 34,
+    padding: 20,
+    marginBottom: 18,
+  },
+  heroTop: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
+    gap: 12,
   },
-  farmAvatar: {
-    width: 66,
-    height: 66,
-    borderRadius: 22,
-    backgroundColor: COLORS.secondary,
-    justifyContent: "center",
-    alignItems: "center",
+  kicker: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: 6,
   },
-  farmAvatarText: { fontSize: 35 },
-  header: {
+  heroTitle: {
+    color: "#FFFFFF",
     fontSize: 31,
     fontWeight: "900",
-    color: "#FFFFFF",
   },
-  subheader: {
-    color: "#EAF7E6",
+  heroSubtitle: {
+    color: "#DCFCE7",
+    fontWeight: "700",
+    lineHeight: 21,
     marginTop: 8,
-    lineHeight: 22,
-    fontWeight: "700",
+    maxWidth: 285,
   },
-  statusCard: {
-    backgroundColor: "#FFFFFF",
-    marginTop: 16,
-    borderRadius: 20,
-    padding: 15,
-  },
-  statusTitle: {
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  statusValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 18,
-    marginTop: 5,
-  },
-  statusNote: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 6,
-  },
-  storeMetaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginTop: 16,
-  },
-  storeMeta: {
-    flexGrow: 1,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 20,
-    minWidth: 94,
-  },
-  storeMetaValue: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  storeMetaLabel: {
-    color: "#EAF7E6",
-    fontWeight: "800",
-    fontSize: 11,
-    marginTop: 2,
-  },
-  setupStoreButton: {
-    backgroundColor: "#FFFFFF",
-    paddingVertical: 15,
-    borderRadius: 20,
-    alignItems: "center",
-    marginTop: 18,
-  },
-  setupStoreText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  logoutButton: {
-    backgroundColor: "rgba(255,255,255,0.18)",
-    paddingHorizontal: 16,
+  logoutPill: {
+    backgroundColor: "rgba(255,255,255,0.16)",
+    paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
+    height: 42,
   },
-  logoutText: { color: "#FFFFFF", fontWeight: "900" },
+  logoutText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  statusPill: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginTop: 16,
+  },
+  statusDot: {
+    color: COLORS.primary,
+    fontSize: 12,
+  },
+  statusText: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  heroStatsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 18,
+  },
+  heroStat: {
+    flex: 1,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: 20,
+    padding: 13,
+  },
+  heroStatValue: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  heroStatLabel: {
+    color: "#DCFCE7",
+    fontWeight: "800",
+    fontSize: 12,
+    marginTop: 3,
+  },
+  heroButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 18,
+  },
+  primaryButton: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  primaryButtonText: {
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+  },
+  secondaryButton: {
+    flex: 1,
+    backgroundColor: COLORS.yellow,
+    borderRadius: 18,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  secondaryButtonText: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  sectionHeaderRow: {
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  sectionSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    lineHeight: 20,
+  },
   actionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginBottom: 16,
+    marginBottom: 18,
   },
   actionButton: {
     width: "48%",
-    minHeight: 86,
-    padding: 14,
-    borderRadius: 22,
-    justifyContent: "center",
-  },
-  actionIcon: { fontSize: 24, marginBottom: 7 },
-  actionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 14,
-  },
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 16,
-  },
-  statCard: {
-    width: "48%",
     backgroundColor: COLORS.card,
-    padding: 16,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
+    padding: 14,
+    minHeight: 98,
   },
-  statValue: {
-    fontSize: 23,
-    fontWeight: "900",
-    color: COLORS.primary,
-  },
-  statLabel: {
-    color: COLORS.muted,
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  lowStockSection: {
-    backgroundColor: "#FFFBEB",
-    borderColor: "#FBBF24",
-    borderWidth: 1,
-    padding: 16,
-    borderRadius: 24,
-    marginBottom: 14,
-  },
-  lowStockSectionTitle: {
-    color: "#92400E",
-    fontWeight: "900",
-    fontSize: 18,
-    marginBottom: 10,
-  },
-  soldOutSection: {
-    backgroundColor: "#FEF2F2",
-    borderColor: "#FCA5A5",
-    borderWidth: 1,
-    padding: 16,
-    borderRadius: 24,
-    marginBottom: 18,
-  },
-  soldOutSectionTitle: {
-    color: "#991B1B",
-    fontWeight: "900",
-    fontSize: 18,
-    marginBottom: 10,
-  },
-  alertEmptyText: {
-    color: COLORS.muted,
-    fontWeight: "800",
-  },
-  alertItemRow: {
-    flexDirection: "row",
+  actionIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 17,
+    justifyContent: "center",
     alignItems: "center",
-    gap: 12,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    marginBottom: 10,
   },
-  alertWarningRow: {
-    backgroundColor: "#FEF3C7",
-    borderColor: "#FBBF24",
+  actionIcon: {
+    fontSize: 22,
   },
-  alertCriticalRow: {
-    backgroundColor: "#FFEDD5",
-    borderColor: "#FDBA74",
-  },
-  alertSoldRow: {
-    backgroundColor: "#FEE2E2",
-    borderColor: "#FCA5A5",
-  },
-  alertItemName: {
+  actionText: {
     color: COLORS.text,
     fontWeight: "900",
   },
-  alertItemSub: {
+  insightGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 18,
+  },
+  insightCard: {
+    width: "48%",
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 15,
+  },
+  insightIcon: {
+    fontSize: 22,
+    marginBottom: 8,
+  },
+  insightValue: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 22,
+  },
+  insightLabel: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    fontSize: 12,
+    marginTop: 3,
+  },
+  alertPanel: {
+    backgroundColor: COLORS.card,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    marginBottom: 18,
+  },
+  alertPanelTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  alertTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 19,
+  },
+  alertSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  alertCount: {
+    backgroundColor: COLORS.primarySoft,
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  alertEmpty: {
+    color: COLORS.muted,
+    fontWeight: "800",
+  },
+  alertRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+    backgroundColor: COLORS.bg,
+    borderRadius: 18,
+    marginTop: 8,
+  },
+  alertProductName: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  alertProductSub: {
     color: COLORS.muted,
     fontWeight: "700",
     fontSize: 12,
     marginTop: 3,
   },
-  alertItemQty: {
-    color: "#92400E",
-    fontWeight: "900",
-    fontSize: 20,
+  smallBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
-  alertSoldQty: {
-    color: "#991B1B",
-  },
-  sectionHeader: { marginTop: 6, marginBottom: 12 },
-  sectionTitle: {
-    fontSize: 23,
+  smallBadgeText: {
     fontWeight: "900",
+    fontSize: 11,
+  },
+  topProductsScroller: {
+    marginBottom: 18,
+  },
+  topProductCard: {
+    width: 156,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 24,
+    padding: 10,
+    marginRight: 10,
+  },
+  topProductImage: {
+    width: "100%",
+    height: 92,
+    borderRadius: 18,
+    backgroundColor: COLORS.primarySoft,
+  },
+  topProductName: {
     color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 9,
   },
-  sectionSubtitle: {
+  topProductMeta: {
     color: COLORS.muted,
     fontWeight: "700",
+    fontSize: 12,
     marginTop: 3,
   },
   emptyCard: {
     backgroundColor: COLORS.card,
     borderRadius: 28,
     padding: 24,
-    marginBottom: 16,
+    marginBottom: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: "center",
   },
-  emptyIcon: { fontSize: 46, marginBottom: 10 },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 10,
+  },
   emptyTitle: {
+    color: COLORS.text,
     fontSize: 21,
     fontWeight: "900",
-    color: COLORS.text,
     marginBottom: 6,
   },
-  emptyActionButton: {
-    backgroundColor: COLORS.primary,
-    padding: 15,
-    borderRadius: 18,
-    marginTop: 12,
-    alignItems: "center",
-    alignSelf: "stretch",
+  emptyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    textAlign: "center",
   },
-  emptyActionText: { color: "#FFFFFF", fontWeight: "900" },
-  emptySecondaryButton: {
-    backgroundColor: COLORS.lightGreen,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    padding: 15,
+  emptyPrimary: {
+    alignSelf: "stretch",
+    backgroundColor: COLORS.primary,
     borderRadius: 18,
+    padding: 15,
+    marginTop: 14,
+    alignItems: "center",
+  },
+  emptyPrimaryText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  emptySecondary: {
+    alignSelf: "stretch",
+    backgroundColor: COLORS.primarySoft,
+    borderRadius: 18,
+    padding: 15,
     marginTop: 10,
     alignItems: "center",
-    alignSelf: "stretch",
   },
   emptySecondaryText: {
     color: COLORS.primaryDark,
     fontWeight: "900",
-    textAlign: "center",
   },
-  productCard: {
+  inventoryCard: {
     backgroundColor: COLORS.card,
     borderRadius: 30,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     marginBottom: 16,
     overflow: "hidden",
-    borderWidth: 2,
-    borderColor: COLORS.border,
   },
-  productWarningCard: {
-    borderColor: "#FBBF24",
-    backgroundColor: "#FFFBEB",
-  },
-  productCriticalCard: {
-    borderColor: "#FDBA74",
-    backgroundColor: "#FFF7ED",
-  },
-  productSoldOutCard: {
-    borderColor: "#FCA5A5",
-    backgroundColor: "#FEF2F2",
-  },
-  productImage: {
+  inventoryImage: {
     width: "100%",
-    height: 210,
-    backgroundColor: COLORS.softGreen,
+    height: 190,
+    backgroundColor: COLORS.primarySoft,
   },
-  productBody: { padding: 16 },
-  productHeader: {
+  inventoryBody: {
+    padding: 16,
+  },
+  inventoryTopRow: {
     flexDirection: "row",
     gap: 10,
     alignItems: "flex-start",
     marginBottom: 12,
   },
   productName: {
-    fontSize: 22,
-    fontWeight: "900",
     color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 22,
   },
-  meta: {
+  productCategory: {
     color: COLORS.muted,
-    marginBottom: 5,
-    lineHeight: 20,
     fontWeight: "700",
-    textAlign: "center",
+    marginTop: 3,
   },
-  inventoryTotalBox: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    padding: 14,
-    marginBottom: 12,
+  badge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
-  inventoryTotalLabel: {
-    color: COLORS.muted,
+  badgeText: {
     fontWeight: "900",
     fontSize: 12,
   },
-  inventoryTotalValue: {
-    color: COLORS.primary,
+  stockBox: {
+    backgroundColor: COLORS.primarySoft,
+    borderRadius: 22,
+    padding: 15,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  stockLabel: {
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  stockValue: {
+    color: COLORS.primaryDark,
     fontWeight: "900",
     fontSize: 28,
-    marginTop: 4,
+    marginTop: 3,
   },
-  inventoryWarningText: {
-    color: "#92400E",
+  thresholdBox: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 11,
+    minWidth: 78,
+    alignItems: "center",
   },
-  inventoryCriticalText: {
-    color: "#C2410C",
-  },
-  inventorySoldText: {
-    color: "#991B1B",
-  },
-  inventoryThresholdText: {
+  thresholdLabel: {
     color: COLORS.muted,
-    fontWeight: "800",
-    marginTop: 4,
+    fontWeight: "900",
+    fontSize: 11,
   },
-  detailGrid: {
+  thresholdValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 18,
+    marginTop: 2,
+  },
+  productMetrics: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
     marginBottom: 12,
   },
-  detailTile: {
+  metricCard: {
     width: "48%",
-    backgroundColor: COLORS.lightGreen,
-    padding: 11,
+    backgroundColor: COLORS.bg,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    padding: 11,
   },
-  detailLabel: {
+  metricLabel: {
     color: COLORS.muted,
     fontWeight: "900",
     fontSize: 11,
     marginBottom: 4,
   },
-  detailValue: {
+  metricValue: {
     color: COLORS.text,
-    fontWeight: "800",
+    fontWeight: "900",
     fontSize: 12,
   },
-  soldOutBadge: {
-    backgroundColor: COLORS.redSoft,
-    color: COLORS.redText,
-    fontWeight: "900",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-    overflow: "hidden",
+  stockControlBox: {
+    backgroundColor: COLORS.bg,
+    borderRadius: 22,
+    padding: 13,
   },
-  criticalBadge: {
-    backgroundColor: "#FFEDD5",
-    color: "#C2410C",
+  controlTitle: {
+    color: COLORS.text,
     fontWeight: "900",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-    overflow: "hidden",
+    marginBottom: 10,
   },
-  lowStockBadge: {
-    backgroundColor: COLORS.yellow,
-    color: COLORS.yellowText,
-    fontWeight: "900",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-    overflow: "hidden",
+  controlRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 9,
   },
-  availableBadge: {
-    backgroundColor: "#DCFCE7",
-    color: "#166534",
-    fontWeight: "900",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-    overflow: "hidden",
-  },
-  input: {
-    backgroundColor: COLORS.lightGreen,
+  controlInput: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 18,
-    padding: 15,
-    marginTop: 10,
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
     color: COLORS.text,
     fontWeight: "800",
   },
-  restockButton: {
+  addStockButton: {
+    width: 88,
     backgroundColor: COLORS.dark,
-    padding: 15,
-    borderRadius: 18,
-    marginTop: 10,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  restockText: {
+  addStockText: {
     color: "#FFFFFF",
-    textAlign: "center",
     fontWeight: "900",
   },
-  removeStockButton: {
+  reduceStockButton: {
+    width: 88,
     backgroundColor: COLORS.orange,
-    padding: 15,
-    borderRadius: 18,
-    marginTop: 10,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  removeStockText: {
+  reduceStockText: {
     color: "#FFFFFF",
-    textAlign: "center",
     fontWeight: "900",
   },
-  deleteButton: {
+  deleteProductButton: {
     backgroundColor: COLORS.redSoft,
     borderWidth: 1,
     borderColor: "#FCA5A5",
-    padding: 15,
-    borderRadius: 18,
-    marginTop: 10,
+    borderRadius: 16,
+    padding: 14,
+    alignItems: "center",
+    marginTop: 2,
   },
-  deleteText: {
+  deleteProductText: {
     color: COLORS.redText,
-    textAlign: "center",
     fontWeight: "900",
+    textAlign: "center",
   },
   reviewCard: {
     backgroundColor: COLORS.card,
-    padding: 14,
     borderRadius: 22,
-    marginBottom: 10,
+    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
     gap: 12,
+    marginBottom: 10,
   },
   reviewAvatar: {
     width: 46,
     height: 46,
     borderRadius: 16,
-    backgroundColor: COLORS.softGreen,
+    backgroundColor: COLORS.primarySoft,
     justifyContent: "center",
     alignItems: "center",
   },
   reviewAvatarText: {
-    color: COLORS.primary,
+    color: COLORS.primaryDark,
     fontWeight: "900",
     fontSize: 18,
   },
-  reviewBody: { flex: 1 },
-  reviewHeader: {
+  reviewBody: {
+    flex: 1,
+  },
+  reviewTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 8,
   },
   reviewName: {
+    color: COLORS.text,
     fontWeight: "900",
     fontSize: 16,
-    color: COLORS.text,
   },
-  reviewRating: { fontWeight: "900", color: COLORS.primary },
+  reviewRating: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
   reviewText: {
-    marginTop: 5,
     color: COLORS.muted,
     fontWeight: "700",
+    marginTop: 5,
     lineHeight: 20,
   },
-  pressed: { opacity: 0.75 },
+  pressed: {
+    opacity: 0.75,
+  },
 });
