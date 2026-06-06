@@ -19,7 +19,7 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
-import { supabase } from "../services/supabaseClient";
+import { supabase } from "../data/supabaseClient";
 
 const PENDING_FARMER_KEY = "pendingFarmerApplication";
 
@@ -225,7 +225,7 @@ export default function FarmerRegister() {
     if (!legalComplete) {
       Alert.alert(
         "Agreement Required",
-        "Accept all Farmer Onboarding Agreement items before continuing."
+        "Accept all Farmer Seller Agreement items before continuing."
       );
       return false;
     }
@@ -246,18 +246,18 @@ export default function FarmerRegister() {
     cleanEmail: string,
     cleanBusinessName: string
   ) {
-    const url = `/farmer/compliance-upload?farmerId=${encodeURIComponent(
+    const path = `/farmer/compliance-upload?farmerId=${encodeURIComponent(
       farmerId
     )}&email=${encodeURIComponent(
       cleanEmail
     )}&businessName=${encodeURIComponent(cleanBusinessName)}`;
 
     if (Platform.OS === "web") {
-      window.location.href = url;
+      window.location.href = path;
       return;
     }
 
-    router.replace(url as any);
+    router.replace(path as any);
   }
 
   async function saveSupabaseInBackground(
@@ -272,58 +272,45 @@ export default function FarmerRegister() {
       if (existingAuthUser?.user?.id) {
         authUserId = existingAuthUser.user.id;
       } else {
-        const { data: authData, error: authError } = await supabase.auth.signUp(
-          {
-            email: localFarmer.email,
-            password: cleanPassword,
-            options: {
-              data: {
-                role: "farmer",
-                username: localFarmer.username,
-                owner_name: localFarmer.ownerName,
-                business_name: localFarmer.businessName,
-                farm_name: localFarmer.farmName,
-              },
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: localFarmer.email,
+          password: cleanPassword,
+          options: {
+            data: {
+              role: "farmer",
+              username: localFarmer.username,
+              owner_name: localFarmer.ownerName,
+              business_name: localFarmer.businessName,
+              farm_name: localFarmer.farmName,
             },
-          }
-        );
+          },
+        });
 
         if (authError) {
-          Alert.alert("Supabase Auth Save Failed", authError.message);
-          return;
+          console.log("Supabase auth save failed:", authError.message);
+        } else {
+          authUserId = authData?.user?.id || localFarmer.id;
         }
-
-        authUserId = authData?.user?.id || localFarmer.id;
       }
 
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .upsert(
-          {
-            auth_user_id: authUserId,
-            role: "farmer",
-            full_name: localFarmer.ownerName,
-            name: localFarmer.ownerName,
-            email: localFarmer.email,
-            phone: localFarmer.phone,
-            username: localFarmer.username,
-            account_active: true,
-            created_at: localFarmer.createdAt,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "email" }
-        )
-        .select("*")
-        .maybeSingle();
-
-      if (profileError) {
-        Alert.alert("Profile Save Failed", profileError.message);
-        return;
-      }
+      await supabase.from("profiles").upsert(
+        {
+          auth_user_id: authUserId,
+          role: "farmer",
+          full_name: localFarmer.ownerName,
+          name: localFarmer.ownerName,
+          email: localFarmer.email,
+          phone: localFarmer.phone,
+          username: localFarmer.username,
+          account_active: true,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "email" }
+      );
 
       const farmerPayload = {
         id: authUserId,
-        profile_id: profile?.id || authUserId,
+        profile_id: authUserId,
 
         email: localFarmer.email,
         username: localFarmer.username,
@@ -334,6 +321,7 @@ export default function FarmerRegister() {
         business_name: localFarmer.businessName,
 
         business_address: localFarmer.businessAddress,
+        address: localFarmer.businessAddress,
         city: localFarmer.city,
         state: localFarmer.state,
         zip_code: localFarmer.zipCode,
@@ -343,28 +331,21 @@ export default function FarmerRegister() {
           localFarmer.selectedProductCategories || [],
         legal_agreements: localFarmer.legalAgreements || {},
 
-        compliance_status: "in_progress",
-        admin_review_status: "not_submitted",
-        review_decision: "not_submitted",
+        compliance_status: "ACTIVE",
+        admin_review_status: "DOCUMENT_REVIEW_ONLY",
+        review_decision: "NOT_REQUIRED",
 
-        approved: false,
+        approved: true,
         rejected: false,
         reviewed: false,
         needs_more_info: false,
+        account_active: true,
+        store_unlocked: true,
 
-        account_active: false,
-        store_unlocked: false,
         compliance_submitted: false,
-
         application_fee_paid: false,
         farmer_membership_paid: false,
         monthly_membership_started: false,
-
-        stripe_account_id: "",
-        farmer_stripe_account_id: "",
-        stripe_onboarding_complete: false,
-        stripe_payouts_enabled: false,
-        stripe_charges_enabled: false,
 
         uploaded_docs: {},
         legal_checks: {},
@@ -379,7 +360,7 @@ export default function FarmerRegister() {
         .upsert(farmerPayload, { onConflict: "id" });
 
       if (farmerError) {
-        Alert.alert("Farmer Table Save Failed", farmerError.message);
+        console.log("Farmer table save failed:", farmerError.message);
         return;
       }
 
@@ -387,7 +368,13 @@ export default function FarmerRegister() {
         ...localFarmer,
         id: authUserId,
         farmerId: authUserId,
-        profileId: profile?.id || authUserId,
+        profileId: authUserId,
+        approved: true,
+        accountActive: true,
+        storeUnlocked: true,
+        complianceStatus: "ACTIVE",
+        adminReviewStatus: "DOCUMENT_REVIEW_ONLY",
+        reviewDecision: "NOT_REQUIRED",
       };
 
       await saveLocalFarmerSession(correctedLocalFarmer);
@@ -408,29 +395,19 @@ export default function FarmerRegister() {
           phone: localFarmer.phone,
           state: localFarmer.state,
 
-          status: "STARTED",
-          compliance_status: "in_progress",
-          admin_review_status: "not_submitted",
-          review_decision: "not_submitted",
+          status: "ACTIVE",
+          compliance_status: "ACTIVE",
+          admin_review_status: "DOCUMENT_REVIEW_ONLY",
+          review_decision: "NOT_REQUIRED",
 
-          approved: false,
+          approved: true,
           rejected: false,
           reviewed: false,
           needs_more_info: false,
-          account_active: false,
-          store_unlocked: false,
+          account_active: true,
+          store_unlocked: true,
 
           compliance_submitted: false,
-          application_fee_paid: false,
-          farmer_membership_paid: false,
-          monthly_membership_started: false,
-
-          stripe_account_id: "",
-          farmer_stripe_account_id: "",
-          stripe_onboarding_complete: false,
-          stripe_payouts_enabled: false,
-          stripe_charges_enabled: false,
-
           uploaded_docs: {},
           legal_checks: {},
           documents: [],
@@ -446,13 +423,8 @@ export default function FarmerRegister() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(correctedLocalFarmer),
       }).catch(() => {});
-
-      console.log("Farmer saved to Supabase farmers table:", authUserId);
     } catch (error: any) {
-      Alert.alert(
-        "Supabase Save Failed",
-        error?.message || "Farmer account did not save to Supabase."
-      );
+      console.log("Supabase save failed:", error?.message || error);
     }
   }
 
@@ -486,8 +458,10 @@ export default function FarmerRegister() {
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
+        password: password.trim(),
 
         businessAddress: businessAddress.trim(),
+        address: businessAddress.trim(),
         city: city.trim(),
         state: cleanState,
         zipCode: zipCode.trim(),
@@ -496,17 +470,17 @@ export default function FarmerRegister() {
         selectedProductCategories: selectedProducts,
         legalAgreements: accepted,
 
-        approved: false,
+        approved: true,
         rejected: false,
         reviewed: false,
         needsMoreInfo: false,
-        accountActive: false,
-        storeUnlocked: false,
+        accountActive: true,
+        storeUnlocked: true,
 
         complianceSubmitted: false,
-        complianceStatus: "in_progress",
-        adminReviewStatus: "not_submitted",
-        reviewDecision: "not_submitted",
+        complianceStatus: "ACTIVE",
+        adminReviewStatus: "DOCUMENT_REVIEW_ONLY",
+        reviewDecision: "NOT_REQUIRED",
 
         applicationFeePaid: false,
         farmerMembershipPaid: false,
@@ -514,6 +488,9 @@ export default function FarmerRegister() {
 
         stripeAccountId: "",
         farmerStripeAccountId: "",
+        stripeCustomerId: "",
+        stripeSubscriptionId: "",
+        subscriptionStatus: "",
         stripeOnboardingComplete: false,
         stripePayoutsEnabled: false,
         stripeChargesEnabled: false,
@@ -534,7 +511,7 @@ export default function FarmerRegister() {
 
       goToCompliance(farmerId, cleanEmail, cleanBusinessName);
     } catch (error: any) {
-      console.log("Farmer registration route error:", error);
+      console.log("Farmer registration error:", error);
       setLoading(false);
       Alert.alert(
         "Registration Error",
@@ -555,10 +532,10 @@ export default function FarmerRegister() {
       >
         <View style={styles.hero}>
           <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
-          <Text style={styles.heroTitle}>Start Your Farmer Application</Text>
+          <Text style={styles.heroTitle}>Create Your Farmer Account</Text>
           <Text style={styles.heroSub}>
-            Create your farm profile first. Then complete payment, Stripe payout,
-            pickup/delivery, and seller agreement.
+            Create your farm profile. Your store unlocks immediately. Admin only
+            reviews documents submitted for records.
           </Text>
         </View>
 
@@ -731,7 +708,7 @@ export default function FarmerRegister() {
 
         <SectionCard
           icon="shield-checkmark-outline"
-          title="Farmer Onboarding Agreement"
+          title="Farmer Seller Agreement"
           subtitle="Accept all items before continuing."
           done={legalComplete}
         >

@@ -51,17 +51,29 @@ const reviews = [
   { id: 3, customer: "Tanya", rating: 4, text: "Good quality and friendly farmer." },
 ];
 
-function getStock(product: Product) {
-  return Number(product.stock ?? product.quantity ?? 0);
+function cleanProducts(items: Product[]) {
+  return (items || []).filter((item: any) => {
+    const name = String(item?.name || "").trim().toLowerCase();
+    if (!name) return false;
+    if (name === "farm product") return false;
+    if (name === "undefined") return false;
+    if (name === "null") return false;
+    return true;
+  });
 }
 
-function getThreshold(product: Product) {
-  return Number(product.lowStockThreshold ?? 5);
+function getStock(product: any) {
+  return Number(product.stock ?? product.quantity ?? product.inventory ?? 0);
 }
 
-function getProductImage(product: Product) {
-  if (product.image && product.image.trim()) return product.image;
-  if (product.imageUrl && product.imageUrl.trim()) return product.imageUrl;
+function getThreshold(product: any) {
+  return Number(product.lowStockThreshold ?? product.low_stock_threshold ?? 5);
+}
+
+function getProductImage(product: any) {
+  if (product.image && String(product.image).trim()) return product.image;
+  if (product.imageUrl && String(product.imageUrl).trim()) return product.imageUrl;
+  if (product.image_url && String(product.image_url).trim()) return product.image_url;
   return "https://images.unsplash.com/photo-1542838132-92c53300491e";
 }
 
@@ -80,7 +92,7 @@ export default function FarmerDashboard() {
   const [farmName, setFarmName] = useState("My Farm");
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
-  const [statusLabel, setStatusLabel] = useState("Active Account");
+  const [statusLabel, setStatusLabel] = useState("Active / Store Open");
   const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>({});
   const [removeAmounts, setRemoveAmounts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -91,24 +103,13 @@ export default function FarmerDashboard() {
     }, [])
   );
 
-  function isRejectedFarmer(farmer: any) {
-    return (
-      farmer.rejected === true ||
-      String(farmer.complianceStatus || "").toLowerCase() === "rejected" ||
-      String(farmer.compliance_status || "").toLowerCase() === "rejected" ||
-      String(farmer.adminReviewStatus || "").toLowerCase() === "rejected" ||
-      String(farmer.admin_review_status || "").toLowerCase() === "rejected" ||
-      String(farmer.reviewDecision || "").toLowerCase() === "rejected" ||
-      String(farmer.review_decision || "").toLowerCase() === "rejected"
-    );
-  }
-
-  function buildStatusLabel(farmer: any) {
-    if (isRejectedFarmer(farmer)) return "Active / Store Open";
+  function buildStatusLabel() {
     return "Active / Store Open";
   }
 
   async function saveProductsLocally(updatedProducts: Product[]) {
+    const cleaned = cleanProducts(updatedProducts);
+
     const saved =
       (await AsyncStorage.getItem("currentFarmer")) ||
       (await AsyncStorage.getItem("currentUser"));
@@ -118,8 +119,8 @@ export default function FarmerDashboard() {
     const updatedFarmer = {
       ...current,
       id: current.id || farmerId,
-      farmerId: current.farmerId || farmerId,
-      products: updatedProducts,
+      farmerId: current.farmerId || current.id || farmerId,
+      products: cleaned,
       updatedAt: new Date().toISOString(),
     };
 
@@ -132,13 +133,90 @@ export default function FarmerDashboard() {
   async function saveProductsToSupabase(updatedProducts: Product[]) {
     if (!farmerId) return;
 
-    await supabase
+    const cleaned = cleanProducts(updatedProducts);
+
+    const { error } = await supabase
       .from("farmers")
       .update({
-        products: updatedProducts,
+        products: cleaned,
         updated_at: new Date().toISOString(),
       })
       .eq("id", farmerId);
+
+    if (error) {
+      console.log("Save farmer products error:", error.message);
+    }
+  }
+
+  async function hideProductInSupabase(product: any) {
+    const productId = String(product?.id || "");
+    const productName = String(product?.name || "").trim();
+
+    if (productId) {
+      const { error } = await supabase
+        .from("products")
+        .update({
+          active: false,
+          available: false,
+          marketplace_visible: false,
+          removed_from_inventory: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", productId);
+
+      if (!error) return;
+      console.log("Hide product by id failed:", error.message);
+    }
+
+    if (farmerId && productName) {
+      const { error } = await supabase
+        .from("products")
+        .update({
+          active: false,
+          available: false,
+          marketplace_visible: false,
+          removed_from_inventory: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("farmer_id", farmerId)
+        .eq("name", productName);
+
+      if (error) {
+        console.log("Hide product by farmer/name failed:", error.message);
+      }
+    }
+  }
+
+  async function updateProductStockInSupabase(product: any, newStock: number) {
+    const productId = String(product?.id || "");
+    const productName = String(product?.name || "").trim();
+
+    const payload = {
+      stock: newStock,
+      quantity: newStock,
+      inventory: newStock,
+      is_sold_out: newStock <= 0,
+      available: newStock > 0,
+      active: true,
+      marketplace_visible: newStock > 0,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (productId) {
+      const { error } = await supabase.from("products").update(payload).eq("id", productId);
+      if (!error) return;
+      console.log("Update stock by id failed:", error.message);
+    }
+
+    if (farmerId && productName) {
+      const { error } = await supabase
+        .from("products")
+        .update(payload)
+        .eq("farmer_id", farmerId)
+        .eq("name", productName);
+
+      if (error) console.log("Update stock by farmer/name failed:", error.message);
+    }
   }
 
   async function loadFarmerProducts() {
@@ -174,10 +252,10 @@ export default function FarmerDashboard() {
         compliance_submitted: true,
         complianceStatus: "ACTIVE",
         compliance_status: "ACTIVE",
-        adminReviewStatus: "ACTIVE",
-        admin_review_status: "ACTIVE",
-        reviewDecision: "APPROVED",
-        review_decision: "APPROVED",
+        adminReviewStatus: "DOCUMENT_REVIEW_ONLY",
+        admin_review_status: "DOCUMENT_REVIEW_ONLY",
+        reviewDecision: "NOT_REQUIRED",
+        review_decision: "NOT_REQUIRED",
       };
 
       if (!activeFarmer.id) {
@@ -202,9 +280,30 @@ export default function FarmerDashboard() {
           activeFarmer.farm_name ||
           "My Farm"
       );
-      setStatusLabel(buildStatusLabel(activeFarmer));
+      setStatusLabel(buildStatusLabel());
 
-      const farmer = id ? await getFarmerById(id) : null;
+      let farmer = id ? await getFarmerById(id) : null;
+
+      if (!farmer && id) {
+        const { data } = await supabase
+          .from("farmers")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+
+        if (data) {
+          farmer = {
+            ...activeFarmer,
+            ...data,
+            id: data.id,
+            farmerId: data.id,
+            farmName: data.farm_name || data.business_name || activeFarmer.farmName,
+            businessName: data.business_name || data.farm_name || activeFarmer.businessName,
+            email: data.email || activeFarmer.email,
+            products: data.products || activeFarmer.products || [],
+          } as any;
+        }
+      }
 
       if (farmer) {
         const farmerAny = farmer as any;
@@ -214,21 +313,19 @@ export default function FarmerDashboard() {
           approved: true,
           reviewed: true,
           rejected: false,
-          needsMoreInfo: false,
-          needs_more_info: false,
           accountActive: true,
           account_active: true,
           storeUnlocked: true,
           store_unlocked: true,
-          complianceSubmitted: true,
-          compliance_submitted: true,
           complianceStatus: "ACTIVE",
           compliance_status: "ACTIVE",
-          adminReviewStatus: "ACTIVE",
-          admin_review_status: "ACTIVE",
-          reviewDecision: "APPROVED",
-          review_decision: "APPROVED",
+          adminReviewStatus: "DOCUMENT_REVIEW_ONLY",
+          admin_review_status: "DOCUMENT_REVIEW_ONLY",
+          reviewDecision: "NOT_REQUIRED",
+          review_decision: "NOT_REQUIRED",
         };
+
+        const cleaned = cleanProducts(unlockedFarmer.products || []);
 
         setFarmName(
           unlockedFarmer.farmName ||
@@ -239,10 +336,14 @@ export default function FarmerDashboard() {
             "My Farm"
         );
         setFarmerEmail(unlockedFarmer.email || activeFarmer.email || "");
-        setProducts(unlockedFarmer.products || []);
-        setStatusLabel(buildStatusLabel(unlockedFarmer));
+        setProducts(cleaned);
+        setStatusLabel(buildStatusLabel());
+        await saveProductsLocally(cleaned);
+        await saveProductsToSupabase(cleaned);
       } else {
-        setProducts(activeFarmer.products || []);
+        const cleaned = cleanProducts(activeFarmer.products || []);
+        setProducts(cleaned);
+        await saveProductsLocally(cleaned);
       }
     } catch (error) {
       console.log("Dashboard load error:", error);
@@ -254,6 +355,7 @@ export default function FarmerDashboard() {
       if (saved) {
         try {
           const fallbackFarmer = JSON.parse(saved);
+          const cleaned = cleanProducts(fallbackFarmer.products || []);
 
           setFarmerId(fallbackFarmer.id || fallbackFarmer.farmerId || "");
           setFarmerEmail(fallbackFarmer.email || "");
@@ -264,7 +366,7 @@ export default function FarmerDashboard() {
               fallbackFarmer.farm_name ||
               "My Farm"
           );
-          setProducts(fallbackFarmer.products || []);
+          setProducts(cleaned);
           setStatusLabel("Active / Store Open");
         } catch {
           Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
@@ -303,51 +405,49 @@ export default function FarmerDashboard() {
       return;
     }
 
-    await updateFarmerProductStock(
-      farmerId,
-      productId,
-      amount,
-      farmerEmail || "farmer"
-    );
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
 
-    const updatedProducts = products.map((item) => {
-      if (item.id !== productId) return item;
-      const newStock = getStock(item) + amount;
+    try {
+      await updateFarmerProductStock(
+        farmerId,
+        productId,
+        amount,
+        farmerEmail || "farmer"
+      ).catch(() => {});
 
-      return {
-        ...item,
-        stock: newStock,
-        quantity: newStock,
-        isSoldOut: newStock <= 0,
-        available: newStock > 0,
-        active: true,
-        updatedAt: new Date().toISOString(),
-      } as any;
-    });
+      const updatedProducts = cleanProducts(
+        products.map((item) => {
+          if (item.id !== productId) return item;
+          const newStock = getStock(item) + amount;
 
-    setProducts(updatedProducts);
-    await saveProductsLocally(updatedProducts);
-    await saveProductsToSupabase(updatedProducts);
-
-    const updatedItem = updatedProducts.find((item) => item.id === productId);
-    if (updatedItem) {
-      await supabase
-        .from("products")
-        .update({
-          stock: getStock(updatedItem),
-          quantity: getStock(updatedItem),
-          inventory: getStock(updatedItem),
-          is_sold_out: getStock(updatedItem) <= 0,
-          available: getStock(updatedItem) > 0,
-          active: true,
-          updated_at: new Date().toISOString(),
+          return {
+            ...item,
+            stock: newStock,
+            quantity: newStock,
+            inventory: newStock,
+            isSoldOut: newStock <= 0,
+            available: newStock > 0,
+            active: true,
+            marketplace_visible: newStock > 0,
+            updatedAt: new Date().toISOString(),
+          } as any;
         })
-        .eq("id", productId);
+      );
+
+      setProducts(updatedProducts);
+      await saveProductsLocally(updatedProducts);
+      await saveProductsToSupabase(updatedProducts);
+
+      const updatedItem = updatedProducts.find((item) => item.id === productId);
+      if (updatedItem) await updateProductStockInSupabase(updatedItem, getStock(updatedItem));
+
+      setRestockAmounts((prev) => ({ ...prev, [productId]: "" }));
+
+      Alert.alert("Inventory Updated", "Your product inventory was updated.");
+    } catch (error: any) {
+      Alert.alert("Inventory Error", error?.message || "Unable to update inventory.");
     }
-
-    setRestockAmounts((prev) => ({ ...prev, [productId]: "" }));
-
-    Alert.alert("Inventory Updated", "Your product inventory was updated.");
   }
 
   async function removeInventory(productId: string) {
@@ -367,48 +467,49 @@ export default function FarmerDashboard() {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
 
-    const currentStock = getStock(product);
-    const removeQty = Math.min(amount, currentStock);
-    const newStock = Math.max(currentStock - removeQty, 0);
+    try {
+      const currentStock = getStock(product);
+      const removeQty = Math.min(amount, currentStock);
+      const newStock = Math.max(currentStock - removeQty, 0);
 
-    const updatedProducts = products.map((item) => {
-      if (item.id !== productId) return item;
+      const updatedProducts = cleanProducts(
+        products.map((item) => {
+          if (item.id !== productId) return item;
 
-      return {
-        ...item,
-        stock: newStock,
-        quantity: newStock,
-        isSoldOut: newStock <= 0,
-        available: newStock > 0,
-        active: true,
-        updatedAt: new Date().toISOString(),
-      } as any;
-    });
+          return {
+            ...item,
+            stock: newStock,
+            quantity: newStock,
+            inventory: newStock,
+            isSoldOut: newStock <= 0,
+            available: newStock > 0,
+            active: true,
+            marketplace_visible: newStock > 0,
+            updatedAt: new Date().toISOString(),
+          } as any;
+        })
+      );
 
-    setProducts(updatedProducts);
-    await saveProductsLocally(updatedProducts);
-    await saveProductsToSupabase(updatedProducts);
+      setProducts(updatedProducts);
+      await saveProductsLocally(updatedProducts);
+      await saveProductsToSupabase(updatedProducts);
+      await updateProductStockInSupabase(product, newStock);
 
-    await supabase
-      .from("products")
-      .update({
-        stock: newStock,
-        quantity: newStock,
-        inventory: newStock,
-        is_sold_out: newStock <= 0,
-        available: newStock > 0,
-        active: true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", productId);
+      setRemoveAmounts((prev) => ({ ...prev, [productId]: "" }));
 
-    setRemoveAmounts((prev) => ({ ...prev, [productId]: "" }));
-
-    Alert.alert("Inventory Updated", `${product.name} stock was reduced.`);
+      Alert.alert("Inventory Updated", `${product.name} stock was reduced.`);
+    } catch (error: any) {
+      Alert.alert("Inventory Error", error?.message || "Unable to remove inventory.");
+    }
   }
 
   async function deleteProduct(productId: string) {
     const product = products.find((item) => item.id === productId);
+
+    if (!product) {
+      Alert.alert("Product Not Found", "This product could not be found.");
+      return;
+    }
 
     Alert.alert(
       "Remove Product",
@@ -420,26 +521,21 @@ export default function FarmerDashboard() {
           style: "destructive",
           onPress: async () => {
             try {
-              const updatedProducts = products.filter(
-                (item) => item.id !== productId
+              const updatedProducts = cleanProducts(
+                products.filter((item) => item.id !== productId)
               );
 
               setProducts(updatedProducts);
               await saveProductsLocally(updatedProducts);
               await saveProductsToSupabase(updatedProducts);
+              await hideProductInSupabase(product);
 
-              await supabase
-                .from("products")
-                .update({
-                  active: false,
-                  available: false,
-                  marketplace_visible: false,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq("id", productId);
-
-              Alert.alert("Product Removed", "Item removed from inventory.");
+              Alert.alert(
+                "Product Removed",
+                "Item removed from farmer inventory and hidden from marketplace."
+              );
             } catch (error: any) {
+              console.log("Remove product error:", error);
               Alert.alert(
                 "Remove Error",
                 error?.message || "Unable to remove product."
@@ -451,29 +547,31 @@ export default function FarmerDashboard() {
     );
   }
 
-  const totalSold = products.reduce(
-    (sum, item) => sum + Number(item.sold || 0),
+  const visibleProducts = cleanProducts(products);
+
+  const totalSold = visibleProducts.reduce(
+    (sum, item: any) => sum + Number(item.sold || 0),
     0
   );
 
-  const totalGrossSales = products.reduce(
-    (sum, item) => sum + Number(item.grossSales || 0),
+  const totalGrossSales = visibleProducts.reduce(
+    (sum, item: any) => sum + Number(item.grossSales || 0),
     0
   );
 
-  const totalStock = products.reduce((sum, item) => sum + getStock(item), 0);
+  const totalStock = visibleProducts.reduce((sum, item) => sum + getStock(item), 0);
 
-  const warningProducts = products.filter(
+  const warningProducts = visibleProducts.filter(
     (item) => getStockStatus(item) === "warning"
   );
 
-  const criticalLowProducts = products.filter(
+  const criticalLowProducts = visibleProducts.filter(
     (item) => getStockStatus(item) === "critical"
   );
 
-  const lowStockProducts = [...criticalLowProducts, ...warningProducts];
+  const lowStockProducts = cleanProducts([...criticalLowProducts, ...warningProducts]);
 
-  const soldOutProducts = products.filter(
+  const soldOutProducts = visibleProducts.filter(
     (item) => getStockStatus(item) === "soldout"
   );
 
@@ -488,23 +586,14 @@ export default function FarmerDashboard() {
 
   return (
     <View style={styles.page}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.farmAvatar}>
               <Text style={styles.farmAvatarText}>🚜</Text>
             </View>
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.logoutButton,
-                pressed && styles.pressed,
-              ]}
-              onPress={logoutFarmer}
-            >
+            <Pressable style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]} onPress={logoutFarmer}>
               <Text style={styles.logoutText}>Logout</Text>
             </Pressable>
           </View>
@@ -520,14 +609,13 @@ export default function FarmerDashboard() {
             <Text style={styles.statusTitle}>Account Status</Text>
             <Text style={styles.statusValue}>{statusLabel}</Text>
             <Text style={styles.statusNote}>
-              Your farmer store is open. Inventory shows total units by product,
-              low-stock warnings, and sold-out items.
+              Your farmer store is open. Admin review is now document-review only.
             </Text>
           </View>
 
           <View style={styles.storeMetaRow}>
             <View style={styles.storeMeta}>
-              <Text style={styles.storeMetaValue}>{products.length}</Text>
+              <Text style={styles.storeMetaValue}>{visibleProducts.length}</Text>
               <Text style={styles.storeMetaLabel}>Products Listed</Text>
             </View>
 
@@ -537,20 +625,12 @@ export default function FarmerDashboard() {
             </View>
 
             <View style={styles.storeMeta}>
-              <Text style={styles.storeMetaValue}>
-                ${totalGrossSales.toFixed(2)}
-              </Text>
+              <Text style={styles.storeMetaValue}>${totalGrossSales.toFixed(2)}</Text>
               <Text style={styles.storeMetaLabel}>Sales</Text>
             </View>
           </View>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.setupStoreButton,
-              pressed && styles.pressed,
-            ]}
-            onPress={() => goTo("/farmer/select-produce")}
-          >
+          <Pressable style={({ pressed }) => [styles.setupStoreButton, pressed && styles.pressed]} onPress={() => goTo("/farmer/select-produce")}>
             <Text style={styles.setupStoreText}>🥬 Select Produce</Text>
           </Pressable>
         </View>
@@ -561,13 +641,13 @@ export default function FarmerDashboard() {
           <ActionButton label="Customize Store" icon="🏪" color={COLORS.dark} onPress={() => goTo("/farmer/setup-store")} />
           <ActionButton label="Orders" icon="📦" color={COLORS.blue} onPress={() => goTo("/farmer/orders")} />
           <ActionButton label="Delivery" icon="🚚" color={COLORS.orange} onPress={() => goTo("/farmer/delivery-orders")} />
-          <ActionButton label="Payout Status" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/stripe-banking")} />
+          <ActionButton label="Payout Status" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/connect-bank")} />
           <ActionButton label="Profile" icon="👤" color={COLORS.purple} onPress={() => goTo("/farmer/profile")} />
           <ActionButton label="Preview Market" icon="🛒" color={COLORS.secondary} onPress={() => goTo("/customer/marketplace")} />
         </View>
 
         <View style={styles.statsGrid}>
-          <StatCard label="Products Listed" value={String(products.length)} />
+          <StatCard label="Products Listed" value={String(visibleProducts.length)} />
           <StatCard label="Total Inventory Units" value={String(totalStock)} />
           <StatCard label="Units Sold" value={String(totalSold)} />
           <StatCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} />
@@ -575,62 +655,34 @@ export default function FarmerDashboard() {
           <StatCard label="Sold Out Items" value={String(soldOutProducts.length)} />
         </View>
 
-        <InventoryAlertSection
-          title="⚠️ Low Stock Items"
-          products={lowStockProducts}
-          emptyText="No low-stock items."
-          type="low"
-        />
-
-        <InventoryAlertSection
-          title="🔴 Sold Out Items"
-          products={soldOutProducts}
-          emptyText="No sold-out items."
-          type="sold"
-        />
+        <InventoryAlertSection title="⚠️ Low Stock Items" products={lowStockProducts} emptyText="No low-stock items." type="low" />
+        <InventoryAlertSection title="🔴 Sold Out Items" products={soldOutProducts} emptyText="No sold-out items." type="sold" />
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Farm Inventory</Text>
           <Text style={styles.sectionSubtitle}>
-            Total inventory is shown per product. Yellow means near threshold,
-            orange means at/below threshold, and red means sold out.
+            Remove Inventory reduces stock. Remove Product hides it from marketplace and removes it from your dashboard.
           </Text>
         </View>
 
-        {products.length === 0 ? (
+        {visibleProducts.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>🥬</Text>
             <Text style={styles.emptyTitle}>No farmer products yet</Text>
-
             <Text style={styles.meta}>
-              Select common produce from the Farm2Home catalog or add your own
-              custom farm product.
+              Select common produce from the Farm2Home catalog or add your own custom farm product.
             </Text>
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.emptyActionButton,
-                pressed && styles.pressed,
-              ]}
-              onPress={() => goTo("/farmer/select-produce")}
-            >
+            <Pressable style={({ pressed }) => [styles.emptyActionButton, pressed && styles.pressed]} onPress={() => goTo("/farmer/select-produce")}>
               <Text style={styles.emptyActionText}>Select Produce</Text>
             </Pressable>
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.emptySecondaryButton,
-                pressed && styles.pressed,
-              ]}
-              onPress={() => goTo("/farmer/add-product")}
-            >
-              <Text style={styles.emptySecondaryText}>
-                Add Custom Product / Upload Photo
-              </Text>
+            <Pressable style={({ pressed }) => [styles.emptySecondaryButton, pressed && styles.pressed]} onPress={() => goTo("/farmer/add-product")}>
+              <Text style={styles.emptySecondaryText}>Add Custom Product / Upload Photo</Text>
             </Pressable>
           </View>
         ) : (
-          products.map((item) => {
+          visibleProducts.map((item: any) => {
             const stock = getStock(item);
             const threshold = getThreshold(item);
             const status = getStockStatus(item);
@@ -648,16 +700,13 @@ export default function FarmerDashboard() {
                   isSoldOut && styles.productSoldOutCard,
                 ]}
               >
-                <Image
-                  source={{ uri: getProductImage(item) }}
-                  style={styles.productImage}
-                />
+                <Image source={{ uri: getProductImage(item) }} style={styles.productImage} />
 
                 <View style={styles.productBody}>
                   <View style={styles.productHeader}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.productName}>{item.name}</Text>
-                      <Text style={styles.meta}>{item.category}</Text>
+                      <Text style={styles.meta}>{item.category || "Farm Goods"}</Text>
                     </View>
 
                     {isSoldOut ? (
@@ -672,9 +721,7 @@ export default function FarmerDashboard() {
                   </View>
 
                   <View style={styles.inventoryTotalBox}>
-                    <Text style={styles.inventoryTotalLabel}>
-                      Total In Stock For This Item
-                    </Text>
+                    <Text style={styles.inventoryTotalLabel}>Total In Stock For This Item</Text>
                     <Text
                       style={[
                         styles.inventoryTotalValue,
@@ -685,16 +732,14 @@ export default function FarmerDashboard() {
                     >
                       {stock} {item.unit || "each"}
                     </Text>
-                    <Text style={styles.inventoryThresholdText}>
-                      Low-stock threshold: {threshold}
-                    </Text>
+                    <Text style={styles.inventoryThresholdText}>Low-stock threshold: {threshold}</Text>
                   </View>
 
                   <View style={styles.detailGrid}>
                     <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)} / ${item.unit || "each"}`} />
                     <Detail label="Sold" value={String(Number(item.sold || 0))} />
                     <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
-                    <Detail label="Delivery" value={item.deliveryOption || "Not set"} />
+                    <Detail label="Delivery" value={item.deliveryOption || item.delivery_option || "Not set"} />
                   </View>
 
                   <TextInput
@@ -703,18 +748,10 @@ export default function FarmerDashboard() {
                     placeholderTextColor="#8A9482"
                     keyboardType="numeric"
                     value={restockAmounts[item.id] || ""}
-                    onChangeText={(text) =>
-                      setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))
-                    }
+                    onChangeText={(text) => setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))}
                   />
 
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.restockButton,
-                      pressed && styles.pressed,
-                    ]}
-                    onPress={() => restockProduct(item.id)}
-                  >
+                  <Pressable style={({ pressed }) => [styles.restockButton, pressed && styles.pressed]} onPress={() => restockProduct(item.id)}>
                     <Text style={styles.restockText}>Add Inventory</Text>
                   </Pressable>
 
@@ -724,31 +761,15 @@ export default function FarmerDashboard() {
                     placeholderTextColor="#8A9482"
                     keyboardType="numeric"
                     value={removeAmounts[item.id] || ""}
-                    onChangeText={(text) =>
-                      setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))
-                    }
+                    onChangeText={(text) => setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))}
                   />
 
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.removeStockButton,
-                      pressed && styles.pressed,
-                    ]}
-                    onPress={() => removeInventory(item.id)}
-                  >
+                  <Pressable style={({ pressed }) => [styles.removeStockButton, pressed && styles.pressed]} onPress={() => removeInventory(item.id)}>
                     <Text style={styles.removeStockText}>Remove Inventory</Text>
                   </Pressable>
 
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.deleteButton,
-                      pressed && styles.pressed,
-                    ]}
-                    onPress={() => deleteProduct(item.id)}
-                  >
-                    <Text style={styles.deleteText}>
-                      Remove Product From Farm Inventory
-                    </Text>
+                  <Pressable style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]} onPress={() => deleteProduct(item.id)}>
+                    <Text style={styles.deleteText}>Remove Product From Farm Inventory</Text>
                   </Pressable>
                 </View>
               </View>
@@ -764,9 +785,7 @@ export default function FarmerDashboard() {
         {reviews.map((review) => (
           <View key={review.id} style={styles.reviewCard}>
             <View style={styles.reviewAvatar}>
-              <Text style={styles.reviewAvatarText}>
-                {review.customer.slice(0, 1)}
-              </Text>
+              <Text style={styles.reviewAvatarText}>{review.customer.slice(0, 1)}</Text>
             </View>
 
             <View style={styles.reviewBody}>
@@ -774,7 +793,6 @@ export default function FarmerDashboard() {
                 <Text style={styles.reviewName}>{review.customer}</Text>
                 <Text style={styles.reviewRating}>⭐ {review.rating}</Text>
               </View>
-
               <Text style={styles.reviewText}>{review.text}</Text>
             </View>
           </View>
@@ -804,7 +822,7 @@ function InventoryAlertSection({
       {products.length === 0 ? (
         <Text style={styles.alertEmptyText}>{emptyText}</Text>
       ) : (
-        products.map((item) => {
+        products.map((item: any) => {
           const stock = getStock(item);
           const threshold = getThreshold(item);
           const status = getStockStatus(item);
@@ -826,12 +844,7 @@ function InventoryAlertSection({
                 </Text>
               </View>
 
-              <Text
-                style={[
-                  styles.alertItemQty,
-                  status === "soldout" && styles.alertSoldQty,
-                ]}
-              >
+              <Text style={[styles.alertItemQty, status === "soldout" && styles.alertSoldQty]}>
                 {stock}
               </Text>
             </View>
@@ -854,14 +867,7 @@ function ActionButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.actionButton,
-        { backgroundColor: color },
-        pressed && styles.pressed,
-      ]}
-      onPress={onPress}
-    >
+    <Pressable style={({ pressed }) => [styles.actionButton, { backgroundColor: color }, pressed && styles.pressed]} onPress={onPress}>
       <Text style={styles.actionIcon}>{icon}</Text>
       <Text style={styles.actionText}>{label}</Text>
     </Pressable>
