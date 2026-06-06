@@ -152,16 +152,18 @@ export default function FarmerDashboard() {
     const productId = String(product?.id || "");
     const productName = String(product?.name || "").trim();
 
+    const payload = {
+      active: false,
+      available: false,
+      marketplace_visible: false,
+      removed_from_inventory: true,
+      updated_at: new Date().toISOString(),
+    };
+
     if (productId) {
       const { error } = await supabase
         .from("products")
-        .update({
-          active: false,
-          available: false,
-          marketplace_visible: false,
-          removed_from_inventory: true,
-          updated_at: new Date().toISOString(),
-        })
+        .update(payload)
         .eq("id", productId);
 
       if (!error) return;
@@ -171,13 +173,7 @@ export default function FarmerDashboard() {
     if (farmerId && productName) {
       const { error } = await supabase
         .from("products")
-        .update({
-          active: false,
-          available: false,
-          marketplace_visible: false,
-          removed_from_inventory: true,
-          updated_at: new Date().toISOString(),
-        })
+        .update(payload)
         .eq("farmer_id", farmerId)
         .eq("name", productName);
 
@@ -203,7 +199,11 @@ export default function FarmerDashboard() {
     };
 
     if (productId) {
-      const { error } = await supabase.from("products").update(payload).eq("id", productId);
+      const { error } = await supabase
+        .from("products")
+        .update(payload)
+        .eq("id", productId);
+
       if (!error) return;
       console.log("Update stock by id failed:", error.message);
     }
@@ -215,7 +215,9 @@ export default function FarmerDashboard() {
         .eq("farmer_id", farmerId)
         .eq("name", productName);
 
-      if (error) console.log("Update stock by farmer/name failed:", error.message);
+      if (error) {
+        console.log("Update stock by farmer/name failed:", error.message);
+      }
     }
   }
 
@@ -392,7 +394,7 @@ export default function FarmerDashboard() {
   }
 
   async function restockProduct(productId: string) {
-    const amount = Number(restockAmounts[productId] || 0);
+    const amount = Number(removeNonNumber(restockAmounts[productId] || "0"));
 
     if (!farmerId) {
       Alert.alert("Session Error", "Please login again.");
@@ -405,7 +407,7 @@ export default function FarmerDashboard() {
       return;
     }
 
-    const product = products.find((item) => item.id === productId);
+    const product = products.find((item: any) => String(item.id) === String(productId));
     if (!product) return;
 
     try {
@@ -417,8 +419,8 @@ export default function FarmerDashboard() {
       ).catch(() => {});
 
       const updatedProducts = cleanProducts(
-        products.map((item) => {
-          if (item.id !== productId) return item;
+        products.map((item: any) => {
+          if (String(item.id) !== String(productId)) return item;
           const newStock = getStock(item) + amount;
 
           return {
@@ -427,10 +429,12 @@ export default function FarmerDashboard() {
             quantity: newStock,
             inventory: newStock,
             isSoldOut: newStock <= 0,
+            is_sold_out: newStock <= 0,
             available: newStock > 0,
             active: true,
             marketplace_visible: newStock > 0,
             updatedAt: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           } as any;
         })
       );
@@ -439,8 +443,13 @@ export default function FarmerDashboard() {
       await saveProductsLocally(updatedProducts);
       await saveProductsToSupabase(updatedProducts);
 
-      const updatedItem = updatedProducts.find((item) => item.id === productId);
-      if (updatedItem) await updateProductStockInSupabase(updatedItem, getStock(updatedItem));
+      const updatedItem = updatedProducts.find(
+        (item: any) => String(item.id) === String(productId)
+      );
+
+      if (updatedItem) {
+        await updateProductStockInSupabase(updatedItem, getStock(updatedItem));
+      }
 
       setRestockAmounts((prev) => ({ ...prev, [productId]: "" }));
 
@@ -451,7 +460,7 @@ export default function FarmerDashboard() {
   }
 
   async function removeInventory(productId: string) {
-    const amount = Number(removeAmounts[productId] || 0);
+    const amount = Number(removeNonNumber(removeAmounts[productId] || "0"));
 
     if (!farmerId) {
       Alert.alert("Session Error", "Please login again.");
@@ -464,7 +473,7 @@ export default function FarmerDashboard() {
       return;
     }
 
-    const product = products.find((item) => item.id === productId);
+    const product = products.find((item: any) => String(item.id) === String(productId));
     if (!product) return;
 
     try {
@@ -473,8 +482,8 @@ export default function FarmerDashboard() {
       const newStock = Math.max(currentStock - removeQty, 0);
 
       const updatedProducts = cleanProducts(
-        products.map((item) => {
-          if (item.id !== productId) return item;
+        products.map((item: any) => {
+          if (String(item.id) !== String(productId)) return item;
 
           return {
             ...item,
@@ -482,10 +491,12 @@ export default function FarmerDashboard() {
             quantity: newStock,
             inventory: newStock,
             isSoldOut: newStock <= 0,
+            is_sold_out: newStock <= 0,
             available: newStock > 0,
             active: true,
             marketplace_visible: newStock > 0,
             updatedAt: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           } as any;
         })
       );
@@ -493,18 +504,30 @@ export default function FarmerDashboard() {
       setProducts(updatedProducts);
       await saveProductsLocally(updatedProducts);
       await saveProductsToSupabase(updatedProducts);
-      await updateProductStockInSupabase(product, newStock);
+
+      const updatedItem = updatedProducts.find(
+        (item: any) => String(item.id) === String(productId)
+      );
+
+      if (updatedItem) {
+        await updateProductStockInSupabase(updatedItem, newStock);
+      } else {
+        await updateProductStockInSupabase(product, newStock);
+      }
 
       setRemoveAmounts((prev) => ({ ...prev, [productId]: "" }));
 
-      Alert.alert("Inventory Updated", `${product.name} stock was reduced.`);
+      Alert.alert(
+        "Inventory Updated",
+        `${product.name} stock was reduced by ${removeQty}.`
+      );
     } catch (error: any) {
       Alert.alert("Inventory Error", error?.message || "Unable to remove inventory.");
     }
   }
 
   async function deleteProduct(productId: string) {
-    const product = products.find((item) => item.id === productId);
+    const product = products.find((item: any) => String(item.id) === String(productId));
 
     if (!product) {
       Alert.alert("Product Not Found", "This product could not be found.");
@@ -522,7 +545,7 @@ export default function FarmerDashboard() {
           onPress: async () => {
             try {
               const updatedProducts = cleanProducts(
-                products.filter((item) => item.id !== productId)
+                products.filter((item: any) => String(item.id) !== String(productId))
               );
 
               setProducts(updatedProducts);
@@ -593,7 +616,10 @@ export default function FarmerDashboard() {
               <Text style={styles.farmAvatarText}>🚜</Text>
             </View>
 
-            <Pressable style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]} onPress={logoutFarmer}>
+            <Pressable
+              style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
+              onPress={logoutFarmer}
+            >
               <Text style={styles.logoutText}>Logout</Text>
             </Pressable>
           </View>
@@ -630,7 +656,10 @@ export default function FarmerDashboard() {
             </View>
           </View>
 
-          <Pressable style={({ pressed }) => [styles.setupStoreButton, pressed && styles.pressed]} onPress={() => goTo("/farmer/select-produce")}>
+          <Pressable
+            style={({ pressed }) => [styles.setupStoreButton, pressed && styles.pressed]}
+            onPress={() => goTo("/farmer/select-produce")}
+          >
             <Text style={styles.setupStoreText}>🥬 Select Produce</Text>
           </Pressable>
         </View>
@@ -673,11 +702,17 @@ export default function FarmerDashboard() {
               Select common produce from the Farm2Home catalog or add your own custom farm product.
             </Text>
 
-            <Pressable style={({ pressed }) => [styles.emptyActionButton, pressed && styles.pressed]} onPress={() => goTo("/farmer/select-produce")}>
+            <Pressable
+              style={({ pressed }) => [styles.emptyActionButton, pressed && styles.pressed]}
+              onPress={() => goTo("/farmer/select-produce")}
+            >
               <Text style={styles.emptyActionText}>Select Produce</Text>
             </Pressable>
 
-            <Pressable style={({ pressed }) => [styles.emptySecondaryButton, pressed && styles.pressed]} onPress={() => goTo("/farmer/add-product")}>
+            <Pressable
+              style={({ pressed }) => [styles.emptySecondaryButton, pressed && styles.pressed]}
+              onPress={() => goTo("/farmer/add-product")}
+            >
               <Text style={styles.emptySecondaryText}>Add Custom Product / Upload Photo</Text>
             </Pressable>
           </View>
@@ -748,10 +783,15 @@ export default function FarmerDashboard() {
                     placeholderTextColor="#8A9482"
                     keyboardType="numeric"
                     value={restockAmounts[item.id] || ""}
-                    onChangeText={(text) => setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))}
+                    onChangeText={(text) =>
+                      setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))
+                    }
                   />
 
-                  <Pressable style={({ pressed }) => [styles.restockButton, pressed && styles.pressed]} onPress={() => restockProduct(item.id)}>
+                  <Pressable
+                    style={({ pressed }) => [styles.restockButton, pressed && styles.pressed]}
+                    onPress={() => restockProduct(item.id)}
+                  >
                     <Text style={styles.restockText}>Add Inventory</Text>
                   </Pressable>
 
@@ -761,14 +801,22 @@ export default function FarmerDashboard() {
                     placeholderTextColor="#8A9482"
                     keyboardType="numeric"
                     value={removeAmounts[item.id] || ""}
-                    onChangeText={(text) => setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))}
+                    onChangeText={(text) =>
+                      setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))
+                    }
                   />
 
-                  <Pressable style={({ pressed }) => [styles.removeStockButton, pressed && styles.pressed]} onPress={() => deleteProduct(item.id)}>
+                  <Pressable
+                    style={({ pressed }) => [styles.removeStockButton, pressed && styles.pressed]}
+                    onPress={() => removeInventory(item.id)}
+                  >
                     <Text style={styles.removeStockText}>Remove Inventory</Text>
                   </Pressable>
 
-                  <Pressable style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]} onPress={() => deleteProduct(item.id)}>
+                  <Pressable
+                    style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
+                    onPress={() => deleteProduct(item.id)}
+                  >
                     <Text style={styles.deleteText}>Remove Product From Farm Inventory</Text>
                   </Pressable>
                 </View>
@@ -800,6 +848,10 @@ export default function FarmerDashboard() {
       </ScrollView>
     </View>
   );
+}
+
+function removeNonNumber(value: string) {
+  return String(value || "").replace(/[^0-9.]/g, "");
 }
 
 function InventoryAlertSection({
@@ -867,7 +919,14 @@ function ActionButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={({ pressed }) => [styles.actionButton, { backgroundColor: color }, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable
+      style={({ pressed }) => [
+        styles.actionButton,
+        { backgroundColor: color },
+        pressed && styles.pressed,
+      ]}
+      onPress={onPress}
+    >
       <Text style={styles.actionIcon}>{icon}</Text>
       <Text style={styles.actionText}>{label}</Text>
     </Pressable>
