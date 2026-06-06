@@ -23,14 +23,14 @@ import {
 import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
-  bg: "#F5F7F2",
+  bg: "#F6F8F2",
   card: "#FFFFFF",
-  text: "#102015",
-  muted: "#6F7D68",
-  border: "#E4E9DC",
+  text: "#132016",
+  muted: "#6F7A6A",
+  border: "#E3E9DA",
   primary: "#2E7D32",
   primaryDark: "#14532D",
-  primarySoft: "#EAF6E8",
+  greenSoft: "#EAF6E8",
   yellow: "#F9A825",
   orange: "#EF6C00",
   red: "#DC2626",
@@ -40,12 +40,6 @@ const COLORS = {
   purple: "#7C3AED",
   dark: "#111827",
   stripe: "#635BFF",
-  warningBg: "#FFFBEB",
-  warningText: "#92400E",
-  criticalBg: "#FFF7ED",
-  criticalText: "#C2410C",
-  successBg: "#DCFCE7",
-  successText: "#166534",
 };
 
 const reviews = [
@@ -57,15 +51,11 @@ const reviews = [
 function cleanProducts(items: Product[]) {
   return (items || []).filter((item: any) => {
     const name = String(item?.name || "").trim().toLowerCase();
-    if (!name) return false;
-    if (name === "farm product") return false;
-    if (name === "undefined") return false;
-    if (name === "null") return false;
-    return true;
+    return name && name !== "farm product" && name !== "undefined" && name !== "null";
   });
 }
 
-function removeNonNumber(value: string) {
+function cleanNumber(value: string) {
   return String(value || "").replace(/[^0-9.]/g, "");
 }
 
@@ -78,10 +68,12 @@ function getThreshold(product: any) {
 }
 
 function getProductImage(product: any) {
-  if (product.image && String(product.image).trim()) return product.image;
-  if (product.imageUrl && String(product.imageUrl).trim()) return product.imageUrl;
-  if (product.image_url && String(product.image_url).trim()) return product.image_url;
-  return "https://images.unsplash.com/photo-1542838132-92c53300491e";
+  return (
+    product.image ||
+    product.imageUrl ||
+    product.image_url ||
+    "https://images.unsplash.com/photo-1542838132-92c53300491e"
+  );
 }
 
 function getStockStatus(product: Product) {
@@ -99,7 +91,6 @@ export default function FarmerDashboard() {
   const [farmName, setFarmName] = useState("My Farm");
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
-  const [statusLabel, setStatusLabel] = useState("Active / Store Open");
   const [restockAmounts, setRestockAmounts] = useState<Record<string, string>>({});
   const [removeAmounts, setRemoveAmounts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -109,10 +100,6 @@ export default function FarmerDashboard() {
       loadFarmerProducts();
     }, [])
   );
-
-  function buildStatusLabel() {
-    return "Active / Store Open";
-  }
 
   async function saveProductsLocally(updatedProducts: Product[]) {
     const cleaned = cleanProducts(updatedProducts);
@@ -140,46 +127,15 @@ export default function FarmerDashboard() {
   async function saveProductsToSupabase(updatedProducts: Product[]) {
     if (!farmerId) return;
 
-    const cleaned = cleanProducts(updatedProducts);
-
     const { error } = await supabase
       .from("farmers")
       .update({
-        products: cleaned,
+        products: cleanProducts(updatedProducts),
         updated_at: new Date().toISOString(),
       })
       .eq("id", farmerId);
 
     if (error) console.log("Save farmer products error:", error.message);
-  }
-
-  async function hideProductInSupabase(product: any) {
-    const productId = String(product?.id || "");
-    const productName = String(product?.name || "").trim();
-
-    const payload = {
-      active: false,
-      available: false,
-      marketplace_visible: false,
-      removed_from_inventory: true,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (productId) {
-      const { error } = await supabase.from("products").update(payload).eq("id", productId);
-      if (!error) return;
-      console.log("Hide product by id failed:", error.message);
-    }
-
-    if (farmerId && productName) {
-      const { error } = await supabase
-        .from("products")
-        .update(payload)
-        .eq("farmer_id", farmerId)
-        .eq("name", productName);
-
-      if (error) console.log("Hide product by farmer/name failed:", error.message);
-    }
   }
 
   async function updateProductStockInSupabase(product: any, newStock: number) {
@@ -214,6 +170,35 @@ export default function FarmerDashboard() {
     }
   }
 
+  async function hideProductInSupabase(product: any) {
+    const productId = String(product?.id || "");
+    const productName = String(product?.name || "").trim();
+
+    const payload = {
+      active: false,
+      available: false,
+      marketplace_visible: false,
+      removed_from_inventory: true,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (productId) {
+      const { error } = await supabase.from("products").update(payload).eq("id", productId);
+      if (!error) return;
+      console.log("Hide product by id failed:", error.message);
+    }
+
+    if (farmerId && productName) {
+      const { error } = await supabase
+        .from("products")
+        .update(payload)
+        .eq("farmer_id", farmerId)
+        .eq("name", productName);
+
+      if (error) console.log("Hide product by farmer/name failed:", error.message);
+    }
+  }
+
   async function loadFarmerProducts() {
     try {
       setLoading(true);
@@ -228,147 +213,57 @@ export default function FarmerDashboard() {
       }
 
       const currentFarmer = JSON.parse(saved);
+      const id = currentFarmer.id || currentFarmer.farmerId || "";
 
-      const activeFarmer = {
-        ...currentFarmer,
-        id: currentFarmer.id || currentFarmer.farmerId,
-        farmerId: currentFarmer.farmerId || currentFarmer.id,
-        role: "farmer",
-        approved: true,
-        reviewed: true,
-        rejected: false,
-        needsMoreInfo: false,
-        needs_more_info: false,
-        accountActive: true,
-        account_active: true,
-        storeUnlocked: true,
-        store_unlocked: true,
-        complianceSubmitted: true,
-        compliance_submitted: true,
-        complianceStatus: "ACTIVE",
-        compliance_status: "ACTIVE",
-        adminReviewStatus: "DOCUMENT_REVIEW_ONLY",
-        admin_review_status: "DOCUMENT_REVIEW_ONLY",
-        reviewDecision: "NOT_REQUIRED",
-        review_decision: "NOT_REQUIRED",
-      };
-
-      if (!activeFarmer.id) {
+      if (!id) {
         Alert.alert("Session Error", "Please login again.");
         router.replace("/farmer/login" as any);
         return;
       }
 
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(activeFarmer));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(activeFarmer));
-      await AsyncStorage.setItem("userRole", "farmer");
-      await AsyncStorage.setItem("currentUserRole", "farmer");
-
-      const id = activeFarmer.id || activeFarmer.farmerId || "";
-
       setFarmerId(id);
-      setFarmerEmail(activeFarmer.email || "");
+      setFarmerEmail(currentFarmer.email || "");
       setFarmName(
-        activeFarmer.farmName ||
-          activeFarmer.businessName ||
-          activeFarmer.business_name ||
-          activeFarmer.farm_name ||
+        currentFarmer.farmName ||
+          currentFarmer.businessName ||
+          currentFarmer.business_name ||
+          currentFarmer.farm_name ||
           "My Farm"
       );
-      setStatusLabel(buildStatusLabel());
 
-      let farmer = id ? await getFarmerById(id) : null;
+      let farmer = await getFarmerById(id);
 
-      if (!farmer && id) {
-        const { data } = await supabase
-          .from("farmers")
-          .select("*")
-          .eq("id", id)
-          .maybeSingle();
+      if (!farmer) {
+        const { data } = await supabase.from("farmers").select("*").eq("id", id).maybeSingle();
 
         if (data) {
           farmer = {
-            ...activeFarmer,
+            ...currentFarmer,
             ...data,
             id: data.id,
             farmerId: data.id,
-            farmName: data.farm_name || data.business_name || activeFarmer.farmName,
-            businessName: data.business_name || data.farm_name || activeFarmer.businessName,
-            email: data.email || activeFarmer.email,
-            products: data.products || activeFarmer.products || [],
+            products: data.products || currentFarmer.products || [],
           } as any;
         }
       }
 
-      if (farmer) {
-        const farmerAny = farmer as any;
+      const farmerData: any = farmer || currentFarmer;
+      const cleaned = cleanProducts(farmerData.products || []);
 
-        const unlockedFarmer = {
-          ...farmerAny,
-          approved: true,
-          reviewed: true,
-          rejected: false,
-          accountActive: true,
-          account_active: true,
-          storeUnlocked: true,
-          store_unlocked: true,
-          complianceStatus: "ACTIVE",
-          compliance_status: "ACTIVE",
-          adminReviewStatus: "DOCUMENT_REVIEW_ONLY",
-          admin_review_status: "DOCUMENT_REVIEW_ONLY",
-          reviewDecision: "NOT_REQUIRED",
-          review_decision: "NOT_REQUIRED",
-        };
+      setFarmName(
+        farmerData.farmName ||
+          farmerData.businessName ||
+          farmerData.business_name ||
+          farmerData.farm_name ||
+          "My Farm"
+      );
 
-        const cleaned = cleanProducts(unlockedFarmer.products || []);
-
-        setFarmName(
-          unlockedFarmer.farmName ||
-            unlockedFarmer.businessName ||
-            unlockedFarmer.business_name ||
-            unlockedFarmer.farm_name ||
-            activeFarmer.businessName ||
-            "My Farm"
-        );
-        setFarmerEmail(unlockedFarmer.email || activeFarmer.email || "");
-        setProducts(cleaned);
-        setStatusLabel(buildStatusLabel());
-        await saveProductsLocally(cleaned);
-        await saveProductsToSupabase(cleaned);
-      } else {
-        const cleaned = cleanProducts(activeFarmer.products || []);
-        setProducts(cleaned);
-        await saveProductsLocally(cleaned);
-      }
+      setFarmerEmail(farmerData.email || currentFarmer.email || "");
+      setProducts(cleaned);
+      await saveProductsLocally(cleaned);
     } catch (error) {
       console.log("Dashboard load error:", error);
-
-      const saved =
-        (await AsyncStorage.getItem("currentFarmer")) ||
-        (await AsyncStorage.getItem("currentUser"));
-
-      if (saved) {
-        try {
-          const fallbackFarmer = JSON.parse(saved);
-          const cleaned = cleanProducts(fallbackFarmer.products || []);
-
-          setFarmerId(fallbackFarmer.id || fallbackFarmer.farmerId || "");
-          setFarmerEmail(fallbackFarmer.email || "");
-          setFarmName(
-            fallbackFarmer.farmName ||
-              fallbackFarmer.businessName ||
-              fallbackFarmer.business_name ||
-              fallbackFarmer.farm_name ||
-              "My Farm"
-          );
-          setProducts(cleaned);
-          setStatusLabel("Active / Store Open");
-        } catch {
-          Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
-        }
-      } else {
-        Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
-      }
+      Alert.alert("Dashboard Error", "Unable to load farmer dashboard.");
     } finally {
       setLoading(false);
     }
@@ -387,13 +282,7 @@ export default function FarmerDashboard() {
   }
 
   async function restockProduct(productId: string) {
-    const amount = Number(removeNonNumber(restockAmounts[productId] || "0"));
-
-    if (!farmerId) {
-      Alert.alert("Session Error", "Please login again.");
-      router.replace("/farmer/login" as any);
-      return;
-    }
+    const amount = Number(cleanNumber(restockAmounts[productId] || "0"));
 
     if (!amount || amount <= 0) {
       Alert.alert("Invalid Restock", "Enter a valid restock amount.");
@@ -404,16 +293,14 @@ export default function FarmerDashboard() {
     if (!product) return;
 
     try {
-      await updateFarmerProductStock(
-        farmerId,
-        productId,
-        amount,
-        farmerEmail || "farmer"
-      ).catch(() => {});
+      await updateFarmerProductStock(farmerId, productId, amount, farmerEmail || "farmer").catch(
+        () => {}
+      );
 
       const updatedProducts = cleanProducts(
         products.map((item: any) => {
           if (String(item.id) !== String(productId)) return item;
+
           const newStock = getStock(item) + amount;
 
           return {
@@ -428,7 +315,7 @@ export default function FarmerDashboard() {
             marketplace_visible: newStock > 0,
             updatedAt: new Date().toISOString(),
             updated_at: new Date().toISOString(),
-          } as any;
+          };
         })
       );
 
@@ -436,27 +323,18 @@ export default function FarmerDashboard() {
       await saveProductsLocally(updatedProducts);
       await saveProductsToSupabase(updatedProducts);
 
-      const updatedItem = updatedProducts.find(
-        (item: any) => String(item.id) === String(productId)
-      );
-
+      const updatedItem = updatedProducts.find((item: any) => String(item.id) === String(productId));
       if (updatedItem) await updateProductStockInSupabase(updatedItem, getStock(updatedItem));
 
       setRestockAmounts((prev) => ({ ...prev, [productId]: "" }));
-      Alert.alert("Inventory Updated", "Your product inventory was updated.");
+      Alert.alert("Inventory Updated", "Inventory was added.");
     } catch (error: any) {
-      Alert.alert("Inventory Error", error?.message || "Unable to update inventory.");
+      Alert.alert("Inventory Error", error?.message || "Unable to add inventory.");
     }
   }
 
   async function removeInventory(productId: string) {
-    const amount = Number(removeNonNumber(removeAmounts[productId] || "0"));
-
-    if (!farmerId) {
-      Alert.alert("Session Error", "Please login again.");
-      router.replace("/farmer/login" as any);
-      return;
-    }
+    const amount = Number(cleanNumber(removeAmounts[productId] || "0"));
 
     if (!amount || amount <= 0) {
       Alert.alert("Invalid Amount", "Enter quantity to remove.");
@@ -487,19 +365,14 @@ export default function FarmerDashboard() {
             marketplace_visible: newStock > 0,
             updatedAt: new Date().toISOString(),
             updated_at: new Date().toISOString(),
-          } as any;
+          };
         })
       );
 
       setProducts(updatedProducts);
       await saveProductsLocally(updatedProducts);
       await saveProductsToSupabase(updatedProducts);
-
-      const updatedItem = updatedProducts.find(
-        (item: any) => String(item.id) === String(productId)
-      );
-
-      await updateProductStockInSupabase(updatedItem || product, newStock);
+      await updateProductStockInSupabase(product, newStock);
 
       setRemoveAmounts((prev) => ({ ...prev, [productId]: "" }));
       Alert.alert("Inventory Updated", `${product.name} stock was reduced by ${removeQty}.`);
@@ -518,31 +391,23 @@ export default function FarmerDashboard() {
 
     Alert.alert(
       "Remove Product",
-      `Remove ${product?.name || "this product"} from farm inventory and marketplace?`,
+      `Remove ${product.name || "this product"} from farm inventory and marketplace?`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Remove",
           style: "destructive",
           onPress: async () => {
-            try {
-              const updatedProducts = cleanProducts(
-                products.filter((item: any) => String(item.id) !== String(productId))
-              );
+            const updatedProducts = cleanProducts(
+              products.filter((item: any) => String(item.id) !== String(productId))
+            );
 
-              setProducts(updatedProducts);
-              await saveProductsLocally(updatedProducts);
-              await saveProductsToSupabase(updatedProducts);
-              await hideProductInSupabase(product);
+            setProducts(updatedProducts);
+            await saveProductsLocally(updatedProducts);
+            await saveProductsToSupabase(updatedProducts);
+            await hideProductInSupabase(product);
 
-              Alert.alert(
-                "Product Removed",
-                "Item removed from farmer inventory and hidden from marketplace."
-              );
-            } catch (error: any) {
-              console.log("Remove product error:", error);
-              Alert.alert("Remove Error", error?.message || "Unable to remove product.");
-            }
+            Alert.alert("Product Removed", "Product was removed from farm inventory.");
           },
         },
       ]
@@ -550,159 +415,88 @@ export default function FarmerDashboard() {
   }
 
   const visibleProducts = cleanProducts(products);
-
-  const totalSold = visibleProducts.reduce(
-    (sum, item: any) => sum + Number(item.sold || 0),
-    0
-  );
-
-  const totalGrossSales = visibleProducts.reduce(
+  const totalStock = visibleProducts.reduce((sum, item) => sum + getStock(item), 0);
+  const totalSold = visibleProducts.reduce((sum, item: any) => sum + Number(item.sold || 0), 0);
+  const totalSales = visibleProducts.reduce(
     (sum, item: any) => sum + Number(item.grossSales || 0),
     0
   );
-
-  const totalStock = visibleProducts.reduce((sum, item) => sum + getStock(item), 0);
-
-  const warningProducts = visibleProducts.filter(
-    (item) => getStockStatus(item) === "warning"
-  );
-
-  const criticalLowProducts = visibleProducts.filter(
-    (item) => getStockStatus(item) === "critical"
-  );
-
-  const lowStockProducts = cleanProducts([...criticalLowProducts, ...warningProducts]);
-
-  const soldOutProducts = visibleProducts.filter(
-    (item) => getStockStatus(item) === "soldout"
-  );
-
-  const topProducts = visibleProducts.slice(0, 4);
+  const lowStock = visibleProducts.filter((item) => {
+    const status = getStockStatus(item);
+    return status === "warning" || status === "critical";
+  });
+  const soldOut = visibleProducts.filter((item) => getStockStatus(item) === "soldout");
 
   if (loading) {
     return (
-      <View style={styles.loadingPage}>
+      <View style={styles.centerPage}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingTitle}>Loading farmer dashboard...</Text>
+        <Text style={styles.loadingText}>Loading farmer dashboard...</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.page}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
           <View style={styles.heroTop}>
-            <View>
-              <Text style={styles.kicker}>Farm2Home Seller Center</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.kicker}>Farm2Home Farmer Center</Text>
               <Text style={styles.heroTitle}>{farmName}</Text>
               <Text style={styles.heroSubtitle}>
-                Manage your storefront, inventory, orders, delivery, and payout status.
+                Manage products, inventory, orders, delivery, and store setup.
               </Text>
             </View>
 
-            <Pressable style={styles.logoutPill} onPress={logoutFarmer}>
+            <Pressable style={styles.logoutButton} onPress={logoutFarmer}>
               <Text style={styles.logoutText}>Logout</Text>
             </Pressable>
           </View>
 
           <View style={styles.statusPill}>
             <Text style={styles.statusDot}>●</Text>
-            <Text style={styles.statusText}>{statusLabel}</Text>
+            <Text style={styles.statusText}>Active / Store Open</Text>
           </View>
 
-          <View style={styles.heroStatsRow}>
-            <HeroStat value={String(visibleProducts.length)} label="Listed" />
+          <View style={styles.heroStats}>
+            <HeroStat value={String(visibleProducts.length)} label="Products" />
             <HeroStat value={String(totalStock)} label="Units" />
-            <HeroStat value={`$${totalGrossSales.toFixed(0)}`} label="Sales" />
-          </View>
-
-          <View style={styles.heroButtons}>
-            <Pressable style={styles.primaryButton} onPress={() => goTo("/farmer/select-produce")}>
-              <Text style={styles.primaryButtonText}>🥬 Select Produce</Text>
-            </Pressable>
-
-            <Pressable style={styles.secondaryButton} onPress={() => goTo("/farmer/add-product")}>
-              <Text style={styles.secondaryButtonText}>＋ Add Product</Text>
-            </Pressable>
+            <HeroStat value={`$${totalSales.toFixed(0)}`} label="Sales" />
           </View>
         </View>
 
-        <View style={styles.sectionHeaderRow}>
-          <View>
-            <Text style={styles.sectionTitle}>Quick Actions</Text>
-            <Text style={styles.sectionSub}>Run your farm store from one place.</Text>
-          </View>
+        <View style={styles.quickActions}>
+          <ActionButton label="Select Produce" icon="🥬" onPress={() => goTo("/farmer/select-produce")} />
+          <ActionButton label="Add Product" icon="➕" onPress={() => goTo("/farmer/add-product")} />
+          <ActionButton label="Store Setup" icon="🏪" onPress={() => goTo("/farmer/setup-store")} />
+          <ActionButton label="Orders" icon="📦" onPress={() => goTo("/farmer/orders")} />
+          <ActionButton label="Delivery" icon="🚚" onPress={() => goTo("/farmer/delivery-orders")} />
+          <ActionButton label="Payouts" icon="💳" onPress={() => goTo("/farmer/connect-bank")} />
         </View>
 
-        <View style={styles.actionGrid}>
-          <ActionButton label="Store Setup" icon="🏪" color={COLORS.primaryDark} onPress={() => goTo("/farmer/setup-store")} />
-          <ActionButton label="Orders" icon="📦" color={COLORS.blue} onPress={() => goTo("/farmer/orders")} />
-          <ActionButton label="Delivery" icon="🚚" color={COLORS.orange} onPress={() => goTo("/farmer/delivery-orders")} />
-          <ActionButton label="Payouts" icon="💳" color={COLORS.stripe} onPress={() => goTo("/farmer/connect-bank")} />
-          <ActionButton label="Profile" icon="👤" color={COLORS.purple} onPress={() => goTo("/farmer/profile")} />
-          <ActionButton label="Market Preview" icon="🛒" color={COLORS.yellow} onPress={() => goTo("/customer/marketplace")} />
+        <View style={styles.statsGrid}>
+          <StatCard label="Products Listed" value={String(visibleProducts.length)} />
+          <StatCard label="Total Inventory" value={String(totalStock)} />
+          <StatCard label="Units Sold" value={String(totalSold)} />
+          <StatCard label="Gross Sales" value={`$${totalSales.toFixed(2)}`} />
+          <StatCard label="Low Stock" value={String(lowStock.length)} />
+          <StatCard label="Sold Out" value={String(soldOut.length)} />
         </View>
 
-        <View style={styles.insightGrid}>
-          <InsightCard label="Products Listed" value={String(visibleProducts.length)} icon="🥬" />
-          <InsightCard label="Total Inventory" value={String(totalStock)} icon="📦" />
-          <InsightCard label="Units Sold" value={String(totalSold)} icon="📈" />
-          <InsightCard label="Gross Sales" value={`$${totalGrossSales.toFixed(2)}`} icon="💵" />
-          <InsightCard label="Low Stock" value={String(lowStockProducts.length)} icon="⚠️" />
-          <InsightCard label="Sold Out" value={String(soldOutProducts.length)} icon="🔴" />
-        </View>
-
-        <InventoryAlertSection
-          title="Inventory Alerts"
-          products={lowStockProducts}
-          soldOutProducts={soldOutProducts}
-        />
-
-        {topProducts.length > 0 && (
-          <>
-            <View style={styles.sectionHeaderRow}>
-              <View>
-                <Text style={styles.sectionTitle}>Top Inventory Snapshot</Text>
-                <Text style={styles.sectionSub}>Your first listed products.</Text>
-              </View>
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.topProductsScroller}>
-              {topProducts.map((item: any) => (
-                <View key={`top-${item.id}`} style={styles.topProductCard}>
-                  <Image source={{ uri: getProductImage(item) }} style={styles.topProductImage} />
-                  <Text style={styles.topProductName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.topProductMeta}>{getStock(item)} {item.unit || "each"} available</Text>
-                </View>
-              ))}
-            </ScrollView>
-          </>
-        )}
-
-        <View style={styles.sectionHeaderRow}>
-          <View>
-            <Text style={styles.sectionTitle}>Farm Inventory</Text>
-            <Text style={styles.sectionSub}>
-              Add stock, reduce stock, or remove unwanted products from your farm list.
-            </Text>
-          </View>
-        </View>
+        <Text style={styles.sectionTitle}>Farm Inventory</Text>
+        <Text style={styles.sectionSub}>
+          Reduce stock with Remove Inventory. Delete unwanted items with Remove Product.
+        </Text>
 
         {visibleProducts.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>🥬</Text>
-            <Text style={styles.emptyTitle}>No farmer products yet</Text>
-            <Text style={styles.emptyText}>
-              Select common produce from the Farm2Home catalog or add your own custom farm product.
-            </Text>
+            <Text style={styles.emptyTitle}>No products listed yet</Text>
+            <Text style={styles.emptyText}>Select produce or add a custom farm product.</Text>
 
-            <Pressable style={styles.emptyPrimary} onPress={() => goTo("/farmer/select-produce")}>
-              <Text style={styles.emptyPrimaryText}>Select Produce</Text>
-            </Pressable>
-
-            <Pressable style={styles.emptySecondary} onPress={() => goTo("/farmer/add-product")}>
-              <Text style={styles.emptySecondaryText}>Add Custom Product</Text>
+            <Pressable style={styles.primaryButton} onPress={() => goTo("/farmer/select-produce")}>
+              <Text style={styles.primaryButtonText}>Select Produce</Text>
             </Pressable>
           </View>
         ) : (
@@ -710,28 +504,27 @@ export default function FarmerDashboard() {
             const stock = getStock(item);
             const threshold = getThreshold(item);
             const status = getStockStatus(item);
-            const badge = getBadge(status);
 
             return (
-              <View key={item.id} style={styles.inventoryCard}>
-                <Image source={{ uri: getProductImage(item) }} style={styles.inventoryImage} />
+              <View key={item.id} style={styles.productCard}>
+                <Image source={{ uri: getProductImage(item) }} style={styles.productImage} />
 
-                <View style={styles.inventoryBody}>
-                  <View style={styles.inventoryTopRow}>
+                <View style={styles.productBody}>
+                  <View style={styles.productTop}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.productName}>{item.name}</Text>
                       <Text style={styles.productCategory}>{item.category || "Farm Goods"}</Text>
                     </View>
 
-                    <View style={[styles.badge, { backgroundColor: badge.bg }]}>
-                      <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
-                    </View>
+                    <Text style={[styles.badge, getBadgeStyle(status)]}>{getBadgeText(status)}</Text>
                   </View>
 
                   <View style={styles.stockBox}>
                     <View>
                       <Text style={styles.stockLabel}>Current Stock</Text>
-                      <Text style={styles.stockValue}>{stock} {item.unit || "each"}</Text>
+                      <Text style={styles.stockValue}>
+                        {stock} {item.unit || "each"}
+                      </Text>
                     </View>
                     <View style={styles.thresholdBox}>
                       <Text style={styles.thresholdLabel}>Low Alert</Text>
@@ -739,19 +532,19 @@ export default function FarmerDashboard() {
                     </View>
                   </View>
 
-                  <View style={styles.productMetrics}>
-                    <Metric label="Price" value={`$${Number(item.price || 0).toFixed(2)}`} />
-                    <Metric label="Sold" value={String(Number(item.sold || 0))} />
-                    <Metric label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
-                    <Metric label="Delivery" value={item.deliveryOption || item.delivery_option || "Not set"} />
+                  <View style={styles.detailGrid}>
+                    <Detail label="Price" value={`$${Number(item.price || 0).toFixed(2)}`} />
+                    <Detail label="Sold" value={String(Number(item.sold || 0))} />
+                    <Detail label="Gross" value={`$${Number(item.grossSales || 0).toFixed(2)}`} />
+                    <Detail label="Delivery" value={item.deliveryOption || item.delivery_option || "Not set"} />
                   </View>
 
-                  <View style={styles.stockControlBox}>
+                  <View style={styles.controlPanel}>
                     <Text style={styles.controlTitle}>Inventory Controls</Text>
 
                     <View style={styles.controlRow}>
                       <TextInput
-                        style={styles.controlInput}
+                        style={styles.input}
                         placeholder="Add qty"
                         placeholderTextColor="#8A9482"
                         keyboardType="numeric"
@@ -760,15 +553,14 @@ export default function FarmerDashboard() {
                           setRestockAmounts((prev) => ({ ...prev, [item.id]: text }))
                         }
                       />
-
-                      <Pressable style={styles.addStockButton} onPress={() => restockProduct(item.id)}>
-                        <Text style={styles.addStockText}>Add</Text>
+                      <Pressable style={styles.addButton} onPress={() => restockProduct(item.id)}>
+                        <Text style={styles.actionText}>Add</Text>
                       </Pressable>
                     </View>
 
                     <View style={styles.controlRow}>
                       <TextInput
-                        style={styles.controlInput}
+                        style={styles.input}
                         placeholder="Remove qty"
                         placeholderTextColor="#8A9482"
                         keyboardType="numeric"
@@ -777,14 +569,13 @@ export default function FarmerDashboard() {
                           setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))
                         }
                       />
-
-                      <Pressable style={styles.reduceStockButton} onPress={() => removeInventory(item.id)}>
-                        <Text style={styles.reduceStockText}>Reduce</Text>
+                      <Pressable style={styles.reduceButton} onPress={() => removeInventory(item.id)}>
+                        <Text style={styles.actionText}>Reduce</Text>
                       </Pressable>
                     </View>
 
-                    <Pressable style={styles.deleteProductButton} onPress={() => deleteProduct(item.id)}>
-                      <Text style={styles.deleteProductText}>Remove Product From Farm Inventory</Text>
+                    <Pressable style={styles.deleteButton} onPress={() => deleteProduct(item.id)}>
+                      <Text style={styles.deleteText}>Remove Product From Farm Inventory</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -793,24 +584,17 @@ export default function FarmerDashboard() {
           })
         )}
 
-        <View style={styles.sectionHeaderRow}>
-          <View>
-            <Text style={styles.sectionTitle}>Customer Reviews</Text>
-            <Text style={styles.sectionSub}>Recent customer feedback.</Text>
-          </View>
-        </View>
+        <Text style={styles.sectionTitle}>Customer Reviews</Text>
 
         {reviews.map((review) => (
           <View key={review.id} style={styles.reviewCard}>
             <View style={styles.reviewAvatar}>
               <Text style={styles.reviewAvatarText}>{review.customer.slice(0, 1)}</Text>
             </View>
-
-            <View style={styles.reviewBody}>
-              <View style={styles.reviewTop}>
-                <Text style={styles.reviewName}>{review.customer}</Text>
-                <Text style={styles.reviewRating}>⭐ {review.rating}</Text>
-              </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.reviewName}>
+                {review.customer} · ⭐ {review.rating}
+              </Text>
               <Text style={styles.reviewText}>{review.text}</Text>
             </View>
           </View>
@@ -820,20 +604,18 @@ export default function FarmerDashboard() {
   );
 }
 
-function getBadge(status: string) {
-  if (status === "soldout") {
-    return { label: "Sold Out", bg: COLORS.redSoft, text: COLORS.redText };
-  }
+function getBadgeText(status: string) {
+  if (status === "soldout") return "Sold Out";
+  if (status === "critical") return "Critical";
+  if (status === "warning") return "Low Stock";
+  return "Available";
+}
 
-  if (status === "critical") {
-    return { label: "Critical", bg: COLORS.criticalBg, text: COLORS.criticalText };
-  }
-
-  if (status === "warning") {
-    return { label: "Low Stock", bg: COLORS.warningBg, text: COLORS.warningText };
-  }
-
-  return { label: "Available", bg: COLORS.successBg, text: COLORS.successText };
+function getBadgeStyle(status: string) {
+  if (status === "soldout") return styles.badgeRed;
+  if (status === "critical") return styles.badgeOrange;
+  if (status === "warning") return styles.badgeYellow;
+  return styles.badgeGreen;
 }
 
 function HeroStat({ value, label }: { value: string; label: string }) {
@@ -845,654 +627,266 @@ function HeroStat({ value, label }: { value: string; label: string }) {
   );
 }
 
-function ActionButton({
-  label,
-  icon,
-  color,
-  onPress,
-}: {
-  label: string;
-  icon: string;
-  color: string;
-  onPress: () => void;
-}) {
+function ActionButton({ label, icon, onPress }: { label: string; icon: string; onPress: () => void }) {
   return (
-    <Pressable style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]} onPress={onPress}>
-      <View style={[styles.actionIconCircle, { backgroundColor: color }]}>
-        <Text style={styles.actionIcon}>{icon}</Text>
-      </View>
-      <Text style={styles.actionText}>{label}</Text>
+    <Pressable style={styles.quickAction} onPress={onPress}>
+      <Text style={styles.quickIcon}>{icon}</Text>
+      <Text style={styles.quickLabel}>{label}</Text>
     </Pressable>
   );
 }
 
-function InsightCard({ label, value, icon }: { label: string; value: string; icon: string }) {
+function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.insightCard}>
-      <Text style={styles.insightIcon}>{icon}</Text>
-      <Text style={styles.insightValue}>{value}</Text>
-      <Text style={styles.insightLabel}>{label}</Text>
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Detail({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.metricCard}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <Text style={styles.metricValue} numberOfLines={1}>{value}</Text>
-    </View>
-  );
-}
-
-function InventoryAlertSection({
-  title,
-  products,
-  soldOutProducts,
-}: {
-  title: string;
-  products: Product[];
-  soldOutProducts: Product[];
-}) {
-  const allAlerts = [...products, ...soldOutProducts];
-
-  return (
-    <View style={styles.alertPanel}>
-      <View style={styles.alertPanelTop}>
-        <View>
-          <Text style={styles.alertTitle}>{title}</Text>
-          <Text style={styles.alertSub}>Low stock and sold-out products.</Text>
-        </View>
-        <Text style={styles.alertCount}>{allAlerts.length}</Text>
-      </View>
-
-      {allAlerts.length === 0 ? (
-        <Text style={styles.alertEmpty}>No urgent inventory alerts right now.</Text>
-      ) : (
-        allAlerts.map((item: any) => {
-          const status = getStockStatus(item);
-          const badge = getBadge(status);
-
-          return (
-            <View key={`alert-${item.id}`} style={styles.alertRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.alertProductName}>{item.name}</Text>
-                <Text style={styles.alertProductSub}>
-                  Stock: {getStock(item)} · Threshold: {getThreshold(item)}
-                </Text>
-              </View>
-
-              <View style={[styles.smallBadge, { backgroundColor: badge.bg }]}>
-                <Text style={[styles.smallBadgeText, { color: badge.text }]}>{badge.label}</Text>
-              </View>
-            </View>
-          );
-        })
-      )}
+    <View style={styles.detailCard}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue} numberOfLines={1}>
+        {value}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: {
+  page: { flex: 1, backgroundColor: COLORS.bg },
+  centerPage: {
     flex: 1,
     backgroundColor: COLORS.bg,
-  },
-  loadingPage: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
     padding: 24,
   },
-  loadingTitle: {
-    marginTop: 14,
-    color: COLORS.muted,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  content: {
-    padding: 18,
-    paddingBottom: 44,
-  },
+  loadingText: { marginTop: 12, color: COLORS.muted, fontWeight: "900" },
+  content: { padding: 18, paddingBottom: 44 },
+
   hero: {
     backgroundColor: COLORS.primaryDark,
-    borderRadius: 34,
+    borderRadius: 30,
     padding: 20,
-    marginBottom: 18,
+    marginBottom: 16,
   },
-  heroTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start" },
   kicker: {
     color: "#BBF7D0",
     fontWeight: "900",
     fontSize: 12,
     textTransform: "uppercase",
-    letterSpacing: 0.8,
     marginBottom: 6,
   },
-  heroTitle: {
-    color: "#FFFFFF",
-    fontSize: 31,
-    fontWeight: "900",
-  },
-  heroSubtitle: {
-    color: "#DCFCE7",
-    fontWeight: "700",
-    lineHeight: 21,
-    marginTop: 8,
-    maxWidth: 285,
-  },
-  logoutPill: {
+  heroTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 30 },
+  heroSubtitle: { color: "#DCFCE7", fontWeight: "700", lineHeight: 21, marginTop: 8 },
+  logoutButton: {
     backgroundColor: "rgba(255,255,255,0.16)",
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderRadius: 999,
-    height: 42,
+    marginLeft: 10,
   },
-  logoutText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  logoutText: { color: "#FFFFFF", fontWeight: "900" },
   statusPill: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    backgroundColor: "#FFFFFF",
+    alignSelf: "flex-start",
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 999,
     marginTop: 16,
   },
-  statusDot: {
-    color: COLORS.primary,
-    fontSize: 12,
-  },
-  statusText: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  heroStatsRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 18,
-  },
+  statusDot: { color: COLORS.primary, marginRight: 7 },
+  statusText: { color: COLORS.text, fontWeight: "900" },
+  heroStats: { flexDirection: "row", marginTop: 18 },
   heroStat: {
     flex: 1,
     backgroundColor: "rgba(255,255,255,0.14)",
-    borderRadius: 20,
-    padding: 13,
-  },
-  heroStatValue: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "900",
-  },
-  heroStatLabel: {
-    color: "#DCFCE7",
-    fontWeight: "800",
-    fontSize: 12,
-    marginTop: 3,
-  },
-  heroButtons: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 18,
-  },
-  primaryButton: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
     borderRadius: 18,
-    paddingVertical: 14,
-    alignItems: "center",
+    padding: 12,
+    marginRight: 8,
   },
-  primaryButtonText: {
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-  },
-  secondaryButton: {
-    flex: 1,
-    backgroundColor: COLORS.yellow,
-    borderRadius: 18,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  secondaryButtonText: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  sectionHeaderRow: {
-    marginTop: 4,
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  sectionSub: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-    lineHeight: 20,
-  },
-  actionGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 18,
-  },
-  actionButton: {
+  heroStatValue: { color: "#FFFFFF", fontWeight: "900", fontSize: 20 },
+  heroStatLabel: { color: "#DCFCE7", fontWeight: "800", fontSize: 12, marginTop: 3 },
+
+  quickActions: { flexDirection: "row", flexWrap: "wrap", marginBottom: 16 },
+  quickAction: {
     width: "48%",
     backgroundColor: COLORS.card,
-    borderRadius: 24,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 14,
-    minHeight: 98,
-  },
-  actionIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 17,
-    justifyContent: "center",
-    alignItems: "center",
     marginBottom: 10,
+    marginRight: "2%",
   },
-  actionIcon: {
-    fontSize: 22,
-  },
-  actionText: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  insightGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 18,
-  },
-  insightCard: {
+  quickIcon: { fontSize: 24, marginBottom: 8 },
+  quickLabel: { color: COLORS.text, fontWeight: "900" },
+
+  statsGrid: { flexDirection: "row", flexWrap: "wrap", marginBottom: 18 },
+  statCard: {
     width: "48%",
     backgroundColor: COLORS.card,
-    borderRadius: 24,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 15,
+    marginBottom: 10,
+    marginRight: "2%",
   },
-  insightIcon: {
-    fontSize: 22,
-    marginBottom: 8,
-  },
-  insightValue: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 22,
-  },
-  insightLabel: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    fontSize: 12,
-    marginTop: 3,
-  },
-  alertPanel: {
-    backgroundColor: COLORS.card,
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 16,
-    marginBottom: 18,
-  },
-  alertPanelTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  alertTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 19,
-  },
-  alertSub: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
-  alertCount: {
-    backgroundColor: COLORS.primarySoft,
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 999,
-    overflow: "hidden",
-  },
-  alertEmpty: {
-    color: COLORS.muted,
-    fontWeight: "800",
-  },
-  alertRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    padding: 12,
-    backgroundColor: COLORS.bg,
-    borderRadius: 18,
-    marginTop: 8,
-  },
-  alertProductName: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  alertProductSub: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-    marginTop: 3,
-  },
-  smallBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  smallBadgeText: {
-    fontWeight: "900",
-    fontSize: 11,
-  },
-  topProductsScroller: {
-    marginBottom: 18,
-  },
-  topProductCard: {
-    width: 156,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 24,
-    padding: 10,
-    marginRight: 10,
-  },
-  topProductImage: {
-    width: "100%",
-    height: 92,
-    borderRadius: 18,
-    backgroundColor: COLORS.primarySoft,
-  },
-  topProductName: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: 9,
-  },
-  topProductMeta: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-    marginTop: 3,
-  },
+  statValue: { color: COLORS.primary, fontWeight: "900", fontSize: 22 },
+  statLabel: { color: COLORS.muted, fontWeight: "800", fontSize: 12, marginTop: 4 },
+
+  sectionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 23, marginTop: 8 },
+  sectionSub: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3, marginBottom: 12 },
+
   emptyCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 28,
-    padding: 24,
-    marginBottom: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
+    borderRadius: 26,
+    padding: 22,
     alignItems: "center",
+    marginBottom: 18,
   },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: 10,
-  },
-  emptyTitle: {
-    color: COLORS.text,
-    fontSize: 21,
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  emptyText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  emptyPrimary: {
-    alignSelf: "stretch",
+  emptyIcon: { fontSize: 46, marginBottom: 10 },
+  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 20 },
+  emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", marginTop: 6 },
+  primaryButton: {
     backgroundColor: COLORS.primary,
-    borderRadius: 18,
+    borderRadius: 17,
     padding: 15,
-    marginTop: 14,
-    alignItems: "center",
-  },
-  emptyPrimaryText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  emptySecondary: {
     alignSelf: "stretch",
-    backgroundColor: COLORS.primarySoft,
-    borderRadius: 18,
-    padding: 15,
-    marginTop: 10,
     alignItems: "center",
+    marginTop: 14,
   },
-  emptySecondaryText: {
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-  },
-  inventoryCard: {
+  primaryButtonText: { color: "#FFFFFF", fontWeight: "900" },
+
+  productCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 30,
+    borderRadius: 28,
     borderWidth: 1,
     borderColor: COLORS.border,
     marginBottom: 16,
     overflow: "hidden",
   },
-  inventoryImage: {
-    width: "100%",
-    height: 190,
-    backgroundColor: COLORS.primarySoft,
-  },
-  inventoryBody: {
-    padding: 16,
-  },
-  inventoryTopRow: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 12,
-  },
-  productName: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 22,
-  },
-  productCategory: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
+  productImage: { width: "100%", height: 190, backgroundColor: COLORS.greenSoft },
+  productBody: { padding: 16 },
+  productTop: { flexDirection: "row", alignItems: "flex-start", marginBottom: 12 },
+  productName: { color: COLORS.text, fontWeight: "900", fontSize: 22 },
+  productCategory: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
+
   badge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  badgeText: {
     fontWeight: "900",
     fontSize: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: "hidden",
+    marginLeft: 8,
   },
+  badgeGreen: { backgroundColor: "#DCFCE7", color: "#166534" },
+  badgeYellow: { backgroundColor: "#FEF3C7", color: "#92400E" },
+  badgeOrange: { backgroundColor: "#FFEDD5", color: "#C2410C" },
+  badgeRed: { backgroundColor: COLORS.redSoft, color: COLORS.redText },
+
   stockBox: {
-    backgroundColor: COLORS.primarySoft,
-    borderRadius: 22,
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 20,
     padding: 15,
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
     marginBottom: 12,
   },
-  stockLabel: {
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-    fontSize: 12,
-  },
-  stockValue: {
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-    fontSize: 28,
-    marginTop: 3,
-  },
+  stockLabel: { color: COLORS.primaryDark, fontWeight: "900", fontSize: 12 },
+  stockValue: { color: COLORS.primaryDark, fontWeight: "900", fontSize: 27, marginTop: 3 },
   thresholdBox: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 11,
+    borderRadius: 15,
+    padding: 10,
     minWidth: 78,
     alignItems: "center",
   },
-  thresholdLabel: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    fontSize: 11,
-  },
-  thresholdValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 18,
-    marginTop: 2,
-  },
-  productMetrics: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 12,
-  },
-  metricCard: {
+  thresholdLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11 },
+  thresholdValue: { color: COLORS.text, fontWeight: "900", fontSize: 18 },
+
+  detailGrid: { flexDirection: "row", flexWrap: "wrap", marginBottom: 12 },
+  detailCard: {
     width: "48%",
     backgroundColor: COLORS.bg,
-    borderRadius: 16,
-    padding: 11,
+    borderRadius: 15,
+    padding: 10,
+    marginRight: "2%",
+    marginBottom: 8,
   },
-  metricLabel: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    fontSize: 11,
-    marginBottom: 4,
-  },
-  metricValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 12,
-  },
-  stockControlBox: {
-    backgroundColor: COLORS.bg,
-    borderRadius: 22,
-    padding: 13,
-  },
-  controlTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginBottom: 10,
-  },
-  controlRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 9,
-  },
-  controlInput: {
+  detailLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11 },
+  detailValue: { color: COLORS.text, fontWeight: "900", fontSize: 12, marginTop: 4 },
+
+  controlPanel: { backgroundColor: COLORS.bg, borderRadius: 20, padding: 12 },
+  controlTitle: { color: COLORS.text, fontWeight: "900", marginBottom: 10 },
+  controlRow: { flexDirection: "row", marginBottom: 9 },
+  input: {
     flex: 1,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 16,
+    borderRadius: 15,
     paddingHorizontal: 13,
     paddingVertical: 12,
     color: COLORS.text,
     fontWeight: "800",
+    marginRight: 8,
   },
-  addStockButton: {
-    width: 88,
+  addButton: {
+    width: 85,
     backgroundColor: COLORS.dark,
-    borderRadius: 16,
+    borderRadius: 15,
     justifyContent: "center",
     alignItems: "center",
   },
-  addStockText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  reduceStockButton: {
-    width: 88,
+  reduceButton: {
+    width: 85,
     backgroundColor: COLORS.orange,
-    borderRadius: 16,
+    borderRadius: 15,
     justifyContent: "center",
     alignItems: "center",
   },
-  reduceStockText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  deleteProductButton: {
+  actionText: { color: "#FFFFFF", fontWeight: "900" },
+  deleteButton: {
     backgroundColor: COLORS.redSoft,
-    borderWidth: 1,
     borderColor: "#FCA5A5",
-    borderRadius: 16,
+    borderWidth: 1,
+    borderRadius: 15,
     padding: 14,
     alignItems: "center",
-    marginTop: 2,
   },
-  deleteProductText: {
-    color: COLORS.redText,
-    fontWeight: "900",
-    textAlign: "center",
-  },
+  deleteText: { color: COLORS.redText, fontWeight: "900", textAlign: "center" },
+
   reviewCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
+    borderRadius: 20,
+    padding: 14,
     flexDirection: "row",
-    gap: 12,
     marginBottom: 10,
   },
   reviewAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
-    backgroundColor: COLORS.primarySoft,
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    backgroundColor: COLORS.greenSoft,
     justifyContent: "center",
     alignItems: "center",
+    marginRight: 12,
   },
-  reviewAvatarText: {
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  reviewBody: {
-    flex: 1,
-  },
-  reviewTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  reviewName: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  reviewRating: {
-    color: COLORS.primary,
-    fontWeight: "900",
-  },
-  reviewText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 5,
-    lineHeight: 20,
-  },
-  pressed: {
-    opacity: 0.75,
-  },
+  reviewAvatarText: { color: COLORS.primaryDark, fontWeight: "900", fontSize: 18 },
+  reviewName: { color: COLORS.text, fontWeight: "900" },
+  reviewText: { color: COLORS.muted, fontWeight: "700", marginTop: 5, lineHeight: 20 },
 });
