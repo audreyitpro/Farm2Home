@@ -764,7 +764,7 @@ export default function FarmerDashboard() {
                     onChangeText={(text) => setRemoveAmounts((prev) => ({ ...prev, [item.id]: text }))}
                   />
 
-                  <Pressable style={({ pressed }) => [styles.removeStockButton, pressed && styles.pressed]} onPress={() => removeInventory(item.id)}>
+                  <Pressable style={({ pressed }) => [styles.removeStockButton, pressed && styles.pressed]} onPress={() => deleteProduct(item.id)}>
                     <Text style={styles.removeStockText}>Remove Inventory</Text>
                   </Pressable>
 
