@@ -32,9 +32,11 @@ const COLORS = {
   border: "#E5E7EB",
   softGreen: "#EAF5E6",
   white: "#FFFFFF",
-  redSoft: "#FEE2E2",
-  redText: "#991B1B",
 };
+
+function getFarmerProductsKey(farmerId: string) {
+  return `farmer_products_${farmerId}`;
+}
 
 function cleanProducts(items: any[]) {
   return (items || []).filter((item: any) => {
@@ -90,8 +92,6 @@ function makeFarmerProduct(item: FarmCatalogProduct, farmer: any) {
     marketplace_visible: true,
     removed_from_inventory: false,
     source: "farm_catalog",
-    harvestDate: "",
-    harvest_date: "",
     organic: item.tags?.includes("organic") || false,
     local: true,
     seasonal: item.tags?.includes("seasonal") || false,
@@ -105,7 +105,7 @@ function makeFarmerProduct(item: FarmCatalogProduct, farmer: any) {
 }
 
 export default function SelectProduceScreen() {
-  const [selectedCategory, setSelectedCategory] = useState<string>("All");
+  const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedProducts, setSelectedProducts] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState("");
   const [currentFarmer, setCurrentFarmer] = useState<any>(null);
@@ -118,43 +118,46 @@ export default function SelectProduceScreen() {
   );
 
   async function loadCurrentFarmer() {
-    try {
-      const saved =
-        (await AsyncStorage.getItem("currentFarmer")) ||
-        (await AsyncStorage.getItem("currentUser"));
+    const saved =
+      (await AsyncStorage.getItem("currentFarmer")) ||
+      (await AsyncStorage.getItem("currentUser"));
 
-      if (!saved) {
-        router.replace("/farmer/login" as any);
-        return;
-      }
-
-      const parsed = JSON.parse(saved);
-      const farmerId = parsed.id || parsed.farmerId;
-
-      let latestFarmer = parsed;
-
-      if (farmerId) {
-        const { data, error } = await supabase
-          .from("farmers")
-          .select("*")
-          .eq("id", farmerId)
-          .maybeSingle();
-
-        if (!error && data) {
-          latestFarmer = {
-            ...parsed,
-            ...data,
-            id: data.id,
-            farmerId: data.id,
-            products: data.products || parsed.products || [],
-          };
-        }
-      }
-
-      setCurrentFarmer(latestFarmer);
-    } catch (error) {
-      console.log("LOAD_CURRENT_FARMER_ERROR:", error);
+    if (!saved) {
+      router.replace("/farmer/login" as any);
+      return;
     }
+
+    const parsed = JSON.parse(saved);
+    const farmerId = parsed.id || parsed.farmerId;
+
+    let latestFarmer = parsed;
+
+    if (farmerId) {
+      const localInventory = await AsyncStorage.getItem(getFarmerProductsKey(farmerId));
+      if (localInventory) {
+        latestFarmer.products = cleanProducts(JSON.parse(localInventory));
+      }
+
+      const { data } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("id", farmerId)
+        .maybeSingle();
+
+      if (data) {
+        latestFarmer = {
+          ...latestFarmer,
+          ...data,
+          id: data.id,
+          farmerId: data.id,
+          products: latestFarmer.products?.length
+            ? latestFarmer.products
+            : data.products || parsed.products || [],
+        };
+      }
+    }
+
+    setCurrentFarmer(latestFarmer);
   }
 
   const categories = ["All", ...FARM_PRODUCT_CATEGORIES];
@@ -187,9 +190,7 @@ export default function SelectProduceScreen() {
     try {
       setSaving(true);
 
-      const selected = FARM_PRODUCT_CATALOG.filter(
-        (item) => selectedProducts[item.id]
-      );
+      const selected = FARM_PRODUCT_CATALOG.filter((item) => selectedProducts[item.id]);
 
       if (selected.length === 0) {
         Alert.alert("No Products Selected", "Select at least one farm product.");
@@ -211,46 +212,46 @@ export default function SelectProduceScreen() {
       const farmerId = farmer.id || farmer.farmerId;
 
       if (!farmerId) {
-        Alert.alert("Session Error", "Farmer ID is missing. Please login again.");
+        Alert.alert("Session Error", "Farmer ID missing. Please login again.");
         router.replace("/farmer/login" as any);
         return;
       }
 
       let latestProducts = cleanProducts(farmer.products || []);
 
-      const { data } = await supabase
-        .from("farmers")
-        .select("products")
-        .eq("id", farmerId)
-        .maybeSingle();
-
-      if (data?.products) {
-        latestProducts = cleanProducts(data.products || []);
+      const localInventory = await AsyncStorage.getItem(getFarmerProductsKey(farmerId));
+      if (localInventory) {
+        latestProducts = cleanProducts(JSON.parse(localInventory));
       }
 
       const existingKeys = new Set(
-        latestProducts.map((item: any) =>
-          String(item.catalogId || item.catalog_id || item.id || item.name)
-            .trim()
-            .toLowerCase()
-        )
+        latestProducts.flatMap((item: any) => [
+          String(item.id || "").toLowerCase(),
+          String(item.catalogId || item.catalog_id || "").toLowerCase(),
+          String(item.name || "").toLowerCase(),
+        ])
       );
 
       const newProducts = selected
         .filter((item) => {
-          const idKey = String(item.id).trim().toLowerCase();
-          const nameKey = String(item.name).trim().toLowerCase();
+          const idKey = String(item.id).toLowerCase();
+          const nameKey = String(item.name).toLowerCase();
           return !existingKeys.has(idKey) && !existingKeys.has(nameKey);
         })
         .map((item) => makeFarmerProduct(item, farmer));
 
       if (newProducts.length === 0) {
-        Alert.alert("Already Added", "Those selected products are already on your dashboard.");
+        Alert.alert("Already Added", "Those products are already on your dashboard.");
         router.replace("/farmer/dashboard" as any);
         return;
       }
 
       const updatedProducts = cleanProducts([...latestProducts, ...newProducts]);
+
+      await AsyncStorage.setItem(
+        getFarmerProductsKey(farmerId),
+        JSON.stringify(updatedProducts)
+      );
 
       const updatedFarmer = {
         ...farmer,
@@ -271,7 +272,7 @@ export default function SelectProduceScreen() {
       await AsyncStorage.setItem("userRole", "farmer");
       await AsyncStorage.setItem("currentUserRole", "farmer");
 
-      const { error: farmerSaveError } = await supabase
+      await supabase
         .from("farmers")
         .update({
           products: updatedProducts,
@@ -280,48 +281,10 @@ export default function SelectProduceScreen() {
         })
         .eq("id", farmerId);
 
-      if (farmerSaveError) {
-        console.log("SAVE_FARMER_PRODUCTS_ERROR:", farmerSaveError.message);
-      }
-
-      for (const product of newProducts) {
-        const { error: productInsertError } = await supabase.from("products").upsert(
-          {
-            id: product.id,
-            farmer_id: farmerId,
-            name: product.name,
-            category: product.category,
-            unit: product.unit,
-            price: product.price,
-            stock: product.stock,
-            quantity: product.quantity,
-            inventory: product.inventory,
-            image_url: product.image_url,
-            active: true,
-            available: true,
-            marketplace_visible: true,
-            removed_from_inventory: false,
-            is_sold_out: false,
-            updated_at: new Date().toISOString(),
-            created_at: product.created_at,
-          },
-          { onConflict: "id" }
-        );
-
-        if (productInsertError) {
-          console.log("PRODUCT_UPSERT_ERROR:", productInsertError.message);
-        }
-      }
-
       Alert.alert(
         "Products Added",
-        `${newProducts.length} new product(s) added to your farm inventory.`,
-        [
-          {
-            text: "Go to Dashboard",
-            onPress: () => router.replace("/farmer/dashboard" as any),
-          },
-        ]
+        `${newProducts.length} product(s) added to your farm inventory.`,
+        [{ text: "Go to Dashboard", onPress: () => router.replace("/farmer/dashboard" as any) }]
       );
     } catch (error: any) {
       console.log("SAVE_SELECTED_PRODUCTS_ERROR:", error);
@@ -355,7 +318,6 @@ export default function SelectProduceScreen() {
 
           <View style={styles.tagRow}>
             <Text style={styles.unitTag}>{item.unit}</Text>
-
             {item.tags.slice(0, 3).map((tag) => (
               <Text key={`${item.id}-${tag}`} style={styles.tag}>
                 {tag}
@@ -381,10 +343,8 @@ export default function SelectProduceScreen() {
     <View style={styles.page}>
       <View style={styles.header}>
         <Text style={styles.title}>Select Farm Products</Text>
-
         <Text style={styles.subtitle}>
-          Choose produce, fish, hay, seasonal items, flowers, farm supplies, and
-          more to add to your Farmer Store.
+          Choose products to add to your Farmer Dashboard inventory.
         </Text>
 
         <TextInput
@@ -396,14 +356,9 @@ export default function SelectProduceScreen() {
         />
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryRow}
-      >
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
         {categories.map((category) => {
           const active = selectedCategory === category;
-
           return (
             <Pressable
               key={category}
@@ -424,22 +379,6 @@ export default function SelectProduceScreen() {
         renderItem={renderProduct}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyTitle}>No product found</Text>
-            <Text style={styles.emptyText}>
-              Add it as a custom product with your own photo, price, unit, and
-              stock quantity.
-            </Text>
-
-            <Pressable
-              style={styles.emptyCustomButton}
-              onPress={() => router.push("/farmer/add-product" as any)}
-            >
-              <Text style={styles.emptyCustomText}>Upload Custom Product</Text>
-            </Pressable>
-          </View>
-        }
       />
 
       <View style={styles.footer}>
@@ -457,9 +396,7 @@ export default function SelectProduceScreen() {
           style={styles.customButton}
           onPress={() => router.push("/farmer/add-product" as any)}
         >
-          <Text style={styles.customText}>
-            Product Not Listed? Upload Your Own
-          </Text>
+          <Text style={styles.customText}>Product Not Listed? Upload Your Own</Text>
         </Pressable>
       </View>
     </View>
@@ -467,10 +404,7 @@ export default function SelectProduceScreen() {
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
+  page: { flex: 1, backgroundColor: COLORS.background },
   header: {
     padding: 18,
     paddingTop: 24,
@@ -478,17 +412,8 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 28,
     borderBottomRightRadius: 28,
   },
-  title: {
-    color: COLORS.white,
-    fontSize: 30,
-    fontWeight: "900",
-  },
-  subtitle: {
-    color: "#DCFCE7",
-    fontWeight: "700",
-    lineHeight: 21,
-    marginTop: 8,
-  },
+  title: { color: COLORS.white, fontSize: 30, fontWeight: "900" },
+  subtitle: { color: "#DCFCE7", fontWeight: "700", lineHeight: 21, marginTop: 8 },
   search: {
     backgroundColor: COLORS.white,
     borderRadius: 18,
@@ -497,11 +422,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.text,
   },
-  categoryRow: {
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 8,
-  },
+  categoryRow: { paddingHorizontal: 14, paddingVertical: 14, gap: 8 },
   categoryButton: {
     backgroundColor: COLORS.white,
     borderWidth: 1,
@@ -510,22 +431,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  categoryActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  categoryText: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 12,
-  },
-  categoryTextActive: {
-    color: COLORS.white,
-  },
-  list: {
-    padding: 16,
-    paddingBottom: 170,
-  },
+  categoryActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  categoryText: { color: COLORS.text, fontWeight: "900", fontSize: 12 },
+  categoryTextActive: { color: COLORS.white },
+  list: { padding: 16, paddingBottom: 170 },
   productCard: {
     backgroundColor: COLORS.card,
     borderRadius: 24,
@@ -534,33 +443,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  productCardSelected: {
-    borderColor: COLORS.primary,
-    borderWidth: 3,
-  },
-  productImage: {
-    width: "100%",
-    height: 170,
-    backgroundColor: COLORS.softGreen,
-  },
-  productBody: {
-    padding: 14,
-  },
-  productTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  productName: {
-    color: COLORS.text,
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  productCategory: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    marginTop: 3,
-  },
+  productCardSelected: { borderColor: COLORS.primary, borderWidth: 3 },
+  productImage: { width: "100%", height: 170, backgroundColor: COLORS.softGreen },
+  productBody: { padding: 14 },
+  productTop: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  productName: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  productCategory: { color: COLORS.muted, fontWeight: "800", marginTop: 3 },
   checkCircle: {
     width: 32,
     height: 32,
@@ -570,20 +458,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  checkCircleOn: {
-    backgroundColor: COLORS.primary,
-  },
-  checkText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  tagRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
-    marginTop: 12,
-  },
+  checkCircleOn: { backgroundColor: COLORS.primary },
+  checkText: { color: COLORS.white, fontWeight: "900", fontSize: 18 },
+  tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 12 },
   unitTag: {
     backgroundColor: COLORS.primaryDark,
     color: COLORS.white,
@@ -604,16 +481,8 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     fontSize: 12,
   },
-  price: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: 12,
-  },
-  stock: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  price: { color: COLORS.text, fontWeight: "900", marginTop: 12 },
+  stock: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
   footer: {
     position: "absolute",
     left: 0,
@@ -630,14 +499,8 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: "center",
   },
-  disabledButton: {
-    opacity: 0.65,
-  },
-  saveText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: 15,
-  },
+  disabledButton: { opacity: 0.65 },
+  saveText: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
   customButton: {
     backgroundColor: COLORS.white,
     borderWidth: 1,
@@ -647,40 +510,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 10,
   },
-  customText: {
-    color: COLORS.primaryDark,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  emptyBox: {
-    backgroundColor: COLORS.white,
-    padding: 20,
-    borderRadius: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  emptyTitle: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: "900",
-  },
-  emptyText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    textAlign: "center",
-    marginTop: 8,
-    lineHeight: 20,
-  },
-  emptyCustomButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    borderRadius: 16,
-    marginTop: 14,
-  },
-  emptyCustomText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
+  customText: { color: COLORS.primaryDark, fontWeight: "900", textAlign: "center" },
 });
