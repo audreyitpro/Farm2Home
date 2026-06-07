@@ -13,13 +13,14 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 
 import {
   FARM_PRODUCT_CATALOG,
   FARM_PRODUCT_CATEGORIES,
   FarmCatalogProduct,
 } from "../data/farmProductCatalog";
+import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
   primary: "#2E7D32",
@@ -31,14 +32,130 @@ const COLORS = {
   border: "#E5E7EB",
   softGreen: "#EAF5E6",
   white: "#FFFFFF",
+  redSoft: "#FEE2E2",
+  redText: "#991B1B",
 };
+
+function cleanProducts(items: any[]) {
+  return (items || []).filter((item: any) => {
+    const name = String(item?.name || "").trim().toLowerCase();
+    return name && name !== "farm product" && name !== "undefined" && name !== "null";
+  });
+}
+
+function makeFarmerProduct(item: FarmCatalogProduct, farmer: any) {
+  const now = new Date().toISOString();
+  const farmerId = farmer.id || farmer.farmerId || "";
+
+  return {
+    id: item.id,
+    catalogId: item.id,
+    catalog_id: item.id,
+    name: item.name,
+    category: item.category,
+    price: item.defaultPrice,
+    unit: item.unit,
+    stock: item.defaultStock,
+    quantity: item.defaultStock,
+    inventory: item.defaultStock,
+    lowStockThreshold: 5,
+    low_stock_threshold: 5,
+    image: item.imageUrl,
+    imageUrl: item.imageUrl,
+    image_url: item.imageUrl,
+    tags: item.tags || [],
+    farmName:
+      farmer.farmName ||
+      farmer.businessName ||
+      farmer.business_name ||
+      farmer.farm_name ||
+      "Local Farm",
+    farmerId,
+    farmer_id: farmerId,
+    farmerEmail: farmer.email || "",
+    farmer_email: farmer.email || "",
+    deliveryOption:
+      farmer.pickupDeliveryOption ||
+      farmer.pickup_delivery_option ||
+      "Pickup and Delivery",
+    delivery_option:
+      farmer.pickupDeliveryOption ||
+      farmer.pickup_delivery_option ||
+      "Pickup and Delivery",
+    sold: 0,
+    grossSales: 0,
+    gross_sales: 0,
+    active: true,
+    available: true,
+    marketplace_visible: true,
+    removed_from_inventory: false,
+    source: "farm_catalog",
+    harvestDate: "",
+    harvest_date: "",
+    organic: item.tags?.includes("organic") || false,
+    local: true,
+    seasonal: item.tags?.includes("seasonal") || false,
+    isSoldOut: false,
+    is_sold_out: false,
+    createdAt: now,
+    created_at: now,
+    updatedAt: now,
+    updated_at: now,
+  };
+}
 
 export default function SelectProduceScreen() {
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
-  const [selectedProducts, setSelectedProducts] = useState<
-    Record<string, boolean>
-  >({});
+  const [selectedProducts, setSelectedProducts] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState("");
+  const [currentFarmer, setCurrentFarmer] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadCurrentFarmer();
+    }, [])
+  );
+
+  async function loadCurrentFarmer() {
+    try {
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      if (!saved) {
+        router.replace("/farmer/login" as any);
+        return;
+      }
+
+      const parsed = JSON.parse(saved);
+      const farmerId = parsed.id || parsed.farmerId;
+
+      let latestFarmer = parsed;
+
+      if (farmerId) {
+        const { data, error } = await supabase
+          .from("farmers")
+          .select("*")
+          .eq("id", farmerId)
+          .maybeSingle();
+
+        if (!error && data) {
+          latestFarmer = {
+            ...parsed,
+            ...data,
+            id: data.id,
+            farmerId: data.id,
+            products: data.products || parsed.products || [],
+          };
+        }
+      }
+
+      setCurrentFarmer(latestFarmer);
+    } catch (error) {
+      console.log("LOAD_CURRENT_FARMER_ERROR:", error);
+    }
+  }
 
   const categories = ["All", ...FARM_PRODUCT_CATEGORIES];
 
@@ -68,6 +185,8 @@ export default function SelectProduceScreen() {
 
   async function saveSelectedProducts() {
     try {
+      setSaving(true);
+
       const selected = FARM_PRODUCT_CATALOG.filter(
         (item) => selectedProducts[item.id]
       );
@@ -81,68 +200,70 @@ export default function SelectProduceScreen() {
         (await AsyncStorage.getItem("currentFarmer")) ||
         (await AsyncStorage.getItem("currentUser"));
 
-      const currentFarmer = saved ? JSON.parse(saved) : {};
+      if (!saved) {
+        Alert.alert("Session Error", "Please login again.");
+        router.replace("/farmer/login" as any);
+        return;
+      }
 
-      const existingProducts = Array.isArray(currentFarmer.products)
-        ? currentFarmer.products
-        : [];
+      const localFarmer = JSON.parse(saved);
+      const farmer = currentFarmer || localFarmer;
+      const farmerId = farmer.id || farmer.farmerId;
 
-      const existingIds = new Set(
-        existingProducts.map((item: any) => String(item.id))
+      if (!farmerId) {
+        Alert.alert("Session Error", "Farmer ID is missing. Please login again.");
+        router.replace("/farmer/login" as any);
+        return;
+      }
+
+      let latestProducts = cleanProducts(farmer.products || []);
+
+      const { data } = await supabase
+        .from("farmers")
+        .select("products")
+        .eq("id", farmerId)
+        .maybeSingle();
+
+      if (data?.products) {
+        latestProducts = cleanProducts(data.products || []);
+      }
+
+      const existingKeys = new Set(
+        latestProducts.map((item: any) =>
+          String(item.catalogId || item.catalog_id || item.id || item.name)
+            .trim()
+            .toLowerCase()
+        )
       );
 
       const newProducts = selected
-        .filter((item) => !existingIds.has(item.id))
-        .map((item) => ({
-          id: item.id,
-          name: item.name,
-          category: item.category,
-          price: item.defaultPrice,
-          unit: item.unit,
-          stock: item.defaultStock,
-          quantity: item.defaultStock,
-          lowStockThreshold: 5,
-          image: item.imageUrl,
-          imageUrl: item.imageUrl,
-          tags: item.tags,
+        .filter((item) => {
+          const idKey = String(item.id).trim().toLowerCase();
+          const nameKey = String(item.name).trim().toLowerCase();
+          return !existingKeys.has(idKey) && !existingKeys.has(nameKey);
+        })
+        .map((item) => makeFarmerProduct(item, farmer));
 
-          farmName:
-            currentFarmer.farmName ||
-            currentFarmer.businessName ||
-            currentFarmer.business_name ||
-            currentFarmer.farm_name ||
-            "Local Farm",
+      if (newProducts.length === 0) {
+        Alert.alert("Already Added", "Those selected products are already on your dashboard.");
+        router.replace("/farmer/dashboard" as any);
+        return;
+      }
 
-          farmerId: currentFarmer.id || currentFarmer.farmerId || "",
-          farmerEmail: currentFarmer.email || "",
-
-          deliveryOption:
-            currentFarmer.pickupDeliveryOption ||
-            currentFarmer.pickup_delivery_option ||
-            "Pickup and Delivery",
-
-          sold: 0,
-          grossSales: 0,
-          active: true,
-          source: "farm_catalog",
-
-          harvestDate: "",
-          organic: item.tags.includes("organic"),
-          local: item.tags.includes("local") || true,
-          seasonal: item.tags.includes("seasonal"),
-        }));
-
-      const updatedProducts = [...existingProducts, ...newProducts];
+      const updatedProducts = cleanProducts([...latestProducts, ...newProducts]);
 
       const updatedFarmer = {
-        ...currentFarmer,
+        ...farmer,
+        id: farmerId,
+        farmerId,
         products: updatedProducts,
-        selectedProduce: selected.map((item) => item.name),
-        selectedProducts: selected.map((item) => item.name),
+        selectedProduce: updatedProducts.map((item: any) => item.name),
+        selectedProducts: updatedProducts.map((item: any) => item.name),
         selectedProductCategories: Array.from(
-          new Set(selected.map((item) => item.category))
+          new Set(updatedProducts.map((item: any) => item.category).filter(Boolean))
         ),
         updatedAt: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       };
 
       await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
@@ -150,15 +271,63 @@ export default function SelectProduceScreen() {
       await AsyncStorage.setItem("userRole", "farmer");
       await AsyncStorage.setItem("currentUserRole", "farmer");
 
+      const { error: farmerSaveError } = await supabase
+        .from("farmers")
+        .update({
+          products: updatedProducts,
+          selected_produce: updatedFarmer.selectedProduce,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", farmerId);
+
+      if (farmerSaveError) {
+        console.log("SAVE_FARMER_PRODUCTS_ERROR:", farmerSaveError.message);
+      }
+
+      for (const product of newProducts) {
+        const { error: productInsertError } = await supabase.from("products").upsert(
+          {
+            id: product.id,
+            farmer_id: farmerId,
+            name: product.name,
+            category: product.category,
+            unit: product.unit,
+            price: product.price,
+            stock: product.stock,
+            quantity: product.quantity,
+            inventory: product.inventory,
+            image_url: product.image_url,
+            active: true,
+            available: true,
+            marketplace_visible: true,
+            removed_from_inventory: false,
+            is_sold_out: false,
+            updated_at: new Date().toISOString(),
+            created_at: product.created_at,
+          },
+          { onConflict: "id" }
+        );
+
+        if (productInsertError) {
+          console.log("PRODUCT_UPSERT_ERROR:", productInsertError.message);
+        }
+      }
+
       Alert.alert(
         "Products Added",
-        `${newProducts.length} new product(s) added to your farm inventory.`
+        `${newProducts.length} new product(s) added to your farm inventory.`,
+        [
+          {
+            text: "Go to Dashboard",
+            onPress: () => router.replace("/farmer/dashboard" as any),
+          },
+        ]
       );
-
-      router.replace("/farmer/dashboard");
-    } catch (error) {
+    } catch (error: any) {
       console.log("SAVE_SELECTED_PRODUCTS_ERROR:", error);
-      Alert.alert("Save Error", "Unable to save selected farm products.");
+      Alert.alert("Save Error", error?.message || "Unable to save selected farm products.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -241,12 +410,7 @@ export default function SelectProduceScreen() {
               style={[styles.categoryButton, active && styles.categoryActive]}
               onPress={() => setSelectedCategory(category)}
             >
-              <Text
-                style={[
-                  styles.categoryText,
-                  active && styles.categoryTextActive,
-                ]}
-              >
+              <Text style={[styles.categoryText, active && styles.categoryTextActive]}>
                 {category}
               </Text>
             </Pressable>
@@ -270,7 +434,7 @@ export default function SelectProduceScreen() {
 
             <Pressable
               style={styles.emptyCustomButton}
-              onPress={() => router.push("/farmer/add-product")}
+              onPress={() => router.push("/farmer/add-product" as any)}
             >
               <Text style={styles.emptyCustomText}>Upload Custom Product</Text>
             </Pressable>
@@ -279,15 +443,19 @@ export default function SelectProduceScreen() {
       />
 
       <View style={styles.footer}>
-        <Pressable style={styles.saveButton} onPress={saveSelectedProducts}>
+        <Pressable
+          style={[styles.saveButton, saving && styles.disabledButton]}
+          onPress={saveSelectedProducts}
+          disabled={saving}
+        >
           <Text style={styles.saveText}>
-            Add Selected Products ({selectedCount})
+            {saving ? "Adding Products..." : `Add Selected Products (${selectedCount})`}
           </Text>
         </Pressable>
 
         <Pressable
           style={styles.customButton}
-          onPress={() => router.push("/farmer/add-product")}
+          onPress={() => router.push("/farmer/add-product" as any)}
         >
           <Text style={styles.customText}>
             Product Not Listed? Upload Your Own
@@ -461,6 +629,9 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 16,
     alignItems: "center",
+  },
+  disabledButton: {
+    opacity: 0.65,
   },
   saveText: {
     color: COLORS.white,
