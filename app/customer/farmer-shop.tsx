@@ -21,16 +21,14 @@ import { supabase } from "../data/supabaseClient";
 const COLORS = {
   primary: "#2E7D32",
   primaryDark: "#14532D",
-  secondary: "#F9A825",
-  background: "#F8FAF5",
+  bg: "#F6F8F2",
   card: "#FFFFFF",
   text: "#172017",
-  muted: "#75806F",
-  border: "#E2E8DA",
-  softGreen: "#EAF5E6",
-  lightGreen: "#F1FAED",
-  danger: "#DC2626",
+  muted: "#6B7280",
+  border: "#E3E8DD",
+  soft: "#EEF5EA",
   dark: "#111827",
+  danger: "#B91C1C",
 };
 
 type Product = {
@@ -57,10 +55,10 @@ type Product = {
   available?: boolean;
   active?: boolean;
   marketplace_visible?: boolean;
+  removed_from_inventory?: boolean;
   organic?: boolean;
   local?: boolean;
   seasonal?: boolean;
-  featured?: boolean;
   tags?: string[];
 };
 
@@ -72,6 +70,7 @@ type Farmer = {
   business_name?: string;
   location?: string;
   farmLocation?: string;
+  farm_location?: string;
   city?: string;
   state?: string;
   about?: string;
@@ -81,6 +80,7 @@ type Farmer = {
   farm_logo_url?: string;
   rating?: number;
   distanceMiles?: number;
+  distance_miles?: number;
   stripeAccountId?: string;
   farmerStripeAccountId?: string;
   stripe_account_id?: string;
@@ -91,6 +91,10 @@ type Farmer = {
 function firstParam(value: any) {
   if (Array.isArray(value)) return value[0] || "";
   return value ? String(value) : "";
+}
+
+function getFarmerProductsKey(farmerId: string) {
+  return `farmer_products_${farmerId}`;
 }
 
 function getFarmerName(farmer: Farmer) {
@@ -106,9 +110,10 @@ function getFarmerName(farmer: Farmer) {
 function getFarmerLocation(farmer: Farmer) {
   if (farmer.location) return farmer.location;
   if (farmer.farmLocation) return farmer.farmLocation;
+  if (farmer.farm_location) return farmer.farm_location;
   if (farmer.city && farmer.state) return `${farmer.city}, ${farmer.state}`;
   if (farmer.state) return farmer.state;
-  return "Local Farm";
+  return "Local farm";
 }
 
 function getFarmerLogo(farmer: Farmer) {
@@ -129,12 +134,23 @@ function getProductStock(product: Product) {
   return Number(product.stock ?? product.quantity ?? product.inventory ?? 0);
 }
 
+function normalizeCategory(category?: string) {
+  const value = String(category || "").trim();
+  if (!value) return "Farm Goods";
+  if (value === "Fish Farm / Aquaculture") return "Fish & Aquaculture";
+  if (value === "Bale of Hay" || value === "Hay") return "Hay & Feed";
+  if (value === "Plants & Herbs") return "Plants & Nursery";
+  if (value === "Seasonal") return "Seasonal Products";
+  return value;
+}
+
 function isProductAvailable(product: Product) {
-  const stock = getProductStock(product);
+  if (!product?.name) return false;
   if (product.available === false) return false;
   if (product.active === false) return false;
   if (product.marketplace_visible === false) return false;
-  return stock > 0;
+  if (product.removed_from_inventory === true) return false;
+  return getProductStock(product) > 0;
 }
 
 function getFarmerStripeAccountId(farmer: Farmer, product?: Product) {
@@ -151,70 +167,54 @@ function getFarmerStripeAccountId(farmer: Farmer, product?: Product) {
   );
 }
 
-function normalizeCategory(category?: string) {
-  const value = String(category || "").trim();
-  if (!value) return "Farm Goods";
-  if (value === "Fish Farm / Aquaculture") return "Fish & Aquaculture";
-  if (value === "Bale of Hay") return "Hay & Feed";
-  if (value === "Hay") return "Hay & Feed";
-  if (value === "Plants & Herbs") return "Plants & Nursery";
-  if (value === "Seasonal") return "Seasonal Products";
-  return value;
-}
-
-function getProductEmoji(product: Product) {
-  const category = String(product.category || "").toLowerCase();
-  const name = String(product.name || "").toLowerCase();
-
-  if (category.includes("flower") || name.includes("flower")) return "💐";
-  if (category.includes("hay") || name.includes("hay")) return "🌾";
-  if (category.includes("egg") || name.includes("egg")) return "🥚";
-  if (category.includes("honey") || name.includes("honey")) return "🍯";
-  if (category.includes("dairy") || name.includes("milk")) return "🥛";
-  if (category.includes("fish") || name.includes("catfish")) return "🐟";
-  if (category.includes("meat") || category.includes("poultry")) return "🥩";
-  if (category.includes("fruit") || name.includes("apple")) return "🍎";
-  if (category.includes("seasonal") || name.includes("pumpkin")) return "🎃";
-  if (name.includes("christmas")) return "🎄";
-  if (category.includes("vegetable") || category.includes("greens")) return "🥬";
-
-  return "🥬";
-}
-
-function normalizeFarmer(farmer: Farmer): Farmer {
+function normalizeProduct(product: any, farmer: Farmer): Product {
   const farmName = getFarmerName(farmer);
-  const stripeAccountId =
-    farmer.stripeAccountId ||
-    farmer.farmerStripeAccountId ||
-    farmer.stripe_account_id ||
-    farmer.farmer_stripe_account_id ||
-    "";
+  const farmerId = String(product.farmerId || product.farmer_id || farmer.id || "");
 
   return {
+    ...product,
+    id: String(product.id || `${farmerId}_${product.name}_${Date.now()}`),
+    name: String(product.name || "Farm Product"),
+    category: normalizeCategory(product.category),
+    price: Number(product.price || 0),
+    unit: product.unit || "each",
+    image: getProductImage(product),
+    imageUrl: getProductImage(product),
+    image_url: getProductImage(product),
+    farmerId,
+    farmer_id: farmerId,
+    farmName: product.farmName || product.farm_name || farmName,
+    farm_name: product.farmName || product.farm_name || farmName,
+    stock: getProductStock(product),
+    quantity: getProductStock(product),
+    inventory: getProductStock(product),
+    available: product.available !== false,
+    active: product.active !== false,
+    marketplace_visible: product.marketplace_visible !== false,
+    removed_from_inventory: product.removed_from_inventory === true,
+    tags: Array.isArray(product.tags) ? product.tags : [],
+  };
+}
+
+function normalizeFarmer(farmer: Farmer, products: Product[] = []) {
+  const farmName = getFarmerName(farmer);
+  const stripeAccountId = getFarmerStripeAccountId(farmer);
+
+  const normalized: Farmer = {
     ...farmer,
+    id: String(farmer.id),
     farmName,
     name: farmName,
     location: getFarmerLocation(farmer),
     logoUrl: getFarmerLogo(farmer),
     stripeAccountId,
     farmerStripeAccountId: stripeAccountId,
-    products: (farmer.products || [])
-      .map((product) => ({
-        ...product,
-        category: normalizeCategory(product.category),
-        farmerId: product.farmerId || product.farmer_id || farmer.id,
-        farmName: product.farmName || product.farm_name || farmName,
-        farmerStripeAccountId:
-          product.farmerStripeAccountId ||
-          product.farmer_stripe_account_id ||
-          product.stripeAccountId ||
-          product.stripe_account_id ||
-          stripeAccountId,
-        image: getProductImage(product),
-        stock: getProductStock(product),
-      }))
+    products: products
+      .map((product) => normalizeProduct(product, farmer))
       .filter(isProductAvailable),
   };
+
+  return normalized;
 }
 
 function mapProductRow(row: any): Product {
@@ -227,40 +227,34 @@ function mapProductRow(row: any): Product {
     unit: row.unit || "each",
     image: row.image_url || row.image || row.imageUrl || "",
     imageUrl: row.image_url || row.image || row.imageUrl || "",
+    image_url: row.image_url || row.image || row.imageUrl || "",
     farmerId: String(row.farmer_id || row.farmerId || ""),
     farmer_id: String(row.farmer_id || row.farmerId || ""),
     farmName: row.farm_name || row.farmName || "",
     farm_name: row.farm_name || row.farmName || "",
-    farmerStripeAccountId:
-      row.farmer_stripe_account_id || row.stripe_account_id || "",
-    farmer_stripe_account_id:
-      row.farmer_stripe_account_id || row.stripe_account_id || "",
+    farmerStripeAccountId: row.farmer_stripe_account_id || row.stripe_account_id || "",
+    farmer_stripe_account_id: row.farmer_stripe_account_id || row.stripe_account_id || "",
     stock: Number(row.stock ?? row.quantity ?? row.inventory ?? 0),
     quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? 0),
     inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? 0),
     available: row.available !== false,
     active: row.active !== false,
     marketplace_visible: row.marketplace_visible !== false,
+    removed_from_inventory: row.removed_from_inventory === true,
     organic: Boolean(row.organic),
     local: Boolean(row.local),
     seasonal: Boolean(row.seasonal),
-    featured: Boolean(row.featured),
     tags: Array.isArray(row.tags) ? row.tags : [],
   };
 }
 
-function mapFarmerRow(row: any, products: Product[]): Farmer {
+function mapFarmerRow(row: any, fallbackId: string): Farmer {
   const farmName =
     row?.farm_name ||
     row?.business_name ||
     row?.farmName ||
     row?.businessName ||
     "Local Farm";
-
-  const location =
-    row?.city && row?.state
-      ? `${row.city}, ${row.state}`
-      : row?.farm_location || row?.location || row?.state || "Local Farm";
 
   const logo =
     row?.logo_url ||
@@ -269,27 +263,24 @@ function mapFarmerRow(row: any, products: Product[]): Farmer {
     row?.farmLogoUrl ||
     "";
 
-  const stripeAccountId =
-    row?.stripe_account_id ||
-    row?.farmer_stripe_account_id ||
-    row?.stripeAccountId ||
-    row?.farmerStripeAccountId ||
-    "";
-
-  return normalizeFarmer({
-    id: String(row?.id || products[0]?.farmerId || ""),
+  return {
+    id: String(row?.id || fallbackId),
     farmName,
     name: farmName,
-    location,
+    businessName: row?.business_name || farmName,
+    location:
+      row?.city && row?.state
+        ? `${row.city}, ${row.state}`
+        : row?.farm_location || row?.location || row?.state || "Local farm",
     about: row?.about || "",
     logoUrl: logo,
     farmLogoUrl: logo,
     rating: Number(row?.rating || 4.8),
     distanceMiles: Number(row?.distance_miles || row?.distanceMiles || 5),
-    stripeAccountId,
-    farmerStripeAccountId: stripeAccountId,
-    products,
-  });
+    stripeAccountId: row?.stripe_account_id || row?.farmer_stripe_account_id || "",
+    farmerStripeAccountId: row?.farmer_stripe_account_id || row?.stripe_account_id || "",
+    products: Array.isArray(row?.products) ? row.products : [],
+  };
 }
 
 export default function FarmerShopScreen() {
@@ -323,19 +314,8 @@ export default function FarmerShopScreen() {
         return;
       }
 
-      const fromSupabase = await loadFarmerFromSupabase(farmerId);
-      if (fromSupabase) {
-        setFarmer(fromSupabase);
-        return;
-      }
-
-      const fromLocal = await loadFarmerFromLocal(farmerId);
-      if (fromLocal) {
-        setFarmer(fromLocal);
-        return;
-      }
-
-      setFarmer(null);
+      const found = await loadFarmerAllSources(farmerId);
+      setFarmer(found);
     } catch (error) {
       console.log("Load farmer shop error:", error);
       setFarmer(null);
@@ -344,35 +324,65 @@ export default function FarmerShopScreen() {
     }
   }
 
-  async function loadFarmerFromSupabase(activeFarmerId: string) {
-    const { data: productRows, error: productError } = await supabase
-      .from("products")
-      .select("*")
-      .eq("farmer_id", activeFarmerId)
-      .or("marketplace_visible.is.true,active.is.true,available.is.true")
-      .order("created_at", { ascending: false });
+  async function loadFarmerAllSources(activeFarmerId: string) {
+    let farmerBase: Farmer | null = null;
+    let products: Product[] = [];
 
-    if (productError) {
-      console.log("Farmer shop product load ignored:", productError.message);
+    const localInventoryRaw = await AsyncStorage.getItem(
+      getFarmerProductsKey(activeFarmerId)
+    );
+
+    if (localInventoryRaw) {
+      try {
+        products = JSON.parse(localInventoryRaw);
+      } catch {
+        products = [];
+      }
     }
 
-    const products = Array.isArray(productRows)
-      ? productRows.map(mapProductRow).filter(isProductAvailable)
-      : [];
-
-    const { data: farmerRow, error: farmerError } = await supabase
+    const { data: farmerRow } = await supabase
       .from("farmers")
       .select("*")
       .eq("id", activeFarmerId)
       .maybeSingle();
 
-    if (farmerError) {
-      console.log("Farmer shop farmer load ignored:", farmerError.message);
+    if (farmerRow) {
+      farmerBase = mapFarmerRow(farmerRow, activeFarmerId);
+
+      if (products.length === 0 && Array.isArray(farmerRow.products)) {
+        products = farmerRow.products;
+      }
     }
 
-    if (!farmerRow && products.length === 0) return null;
+    const { data: productRows, error: productError } = await supabase
+      .from("products")
+      .select("*")
+      .eq("farmer_id", activeFarmerId)
+      .order("created_at", { ascending: false });
 
-    return mapFarmerRow(farmerRow || { id: activeFarmerId }, products);
+    if (!productError && Array.isArray(productRows) && productRows.length > 0) {
+      products = productRows.map(mapProductRow);
+    }
+
+    const local = await loadFarmerFromLocal(activeFarmerId);
+
+    if (!farmerBase && local) {
+      farmerBase = local;
+    }
+
+    if (products.length === 0 && local?.products?.length) {
+      products = local.products;
+    }
+
+    if (!farmerBase && products.length === 0) return null;
+
+    return normalizeFarmer(
+      farmerBase || {
+        id: activeFarmerId,
+        farmName: firstParam(params.farmName) || "Local Farm",
+      },
+      products
+    );
   }
 
   async function loadFarmerFromLocal(activeFarmerId: string) {
@@ -391,28 +401,25 @@ export default function FarmerShopScreen() {
 
     const selected = localFarmers.find(
       (item: any) =>
-        item?.id === activeFarmerId || item?.farmerId === activeFarmerId
+        String(item?.id || "") === String(activeFarmerId) ||
+        String(item?.farmerId || "") === String(activeFarmerId)
     );
 
     if (!selected) return null;
 
-    return normalizeFarmer({
-      ...selected,
-      id: selected.id || selected.farmerId,
-      farmName:
-        selected.farmName ||
-        selected.businessName ||
-        selected.business_name ||
-        selected.farm_name ||
-        "Farm2Home Farm",
-      logoUrl:
-        selected.logoUrl ||
-        selected.farmLogoUrl ||
-        selected.logo_url ||
-        selected.farm_logo_url ||
-        "",
-      products: selected.products || [],
-    });
+    return normalizeFarmer(
+      {
+        ...selected,
+        id: selected.id || selected.farmerId,
+        farmName:
+          selected.farmName ||
+          selected.businessName ||
+          selected.business_name ||
+          selected.farm_name ||
+          "Farm2Home Farm",
+      },
+      selected.products || []
+    );
   }
 
   const groupedProducts = useMemo(() => {
@@ -435,11 +442,6 @@ export default function FarmerShopScreen() {
 
       const farmerStripeAccountId = getFarmerStripeAccountId(farmer, product);
 
-      if (!farmerStripeAccountId) {
-        Alert.alert("Missing Payout Account", "This farm needs a Stripe account.");
-        return;
-      }
-
       await addToCart({
         id: `${farmer.id}_${product.id}`,
         productId: product.id,
@@ -454,8 +456,7 @@ export default function FarmerShopScreen() {
       } as any);
 
       await refreshCartCount();
-
-      Alert.alert("Added To Cart", `${product.name} was added to your cart.`);
+      Alert.alert("Added to Cart", `${product.name} was added to your cart.`);
     } catch (error) {
       console.log("Farmer shop add to cart error:", error);
       Alert.alert("Error", "Unable to add item to cart.");
@@ -466,7 +467,7 @@ export default function FarmerShopScreen() {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Loading farmer storefront...</Text>
+        <Text style={styles.centerText}>Loading storefront...</Text>
       </View>
     );
   }
@@ -474,16 +475,13 @@ export default function FarmerShopScreen() {
   if (!farmer) {
     return (
       <View style={styles.center}>
-        <Text style={styles.loadingIcon}>🌾</Text>
-        <Text style={styles.loadingText}>Farmer shop not found.</Text>
+        <Text style={styles.centerTitle}>Farmer shop not found</Text>
+        <Text style={styles.centerSub}>This store may no longer be available.</Text>
         <Pressable
-          style={({ pressed }) => [
-            styles.backToMarketButton,
-            pressed && styles.pressed,
-          ]}
+          style={styles.primaryButton}
           onPress={() => router.replace("/customer/marketplace" as any)}
         >
-          <Text style={styles.backToMarketText}>Back to Marketplace</Text>
+          <Text style={styles.primaryButtonText}>Back to Marketplace</Text>
         </Pressable>
       </View>
     );
@@ -501,96 +499,60 @@ export default function FarmerShopScreen() {
       >
         <View style={styles.topBar}>
           <Pressable
-            style={({ pressed }) => [
-              styles.backCircle,
-              pressed && styles.pressed,
-            ]}
+            style={styles.backButton}
             onPress={() => router.push("/customer/marketplace" as any)}
           >
-            <Text style={styles.backCircleText}>‹</Text>
+            <Text style={styles.backText}>‹</Text>
           </Pressable>
 
           <View style={styles.topTitleBlock}>
-            <Text style={styles.title}>Farm Store</Text>
-            <Text style={styles.subtitle}>Shop directly from this farmer</Text>
+            <Text style={styles.title}>{farmName}</Text>
+            <Text style={styles.subtitle}>{farmLocation}</Text>
           </View>
 
           <Pressable
-            style={({ pressed }) => [
-              styles.cartTopButton,
-              pressed && styles.pressed,
-            ]}
+            style={styles.cartButton}
             onPress={() => router.push("/customer/cart" as any)}
           >
-            <Text style={styles.cartTopText}>🛒</Text>
-            {cartCount > 0 && (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>{cartCount}</Text>
-              </View>
-            )}
+            <Text style={styles.cartText}>Cart {cartCount}</Text>
           </Pressable>
         </View>
 
-        <View style={styles.heroCard}>
-          <View style={styles.logoWrap}>
-            {logo ? (
-              <Image source={{ uri: logo }} style={styles.logo} />
-            ) : (
-              <View style={styles.logoPlaceholder}>
-                <Text style={styles.logoEmoji}>🚜</Text>
-              </View>
-            )}
-          </View>
-
-          <View style={styles.heroContent}>
-            <Text style={styles.heroBadge}>Verified Farm</Text>
-            <Text style={styles.farmName}>{farmName}</Text>
-            <Text style={styles.location}>{farmLocation}</Text>
-
-            <View style={styles.metaRow}>
-              <View style={styles.metaPill}>
-                <Text style={styles.metaPillText}>
-                  ⭐ {Number(farmer.rating || 4.8).toFixed(1)}
-                </Text>
-              </View>
-
-              <View style={styles.metaPill}>
-                <Text style={styles.metaPillText}>
-                  {Number(farmer.distanceMiles || 5).toFixed(1)} mi
-                </Text>
-              </View>
-
-              <View style={styles.metaPill}>
-                <Text style={styles.metaPillText}>{productCount} items</Text>
-              </View>
+        <View style={styles.storeHeader}>
+          {logo ? (
+            <Image source={{ uri: logo }} style={styles.logo} />
+          ) : (
+            <View style={styles.logoFallback}>
+              <Text style={styles.logoFallbackText}>{farmName.slice(0, 1)}</Text>
             </View>
+          )}
+
+          <View style={styles.storeInfo}>
+            <Text style={styles.storeName}>{farmName}</Text>
+            <Text style={styles.storeMeta}>
+              {Number(farmer.rating || 4.8).toFixed(1)} rating ·{" "}
+              {Number(farmer.distanceMiles || farmer.distance_miles || 5).toFixed(1)} mi ·{" "}
+              {productCount} items
+            </Text>
+            <Text style={styles.storeAbout} numberOfLines={2}>
+              {farmer.about ||
+                "Fresh local goods from this Farm2Home seller."}
+            </Text>
           </View>
         </View>
 
-        <View style={styles.storeInfoCard}>
-          <Text style={styles.storeInfoTitle}>Fresh from {farmName}</Text>
-          <Text style={styles.storeInfoText}>
-            {farmer.about ||
-              "Browse fresh farm goods, seasonal products, and local items available from this Farm2Home seller."}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Available Products</Text>
+          <Text style={styles.sectionSub}>
+            Shop fresh items directly from this seller.
           </Text>
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.viewCartButton,
-              pressed && styles.pressed,
-            ]}
-            onPress={() => router.push("/customer/cart" as any)}
-          >
-            <Text style={styles.viewCartButtonText}>View Cart ({cartCount})</Text>
-          </Pressable>
         </View>
 
         {productCount === 0 ? (
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>🥬</Text>
-            <Text style={styles.emptyTitle}>No products posted yet</Text>
+            <Text style={styles.emptyTitle}>No active products</Text>
             <Text style={styles.emptyText}>
-              This farmer does not have active marketplace products right now.
+              This seller does not have marketplace products available right now.
             </Text>
           </View>
         ) : (
@@ -604,384 +566,323 @@ export default function FarmerShopScreen() {
                 </Text>
               </View>
 
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.horizontalProductsRow}
-              >
-                {groupedProducts[category].map((product) => {
-                  const imageSource = getProductImage(product);
-                  const stock = getProductStock(product);
+              {groupedProducts[category].map((product) => {
+                const imageSource = getProductImage(product);
+                const stock = getProductStock(product);
 
-                  return (
-                    <View key={product.id} style={styles.productCardHorizontal}>
-                      {imageSource ? (
-                        <Image
-                          source={{ uri: imageSource }}
-                          style={styles.productImageHorizontal}
-                        />
-                      ) : (
-                        <View style={styles.imagePlaceholderHorizontal}>
-                          <Text style={styles.imageEmoji}>
-                            {getProductEmoji(product)}
-                          </Text>
-                        </View>
-                      )}
+                return (
+                  <View key={product.id} style={styles.productRow}>
+                    {imageSource ? (
+                      <Image source={{ uri: imageSource }} style={styles.productImage} />
+                    ) : (
+                      <View style={styles.productImageFallback}>
+                        <Text style={styles.productImageFallbackText}>
+                          {product.name.slice(0, 1)}
+                        </Text>
+                      </View>
+                    )}
 
-                      <Text style={styles.productCategory}>
-                        {normalizeCategory(product.category)}
-                      </Text>
-
-                      <Text style={styles.productName} numberOfLines={2}>
+                    <View style={styles.productInfo}>
+                      <Text style={styles.productName} numberOfLines={1}>
                         {product.name}
                       </Text>
-
-                      <Text style={styles.productDescription} numberOfLines={2}>
-                        {product.description || "Fresh farm product"}
+                      <Text style={styles.productDetails} numberOfLines={1}>
+                        ${Number(product.price || 0).toFixed(2)} / {product.unit || "each"} · {stock} in stock
                       </Text>
-
-                      <View style={styles.tagLine}>
-                        {product.organic ? (
-                          <Text style={styles.miniTag}>Organic</Text>
-                        ) : null}
-                        {product.local ? (
-                          <Text style={styles.miniTag}>Local</Text>
-                        ) : null}
-                        {product.seasonal ? (
-                          <Text style={styles.miniTag}>Seasonal</Text>
-                        ) : null}
-                      </View>
-
-                      <View style={styles.priceRow}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.price}>
-                            ${Number(product.price || 0).toFixed(2)}
-                          </Text>
-                          <Text style={styles.unit}>
-                            {product.unit ? `per ${product.unit}` : "each"} ·{" "}
-                            {stock} left
-                          </Text>
-                        </View>
-
-                        <Pressable
-                          style={({ pressed }) => [
-                            styles.addCircleButton,
-                            pressed && styles.pressed,
-                          ]}
-                          onPress={() => handleAddToCart(product)}
-                        >
-                          <Text style={styles.addCircleText}>+</Text>
-                        </Pressable>
-                      </View>
+                      <Text style={styles.productDescription} numberOfLines={2}>
+                        {product.description || "Fresh local farm product."}
+                      </Text>
                     </View>
-                  );
-                })}
-              </ScrollView>
+
+                    <Pressable
+                      style={styles.addButton}
+                      onPress={() => handleAddToCart(product)}
+                    >
+                      <Text style={styles.addButtonText}>Add</Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
             </View>
           ))
         )}
+      </ScrollView>
 
+      <View style={styles.footer}>
         <Pressable
-          style={({ pressed }) => [
-            styles.goCartButton,
-            pressed && styles.pressed,
-          ]}
+          style={styles.footerButton}
           onPress={() => router.push("/customer/cart" as any)}
         >
-          <Text style={styles.goCartButtonText}>Go To Cart ({cartCount})</Text>
+          <Text style={styles.footerButtonText}>View Cart ({cartCount})</Text>
         </Pressable>
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: COLORS.background },
-  scrollContent: { padding: 18, paddingBottom: 110 },
+  page: { flex: 1, backgroundColor: COLORS.bg },
+  scrollContent: { padding: 16, paddingBottom: 96 },
   center: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: COLORS.bg,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
-  loadingIcon: { fontSize: 52, marginBottom: 10 },
-  loadingText: {
+  centerText: {
     marginTop: 12,
-    fontSize: 18,
-    fontWeight: "900",
+    fontSize: 15,
+    fontWeight: "800",
     color: COLORS.primary,
+  },
+  centerTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: COLORS.text,
+  },
+  centerSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 6,
     textAlign: "center",
   },
-  backToMarketButton: {
+  primaryButton: {
     backgroundColor: COLORS.primary,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 18,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    borderRadius: 12,
     marginTop: 18,
   },
-  backToMarketText: { color: "#FFFFFF", fontWeight: "900" },
+  primaryButtonText: { color: "#FFFFFF", fontWeight: "900" },
+
   topBar: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 18,
-    gap: 12,
+    gap: 10,
+    marginBottom: 14,
   },
-  backCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
+  backButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     backgroundColor: COLORS.card,
-    justifyContent: "center",
-    alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  backCircleText: {
-    fontSize: 34,
-    color: COLORS.text,
+  backText: {
+    fontSize: 28,
     fontWeight: "900",
+    color: COLORS.text,
     marginTop: -4,
   },
   topTitleBlock: { flex: 1 },
-  title: { fontSize: 30, fontWeight: "900", color: COLORS.text },
-  subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
-  cartTopButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 17,
-    backgroundColor: COLORS.card,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  cartTopText: { fontSize: 22 },
-  cartBadge: {
-    position: "absolute",
-    top: -5,
-    right: -5,
-    backgroundColor: COLORS.secondary,
-    minWidth: 24,
-    height: 24,
-    borderRadius: 999,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 6,
-    borderWidth: 2,
-    borderColor: COLORS.card,
-  },
-  cartBadgeText: { color: COLORS.dark, fontWeight: "900", fontSize: 12 },
-  heroCard: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 32,
-    padding: 18,
-    marginBottom: 16,
-  },
-  logoWrap: { alignSelf: "center", marginBottom: 14 },
-  logo: {
-    width: 112,
-    height: 112,
-    borderRadius: 32,
-    borderWidth: 4,
-    borderColor: "rgba(255,255,255,0.28)",
-    backgroundColor: COLORS.softGreen,
-  },
-  logoPlaceholder: {
-    width: 112,
-    height: 112,
-    borderRadius: 32,
-    backgroundColor: COLORS.secondary,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 4,
-    borderColor: "rgba(255,255,255,0.28)",
-  },
-  logoEmoji: { fontSize: 50 },
-  heroContent: { alignItems: "center" },
-  heroBadge: {
-    alignSelf: "center",
-    backgroundColor: "rgba(255,255,255,0.18)",
-    color: "#FFFFFF",
+  title: {
+    color: COLORS.text,
+    fontSize: 21,
     fontWeight: "900",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    overflow: "hidden",
-    marginBottom: 10,
   },
-  farmName: {
-    color: "#FFFFFF",
-    fontSize: 30,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  location: {
-    color: "#EAF7E6",
-    marginTop: 7,
-    fontSize: 15,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  metaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    gap: 9,
-    marginTop: 14,
-  },
-  metaPill: {
-    backgroundColor: "rgba(255,255,255,0.18)",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  metaPillText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
-  storeInfoCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 28,
-    padding: 18,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  storeInfoTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900" },
-  storeInfoText: {
+  subtitle: {
     color: COLORS.muted,
     fontWeight: "700",
-    lineHeight: 22,
-    marginTop: 8,
+    fontSize: 12,
+    marginTop: 2,
   },
-  viewCartButton: {
-    backgroundColor: COLORS.primary,
-    padding: 15,
-    borderRadius: 18,
+  cartButton: {
+    backgroundColor: COLORS.dark,
+    borderRadius: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+  },
+  cartText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 12,
+  },
+
+  storeHeader: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 16,
+  },
+  logo: {
+    width: 64,
+    height: 64,
+    borderRadius: 14,
+    backgroundColor: COLORS.soft,
+  },
+  logoFallback: {
+    width: 64,
+    height: 64,
+    borderRadius: 14,
+    backgroundColor: COLORS.primaryDark,
+    justifyContent: "center",
     alignItems: "center",
-    marginTop: 14,
   },
-  viewCartButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  categorySection: { marginTop: 10, marginBottom: 8 },
+  logoFallbackText: {
+    color: "#FFFFFF",
+    fontSize: 26,
+    fontWeight: "900",
+  },
+  storeInfo: { flex: 1 },
+  storeName: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  storeMeta: {
+    color: COLORS.primaryDark,
+    fontWeight: "800",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  storeAbout: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 18,
+    fontSize: 12,
+    marginTop: 6,
+  },
+
+  sectionHeader: { marginBottom: 12 },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  sectionSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 13,
+    marginTop: 3,
+  },
+
+  categorySection: { marginBottom: 18 },
   categoryHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-end",
-    marginBottom: 12,
+    marginBottom: 8,
+    alignItems: "center",
   },
-  categoryTitle: { fontSize: 23, fontWeight: "900", color: COLORS.text },
-  categoryCount: { color: COLORS.muted, fontWeight: "800", fontSize: 13 },
-  horizontalProductsRow: {
-    gap: 14,
-    paddingRight: 18,
-    paddingBottom: 4,
+  categoryTitle: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: "900",
   },
-  productCardHorizontal: {
-    width: 190,
+  categoryCount: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    fontSize: 12,
+  },
+
+  productRow: {
     backgroundColor: COLORS.card,
-    marginBottom: 14,
-    borderRadius: 28,
-    padding: 13,
     borderWidth: 1,
     borderColor: COLORS.border,
-  },
-  productImageHorizontal: {
-    width: "100%",
-    height: 122,
-    borderRadius: 22,
-    backgroundColor: COLORS.softGreen,
+    borderRadius: 14,
+    padding: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     marginBottom: 10,
   },
-  imagePlaceholderHorizontal: {
-    width: "100%",
-    height: 122,
-    borderRadius: 22,
-    backgroundColor: COLORS.softGreen,
+  productImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    backgroundColor: COLORS.soft,
+  },
+  productImageFallback: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    backgroundColor: COLORS.soft,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 10,
   },
-  imageEmoji: { fontSize: 44 },
-  productCategory: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 11,
-    marginBottom: 4,
-  },
-  productName: { fontSize: 18, fontWeight: "900", color: COLORS.text },
-  productDescription: {
-    marginTop: 6,
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 19,
-    fontSize: 12,
-    minHeight: 38,
-  },
-  tagLine: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 5,
-    marginTop: 8,
-    minHeight: 20,
-  },
-  miniTag: {
-    backgroundColor: "#DCFCE7",
+  productImageFallbackText: {
     color: COLORS.primaryDark,
-    fontSize: 10,
+    fontSize: 24,
     fontWeight: "900",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 999,
-    overflow: "hidden",
   },
-  priceRow: {
-    marginTop: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  productInfo: { flex: 1 },
+  productName: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 15,
   },
-  price: { fontSize: 21, fontWeight: "900", color: COLORS.primary },
-  unit: {
+  productDetails: {
+    color: COLORS.primaryDark,
+    fontWeight: "800",
+    fontSize: 12,
+    marginTop: 3,
+  },
+  productDescription: {
     color: COLORS.muted,
     fontWeight: "700",
-    fontSize: 11,
-    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 3,
   },
-  addCircleButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 999,
+  addButton: {
     backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
+    borderRadius: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
-  addCircleText: {
+  addButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 26,
-    marginTop: -2,
+    fontSize: 12,
   },
+
   emptyBox: {
     backgroundColor: COLORS.card,
-    borderRadius: 24,
-    padding: 24,
+    borderRadius: 16,
+    padding: 22,
     alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  emptyIcon: { fontSize: 42, marginBottom: 10 },
-  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 20 },
+  emptyTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 18,
+  },
   emptyText: {
     color: COLORS.muted,
     fontWeight: "700",
     textAlign: "center",
     marginTop: 8,
+    lineHeight: 20,
   },
-  goCartButton: {
+
+  footer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: COLORS.card,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    padding: 12,
+  },
+  footerButton: {
     backgroundColor: COLORS.dark,
-    paddingVertical: 17,
-    borderRadius: 20,
+    borderRadius: 13,
+    paddingVertical: 14,
     alignItems: "center",
-    marginTop: 8,
   },
-  goCartButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
-  pressed: { opacity: 0.75 },
+  footerButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 14,
+  },
 });
