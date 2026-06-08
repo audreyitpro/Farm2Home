@@ -17,7 +17,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
-  bg: "#F6F8F2",
+  bg: "#F8FAF5",
   card: "#FFFFFF",
   text: "#172017",
   muted: "#64748B",
@@ -27,15 +27,12 @@ const COLORS = {
   soft: "#EEF5EA",
   dark: "#111827",
   blue: "#2563EB",
-  blueSoft: "#DBEAFE",
-  greenSoft: "#DCFCE7",
-  redSoft: "#FEE2E2",
-  redText: "#991B1B",
 };
 
 type DriverLocation = {
   id?: string;
   load_id?: string;
+  order_id?: string;
   delivery_order_id?: string;
   driver_id?: string;
   latitude?: number;
@@ -67,6 +64,7 @@ type DeliveryOrder = {
   accepted_at?: string;
   arrived_pickup_at?: string;
   picked_up_at?: string;
+  in_transit_at?: string;
   arrived_dropoff_at?: string;
   delivered_at?: string;
   proof_of_pickup_url?: string;
@@ -77,32 +75,32 @@ type DeliveryOrder = {
 
 const TRACKING_STEPS = [
   {
-    keys: ["available", "assigned", "accepted", "READY"],
+    keys: ["available", "assigned", "accepted", "ready"],
     label: "Assigned",
     description: "A driver has been assigned or is preparing for pickup.",
   },
   {
-    keys: ["arrived_pickup", "ARRIVED_AT_PICKUP"],
+    keys: ["arrived_pickup", "arrived_at_pickup"],
     label: "At Pickup",
     description: "The driver has arrived at the farm pickup location.",
   },
   {
-    keys: ["picked_up", "PICKED_UP"],
+    keys: ["picked_up"],
     label: "Picked Up",
     description: "Your order has been picked up from the farm.",
   },
   {
-    keys: ["in_transit", "EN_ROUTE_TO_DROPOFF"],
+    keys: ["in_transit", "en_route_to_dropoff"],
     label: "In Transit",
     description: "The driver is on the way to the delivery address.",
   },
   {
-    keys: ["arrived_dropoff", "ARRIVED_AT_DROPOFF"],
+    keys: ["arrived_dropoff", "arrived_at_dropoff"],
     label: "Arrived",
     description: "The driver has arrived at the dropoff location.",
   },
   {
-    keys: ["delivered", "completed", "DELIVERED"],
+    keys: ["delivered", "completed"],
     label: "Delivered",
     description: "Delivery has been completed.",
   },
@@ -114,15 +112,13 @@ function firstParam(value: any) {
 }
 
 function normalizeStatus(status?: string) {
-  const value = String(status || "").trim();
+  const value = String(status || "").trim().replace(/-/g, "_").toLowerCase();
 
-  if (value === "READY") return "accepted";
-  if (value === "EN_ROUTE_TO_PICKUP") return "accepted";
-  if (value === "ARRIVED_AT_PICKUP") return "arrived_pickup";
-  if (value === "PICKED_UP") return "picked_up";
-  if (value === "EN_ROUTE_TO_DROPOFF") return "in_transit";
-  if (value === "ARRIVED_AT_DROPOFF") return "arrived_dropoff";
-  if (value === "DELIVERED") return "delivered";
+  if (value === "ready") return "accepted";
+  if (value === "en_route_to_pickup") return "accepted";
+  if (value === "arrived_at_pickup") return "arrived_pickup";
+  if (value === "en_route_to_dropoff") return "in_transit";
+  if (value === "arrived_at_dropoff") return "arrived_dropoff";
 
   return value || "assigned";
 }
@@ -187,6 +183,13 @@ function getStepIndex(status?: string) {
   return index < 0 ? 0 : index;
 }
 
+function formatDate(value?: string) {
+  if (!value) return "No update yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No update yet";
+  return date.toLocaleString();
+}
+
 export default function CustomerOrderTracking() {
   const params = useLocalSearchParams();
 
@@ -208,8 +211,7 @@ export default function CustomerOrderTracking() {
   useEffect(() => {
     loadTracking();
 
-    const channelKey =
-      deliveryOrderId || loadId || orderId || `tracking-${Date.now()}`;
+    const channelKey = deliveryOrderId || loadId || orderId || `tracking-${Date.now()}`;
 
     const deliveryChannel = supabase
       .channel(`customer-delivery-${channelKey}`)
@@ -251,8 +253,8 @@ export default function CustomerOrderTracking() {
 
           const matches =
             (loadId && String(row.load_id) === String(loadId)) ||
-            (deliveryOrderId &&
-              String(row.delivery_order_id) === String(deliveryOrderId)) ||
+            (orderId && String(row.order_id) === String(orderId)) ||
+            (deliveryOrderId && String(row.delivery_order_id) === String(deliveryOrderId)) ||
             (delivery?.driver_id && String(row.driver_id) === String(delivery.driver_id));
 
           if (matches) {
@@ -283,12 +285,13 @@ export default function CustomerOrderTracking() {
       dropoff_address: row.dropoff_address || "",
       miles: Number(row.miles || 0),
       delivery_fee: Number(row.delivery_fee || row.payout_amount || 0),
-      status: row.status || "",
+      status: normalizeStatus(row.status || ""),
       source: row.source || "",
       assigned_at: row.assigned_at || "",
       accepted_at: row.accepted_at || row.assigned_at || "",
       arrived_pickup_at: row.arrived_pickup_at || "",
       picked_up_at: row.picked_up_at || "",
+      in_transit_at: row.in_transit_at || "",
       arrived_dropoff_at: row.arrived_dropoff_at || "",
       delivered_at: row.delivered_at || "",
       proof_of_pickup_url: row.proof_of_pickup_url || "",
@@ -302,18 +305,16 @@ export default function CustomerOrderTracking() {
     return {
       id: row.id || "",
       load_id: row.load_id || "",
+      order_id: row.order_id || "",
       delivery_order_id: row.delivery_order_id || "",
       driver_id: row.driver_id || row.carrier_id || "",
       latitude: Number(row.latitude || 0),
       longitude: Number(row.longitude || 0),
       speed: row.speed !== null && row.speed !== undefined ? Number(row.speed) : null,
-      heading:
-        row.heading !== null && row.heading !== undefined ? Number(row.heading) : null,
+      heading: row.heading !== null && row.heading !== undefined ? Number(row.heading) : null,
       accuracy:
-        row.accuracy !== null && row.accuracy !== undefined
-          ? Number(row.accuracy)
-          : null,
-      status: row.status || "",
+        row.accuracy !== null && row.accuracy !== undefined ? Number(row.accuracy) : null,
+      status: normalizeStatus(row.status || ""),
       updated_at: row.updated_at || "",
     };
   }
@@ -322,8 +323,8 @@ export default function CustomerOrderTracking() {
     try {
       setLoading(true);
 
-      await loadDeliveryOrder();
-      await loadDriverLocation();
+      const loadedDelivery = await loadDeliveryOrder();
+      await loadDriverLocation(loadedDelivery);
     } catch (error: any) {
       Alert.alert("Tracking Error", error?.message || "Unable to load tracking.");
     } finally {
@@ -342,7 +343,7 @@ export default function CustomerOrderTracking() {
       query = query.eq("id", loadId);
     } else {
       setDelivery(null);
-      return;
+      return null;
     }
 
     const { data, error } = await query
@@ -351,22 +352,37 @@ export default function CustomerOrderTracking() {
 
     if (error) {
       console.log("Delivery order tracking error:", error.message);
-      return;
+      return null;
     }
 
     if (Array.isArray(data) && data[0]) {
-      setDelivery(mapDelivery(data[0]));
+      const mapped = mapDelivery(data[0]);
+      setDelivery(mapped);
+      return mapped;
     }
+
+    return null;
   }
 
-  async function loadDriverLocation() {
+  async function loadDriverLocation(activeDelivery?: DeliveryOrder | null) {
     let locationData: any[] | null = null;
 
-    if (deliveryOrderId) {
+    if (deliveryOrderId || activeDelivery?.id) {
       const { data } = await supabase
         .from("driver_locations")
         .select("*")
-        .eq("delivery_order_id", deliveryOrderId)
+        .eq("delivery_order_id", deliveryOrderId || activeDelivery?.id)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      locationData = data;
+    }
+
+    if ((!locationData || locationData.length === 0) && orderId) {
+      const { data } = await supabase
+        .from("driver_locations")
+        .select("*")
+        .eq("order_id", orderId)
         .order("updated_at", { ascending: false })
         .limit(1);
 
@@ -384,11 +400,13 @@ export default function CustomerOrderTracking() {
       locationData = data;
     }
 
-    if ((!locationData || locationData.length === 0) && delivery?.driver_id) {
+    const driverId = activeDelivery?.driver_id || delivery?.driver_id;
+
+    if ((!locationData || locationData.length === 0) && driverId) {
       const { data } = await supabase
         .from("driver_locations")
         .select("*")
-        .eq("driver_id", delivery.driver_id)
+        .eq("driver_id", driverId)
         .order("updated_at", { ascending: false })
         .limit(1);
 
@@ -429,8 +447,18 @@ export default function CustomerOrderTracking() {
         orderId: delivery?.order_id || orderId,
         deliveryOrderId: delivery?.id || deliveryOrderId,
         driverId: delivery?.driver_id || driverLocation?.driver_id || "",
+        role: "customer",
       },
     } as any);
+  }
+
+  function openProof(url?: string) {
+    if (!url) {
+      Alert.alert("Proof Not Available", "Proof image is not available yet.");
+      return;
+    }
+
+    Linking.openURL(url);
   }
 
   function stepCompleted(index: number) {
@@ -453,9 +481,7 @@ export default function CustomerOrderTracking() {
 
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Order Tracking</Text>
-            <Text style={styles.subtitle}>
-              Live delivery status and driver updates
-            </Text>
+            <Text style={styles.subtitle}>Live delivery status and driver updates</Text>
           </View>
         </View>
 
@@ -488,24 +514,19 @@ export default function CustomerOrderTracking() {
           ) : (
             <>
               <InfoRow label="Order ID" value={delivery?.order_id || orderId || "Not provided"} />
+              <InfoRow label="Delivery ID" value={delivery?.id || deliveryOrderId || "Pending"} />
               <InfoRow label="Driver" value={delivery?.driver_name || "Not assigned yet"} />
               <InfoRow label="Pickup" value={delivery?.pickup_address || "Pickup location pending"} />
               <InfoRow label="Dropoff" value={delivery?.dropoff_address || "Dropoff location pending"} />
-              <InfoRow
-                label="Miles"
-                value={`${Number(delivery?.miles || 0).toFixed(1)} miles`}
-              />
-              <InfoRow
-                label="Delivery Fee"
-                value={`$${Number(delivery?.delivery_fee || 0).toFixed(2)}`}
-              />
+              <InfoRow label="Miles" value={`${Number(delivery?.miles || 0).toFixed(1)} miles`} />
+              <InfoRow label="Delivery Fee" value={`$${Number(delivery?.delivery_fee || 0).toFixed(2)}`} />
               <InfoRow
                 label="Last Update"
                 value={
                   driverLocation?.updated_at
-                    ? new Date(driverLocation.updated_at).toLocaleString()
+                    ? formatDate(driverLocation.updated_at)
                     : delivery?.updated_at
-                    ? new Date(delivery.updated_at).toLocaleString()
+                    ? formatDate(delivery.updated_at)
                     : "No update yet"
                 }
               />
@@ -521,13 +542,10 @@ export default function CustomerOrderTracking() {
               <View style={styles.locationBox}>
                 <Text style={styles.locationTitle}>GPS Connected</Text>
                 <Text style={styles.locationText}>
-                  {driverLocation.latitude.toFixed(5)},{" "}
-                  {driverLocation.longitude.toFixed(5)}
+                  {driverLocation.latitude.toFixed(5)}, {driverLocation.longitude.toFixed(5)}
                 </Text>
                 <Text style={styles.locationSub}>
-                  {Platform.OS === "web"
-                    ? "Open map to view driver position."
-                    : "Driver GPS is updating when location sharing is active."}
+                  Driver GPS updates when location sharing is active.
                 </Text>
               </View>
 
@@ -539,7 +557,7 @@ export default function CustomerOrderTracking() {
             <View style={styles.locationBox}>
               <Text style={styles.locationTitle}>Waiting for GPS</Text>
               <Text style={styles.locationSub}>
-                Location will appear once the driver starts live tracking.
+                Location appears once the driver starts live tracking.
               </Text>
             </View>
           )}
@@ -550,6 +568,24 @@ export default function CustomerOrderTracking() {
 
           <Pressable style={styles.darkButton} onPress={openChat}>
             <Text style={styles.darkButtonText}>Message Support</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Proofs</Text>
+
+          <Pressable
+            style={styles.proofButton}
+            onPress={() => openProof(delivery?.proof_of_pickup_url)}
+          >
+            <Text style={styles.proofButtonText}>View Proof of Pickup</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.proofButton}
+            onPress={() => openProof(delivery?.proof_of_delivery_url)}
+          >
+            <Text style={styles.proofButtonText}>View Proof of Delivery</Text>
           </Pressable>
         </View>
 
@@ -570,14 +606,7 @@ export default function CustomerOrderTracking() {
                       active && styles.timelineDotActive,
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.timelineDotText,
-                        complete && styles.timelineDotTextComplete,
-                      ]}
-                    >
-                      {index + 1}
-                    </Text>
+                    <Text style={styles.timelineDotText}>{index + 1}</Text>
                   </View>
 
                   {index < TRACKING_STEPS.length - 1 && (
@@ -630,7 +659,6 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: COLORS.bg },
   content: { padding: 16, paddingBottom: 44 },
-
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -660,7 +688,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 2,
   },
-
   statusCard: {
     backgroundColor: COLORS.primaryDark,
     borderRadius: 18,
@@ -704,7 +731,6 @@ const styles = StyleSheet.create({
     height: "100%",
     backgroundColor: "#FFFFFF",
   },
-
   card: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -728,7 +754,6 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontWeight: "800",
   },
-
   infoRow: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
@@ -748,7 +773,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 19,
   },
-
   locationBox: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
@@ -773,7 +797,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 5,
   },
-
   primaryButton: {
     backgroundColor: COLORS.primary,
     borderRadius: 12,
@@ -797,7 +820,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   darkButtonText: { color: "#FFFFFF", fontWeight: "900" },
-
+  proofButton: {
+    backgroundColor: COLORS.soft,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  proofButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
   timelineRow: {
     flexDirection: "row",
     minHeight: 68,
@@ -824,9 +859,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 12,
-  },
-  timelineDotTextComplete: {
-    color: "#FFFFFF",
   },
   timelineLine: {
     width: 2,
@@ -860,7 +892,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 3,
   },
-
   outlineButton: {
     backgroundColor: COLORS.card,
     borderWidth: 1,

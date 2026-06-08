@@ -1,3 +1,5 @@
+// app/customer/orders.tsx
+
 import React, { useCallback, useState } from "react";
 import {
   Alert,
@@ -8,6 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 
 import {
@@ -19,7 +22,6 @@ import {
 const COLORS = {
   primary: "#2E7D32",
   primaryDark: "#14532D",
-  secondary: "#F9A825",
   background: "#F8FAF5",
   card: "#FFFFFF",
   text: "#172017",
@@ -31,7 +33,7 @@ const COLORS = {
   dark: "#111827",
 };
 
-function money(value: number) {
+function money(value: any) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
 
@@ -42,14 +44,74 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
+async function readJsonArray(key: string) {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function readJsonObject(key: string) {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeOrder(item: any) {
+  const items = Array.isArray(item.items) ? item.items : [];
+
+  return {
+    ...item,
+    id: String(item.id || item.orderId || `order_${Date.now()}`),
+    status: item.status || item.paymentStatus || "PAID",
+    createdAt: item.createdAt || item.created_at || item.updatedAt || item.updated_at || "",
+    itemCount:
+      item.itemCount ||
+      items.reduce((sum: number, cartItem: any) => sum + Number(cartItem.quantity || 0), 0),
+    total: Number(item.total || 0),
+    items,
+  };
+}
+
 export default function CustomerOrdersScreen() {
-  const [orders, setOrders] = useState<CartHistoryItem[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadOrders = useCallback(async () => {
-    const history = await getCartHistory();
-    setOrders(history || []);
-    setRefreshing(false);
+    try {
+      const history = await getCartHistory();
+      const finalizedOrders = await readJsonArray("farm2homeCustomerOrders");
+      const lastOrder = await readJsonObject("lastCustomerOrder");
+
+      const combined = [
+        ...(Array.isArray(finalizedOrders) ? finalizedOrders : []),
+        ...(lastOrder?.id ? [lastOrder] : []),
+        ...(Array.isArray(history) ? history : []),
+      ];
+
+      const unique = Array.from(
+        new Map(combined.map((item: any) => [String(item.id), normalizeOrder(item)])).values()
+      );
+
+      unique.sort((a: any, b: any) => {
+        const aDate = new Date(a.createdAt || a.updatedAt || 0).getTime();
+        const bDate = new Date(b.createdAt || b.updatedAt || 0).getTime();
+        return bDate - aDate;
+      });
+
+      setOrders(unique);
+    } catch (error) {
+      console.log("Load orders error:", error);
+      Alert.alert("Orders Error", "Unable to load orders.");
+    } finally {
+      setRefreshing(false);
+    }
   }, []);
 
   useFocusEffect(
@@ -58,33 +120,31 @@ export default function CustomerOrdersScreen() {
     }, [loadOrders])
   );
 
-  const onRefresh = async () => {
+  async function onRefresh() {
     setRefreshing(true);
     await loadOrders();
-  };
+  }
 
-  const handleClearHistory = async () => {
+  async function handleClearHistory() {
     if (orders.length === 0) return;
 
-    Alert.alert("Clear Order History", "Remove all saved cart history?", [
+    Alert.alert("Clear Order History", "Remove saved cart history only?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Clear",
         style: "destructive",
         onPress: async () => {
           await clearCartHistory();
-          setOrders([]);
+          await loadOrders();
         },
       },
     ]);
-  };
+  }
 
-  function openTracking(item: CartHistoryItem) {
+  function openTracking(item: any) {
     router.push({
       pathname: "/customer/order-tracking",
-      params: {
-        orderId: item.id,
-      },
+      params: { orderId: item.id },
     } as any);
   }
 
@@ -100,13 +160,13 @@ export default function CustomerOrdersScreen() {
 
         <View style={styles.topTitleBlock}>
           <Text style={styles.title}>My Orders</Text>
-          <Text style={styles.subtitle}>Saved carts and checkout history</Text>
+          <Text style={styles.subtitle}>Confirmed orders and checkout history</Text>
         </View>
       </View>
 
       <FlatList
         data={orders}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -114,23 +174,16 @@ export default function CustomerOrdersScreen() {
         ListHeaderComponent={
           <View>
             <View style={styles.heroCard}>
-              <View style={styles.heroTextBlock}>
-                <Text style={styles.heroBadge}>Farm2Home History</Text>
-                <Text style={styles.heroTitle}>Track and review your farm orders</Text>
-                <Text style={styles.heroText}>
-                  View saved carts, totals, item history, and delivery tracking.
-                </Text>
-              </View>
-
-              <Text style={styles.heroEmoji}>🧾</Text>
+              <Text style={styles.heroBadge}>Farm2Home Orders</Text>
+              <Text style={styles.heroTitle}>Track and review your farm orders</Text>
+              <Text style={styles.heroText}>
+                View order totals, fulfillment status, items, and delivery tracking.
+              </Text>
             </View>
 
             {orders.length > 0 && (
               <Pressable
-                style={({ pressed }) => [
-                  styles.clearButton,
-                  pressed && styles.pressed,
-                ]}
+                style={({ pressed }) => [styles.clearButton, pressed && styles.pressed]}
                 onPress={handleClearHistory}
               >
                 <Text style={styles.clearButtonText}>Clear Cart History</Text>
@@ -140,20 +193,19 @@ export default function CustomerOrdersScreen() {
         }
         ListEmptyComponent={
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>🌾</Text>
-            <Text style={styles.emptyTitle}>No saved cart history yet</Text>
+            <View style={styles.emptyIconBox}>
+              <Text style={styles.emptyIconText}>0</Text>
+            </View>
+            <Text style={styles.emptyTitle}>No orders yet</Text>
             <Text style={styles.emptyText}>
-              Add items to your cart. Your saved cart history will appear here.
+              Confirmed Farm2Home orders will appear here after checkout.
             </Text>
 
             <Pressable
-              style={({ pressed }) => [
-                styles.shopButton,
-                pressed && styles.pressed,
-              ]}
+              style={({ pressed }) => [styles.shopButton, pressed && styles.pressed]}
               onPress={() => router.push("/customer/marketplace" as any)}
             >
-              <Text style={styles.shopButtonText}>Shop Fresh Produce</Text>
+              <Text style={styles.shopButtonText}>Shop Marketplace</Text>
             </Pressable>
           </View>
         }
@@ -161,11 +213,13 @@ export default function CustomerOrdersScreen() {
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <View style={styles.orderIconBox}>
-                <Text style={styles.orderIcon}>🧺</Text>
+                <Text style={styles.orderInitial}>
+                  {String(item.id || "O").slice(-1).toUpperCase()}
+                </Text>
               </View>
 
               <View style={styles.orderHeaderText}>
-                <Text style={styles.orderNumber}>Cart #{item.id.slice(-8)}</Text>
+                <Text style={styles.orderNumber}>Order #{String(item.id).slice(-8)}</Text>
                 <Text style={styles.dateText}>{formatDate(item.createdAt)}</Text>
               </View>
 
@@ -178,18 +232,20 @@ export default function CustomerOrdersScreen() {
 
             <Text style={styles.sectionTitle}>Items</Text>
 
-            {item.items.map((cartItem) => (
-              <View key={`${item.id}-${cartItem.id}`} style={styles.itemRow}>
-                <View style={styles.productIcon}>
-                  <Text style={styles.productIconText}>🥬</Text>
+            {(item.items || []).map((cartItem: any, index: number) => (
+              <View key={`${item.id}-${cartItem.id || index}`} style={styles.itemRow}>
+                <View style={styles.productInitialBox}>
+                  <Text style={styles.productInitialText}>
+                    {String(cartItem.name || cartItem.productName || "P").slice(0, 1)}
+                  </Text>
                 </View>
 
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemName} numberOfLines={1}>
-                    {cartItem.name}
+                    {cartItem.name || cartItem.productName || "Farm Product"}
                   </Text>
                   <Text style={styles.farmName} numberOfLines={1}>
-                    {cartItem.farmName || "Farm2Home Farm"}
+                    {cartItem.farmName || cartItem.farmerName || "Farm2Home Farm"}
                   </Text>
                 </View>
 
@@ -213,20 +269,14 @@ export default function CustomerOrdersScreen() {
 
             <View style={styles.actionRow}>
               <Pressable
-                style={({ pressed }) => [
-                  styles.trackButton,
-                  pressed && styles.pressed,
-                ]}
+                style={({ pressed }) => [styles.trackButton, pressed && styles.pressed]}
                 onPress={() => openTracking(item)}
               >
                 <Text style={styles.trackButtonText}>Track Order</Text>
               </Pressable>
 
               <Pressable
-                style={({ pressed }) => [
-                  styles.marketButton,
-                  pressed && styles.pressed,
-                ]}
+                style={({ pressed }) => [styles.marketButton, pressed && styles.pressed]}
                 onPress={() => router.push("/customer/marketplace" as any)}
               >
                 <Text style={styles.marketButtonText}>Shop Again</Text>
@@ -240,10 +290,7 @@ export default function CustomerOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
+  page: { flex: 1, backgroundColor: COLORS.background },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -253,9 +300,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
@@ -263,53 +310,37 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   backCircleText: {
-    fontSize: 34,
+    fontSize: 32,
     color: COLORS.text,
     fontWeight: "900",
     marginTop: -4,
   },
-  topTitleBlock: {
-    flex: 1,
-  },
-  title: {
-    color: COLORS.text,
-    fontSize: 30,
-    fontWeight: "900",
-  },
+  topTitleBlock: { flex: 1 },
+  title: { color: COLORS.text, fontSize: 30, fontWeight: "900" },
   subtitle: {
     color: COLORS.muted,
     fontSize: 14,
     marginTop: 3,
     fontWeight: "700",
   },
-  listContent: {
-    padding: 18,
-    paddingTop: 0,
-    paddingBottom: 38,
-  },
+  listContent: { padding: 18, paddingTop: 0, paddingBottom: 38 },
   heroCard: {
     backgroundColor: COLORS.primary,
-    borderRadius: 30,
-    padding: 20,
+    borderRadius: 18,
+    padding: 18,
     marginBottom: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  heroTextBlock: {
-    flex: 1,
-    paddingRight: 12,
   },
   heroBadge: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.18)",
     color: "#FFFFFF",
     fontWeight: "900",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 999,
     overflow: "hidden",
     marginBottom: 10,
+    fontSize: 12,
   },
   heroTitle: {
     color: "#FFFFFF",
@@ -323,25 +354,19 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 8,
   },
-  heroEmoji: {
-    fontSize: 54,
-  },
   clearButton: {
     backgroundColor: "#FEE2E2",
-    borderRadius: 999,
+    borderRadius: 14,
     paddingVertical: 13,
     alignItems: "center",
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#FECACA",
   },
-  clearButtonText: {
-    color: COLORS.danger,
-    fontWeight: "900",
-  },
+  clearButtonText: { color: COLORS.danger, fontWeight: "900" },
   card: {
     backgroundColor: COLORS.card,
-    borderRadius: 28,
+    borderRadius: 18,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
@@ -352,30 +377,18 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 3,
   },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
   orderIconBox: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: COLORS.softGreen,
+    width: 52,
+    height: 52,
+    borderRadius: 15,
+    backgroundColor: COLORS.primaryDark,
     justifyContent: "center",
     alignItems: "center",
   },
-  orderIcon: {
-    fontSize: 28,
-  },
-  orderHeaderText: {
-    flex: 1,
-  },
-  orderNumber: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
+  orderInitial: { color: "#FFFFFF", fontWeight: "900", fontSize: 22 },
+  orderHeaderText: { flex: 1 },
+  orderNumber: { fontSize: 18, fontWeight: "900", color: COLORS.text },
   dateText: {
     fontSize: 12,
     color: COLORS.muted,
@@ -410,46 +423,36 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: COLORS.lightGreen,
-    borderRadius: 18,
+    borderRadius: 14,
     padding: 10,
     marginTop: 7,
     borderWidth: 1,
     borderColor: COLORS.border,
     gap: 10,
   },
-  productIcon: {
+  productInitialBox: {
     width: 42,
     height: 42,
-    borderRadius: 14,
+    borderRadius: 13,
     backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
   },
-  productIconText: {
-    fontSize: 22,
-  },
-  itemInfo: {
-    flex: 1,
-  },
-  itemName: {
-    fontSize: 14,
+  productInitialText: {
+    color: COLORS.primaryDark,
+    fontSize: 18,
     fontWeight: "900",
-    color: COLORS.text,
   },
+  itemInfo: { flex: 1 },
+  itemName: { fontSize: 14, fontWeight: "900", color: COLORS.text },
   farmName: {
     color: COLORS.muted,
     marginTop: 3,
     fontWeight: "700",
     fontSize: 12,
   },
-  itemRight: {
-    alignItems: "flex-end",
-  },
-  itemQty: {
-    fontSize: 12,
-    color: COLORS.muted,
-    fontWeight: "800",
-  },
+  itemRight: { alignItems: "flex-end" },
+  itemQty: { fontSize: 12, color: COLORS.muted, fontWeight: "800" },
   itemPrice: {
     fontSize: 14,
     fontWeight: "900",
@@ -465,64 +468,52 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
   },
-  totalLabel: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
+  totalLabel: { fontSize: 16, fontWeight: "900", color: COLORS.text },
   totalSubtext: {
     color: COLORS.muted,
     fontWeight: "700",
     marginTop: 3,
     fontSize: 12,
   },
-  totalValue: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: COLORS.primary,
-  },
-  actionRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 16,
-  },
+  totalValue: { fontSize: 22, fontWeight: "900", color: COLORS.primary },
+  actionRow: { flexDirection: "row", gap: 10, marginTop: 16 },
   trackButton: {
     flex: 1,
     backgroundColor: COLORS.primary,
     paddingVertical: 14,
-    borderRadius: 18,
+    borderRadius: 14,
     alignItems: "center",
   },
-  trackButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  trackButtonText: { color: "#FFFFFF", fontWeight: "900" },
   marketButton: {
     flex: 1,
     backgroundColor: COLORS.softGreen,
     paddingVertical: 14,
-    borderRadius: 18,
+    borderRadius: 14,
     alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  marketButtonText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-  },
+  marketButtonText: { color: COLORS.primary, fontWeight: "900" },
   emptyBox: {
     backgroundColor: COLORS.card,
-    borderRadius: 28,
-    padding: 26,
+    borderRadius: 18,
+    padding: 24,
     alignItems: "center",
     marginTop: 10,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  emptyIcon: {
-    fontSize: 48,
+  emptyIconBox: {
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    backgroundColor: COLORS.softGreen,
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 10,
   },
+  emptyIconText: { color: COLORS.primary, fontWeight: "900", fontSize: 24 },
   emptyTitle: {
     fontSize: 22,
     fontWeight: "900",
@@ -539,17 +530,11 @@ const styles = StyleSheet.create({
   },
   shopButton: {
     backgroundColor: COLORS.primary,
-    borderRadius: 999,
+    borderRadius: 14,
     paddingHorizontal: 22,
     paddingVertical: 13,
     marginTop: 18,
   },
-  shopButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 15,
-  },
-  pressed: {
-    opacity: 0.75,
-  },
+  shopButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 15 },
+  pressed: { opacity: 0.75 },
 });

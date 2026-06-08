@@ -45,8 +45,13 @@ export default function CustomerProfile() {
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
 
-  const [currentPassword, setCurrentPassword] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryCity, setDeliveryCity] = useState("");
+  const [deliveryState, setDeliveryState] = useState("MI");
+  const [deliveryZip, setDeliveryZip] = useState("");
+
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
 
@@ -156,9 +161,30 @@ export default function CustomerProfile() {
           current?.fullName ||
           "",
 
-        username: dbCustomer?.username || current?.username || "",
+        username: dbCustomer?.username || profile?.username || current?.username || "",
         email: normalize(dbCustomer?.email || profile?.email || current?.email || ""),
         phone: dbCustomer?.phone || profile?.phone || current?.phone || "",
+
+        deliveryAddress:
+          dbCustomer?.delivery_address ||
+          current?.deliveryAddress ||
+          current?.delivery_address ||
+          "",
+        deliveryCity:
+          dbCustomer?.delivery_city ||
+          current?.deliveryCity ||
+          current?.delivery_city ||
+          "",
+        deliveryState:
+          dbCustomer?.delivery_state ||
+          current?.deliveryState ||
+          current?.delivery_state ||
+          "MI",
+        deliveryZip:
+          dbCustomer?.delivery_zip ||
+          current?.deliveryZip ||
+          current?.delivery_zip ||
+          "",
 
         accountActive: dbCustomer?.account_active ?? current?.accountActive ?? true,
 
@@ -191,6 +217,11 @@ export default function CustomerProfile() {
       setFullName(customerData.fullName || "");
       setUsername(customerData.username || "");
       setEmail(customerData.email || "");
+      setPhone(customerData.phone || "");
+      setDeliveryAddress(customerData.deliveryAddress || "");
+      setDeliveryCity(customerData.deliveryCity || "");
+      setDeliveryState(customerData.deliveryState || "MI");
+      setDeliveryZip(customerData.deliveryZip || "");
 
       await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerData));
       await AsyncStorage.setItem("currentUser", JSON.stringify(customerData));
@@ -247,6 +278,11 @@ export default function CustomerProfile() {
             name: fullName.trim(),
             username: username.trim(),
             email: normalize(email),
+            phone: phone.trim(),
+            delivery_address: deliveryAddress.trim(),
+            delivery_city: deliveryCity.trim(),
+            delivery_state: deliveryState.trim(),
+            delivery_zip: deliveryZip.trim(),
             updated_at: now,
           })
           .eq("id", customer.id);
@@ -263,6 +299,7 @@ export default function CustomerProfile() {
             full_name: fullName.trim(),
             name: fullName.trim(),
             email: normalize(email),
+            phone: phone.trim(),
             updated_at: now,
           })
           .eq("id", profileId);
@@ -276,6 +313,11 @@ export default function CustomerProfile() {
         name: fullName.trim(),
         username: username.trim(),
         email: normalize(email),
+        phone: phone.trim(),
+        deliveryAddress: deliveryAddress.trim(),
+        deliveryCity: deliveryCity.trim(),
+        deliveryState: deliveryState.trim(),
+        deliveryZip: deliveryZip.trim(),
         updatedAt: now,
       };
 
@@ -311,7 +353,6 @@ export default function CustomerProfile() {
 
       if (error) throw error;
 
-      setCurrentPassword("");
       setNewPassword("");
       setConfirmNewPassword("");
 
@@ -452,7 +493,9 @@ export default function CustomerProfile() {
   if (!customer) {
     return (
       <View style={styles.emptyPage}>
-        <Text style={styles.emptyIcon}>👤</Text>
+        <View style={styles.emptyIconBox}>
+          <Text style={styles.emptyIconText}>C</Text>
+        </View>
         <Text style={styles.emptyTitle}>Customer Profile</Text>
         <Text style={styles.emptyText}>No customer profile found.</Text>
 
@@ -505,25 +548,16 @@ export default function CustomerProfile() {
           </View>
         </View>
 
-        <View style={styles.statusCard}>
-          <View style={styles.statusHeader}>
-            <Text style={styles.statusIcon}>🌱</Text>
-            <View style={styles.statusTextBlock}>
-              <Text style={styles.statusTitle}>Membership Status</Text>
-              <Text style={styles.active}>{membershipStatus}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.statusSmall}>
-            Customer membership provides access to Farm2Home ordering, delivery,
-            subscriptions, and premium features.
-          </Text>
+        <View style={styles.statsRow}>
+          <StatCard label="Membership" value={membershipStatus} />
+          <StatCard label="Role" value="Customer" />
+          <StatCard label="Status" value={customer.accountActive === false ? "Inactive" : "Active"} />
         </View>
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Profile Information</Text>
 
-          <Text style={styles.label}>Full Name</Text>
+          <Label text="Full Name" />
           <TextInput
             style={styles.input}
             value={fullName}
@@ -532,7 +566,7 @@ export default function CustomerProfile() {
             placeholderTextColor="#8A9482"
           />
 
-          <Text style={styles.label}>Username</Text>
+          <Label text="Username" />
           <TextInput
             style={styles.input}
             value={username}
@@ -542,7 +576,7 @@ export default function CustomerProfile() {
             autoCapitalize="none"
           />
 
-          <Text style={styles.label}>Email</Text>
+          <Label text="Email" />
           <TextInput
             style={styles.input}
             value={email}
@@ -553,11 +587,68 @@ export default function CustomerProfile() {
             keyboardType="email-address"
           />
 
+          <Label text="Phone" />
+          <TextInput
+            style={styles.input}
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="Phone"
+            placeholderTextColor="#8A9482"
+            keyboardType="phone-pad"
+          />
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Default Delivery Settings</Text>
+
+          <Label text="Delivery Address" />
+          <TextInput
+            style={styles.input}
+            value={deliveryAddress}
+            onChangeText={setDeliveryAddress}
+            placeholder="Delivery address"
+            placeholderTextColor="#8A9482"
+          />
+
+          <View style={styles.inputRow}>
+            <View style={{ flex: 1 }}>
+              <Label text="City" />
+              <TextInput
+                style={styles.input}
+                value={deliveryCity}
+                onChangeText={setDeliveryCity}
+                placeholder="City"
+                placeholderTextColor="#8A9482"
+              />
+            </View>
+
+            <View style={styles.stateBox}>
+              <Label text="State" />
+              <TextInput
+                style={styles.input}
+                value={deliveryState}
+                onChangeText={setDeliveryState}
+                placeholder="MI"
+                placeholderTextColor="#8A9482"
+              />
+            </View>
+          </View>
+
+          <Label text="Zip Code" />
+          <TextInput
+            style={styles.input}
+            value={deliveryZip}
+            onChangeText={setDeliveryZip}
+            placeholder="Zip code"
+            placeholderTextColor="#8A9482"
+            keyboardType="numeric"
+          />
+
           <Pressable
             style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
             onPress={saveProfile}
           >
-            <Text style={styles.buttonText}>Save Profile</Text>
+            <Text style={styles.buttonText}>Save Customer Profile</Text>
           </Pressable>
         </View>
 
@@ -591,18 +682,17 @@ export default function CustomerProfile() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Manage Subscription</Text>
+          <Text style={styles.sectionTitle}>Billing</Text>
 
           <Text style={styles.helpText}>
-            Manage your Farm2Home customer membership, update payment method,
-            review invoices, or cancel your subscription.
+            Manage your Farm2Home customer membership, payment method, invoices, and subscription.
           </Text>
 
           <Pressable
             style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
             onPress={openBillingPortal}
           >
-            <Text style={styles.buttonText}>Manage Subscription</Text>
+            <Text style={styles.buttonText}>Manage Membership</Text>
           </Pressable>
 
           <Pressable
@@ -616,33 +706,15 @@ export default function CustomerProfile() {
         <View style={styles.quickActionsCard}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
 
-          <Pressable
-            style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
-            onPress={() => router.push("/customer/marketplace" as never)}
-          >
-            <View style={styles.actionIcon}>
-              <Text style={styles.actionIconText}>🛒</Text>
-            </View>
-            <View style={styles.actionTextBlock}>
-              <Text style={styles.actionTitle}>Go to Marketplace</Text>
-              <Text style={styles.actionSubtitle}>Shop local farm goods</Text>
-            </View>
-            <Text style={styles.actionArrow}>›</Text>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
-            onPress={() => router.push("/customer/orders" as never)}
-          >
-            <View style={styles.actionIcon}>
-              <Text style={styles.actionIconText}>🧾</Text>
-            </View>
-            <View style={styles.actionTextBlock}>
-              <Text style={styles.actionTitle}>My Orders</Text>
-              <Text style={styles.actionSubtitle}>View cart and order history</Text>
-            </View>
-            <Text style={styles.actionArrow}>›</Text>
-          </Pressable>
+          <RouteRow title="Marketplace" subtitle="Shop local farm goods" path="/customer/marketplace" />
+          <RouteRow title="Cart" subtitle="Review saved cart items" path="/customer/cart" />
+          <RouteRow title="My Orders" subtitle="View confirmed orders and tracking" path="/customer/orders" />
+          <RouteRow
+            title="Chat Center"
+            subtitle="Message support, farmers, or drivers"
+            path="/chat/chat-center"
+            params={{ role: "customer" }}
+          />
         </View>
 
         <Pressable
@@ -656,6 +728,58 @@ export default function CustomerProfile() {
   );
 }
 
+function Label({ text }: { text: string }) {
+  return <Text style={styles.label}>{text}</Text>;
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function RouteRow({
+  title,
+  subtitle,
+  path,
+  params,
+}: {
+  title: string;
+  subtitle: string;
+  path: string;
+  params?: Record<string, string>;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
+      onPress={() =>
+        router.push(
+          params
+            ? ({
+                pathname: path,
+                params,
+              } as any)
+            : (path as any)
+        )
+      }
+    >
+      <View style={styles.actionInitialBox}>
+        <Text style={styles.actionInitial}>{title.slice(0, 1)}</Text>
+      </View>
+
+      <View style={styles.actionTextBlock}>
+        <Text style={styles.actionTitle}>{title}</Text>
+        <Text style={styles.actionSubtitle}>{subtitle}</Text>
+      </View>
+
+      <Text style={styles.actionArrow}>›</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 18, paddingBottom: 70 },
@@ -666,7 +790,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 24,
   },
-  emptyIcon: { fontSize: 52, marginBottom: 10 },
+  emptyIconBox: {
+    width: 62,
+    height: 62,
+    borderRadius: 20,
+    backgroundColor: COLORS.primaryDark,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  emptyIconText: { color: "#FFFFFF", fontWeight: "900", fontSize: 25 },
   emptyTitle: {
     color: COLORS.text,
     fontSize: 28,
@@ -682,9 +815,9 @@ const styles = StyleSheet.create({
   },
   topBar: { flexDirection: "row", alignItems: "center", marginBottom: 18, gap: 12 },
   backCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
@@ -692,7 +825,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   backCircleText: {
-    fontSize: 34,
+    fontSize: 32,
     color: COLORS.text,
     fontWeight: "900",
     marginTop: -4,
@@ -702,17 +835,17 @@ const styles = StyleSheet.create({
   subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   heroCard: {
     backgroundColor: COLORS.primary,
-    borderRadius: 30,
+    borderRadius: 18,
     padding: 18,
-    marginBottom: 16,
+    marginBottom: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
   },
   avatarCircle: {
-    width: 74,
-    height: 74,
-    borderRadius: 26,
+    width: 70,
+    height: 70,
+    borderRadius: 20,
     backgroundColor: COLORS.secondary,
     justifyContent: "center",
     alignItems: "center",
@@ -734,36 +867,35 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textTransform: "capitalize",
   },
-  statusCard: {
+  statsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+  statCard: {
+    flex: 1,
     backgroundColor: COLORS.card,
-    borderRadius: 28,
-    padding: 18,
-    marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
+    borderRadius: 14,
+    padding: 12,
   },
-  statusHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
-  statusIcon: { fontSize: 34 },
-  statusTextBlock: { flex: 1 },
-  statusTitle: { fontSize: 18, fontWeight: "900", color: COLORS.text },
-  active: {
-    fontSize: 18,
-    fontWeight: "900",
+  statValue: {
     color: COLORS.primary,
-    marginTop: 4,
-    textTransform: "capitalize",
+    fontWeight: "900",
+    fontSize: 14,
   },
-  statusSmall: {
-    marginTop: 12,
+  statLabel: {
     color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 21,
+    fontWeight: "800",
+    marginTop: 4,
+    fontSize: 11,
   },
   card: {
     backgroundColor: COLORS.card,
-    padding: 18,
-    borderRadius: 28,
-    marginBottom: 16,
+    padding: 16,
+    borderRadius: 18,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
@@ -784,12 +916,14 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.lightGreen,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 18,
-    padding: 15,
+    borderRadius: 14,
+    padding: 14,
     marginBottom: 10,
     fontWeight: "800",
     color: COLORS.text,
   },
+  inputRow: { flexDirection: "row", gap: 10 },
+  stateBox: { width: 95 },
   helpText: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -798,29 +932,29 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: COLORS.primary,
-    padding: 16,
-    borderRadius: 18,
+    padding: 15,
+    borderRadius: 14,
     alignItems: "center",
     marginTop: 10,
   },
   blueButton: {
     backgroundColor: COLORS.blue,
-    padding: 16,
-    borderRadius: 18,
+    padding: 15,
+    borderRadius: 14,
     alignItems: "center",
     marginTop: 10,
   },
   cancelButton: {
     backgroundColor: COLORS.danger,
-    padding: 16,
-    borderRadius: 18,
+    padding: 15,
+    borderRadius: 14,
     alignItems: "center",
     marginTop: 10,
   },
   logoutButton: {
     backgroundColor: COLORS.dark,
     padding: 16,
-    borderRadius: 18,
+    borderRadius: 14,
     alignItems: "center",
     marginTop: 4,
     marginBottom: 30,
@@ -828,9 +962,9 @@ const styles = StyleSheet.create({
   buttonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
   quickActionsCard: {
     backgroundColor: COLORS.card,
-    padding: 18,
-    borderRadius: 28,
-    marginBottom: 16,
+    padding: 16,
+    borderRadius: 18,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
@@ -839,21 +973,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: COLORS.lightGreen,
     padding: 13,
-    borderRadius: 20,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     marginBottom: 10,
     gap: 12,
   },
-  actionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: COLORS.card,
+  actionInitialBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: COLORS.primaryDark,
     justifyContent: "center",
     alignItems: "center",
   },
-  actionIconText: { fontSize: 25 },
+  actionInitial: { color: "#FFFFFF", fontWeight: "900", fontSize: 18 },
   actionTextBlock: { flex: 1 },
   actionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
   actionSubtitle: {
