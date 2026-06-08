@@ -1,3 +1,5 @@
+// app/driver/my-deliveries.tsx
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,12 +16,16 @@ import { router, useFocusEffect } from "expo-router";
 
 import { API_BASE_URL } from "../config/api";
 import { enforceSubscriptionAccess } from "../services/lockoutGuard";
+import { supabase } from "../data/supabaseClient";
 
 type DeliveryStatus =
+  | "available"
   | "accepted"
   | "arrived_pickup"
   | "picked_up"
+  | "in_transit"
   | "arrived_dropoff"
+  | "delivered"
   | "completed"
   | "cancelled";
 
@@ -35,13 +41,17 @@ type DeliveryJob = {
   dropoff_address?: string;
   delivery_window?: string;
   payout_amount?: number;
+  delivery_fee?: number;
   miles?: number;
   pickup_notes?: string;
   delivery_notes?: string;
   status?: DeliveryStatus | string;
   visibility?: string;
+  source?: string;
   assigned_driver_id?: string;
   assigned_driver_name?: string;
+  driver_id?: string;
+  driver_name?: string;
   accepted_at?: string;
   arrived_pickup_at?: string;
   picked_up_at?: string;
@@ -50,6 +60,7 @@ type DeliveryJob = {
   proof_of_pickup_url?: string;
   proof_of_delivery_url?: string;
   created_at?: string;
+  updated_at?: string;
 };
 
 type DriverProfile = {
@@ -57,6 +68,25 @@ type DriverProfile = {
   name?: string;
   email?: string;
   phone?: string;
+};
+
+const COLORS = {
+  bg: "#0F172A",
+  card: "#FFFFFF",
+  panel: "#1E293B",
+  border: "#334155",
+  text: "#111827",
+  muted: "#64748B",
+  lightText: "#CBD5E1",
+  white: "#FFFFFF",
+  green: "#22C55E",
+  greenDark: "#15803D",
+  blue: "#2563EB",
+  redSoft: "#FEE2E2",
+  redText: "#991B1B",
+  dark: "#111827",
+  greenSoft: "#DCFCE7",
+  blueSoft: "#DBEAFE",
 };
 
 export default function DriverMyDeliveriesScreen() {
@@ -75,18 +105,23 @@ export default function DriverMyDeliveriesScreen() {
   );
 
   const payoutTotals = useMemo(() => {
-    const active = jobs.filter((job) => job.status !== "cancelled");
-    const completed = jobs.filter((job) => job.status === "completed");
+    const active = jobs.filter(
+      (job) => job.status !== "cancelled" && job.status !== "completed" && job.status !== "delivered"
+    );
+
+    const completed = jobs.filter(
+      (job) => job.status === "completed" || job.status === "delivered"
+    );
 
     return {
       activeCount: active.length,
       completedCount: completed.length,
-      totalPayout: active.reduce(
-        (sum, job) => sum + Number(job.payout_amount || 0),
+      totalPayout: jobs.reduce(
+        (sum, job) => sum + Number(job.payout_amount || job.delivery_fee || 0),
         0
       ),
       completedPayout: completed.reduce(
-        (sum, job) => sum + Number(job.payout_amount || 0),
+        (sum, job) => sum + Number(job.payout_amount || job.delivery_fee || 0),
         0
       ),
     };
@@ -114,15 +149,21 @@ export default function DriverMyDeliveriesScreen() {
       return false;
     }
 
-    const access = await enforceSubscriptionAccess({
-      role: "driver",
-      userId: currentDriver.id || "",
-      email: currentDriver.email || "",
-      redirectTo: "/subscription/subscription-locked",
-    });
+    try {
+      const access = await enforceSubscriptionAccess({
+        role: "driver",
+        userId: currentDriver.id || "",
+        email: currentDriver.email || "",
+        redirectTo: "/subscription/subscription-locked",
+      });
 
-    setAccessAllowed(access.allowed);
-    return access.allowed;
+      setAccessAllowed(access.allowed);
+      return access.allowed;
+    } catch (error) {
+      console.log("Driver access check error:", error);
+      setAccessAllowed(true);
+      return true;
+    }
   }
 
   async function initialize() {
@@ -157,6 +198,41 @@ export default function DriverMyDeliveriesScreen() {
     }
   }
 
+  function mapSupabaseDelivery(row: any): DeliveryJob {
+    return {
+      id: String(row.id),
+      order_id: row.order_id || "",
+      farmer_id: row.farmer_id || "",
+      customer_id: row.customer_id || "",
+      farm_name: row.farm_name || row.farmer_name || "Farm Delivery",
+      customer_name: row.customer_name || "",
+      customer_phone: row.customer_phone || "",
+      pickup_address: row.pickup_address || "",
+      dropoff_address: row.dropoff_address || "",
+      delivery_window: row.delivery_window || "",
+      payout_amount: Number(row.payout_amount || row.delivery_fee || 0),
+      delivery_fee: Number(row.delivery_fee || row.payout_amount || 0),
+      miles: Number(row.miles || 0),
+      pickup_notes: row.pickup_notes || "",
+      delivery_notes: row.delivery_notes || "",
+      status: row.status || "accepted",
+      source: row.source || "delivery_orders",
+      assigned_driver_id: row.assigned_driver_id || row.driver_id || "",
+      assigned_driver_name: row.assigned_driver_name || row.driver_name || "",
+      driver_id: row.driver_id || row.assigned_driver_id || "",
+      driver_name: row.driver_name || row.assigned_driver_name || "",
+      accepted_at: row.accepted_at || row.assigned_at || "",
+      arrived_pickup_at: row.arrived_pickup_at || "",
+      picked_up_at: row.picked_up_at || "",
+      arrived_dropoff_at: row.arrived_dropoff_at || "",
+      delivered_at: row.delivered_at || "",
+      proof_of_pickup_url: row.proof_of_pickup_url || "",
+      proof_of_delivery_url: row.proof_of_delivery_url || "",
+      created_at: row.created_at || "",
+      updated_at: row.updated_at || "",
+    };
+  }
+
   async function loadAssignedJobs(driverId?: string) {
     try {
       const activeDriverId = driverId || driver?.id;
@@ -165,17 +241,37 @@ export default function DriverMyDeliveriesScreen() {
 
       setRefreshing(true);
 
-      const response = await fetch(
-        `${API_BASE_URL}/driver/assigned-jobs/${activeDriverId}`
-      );
+      let loadedJobs: DeliveryJob[] = [];
 
-      const data = await response.json();
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/driver/assigned-jobs/${activeDriverId}`
+        );
 
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Unable to load assigned deliveries.");
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          loadedJobs = data.jobs || [];
+        }
+      } catch (apiError) {
+        console.log("Assigned jobs API fallback to Supabase:", apiError);
       }
 
-      setJobs(data.jobs || []);
+      if (loadedJobs.length === 0) {
+        const { data, error } = await supabase
+          .from("delivery_orders")
+          .select("*")
+          .or(`driver_id.eq.${activeDriverId},assigned_driver_id.eq.${activeDriverId}`)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.log("Supabase delivery_orders load error:", error.message);
+        }
+
+        loadedJobs = Array.isArray(data) ? data.map(mapSupabaseDelivery) : [];
+      }
+
+      setJobs(loadedJobs);
     } catch (error: any) {
       console.log("Load assigned deliveries error:", error);
       Alert.alert(
@@ -209,31 +305,67 @@ export default function DriverMyDeliveriesScreen() {
 
       setUpdatingId(job.id);
 
-      const response = await fetch(
-        `${API_BASE_URL}/driver/update-delivery-status`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            deliveryJobId: job.id,
-            driverId: driver.id,
-            status,
-          }),
+      let apiUpdated = false;
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/driver/update-delivery-status`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              deliveryJobId: job.id,
+              driverId: driver.id,
+              status,
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          apiUpdated = true;
         }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Unable to update delivery status.");
+      } catch (apiError) {
+        console.log("Update status API fallback to Supabase:", apiError);
       }
 
-      Alert.alert(
-        "Delivery Updated",
-        data.message || "Delivery status updated."
-      );
+      if (!apiUpdated) {
+        const timestampField =
+          status === "arrived_pickup"
+            ? "arrived_pickup_at"
+            : status === "picked_up"
+            ? "picked_up_at"
+            : status === "arrived_dropoff"
+            ? "arrived_dropoff_at"
+            : status === "delivered" || status === "completed"
+            ? "delivered_at"
+            : status === "accepted"
+            ? "accepted_at"
+            : "";
+
+        const payload: any = {
+          status,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (timestampField) {
+          payload[timestampField] = new Date().toISOString();
+        }
+
+        const { error } = await supabase
+          .from("delivery_orders")
+          .update(payload)
+          .eq("id", job.id);
+
+        if (error) {
+          throw error;
+        }
+      }
+
+      Alert.alert("Delivery Updated", "Delivery status updated.");
 
       await loadAssignedJobs(driver.id);
     } catch (error: any) {
@@ -277,16 +409,33 @@ export default function DriverMyDeliveriesScreen() {
     });
   }
 
+  function openChat(job: DeliveryJob) {
+    router.push({
+      pathname: "/driver/customer-chat" as any,
+      params: {
+        orderId: job.order_id || job.id,
+        deliveryJobId: job.id,
+        farmerId: job.farmer_id || "",
+        customerId: job.customer_id || "",
+      },
+    });
+  }
+
   function getStatusLabel(status?: string) {
     switch (status) {
+      case "available":
+        return "Available";
       case "accepted":
         return "Accepted";
       case "arrived_pickup":
         return "Arrived Pickup";
       case "picked_up":
         return "Picked Up";
+      case "in_transit":
+        return "In Transit";
       case "arrived_dropoff":
         return "Arrived Dropoff";
+      case "delivered":
       case "completed":
         return "Completed";
       case "cancelled":
@@ -312,6 +461,12 @@ export default function DriverMyDeliveriesScreen() {
 
       case "picked_up":
         return {
+          label: "Start Transit",
+          status: "in_transit" as DeliveryStatus,
+        };
+
+      case "in_transit":
+        return {
           label: "Arrived Dropoff",
           status: "arrived_dropoff" as DeliveryStatus,
         };
@@ -330,7 +485,7 @@ export default function DriverMyDeliveriesScreen() {
   function renderJob({ item }: { item: DeliveryJob }) {
     const nextAction = getNextAction(item);
     const isUpdating = updatingId === item.id;
-    const completed = item.status === "completed";
+    const completed = item.status === "completed" || item.status === "delivered";
     const cancelled = item.status === "cancelled";
 
     return (
@@ -378,7 +533,7 @@ export default function DriverMyDeliveriesScreen() {
           <View style={styles.metaBox}>
             <Text style={styles.metaLabel}>Payout</Text>
             <Text style={styles.metaValue}>
-              ${Number(item.payout_amount || 0).toFixed(2)}
+              ${Number(item.payout_amount || item.delivery_fee || 0).toFixed(2)}
             </Text>
           </View>
         </View>
@@ -415,6 +570,13 @@ export default function DriverMyDeliveriesScreen() {
           onPress={() => openLiveNavigation(item)}
         >
           <Text style={styles.navigationButtonText}>Open Live Navigation</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.chatButton}
+          onPress={() => openChat(item)}
+        >
+          <Text style={styles.chatButtonText}>Open Delivery Chat</Text>
         </TouchableOpacity>
 
         {nextAction ? (
@@ -461,7 +623,7 @@ export default function DriverMyDeliveriesScreen() {
   if (loading || accessChecking) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#22C55E" />
+        <ActivityIndicator size="large" color={COLORS.green} />
         <Text style={styles.centeredText}>
           Checking driver delivery access...
         </Text>
@@ -475,7 +637,7 @@ export default function DriverMyDeliveriesScreen() {
         <Text style={styles.lockTitle}>Driver Membership Required</Text>
 
         <Text style={styles.centeredText}>
-          Redirecting to subscription page...
+          Please manage your driver membership to continue.
         </Text>
 
         <TouchableOpacity
@@ -506,8 +668,8 @@ export default function DriverMyDeliveriesScreen() {
             <Text style={styles.title}>My Deliveries</Text>
 
             <Text style={styles.subtitle}>
-              Track assigned Farm2Home delivery jobs, complete pickup, and
-              submit proof of delivery.
+              Manage assigned Farm2Home deliveries, pickup milestones, delivery
+              proof, and customer communication.
             </Text>
 
             <View style={styles.summaryRow}>
@@ -515,7 +677,7 @@ export default function DriverMyDeliveriesScreen() {
                 <Text style={styles.summaryValue}>
                   {payoutTotals.activeCount}
                 </Text>
-                <Text style={styles.summaryLabel}>Active Jobs</Text>
+                <Text style={styles.summaryLabel}>Active</Text>
               </View>
 
               <View style={styles.summaryCard}>
@@ -529,7 +691,7 @@ export default function DriverMyDeliveriesScreen() {
                 <Text style={styles.summaryValue}>
                   ${payoutTotals.completedPayout.toFixed(2)}
                 </Text>
-                <Text style={styles.summaryLabel}>Paid/Done</Text>
+                <Text style={styles.summaryLabel}>Completed Pay</Text>
               </View>
             </View>
 
@@ -543,7 +705,6 @@ export default function DriverMyDeliveriesScreen() {
         }
         ListEmptyComponent={
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>🚚</Text>
             <Text style={styles.emptyTitle}>No assigned deliveries</Text>
             <Text style={styles.emptyText}>
               Accept a delivery from the Driver Board. Assigned jobs will appear
@@ -557,18 +718,18 @@ export default function DriverMyDeliveriesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0F172A" },
+  container: { flex: 1, backgroundColor: COLORS.bg },
 
   centered: {
     flex: 1,
-    backgroundColor: "#0F172A",
+    backgroundColor: COLORS.bg,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
 
   centeredText: {
-    color: "#CBD5E1",
+    color: COLORS.lightText,
     marginTop: 12,
     textAlign: "center",
     fontWeight: "800",
@@ -577,68 +738,69 @@ const styles = StyleSheet.create({
 
   lockTitle: {
     color: "#FCA5A5",
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: "900",
     textAlign: "center",
   },
 
   content: {
-    padding: 18,
-    paddingBottom: 120,
+    padding: 16,
+    paddingBottom: 110,
   },
 
   header: {
-    marginBottom: 18,
+    marginBottom: 16,
   },
 
   title: {
-    color: "#FFFFFF",
-    fontSize: 32,
+    color: COLORS.white,
+    fontSize: 28,
     fontWeight: "900",
-    marginTop: 18,
+    marginTop: 16,
   },
 
   subtitle: {
-    color: "#CBD5E1",
+    color: COLORS.lightText,
     marginTop: 8,
-    lineHeight: 22,
+    lineHeight: 21,
     fontWeight: "700",
+    fontSize: 13,
   },
 
   summaryRow: {
     flexDirection: "row",
     gap: 10,
-    marginTop: 16,
+    marginTop: 14,
   },
 
   summaryCard: {
     flex: 1,
-    backgroundColor: "#1E293B",
-    borderRadius: 18,
+    backgroundColor: COLORS.panel,
+    borderRadius: 14,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#334155",
+    borderColor: COLORS.border,
   },
 
   summaryValue: {
     color: "#86EFAC",
-    fontSize: 19,
+    fontSize: 18,
     fontWeight: "900",
   },
 
   summaryLabel: {
-    color: "#CBD5E1",
-    fontSize: 11,
+    color: COLORS.lightText,
+    fontSize: 10,
     fontWeight: "800",
     marginTop: 5,
   },
 
   boardButton: {
-    backgroundColor: "#22C55E",
-    paddingVertical: 14,
-    borderRadius: 16,
+    backgroundColor: COLORS.green,
+    paddingVertical: 13,
+    borderRadius: 13,
     alignItems: "center",
-    marginTop: 16,
+    marginTop: 14,
   },
 
   boardButtonText: {
@@ -647,10 +809,10 @@ const styles = StyleSheet.create({
   },
 
   manageButton: {
-    backgroundColor: "#22C55E",
-    paddingVertical: 14,
+    backgroundColor: COLORS.green,
+    paddingVertical: 13,
     paddingHorizontal: 18,
-    borderRadius: 16,
+    borderRadius: 13,
     alignItems: "center",
     marginTop: 16,
   },
@@ -661,10 +823,10 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 16,
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 13,
   },
 
   cardHeader: {
@@ -672,124 +834,142 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
-    marginBottom: 12,
+    marginBottom: 10,
   },
 
   farmName: {
-    color: "#111827",
-    fontSize: 20,
+    color: COLORS.text,
+    fontSize: 18,
     fontWeight: "900",
   },
 
   orderText: {
-    color: "#64748B",
+    color: COLORS.muted,
     fontWeight: "800",
-    marginTop: 4,
+    marginTop: 3,
+    fontSize: 12,
   },
 
   statusBadge: {
-    backgroundColor: "#DBEAFE",
-    paddingHorizontal: 10,
+    backgroundColor: COLORS.blueSoft,
+    paddingHorizontal: 9,
     paddingVertical: 6,
     borderRadius: 999,
   },
 
   completedBadge: {
-    backgroundColor: "#DCFCE7",
+    backgroundColor: COLORS.greenSoft,
   },
 
   cancelledBadge: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.redSoft,
   },
 
   statusText: {
     color: "#1D4ED8",
     fontWeight: "900",
-    fontSize: 12,
+    fontSize: 11,
   },
 
   sectionLabel: {
-    color: "#64748B",
+    color: COLORS.muted,
     fontWeight: "900",
-    marginTop: 12,
-    marginBottom: 4,
+    marginTop: 10,
+    marginBottom: 3,
+    fontSize: 12,
   },
 
   addressText: {
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "800",
-    lineHeight: 20,
+    lineHeight: 19,
+    fontSize: 13,
   },
 
   notesText: {
     color: "#334155",
     fontWeight: "700",
-    marginTop: 12,
-    lineHeight: 20,
+    marginTop: 10,
+    lineHeight: 19,
+    fontSize: 12,
   },
 
   metaRow: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 16,
+    gap: 10,
+    marginTop: 13,
   },
 
   metaBox: {
     flex: 1,
     backgroundColor: "#F1F5F9",
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: 13,
+    padding: 12,
   },
 
   metaLabel: {
-    color: "#64748B",
+    color: COLORS.muted,
     fontWeight: "900",
+    fontSize: 11,
   },
 
   metaValue: {
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "900",
-    fontSize: 18,
-    marginTop: 4,
+    fontSize: 17,
+    marginTop: 3,
   },
 
   navigationButton: {
-    backgroundColor: "#2563EB",
-    paddingVertical: 14,
-    borderRadius: 16,
+    backgroundColor: COLORS.blue,
+    paddingVertical: 13,
+    borderRadius: 13,
     alignItems: "center",
-    marginTop: 18,
+    marginTop: 14,
   },
 
   navigationButtonText: {
-    color: "#FFFFFF",
+    color: COLORS.white,
+    fontWeight: "900",
+  },
+
+  chatButton: {
+    backgroundColor: COLORS.dark,
+    paddingVertical: 13,
+    borderRadius: 13,
+    alignItems: "center",
+    marginTop: 9,
+  },
+
+  chatButtonText: {
+    color: COLORS.white,
     fontWeight: "900",
   },
 
   primaryButton: {
-    backgroundColor: "#15803D",
-    paddingVertical: 15,
-    borderRadius: 16,
+    backgroundColor: COLORS.greenDark,
+    paddingVertical: 14,
+    borderRadius: 13,
     alignItems: "center",
-    marginTop: 10,
+    marginTop: 9,
   },
 
   primaryButtonText: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontWeight: "900",
-    fontSize: 16,
+    fontSize: 15,
   },
 
   cancelButton: {
-    backgroundColor: "#FEE2E2",
-    paddingVertical: 14,
-    borderRadius: 16,
+    backgroundColor: COLORS.redSoft,
+    paddingVertical: 13,
+    borderRadius: 13,
     alignItems: "center",
-    marginTop: 10,
+    marginTop: 9,
   },
 
   cancelButtonText: {
-    color: "#991B1B",
+    color: COLORS.redText,
     fontWeight: "900",
   },
 
@@ -798,29 +978,27 @@ const styles = StyleSheet.create({
   },
 
   emptyBox: {
-    backgroundColor: "#1E293B",
-    borderRadius: 22,
+    backgroundColor: COLORS.panel,
+    borderRadius: 16,
     padding: 22,
     alignItems: "center",
-    marginTop: 30,
-  },
-
-  emptyIcon: {
-    fontSize: 42,
-    marginBottom: 8,
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
 
   emptyTitle: {
-    color: "#FFFFFF",
-    fontSize: 20,
+    color: COLORS.white,
+    fontSize: 18,
     fontWeight: "900",
   },
 
   emptyText: {
-    color: "#CBD5E1",
+    color: COLORS.lightText,
     textAlign: "center",
     marginTop: 8,
-    lineHeight: 22,
+    lineHeight: 21,
     fontWeight: "700",
+    fontSize: 13,
   },
 });

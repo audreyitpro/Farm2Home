@@ -4,6 +4,8 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -38,12 +40,23 @@ function getParamString(value: string | string[] | undefined): string {
   return value || "";
 }
 
+function formatStatus(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export default function LiveLocationProviderScreen() {
   const params = useLocalSearchParams();
 
-  const routeLoadId = getParamString(params.loadId);
-  const routeOrderId = getParamString(params.orderId);
-  const proofId = routeLoadId || routeOrderId;
+  const loadId = getParamString(params.loadId);
+  const orderId = getParamString(params.orderId);
+  const deliveryJobId = getParamString(params.deliveryJobId);
+  const deliveryOrderId = getParamString(params.deliveryOrderId);
+  const autoTracking = getParamString(params.autoTracking);
+
+  const proofId = deliveryJobId || deliveryOrderId || loadId || orderId;
 
   const watcherRef = useRef<Location.LocationSubscription | null>(null);
 
@@ -59,16 +72,26 @@ export default function LiveLocationProviderScreen() {
   const [longitude, setLongitude] = useState<number | null>(null);
   const [speed, setSpeed] = useState<number | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<string>("");
+  const [updatedAt, setUpdatedAt] = useState("");
 
   useEffect(() => {
-    loadDriver();
-    requestPermission();
+    initialize();
 
     return () => {
       stopSharingLocation();
     };
   }, []);
+
+  async function initialize() {
+    await loadDriver();
+    await requestPermission();
+
+    if (autoTracking === "true") {
+      setTimeout(() => {
+        startSharingLocation();
+      }, 500);
+    }
+  }
 
   async function getStoredDriver() {
     const raw =
@@ -188,13 +211,9 @@ export default function LiveLocationProviderScreen() {
           stored?.accountActive ??
           true,
         membershipStatus:
-          dbDriver?.membership_status ||
-          stored?.membershipStatus ||
-          "Active",
+          dbDriver?.membership_status || stored?.membershipStatus || "Active",
         subscriptionStatus:
-          dbDriver?.subscription_status ||
-          stored?.subscriptionStatus ||
-          "active",
+          dbDriver?.subscription_status || stored?.subscriptionStatus || "active",
         updatedAt: new Date().toISOString(),
       };
 
@@ -231,12 +250,8 @@ export default function LiveLocationProviderScreen() {
     return true;
   }
 
-  async function saveDriverLocation(location: Location.LocationObject) {
+  async function upsertDriverLocation(location: Location.LocationObject) {
     const activeDriverId = driverId;
-
-    if (!activeDriverId) {
-      await loadDriver();
-    }
 
     const lat = location.coords.latitude;
     const lng = location.coords.longitude;
@@ -253,10 +268,11 @@ export default function LiveLocationProviderScreen() {
     if (!proofId) return;
 
     const payload = {
-      load_id: proofId,
-      order_id: proofId,
-      driver_id: activeDriverId || driverId,
-      carrier_id: activeDriverId || driverId,
+      load_id: loadId || proofId,
+      order_id: orderId || proofId,
+      delivery_order_id: deliveryJobId || deliveryOrderId || proofId,
+      driver_id: activeDriverId,
+      carrier_id: activeDriverId,
       driver_name: driverName,
       latitude: lat,
       longitude: lng,
@@ -267,11 +283,37 @@ export default function LiveLocationProviderScreen() {
     };
 
     try {
-      const { data: existing } = await supabase
-        .from("driver_locations")
-        .select("*")
-        .eq("load_id", proofId)
-        .maybeSingle();
+      let existing: any = null;
+
+      if (deliveryJobId || deliveryOrderId) {
+        const result = await supabase
+          .from("driver_locations")
+          .select("*")
+          .eq("delivery_order_id", deliveryJobId || deliveryOrderId)
+          .maybeSingle();
+
+        existing = result.data;
+      }
+
+      if (!existing && loadId) {
+        const result = await supabase
+          .from("driver_locations")
+          .select("*")
+          .eq("load_id", loadId)
+          .maybeSingle();
+
+        existing = result.data;
+      }
+
+      if (!existing && activeDriverId) {
+        const result = await supabase
+          .from("driver_locations")
+          .select("*")
+          .eq("driver_id", activeDriverId)
+          .maybeSingle();
+
+        existing = result.data;
+      }
 
       if (existing?.id) {
         const { error } = await supabase
@@ -297,11 +339,13 @@ export default function LiveLocationProviderScreen() {
       const allowed = permissionGranted || (await requestPermission());
       if (!allowed) return;
 
+      if (!driverId) await loadDriver();
+
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
 
-      await saveDriverLocation(location);
+      await upsertDriverLocation(location);
 
       Alert.alert("Location Updated", "Current driver location has been refreshed.");
     } catch (error) {
@@ -317,7 +361,7 @@ export default function LiveLocationProviderScreen() {
       setLoading(true);
 
       if (!proofId) {
-        Alert.alert("Missing Load ID", "This screen needs a loadId or orderId.");
+        Alert.alert("Missing Delivery ID", "This screen needs a loadId, orderId, or deliveryOrderId.");
         return;
       }
 
@@ -332,7 +376,7 @@ export default function LiveLocationProviderScreen() {
         accuracy: Location.Accuracy.High,
       });
 
-      await saveDriverLocation(location);
+      await upsertDriverLocation(location);
 
       if (watcherRef.current) {
         watcherRef.current.remove();
@@ -345,16 +389,13 @@ export default function LiveLocationProviderScreen() {
           distanceInterval: 25,
         },
         async (newLocation) => {
-          await saveDriverLocation(newLocation);
+          await upsertDriverLocation(newLocation);
         }
       );
 
       setSharing(true);
 
-      Alert.alert(
-        "Live Location Started",
-        "Driver live location sharing is now active."
-      );
+      Alert.alert("Live Location Started", "Driver live location sharing is now active.");
     } catch (error) {
       console.log("START_LOCATION_ERROR:", error);
       Alert.alert("Location Error", "Unable to start live location sharing.");
@@ -378,9 +419,7 @@ export default function LiveLocationProviderScreen() {
     try {
       await fetch(`${API_BASE_URL}/orders/${proofId}/status`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: nextStatus.toUpperCase(),
           driverId,
@@ -391,59 +430,84 @@ export default function LiveLocationProviderScreen() {
     }
   }
 
-  async function updateSupabaseOrderStatus(nextStatus: LoadStatus, updates: any) {
-    if (!proofId) return;
+  function buildStatusPayload(nextStatus: LoadStatus, now: string) {
+    const payload: any = {
+      status: nextStatus,
+      driver_id: driverId,
+      assigned_driver_id: driverId,
+      driver_name: driverName,
+      updated_at: now,
+    };
 
-    try {
-      await supabase
-        .from("orders")
-        .update({
-          ...updates,
-          status: nextStatus.toUpperCase(),
-          fulfillmentStatus: nextStatus.toUpperCase(),
-          assignedDriverId: driverId,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", proofId);
-    } catch (error) {
-      console.log("Supabase order status update skipped:", error);
-    }
+    if (nextStatus === "arrived_pickup") payload.arrived_pickup_at = now;
+    if (nextStatus === "picked_up") payload.picked_up_at = now;
+    if (nextStatus === "in_transit") payload.in_transit_at = now;
+    if (nextStatus === "arrived_dropoff") payload.arrived_dropoff_at = now;
+    if (nextStatus === "delivered") payload.delivered_at = now;
+
+    return payload;
+  }
+
+  async function updateDeliveryOrderStatus(nextStatus: LoadStatus, payload: any) {
+    const targetId = deliveryJobId || deliveryOrderId || loadId;
+
+    if (!targetId) return;
+
+    const { error } = await supabase
+      .from("delivery_orders")
+      .update(payload)
+      .eq("id", targetId);
+
+    if (error) console.log("Delivery order status update skipped:", error.message);
+  }
+
+  async function updateFreightLoadStatus(nextStatus: LoadStatus, payload: any) {
+    if (!loadId) return;
+
+    const { error } = await supabase
+      .from("freight_loads")
+      .update(payload)
+      .eq("id", loadId);
+
+    if (error) console.log("Freight load status update skipped:", error.message);
+  }
+
+  async function updateOrderStatus(nextStatus: LoadStatus, payload: any) {
+    const targetOrderId = orderId || proofId;
+
+    if (!targetOrderId) return;
+
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        ...payload,
+        status: nextStatus.toUpperCase(),
+        fulfillmentStatus: nextStatus.toUpperCase(),
+        assignedDriverId: driverId,
+        driverId,
+      })
+      .eq("id", targetOrderId);
+
+    if (error) console.log("Order status update skipped:", error.message);
   }
 
   async function updateLoadStatus(nextStatus: LoadStatus) {
     if (!proofId) {
-      Alert.alert("Missing Load ID", "This screen needs a loadId or orderId.");
+      Alert.alert("Missing Delivery ID", "This screen needs a loadId, orderId, or deliveryOrderId.");
       return;
     }
 
     try {
       setLoading(true);
 
+      if (!driverId) await loadDriver();
+
       const now = new Date().toISOString();
+      const payload = buildStatusPayload(nextStatus, now);
 
-      const updates: any = {
-        status: nextStatus,
-        driver_id: driverId,
-        assigned_driver_id: driverId,
-        updated_at: now,
-      };
-
-      if (nextStatus === "arrived_pickup") updates.arrived_pickup_at = now;
-      if (nextStatus === "picked_up") updates.picked_up_at = now;
-      if (nextStatus === "in_transit") updates.in_transit_at = now;
-      if (nextStatus === "arrived_dropoff") updates.arrived_dropoff_at = now;
-      if (nextStatus === "delivered") updates.delivered_at = now;
-
-      const { error } = await supabase
-        .from("freight_loads")
-        .update(updates)
-        .eq("id", proofId);
-
-      if (error) {
-        console.log("Freight load status update skipped:", error.message);
-      }
-
-      await updateSupabaseOrderStatus(nextStatus, updates);
+      await updateDeliveryOrderStatus(nextStatus, payload);
+      await updateFreightLoadStatus(nextStatus, payload);
+      await updateOrderStatus(nextStatus, payload);
       await updateBackendOrderStatus(nextStatus);
 
       setStatus(nextStatus);
@@ -452,22 +516,15 @@ export default function LiveLocationProviderScreen() {
         accuracy: Location.Accuracy.High,
       });
 
-      await saveDriverLocation(currentLocation);
+      await upsertDriverLocation(currentLocation);
 
-      Alert.alert("Status Updated", `Load status updated to ${formatStatus(nextStatus)}.`);
+      Alert.alert("Status Updated", `Delivery status updated to ${formatStatus(nextStatus)}.`);
     } catch (error) {
       console.log("STATUS_UPDATE_CRASH:", error);
-      Alert.alert("Update Error", "Unable to update load status.");
+      Alert.alert("Update Error", "Unable to update delivery status.");
     } finally {
       setLoading(false);
     }
-  }
-
-  function formatStatus(value: string) {
-    return value
-      .replace(/_/g, " ")
-      .toLowerCase()
-      .replace(/\b\w/g, (char) => char.toUpperCase());
   }
 
   function statusColor() {
@@ -489,19 +546,32 @@ export default function LiveLocationProviderScreen() {
     }
   }
 
+  function openMap() {
+    if (!latitude || !longitude) {
+      Alert.alert("No Location", "Refresh or start live location first.");
+      return;
+    }
+
+    const url =
+      Platform.OS === "ios"
+        ? `http://maps.apple.com/?ll=${latitude},${longitude}`
+        : `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+
+    Linking.openURL(url);
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
+        <View style={styles.header}>
+          <View style={styles.headerTop}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.kicker}>Farm2Home Driver</Text>
-              <Text style={styles.title}>Live Location Provider</Text>
-
+              <Text style={styles.kicker}>Driver Operations</Text>
+              <Text style={styles.title}>Live Location</Text>
               <Text style={styles.subtitle}>
-                Share driver location and update delivery milestones in real time.
+                Share location and update delivery milestones in real time.
               </Text>
             </View>
 
@@ -516,16 +586,9 @@ export default function LiveLocationProviderScreen() {
         </View>
 
         <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="person-circle-outline" size={24} color="#10B981" />
-            <Text style={styles.cardHeading}>Driver</Text>
-          </View>
-
-          <Text style={styles.cardTitle}>Driver Name</Text>
-          <Text style={styles.cardValue}>{driverName}</Text>
-
-          <Text style={styles.cardTitle}>Load / Order ID</Text>
-          <Text style={styles.cardValue}>{proofId || "No load selected"}</Text>
+          <Text style={styles.cardHeading}>Driver</Text>
+          <InfoRow label="Driver Name" value={driverName} />
+          <InfoRow label="Delivery ID" value={proofId || "No delivery selected"} />
 
           <Text style={styles.cardTitle}>Current Status</Text>
           <View style={[styles.statusPill, { backgroundColor: statusColor() }]}>
@@ -534,28 +597,29 @@ export default function LiveLocationProviderScreen() {
         </View>
 
         <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="navigate-circle-outline" size={24} color="#10B981" />
-            <Text style={styles.cardHeading}>Current Location</Text>
-          </View>
+          <Text style={styles.cardHeading}>Current Location</Text>
 
-          <LocationRow label="Latitude" value={latitude ?? "Not available"} />
-          <LocationRow label="Longitude" value={longitude ?? "Not available"} />
-          <LocationRow
+          <InfoRow label="Latitude" value={latitude ?? "Not available"} />
+          <InfoRow label="Longitude" value={longitude ?? "Not available"} />
+          <InfoRow
             label="Speed"
             value={speed !== null ? `${speed.toFixed(1)} m/s` : "Not available"}
           />
-          <LocationRow
+          <InfoRow
             label="Heading"
             value={heading !== null ? `${heading.toFixed(1)}°` : "Not available"}
           />
-          <LocationRow
+          <InfoRow
             label="Updated"
             value={updatedAt ? new Date(updatedAt).toLocaleString() : "Not yet"}
           />
+
+          <TouchableOpacity style={styles.mapButton} onPress={openMap}>
+            <Text style={styles.mapButtonText}>Open Map</Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.buttonGrid}>
+        <View style={styles.buttonGroup}>
           <TouchableOpacity
             style={[styles.primaryButton, sharing && styles.disabledButton]}
             onPress={startSharingLocation}
@@ -564,12 +628,9 @@ export default function LiveLocationProviderScreen() {
             {loading && !sharing ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <>
-                <Ionicons name="radio-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.primaryButtonText}>
-                  {sharing ? "Live Location Active" : "Start Live Location"}
-                </Text>
-              </>
+              <Text style={styles.primaryButtonText}>
+                {sharing ? "Live Location Active" : "Start Live Location"}
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -578,7 +639,6 @@ export default function LiveLocationProviderScreen() {
             onPress={refreshCurrentLocation}
             disabled={loading}
           >
-            <Ionicons name="refresh-outline" size={18} color="#10B981" />
             <Text style={styles.secondaryButtonText}>Refresh Location</Text>
           </TouchableOpacity>
 
@@ -589,7 +649,6 @@ export default function LiveLocationProviderScreen() {
               Alert.alert("Stopped", "Live location sharing has stopped.");
             }}
           >
-            <Ionicons name="stop-circle-outline" size={18} color="#FFFFFF" />
             <Text style={styles.dangerButtonText}>Stop Live Location</Text>
           </TouchableOpacity>
         </View>
@@ -599,18 +658,20 @@ export default function LiveLocationProviderScreen() {
 
           <MilestoneButton
             label="Arrived Pickup"
-            icon="location-outline"
             onPress={() => updateLoadStatus("arrived_pickup")}
             disabled={loading}
           />
 
           <MilestoneButton
-            label="Take Pickup Photo"
-            icon="camera-outline"
+            label="Proof of Pickup"
             onPress={() =>
               router.push({
                 pathname: "/driver/proof-of-pickup",
-                params: { loadId: proofId, orderId: proofId },
+                params: {
+                  loadId: loadId || proofId,
+                  orderId: orderId || proofId,
+                  deliveryOrderId: deliveryJobId || deliveryOrderId || proofId,
+                },
               } as any)
             }
             disabled={loading}
@@ -618,32 +679,32 @@ export default function LiveLocationProviderScreen() {
 
           <MilestoneButton
             label="Picked Up"
-            icon="cube-outline"
             onPress={() => updateLoadStatus("picked_up")}
             disabled={loading}
           />
 
           <MilestoneButton
-            label="Start Route / In Transit"
-            icon="navigate-outline"
+            label="In Transit"
             onPress={() => updateLoadStatus("in_transit")}
             disabled={loading}
           />
 
           <MilestoneButton
             label="Arrived Dropoff"
-            icon="flag-outline"
             onPress={() => updateLoadStatus("arrived_dropoff")}
             disabled={loading}
           />
 
           <MilestoneButton
-            label="Take Delivery Photo"
-            icon="camera-reverse-outline"
+            label="Proof of Delivery"
             onPress={() =>
               router.push({
                 pathname: "/driver/proof-of-delivery",
-                params: { loadId: proofId, orderId: proofId },
+                params: {
+                  loadId: loadId || proofId,
+                  orderId: orderId || proofId,
+                  deliveryOrderId: deliveryJobId || deliveryOrderId || proofId,
+                },
               } as any)
             }
             disabled={loading}
@@ -654,39 +715,36 @@ export default function LiveLocationProviderScreen() {
             onPress={() => updateLoadStatus("delivered")}
             disabled={loading}
           >
-            <Ionicons name="checkmark-done-circle-outline" size={18} color="#FFFFFF" />
             <Text style={styles.completeButtonText}>Complete Delivery</Text>
           </TouchableOpacity>
         </View>
 
         <TouchableOpacity
-          style={styles.boardButton}
-          onPress={() => router.push("/driver/mobile-driver-app" as any)}
+          style={styles.backButton}
+          onPress={() => router.push("/driver/my-deliveries" as any)}
         >
-          <Text style={styles.boardButtonText}>Back To Driver App</Text>
+          <Text style={styles.backButtonText}>Back to My Deliveries</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function LocationRow({ label, value }: { label: string; value: string | number }) {
+function InfoRow({ label, value }: { label: string; value: string | number }) {
   return (
-    <View style={styles.locationRow}>
-      <Text style={styles.locationLabel}>{label}</Text>
-      <Text style={styles.locationValue}>{String(value)}</Text>
+    <View style={styles.infoRow}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{String(value)}</Text>
     </View>
   );
 }
 
 function MilestoneButton({
   label,
-  icon,
   onPress,
   disabled,
 }: {
   label: string;
-  icon: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
   disabled?: boolean;
 }) {
@@ -696,7 +754,6 @@ function MilestoneButton({
       onPress={onPress}
       disabled={disabled}
     >
-      <Ionicons name={icon} size={18} color="#10B981" />
       <Text style={styles.actionButtonText}>{label}</Text>
     </TouchableOpacity>
   );
@@ -705,7 +762,7 @@ function MilestoneButton({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: freightTheme.colors.background },
   content: { paddingBottom: 100 },
-  hero: {
+  header: {
     backgroundColor: "#020617",
     paddingTop: 22,
     paddingHorizontal: 20,
@@ -713,7 +770,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
-  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
+  headerTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   kicker: {
     color: "#10B981",
     fontSize: 12,
@@ -734,9 +791,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   liveBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     backgroundColor: "#334155",
     alignItems: "center",
     justifyContent: "center",
@@ -749,37 +806,25 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: freightTheme.colors.card,
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
-    padding: 18,
+    padding: 16,
     marginHorizontal: 18,
-    marginTop: 16,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 12,
+    marginTop: 14,
   },
   cardHeading: {
     color: freightTheme.colors.text,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: "900",
+    marginBottom: 10,
   },
   cardTitle: {
     color: freightTheme.colors.primary,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
     marginTop: 8,
-  },
-  cardValue: {
-    color: freightTheme.colors.text,
-    fontSize: 15,
-    fontWeight: "800",
-    marginTop: 4,
-    marginBottom: 8,
   },
   statusPill: {
     alignSelf: "flex-start",
@@ -793,95 +838,91 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
-  locationRow: {
+  infoRow: {
     backgroundColor: freightTheme.colors.surface,
-    borderRadius: 14,
+    borderRadius: 13,
     padding: 13,
     marginBottom: 9,
   },
-  locationLabel: {
+  infoLabel: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
-    fontSize: 12,
+    fontSize: 11,
     textTransform: "uppercase",
   },
-  locationValue: {
+  infoValue: {
     color: freightTheme.colors.text,
     fontWeight: "800",
     marginTop: 4,
   },
-  buttonGrid: {
+  mapButton: {
+    backgroundColor: "#111827",
+    borderRadius: 13,
+    padding: 13,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  mapButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  buttonGroup: {
     marginHorizontal: 18,
-    marginTop: 16,
+    marginTop: 14,
   },
   primaryButton: {
     backgroundColor: freightTheme.colors.primary,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 13,
+    padding: 15,
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-    flexDirection: "row",
-    gap: 8,
+    marginBottom: 9,
   },
   primaryButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 15,
   },
   secondaryButton: {
     backgroundColor: freightTheme.colors.card,
     borderWidth: 1,
     borderColor: freightTheme.colors.primary,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 13,
+    padding: 15,
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-    flexDirection: "row",
-    gap: 8,
+    marginBottom: 9,
   },
   secondaryButtonText: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
-    fontSize: 15,
   },
   dangerButton: {
     backgroundColor: "#991B1B",
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 13,
+    padding: 15,
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 18,
-    flexDirection: "row",
-    gap: 8,
+    marginBottom: 12,
   },
   dangerButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 15,
   },
   section: {
     marginHorizontal: 18,
     marginTop: 8,
   },
   sectionTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "900",
     color: freightTheme.colors.text,
-    marginBottom: 12,
+    marginBottom: 11,
   },
   actionButton: {
     backgroundColor: freightTheme.colors.card,
     borderWidth: 1,
     borderColor: freightTheme.colors.primary,
-    borderRadius: 14,
-    padding: 15,
+    borderRadius: 13,
+    padding: 14,
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-    flexDirection: "row",
-    gap: 8,
+    marginBottom: 9,
   },
   actionButtonText: {
     color: freightTheme.colors.primary,
@@ -889,23 +930,20 @@ const styles = StyleSheet.create({
   },
   completeButton: {
     backgroundColor: "#064E3B",
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 13,
+    padding: 15,
     alignItems: "center",
-    justifyContent: "center",
     marginTop: 4,
-    flexDirection: "row",
-    gap: 8,
   },
   completeButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
-  boardButton: {
+  backButton: {
     marginTop: 18,
     alignItems: "center",
   },
-  boardButtonText: {
+  backButtonText: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
   },

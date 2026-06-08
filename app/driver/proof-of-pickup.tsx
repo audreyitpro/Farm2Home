@@ -41,7 +41,10 @@ export default function ProofOfPickupScreen() {
 
   const loadId = getParamString(params.loadId);
   const orderId = getParamString(params.orderId);
-  const proofId = loadId || orderId;
+  const deliveryJobId = getParamString(params.deliveryJobId);
+  const deliveryOrderId = getParamString(params.deliveryOrderId);
+
+  const proofId = deliveryJobId || deliveryOrderId || loadId || orderId;
 
   const [photoUri, setPhotoUri] = useState("");
   const [pickupName, setPickupName] = useState("");
@@ -172,7 +175,7 @@ export default function ProofOfPickupScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
     });
 
-    if (!result.canceled && result.assets?.[0]) {
+    if (!result.canceled && result.assets?.[0]?.uri) {
       setPhotoUri(result.assets[0].uri);
     }
   }
@@ -191,8 +194,37 @@ export default function ProofOfPickupScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
     });
 
-    if (!result.canceled && result.assets?.[0]) {
+    if (!result.canceled && result.assets?.[0]?.uri) {
       setPhotoUri(result.assets[0].uri);
+    }
+  }
+
+  async function savePickupProof(uploadedUrl: string, now: string) {
+    const targetDeliveryId = deliveryJobId || deliveryOrderId || loadId || null;
+
+    const { error: modernError } = await supabase.from("pickup_proofs").insert({
+      delivery_order_id: targetDeliveryId,
+      image_url: uploadedUrl,
+      pickup_contact_name: pickupName.trim() || null,
+      notes: notes.trim() || null,
+      created_at: now,
+    });
+
+    if (modernError) {
+      console.log("pickup_proofs insert skipped:", modernError.message);
+    }
+
+    const { error: proofError } = await supabase.from("delivery_proofs").insert({
+      delivery_order_id: targetDeliveryId,
+      proof_type: "pickup",
+      image_url: uploadedUrl,
+      signature_url: null,
+      notes: notes.trim() || null,
+      created_at: now,
+    });
+
+    if (proofError) {
+      console.log("delivery_proofs pickup insert skipped:", proofError.message);
     }
   }
 
@@ -213,32 +245,115 @@ export default function ProofOfPickupScreen() {
     }
   }
 
-  async function updateOrderStatus(driverId: string, uploadedUrl: string) {
-    try {
-      if (!proofId) return;
+  async function updateDeliveryOrder(driverId: string, uploadedUrl: string, now: string) {
+    const targetId = deliveryJobId || deliveryOrderId || loadId;
 
-      await supabase
-        .from("orders")
+    if (!targetId) return;
+
+    const { error } = await supabase
+      .from("delivery_orders")
+      .update({
+        status: "picked_up",
+        picked_up_at: now,
+        pickup_contact_name: pickupName.trim() || null,
+        pickup_notes: notes.trim() || null,
+        proof_of_pickup_photo_url: uploadedUrl,
+        proof_of_pickup_url: uploadedUrl,
+        driver_id: driverId,
+        assigned_driver_id: driverId,
+        updated_at: now,
+      })
+      .eq("id", targetId);
+
+    if (error) {
+      console.log("Delivery order pickup update skipped:", error.message);
+    }
+  }
+
+  async function updateFreightLoad(driverId: string, uploadedUrl: string, now: string) {
+    if (!loadId) return;
+
+    const { error } = await supabase
+      .from("freight_loads")
+      .update({
+        status: "picked_up",
+        picked_up_at: now,
+        proof_of_pickup_photo_url: uploadedUrl,
+        proof_of_pickup_url: uploadedUrl,
+        pickup_notes: notes.trim() || null,
+        pickup_contact_name: pickupName.trim() || null,
+        driver_id: driverId,
+        assigned_driver_id: driverId,
+        updated_at: now,
+      })
+      .eq("id", loadId);
+
+    if (error) {
+      console.log("Freight pickup update skipped:", error.message);
+    }
+  }
+
+  async function updateOrderStatus(driverId: string, uploadedUrl: string, now: string) {
+    if (!orderId && !proofId) return;
+
+    const targetOrderId = orderId || proofId;
+
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        fulfillmentStatus: "PICKED_UP",
+        status: "PICKED_UP",
+        picked_up_at: now,
+        pickup_notes: notes.trim() || null,
+        pickup_contact_name: pickupName.trim() || null,
+        proof_of_pickup_photo_url: uploadedUrl,
+        proof_of_pickup_url: uploadedUrl,
+        assignedDriverId: driverId,
+        driverId,
+        updated_at: now,
+      })
+      .eq("id", targetOrderId);
+
+    if (error) {
+      console.log("Order pickup status update skipped:", error.message);
+    }
+  }
+
+  async function updateDriverLocation(now: string) {
+    if (loadId) {
+      const { error } = await supabase
+        .from("driver_locations")
         .update({
-          fulfillmentStatus: "PICKED_UP",
-          status: "PICKED_UP",
-          picked_up_at: new Date().toISOString(),
-          pickup_notes: notes.trim() || null,
-          pickup_contact_name: pickupName.trim() || null,
-          proof_of_pickup_photo_url: uploadedUrl,
-          assignedDriverId: driverId,
-          driverId,
-          updated_at: new Date().toISOString(),
+          status: "picked_up",
+          updated_at: now,
         })
-        .eq("id", proofId);
-    } catch (error) {
-      console.log("Order pickup status update skipped:", error);
+        .eq("load_id", loadId);
+
+      if (error) {
+        console.log("Driver location load pickup update skipped:", error.message);
+      }
+    }
+
+    const deliveryLocationId = deliveryJobId || deliveryOrderId;
+
+    if (deliveryLocationId) {
+      const { error } = await supabase
+        .from("driver_locations")
+        .update({
+          status: "picked_up",
+          updated_at: now,
+        })
+        .eq("delivery_order_id", deliveryLocationId);
+
+      if (error) {
+        console.log("Driver location delivery pickup update skipped:", error.message);
+      }
     }
   }
 
   async function submitPickupProof() {
     if (!proofId) {
-      Alert.alert("Missing Load ID", "No delivery order was selected.");
+      Alert.alert("Missing Delivery", "No delivery order was selected.");
       return;
     }
 
@@ -261,45 +376,34 @@ export default function ProofOfPickupScreen() {
       const now = new Date().toISOString();
       const uploadedUrl = await uploadProofOfPickupImage(proofId, photoUri);
 
-      const { error } = await supabase
-        .from("freight_loads")
-        .update({
-          status: "picked_up",
-          picked_up_at: now,
-          proof_of_pickup_photo_url: uploadedUrl,
-          pickup_notes: notes.trim() || null,
-          pickup_contact_name: pickupName.trim() || null,
-          driver_id: driver.id,
-          assigned_driver_id: driver.id,
-          updated_at: now,
-        })
-        .eq("id", proofId);
-
-      if (error) {
-        console.log("Freight pickup update skipped:", error.message);
-      }
-
-      await updateOrderStatus(driver.id, uploadedUrl);
+      await savePickupProof(uploadedUrl, now);
+      await updateDeliveryOrder(driver.id, uploadedUrl, now);
+      await updateFreightLoad(driver.id, uploadedUrl, now);
+      await updateOrderStatus(driver.id, uploadedUrl, now);
       await updateBackendOrderStatus(driver.id);
+      await updateDriverLocation(now);
 
-      try {
-        await notifyPickupCompleted();
-      } catch (notifyError) {
+      await notifyPickupCompleted().catch((notifyError) => {
         console.log("Pickup notification skipped:", notifyError);
-      }
+      });
 
       Alert.alert("Pickup Complete", "Pickup proof has been uploaded and saved.", [
-        {
-          text: "Back To Driver App",
-          onPress: () => router.replace("/driver/mobile-driver-app" as any),
-        },
         {
           text: "Live Location",
           onPress: () =>
             router.replace({
               pathname: "/driver/live-location-provider" as any,
-              params: { loadId: proofId, orderId: proofId },
+              params: {
+                loadId: loadId || proofId,
+                orderId: orderId || proofId,
+                deliveryOrderId: deliveryJobId || deliveryOrderId || proofId,
+                autoTracking: "true",
+              },
             }),
+        },
+        {
+          text: "My Deliveries",
+          onPress: () => router.replace("/driver/my-deliveries" as any),
         },
       ]);
     } catch (error: any) {
@@ -310,8 +414,20 @@ export default function ProofOfPickupScreen() {
     }
   }
 
-  function goBackToDriverApp() {
-    router.replace("/driver/mobile-driver-app" as any);
+  function goBackToDeliveries() {
+    router.replace("/driver/my-deliveries" as any);
+  }
+
+  function goToLiveLocation() {
+    router.replace({
+      pathname: "/driver/live-location-provider" as any,
+      params: {
+        loadId: loadId || proofId,
+        orderId: orderId || proofId,
+        deliveryOrderId: deliveryJobId || deliveryOrderId || proofId,
+        autoTracking: "true",
+      },
+    });
   }
 
   return (
@@ -327,24 +443,19 @@ export default function ProofOfPickupScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.hero}>
-            <View style={styles.heroIcon}>
-              <Ionicons name="camera-outline" size={30} color="#FFFFFF" />
-            </View>
-
-            <Text style={styles.kicker}>Farm2Home Driver</Text>
+          <View style={styles.header}>
+            <Text style={styles.kicker}>Driver Operations</Text>
             <Text style={styles.title}>Proof of Pickup</Text>
 
             <Text style={styles.subtitle}>
-              Capture pickup proof, confirm the pickup contact, and move this
-              delivery into picked up status.
+              Capture pickup proof, confirm pickup contact, and move this delivery into picked up status.
             </Text>
           </View>
 
           <View style={styles.card}>
             <View style={styles.loadBox}>
               <Text style={styles.label}>Delivery / Load ID</Text>
-              <Text style={styles.loadId}>{proofId || "Missing load ID"}</Text>
+              <Text style={styles.loadId}>{proofId || "Missing delivery ID"}</Text>
             </View>
 
             <Text style={styles.inputLabel}>Pickup Contact Name</Text>
@@ -352,7 +463,7 @@ export default function ProofOfPickupScreen() {
               style={styles.input}
               value={pickupName}
               onChangeText={setPickupName}
-              placeholder="Pickup Contact Name"
+              placeholder="Pickup contact name"
               placeholderTextColor="#94A3B8"
             />
 
@@ -372,7 +483,6 @@ export default function ProofOfPickupScreen() {
                 onPress={takePhoto}
                 disabled={loading}
               >
-                <Ionicons name="camera-outline" size={18} color="#FFFFFF" />
                 <Text style={styles.photoButtonText}>
                   {photoUri ? "Retake Photo" : "Take Photo"}
                 </Text>
@@ -383,11 +493,6 @@ export default function ProofOfPickupScreen() {
                 onPress={chooseFromLibrary}
                 disabled={loading}
               >
-                <Ionicons
-                  name="image-outline"
-                  size={18}
-                  color={freightTheme.colors.primary}
-                />
                 <Text style={styles.libraryButtonText}>Upload</Text>
               </TouchableOpacity>
             </View>
@@ -396,13 +501,12 @@ export default function ProofOfPickupScreen() {
               <View style={styles.previewWrap}>
                 <Image source={{ uri: photoUri }} style={styles.preview} />
                 <View style={styles.previewBadge}>
-                  <Ionicons name="checkmark-circle" size={17} color="#BBF7D0" />
                   <Text style={styles.previewBadgeText}>Photo attached</Text>
                 </View>
               </View>
             ) : (
               <View style={styles.emptyPhotoBox}>
-                <Ionicons name="camera-reverse-outline" size={38} color="#10B981" />
+                <Ionicons name="camera-outline" size={34} color="#10B981" />
                 <Text style={styles.emptyPhotoTitle}>No pickup photo yet</Text>
                 <Text style={styles.emptyPhotoText}>
                   Take a clear photo of the picked-up order before submitting.
@@ -418,39 +522,26 @@ export default function ProofOfPickupScreen() {
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <>
-                  <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.submitButtonText}>
-                    Upload + Submit Pickup Proof
-                  </Text>
-                </>
+                <Text style={styles.submitButtonText}>
+                  Submit Pickup Proof
+                </Text>
               )}
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.backButton}
-              onPress={goBackToDriverApp}
+              style={styles.secondaryAction}
+              onPress={goToLiveLocation}
               disabled={loading}
             >
-              <Text style={styles.backButtonText}>Back To Driver App</Text>
+              <Text style={styles.secondaryActionText}>Open Live Tracking</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.liveLocationButton}
-              onPress={() =>
-                router.replace({
-                  pathname: "/driver/live-location-provider" as any,
-                  params: { loadId: proofId, orderId: proofId },
-                })
-              }
+              style={styles.backButton}
+              onPress={goBackToDeliveries}
               disabled={loading}
             >
-              <Ionicons
-                name="navigate-outline"
-                size={18}
-                color={freightTheme.colors.primary}
-              />
-              <Text style={styles.liveLocationText}>Back To Live Location</Text>
+              <Text style={styles.backButtonText}>Back to My Deliveries</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -471,24 +562,13 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 120,
   },
-  hero: {
+  header: {
     backgroundColor: "#020617",
     paddingTop: 22,
     paddingHorizontal: 20,
     paddingBottom: 26,
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
-  },
-  heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: "#064E3B",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
-    marginBottom: 14,
   },
   kicker: {
     color: "#10B981",
@@ -498,7 +578,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   title: {
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: "900",
     color: "#FFFFFF",
     marginTop: 6,
@@ -508,24 +588,25 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 22,
     marginTop: 8,
+    fontSize: 14,
   },
   card: {
     backgroundColor: freightTheme.colors.card,
     margin: 18,
-    borderRadius: 22,
-    padding: 18,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
   },
   loadBox: {
     backgroundColor: freightTheme.colors.surface,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 16,
+    borderRadius: 13,
+    padding: 13,
+    marginBottom: 14,
   },
   label: {
     color: freightTheme.colors.primary,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
@@ -544,30 +625,28 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#CBD5E1",
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: 12,
+    padding: 13,
+    marginBottom: 12,
     color: "#111827",
     fontWeight: "700",
   },
   textArea: {
-    minHeight: 110,
+    minHeight: 105,
     textAlignVertical: "top",
   },
   photoActions: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   photoButton: {
     flex: 1,
     backgroundColor: freightTheme.colors.primary,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 13,
+    padding: 13,
     alignItems: "center",
     justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
   },
   photoButtonText: {
     color: "#FFFFFF",
@@ -576,12 +655,10 @@ const styles = StyleSheet.create({
   libraryButton: {
     flex: 0.7,
     backgroundColor: freightTheme.colors.surface,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 13,
+    padding: 13,
     alignItems: "center",
     justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
     borderWidth: 1,
     borderColor: freightTheme.colors.primary,
   },
@@ -594,29 +671,27 @@ const styles = StyleSheet.create({
   },
   preview: {
     width: "100%",
-    height: 280,
-    borderRadius: 18,
+    height: 220,
+    borderRadius: 14,
     backgroundColor: "#0F172A",
   },
   previewBadge: {
     backgroundColor: "#064E3B",
     borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
     alignSelf: "flex-start",
-    marginTop: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+    marginTop: 9,
   },
   previewBadgeText: {
     color: "#BBF7D0",
     fontWeight: "900",
+    fontSize: 12,
   },
   emptyPhotoBox: {
     backgroundColor: freightTheme.colors.surface,
-    borderRadius: 18,
-    padding: 22,
+    borderRadius: 14,
+    padding: 20,
     alignItems: "center",
     marginBottom: 14,
     borderWidth: 1,
@@ -625,45 +700,44 @@ const styles = StyleSheet.create({
   emptyPhotoTitle: {
     color: freightTheme.colors.text,
     fontWeight: "900",
-    fontSize: 18,
-    marginTop: 10,
+    fontSize: 17,
+    marginTop: 9,
   },
   emptyPhotoText: {
     color: freightTheme.colors.mutedText,
     fontWeight: "700",
-    lineHeight: 21,
+    lineHeight: 20,
     textAlign: "center",
     marginTop: 6,
+    fontSize: 13,
   },
   submitButton: {
     backgroundColor: "#064E3B",
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 13,
+    padding: 15,
     alignItems: "center",
     justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
   },
   submitButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
+  secondaryAction: {
+    backgroundColor: "#111827",
+    borderRadius: 13,
+    padding: 14,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  secondaryActionText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   backButton: {
-    marginTop: 18,
+    marginTop: 14,
     alignItems: "center",
   },
   backButtonText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  liveLocationButton: {
-    marginTop: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 7,
-  },
-  liveLocationText: {
     color: freightTheme.colors.primary,
     fontWeight: "900",
   },

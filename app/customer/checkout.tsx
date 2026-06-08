@@ -1,3 +1,6 @@
+// app/customer/checkout.tsx
+// Full updated checkout screen
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -52,41 +55,87 @@ type CurrentCustomer = {
 };
 
 type CartGroup = {
+  farmKey: string;
   farmName: string;
+  farmerId: string;
+  farmerStripeAccountId: string;
   items: CartItem[];
 };
 
 function safelyParseCustomer(rawValue: string | null): CurrentCustomer | null {
   if (!rawValue) return null;
-
   try {
     return JSON.parse(rawValue);
-  } catch (error) {
-    console.log("Customer parse error:", error);
+  } catch {
     return null;
   }
 }
 
-function groupCartByFarm(cart: CartItem[]): CartGroup[] {
-  const grouped: Record<string, CartItem[]> = {};
-
-  cart.forEach((item: any) => {
-    const farmName = item.farmName || item.farmerName || "Farm2Home Farm";
-    if (!grouped[farmName]) grouped[farmName] = [];
-    grouped[farmName].push(item);
-  });
-
-  return Object.entries(grouped).map(([farmName, items]) => ({
-    farmName,
-    items,
-  }));
+function getFarmName(item: any) {
+  return item.farmName || item.farmerName || item.farm_name || "Farm2Home Farm";
 }
 
-function calculateDriverPayout(miles: number) {
-  if (miles > 20) return 25;
-  if (miles > 10) return 18;
-  if (miles > 5) return 12;
-  return 8;
+function getFarmerId(item: any) {
+  return String(item.farmerId || item.farmer_id || item.farmId || "");
+}
+
+function getFarmerStripeAccountId(item: any) {
+  return (
+    item.farmerStripeAccountId ||
+    item.stripeAccountId ||
+    item.farmer_stripe_account_id ||
+    item.stripe_account_id ||
+    ""
+  );
+}
+
+function groupCartByFarm(cart: CartItem[]): CartGroup[] {
+  const grouped: Record<string, CartGroup> = {};
+
+  cart.forEach((item: any) => {
+    const farmerId = getFarmerId(item);
+    const farmName = getFarmName(item);
+    const farmerStripeAccountId = getFarmerStripeAccountId(item);
+    const farmKey = farmerId || farmName;
+
+    if (!grouped[farmKey]) {
+      grouped[farmKey] = {
+        farmKey,
+        farmName,
+        farmerId,
+        farmerStripeAccountId,
+        items: [],
+      };
+    }
+
+    grouped[farmKey].items.push(item);
+  });
+
+  return Object.values(grouped);
+}
+
+function calculateDriverPayout(miles: number, farmSubtotal: number) {
+  const base = miles > 20 ? 25 : miles > 10 ? 18 : miles > 5 ? 12 : 8;
+  return Number((base + farmSubtotal * 0.02).toFixed(2));
+}
+
+function isFreightEligibleItem(item: any) {
+  const name = String(item.name || item.productName || "").toLowerCase();
+  const category = String(item.category || "").toLowerCase();
+
+  return (
+    name.includes("livestock") ||
+    name.includes("cattle") ||
+    name.includes("cow") ||
+    name.includes("goat") ||
+    name.includes("pig") ||
+    name.includes("sheep") ||
+    name.includes("horse") ||
+    name.includes("bale") ||
+    name.includes("hay") ||
+    category.includes("livestock") ||
+    category.includes("hay")
+  );
 }
 
 export default function CustomerCheckout() {
@@ -97,10 +146,7 @@ export default function CustomerCheckout() {
   const [accessChecking, setAccessChecking] = useState(true);
   const [accessAllowed, setAccessAllowed] = useState(false);
 
-  const [deliveryOption, setDeliveryOption] = useState<"Delivery" | "Pickup">(
-    "Delivery"
-  );
-
+  const [deliveryOption, setDeliveryOption] = useState<"Delivery" | "Pickup">("Delivery");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [city, setCity] = useState("");
   const [stateValue, setStateValue] = useState("MI");
@@ -131,8 +177,7 @@ export default function CustomerCheckout() {
       if (access.allowed) {
         await loadCart();
       }
-    } catch (error) {
-      console.log("Checkout access error:", error);
+    } catch {
       setAccessAllowed(false);
     } finally {
       setAccessChecking(false);
@@ -142,7 +187,7 @@ export default function CustomerCheckout() {
   async function loadCart() {
     try {
       const cartData = await getCart();
-      setCart(cartData);
+      setCart(Array.isArray(cartData) ? cartData : []);
     } catch (error) {
       console.log("Load cart error:", error);
       Alert.alert("Cart Error", "Unable to load your cart.");
@@ -157,24 +202,25 @@ export default function CustomerCheckout() {
 
   const subtotal = useMemo(() => {
     return cart.reduce(
-      (sum, item: any) =>
+      (sum: number, item: any) =>
         sum + Number(item.price || 0) * Number(item.quantity || 0),
       0
     );
   }, [cart]);
 
   const itemCount = useMemo(() => {
-    return cart.reduce(
-      (sum, item: any) => sum + Number(item.quantity || 0),
-      0
-    );
+    return cart.reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0);
+  }, [cart]);
+
+  const hasFreightItems = useMemo(() => {
+    return cart.some((item: any) => isFreightEligibleItem(item));
   }, [cart]);
 
   const serviceFee = subtotal * SERVICE_FEE_RATE;
-  const deliveryFee =
-    deliveryOption === "Delivery" && cart.length > 0 ? 5.99 : 0;
+  const deliveryFee = deliveryOption === "Delivery" && cart.length > 0 ? 5.99 : 0;
+  const freightHandlingFee = deliveryOption === "Delivery" && hasFreightItems ? 25 : 0;
   const tipAmount = Number(tip) || 0;
-  const total = subtotal + serviceFee + deliveryFee + tipAmount;
+  const total = subtotal + serviceFee + deliveryFee + freightHandlingFee + tipAmount;
 
   async function createDeliveryJobsForOrder(params: {
     orderId: string;
@@ -184,78 +230,96 @@ export default function CustomerCheckout() {
   }) {
     if (deliveryOption !== "Delivery") return;
 
-    try {
-      const farmerGroups: Record<string, any[]> = {};
+    const dropoffAddress =
+      `${params.deliveryInfo.deliveryAddress}, ` +
+      `${params.deliveryInfo.city}, ` +
+      `${params.deliveryInfo.state} ` +
+      `${params.deliveryInfo.zipCode}`;
 
-      cart.forEach((item: any) => {
-        const farmerId =
-          item.farmerId ||
-          item.farmId ||
-          item.farmer_id ||
-          item.farmerStripeAccountId ||
-          "unknown_farmer";
+    for (const group of cartGroups) {
+      const farmSubtotal = group.items.reduce(
+        (sum: number, item: any) =>
+          sum + Number(item.price || 0) * Number(item.quantity || 0),
+        0
+      );
 
-        if (!farmerGroups[farmerId]) farmerGroups[farmerId] = [];
-        farmerGroups[farmerId].push(item);
-      });
+      const firstItem: any = group.items[0];
 
-      const dropoffAddress =
-        `${params.deliveryInfo.deliveryAddress}, ` +
-        `${params.deliveryInfo.city}, ` +
-        `${params.deliveryInfo.state} ` +
-        `${params.deliveryInfo.zipCode}`;
+      const miles = Number(firstItem?.distanceMiles || firstItem?.miles || 0);
+      const payoutAmount = calculateDriverPayout(miles, farmSubtotal);
 
-      for (const farmerId of Object.keys(farmerGroups)) {
-        const farmerItems = farmerGroups[farmerId];
-        const firstItem: any = farmerItems[0];
+      const pickupAddress =
+        firstItem?.farmAddress ||
+        firstItem?.pickupAddress ||
+        firstItem?.farmLocation ||
+        "Farm pickup location";
 
-        const farmName =
-          firstItem?.farmName || firstItem?.farmerName || "Farm2Home Farm";
+      const freightRequired = group.items.some((item: any) => isFreightEligibleItem(item));
 
-        const miles = Number(firstItem?.distanceMiles || firstItem?.miles || 0);
-        const payoutAmount = calculateDriverPayout(miles);
+      const deliveryJobPayload = {
+        orderId: params.orderId,
+        farmerId: group.farmerId,
+        customerId: params.currentCustomer?.id || "",
+        farmName: group.farmName,
+        customerName: params.customerName,
+        customerPhone: params.deliveryInfo.phone,
+        pickupAddress,
+        dropoffAddress,
+        deliveryWindow: "Same Day Delivery",
+        payoutAmount,
+        deliveryFee: payoutAmount,
+        miles,
+        pickupNotes: "Pickup customer grocery order from farm.",
+        deliveryNotes: params.deliveryInfo.deliveryInstructions || "",
+        freightRequired,
+        items: group.items,
+        productSubtotal: farmSubtotal,
+      };
 
-        const pickupAddress =
-          firstItem?.farmAddress ||
-          firstItem?.pickupAddress ||
-          firstItem?.farmLocation ||
-          "Farm pickup location";
-
-        const deliveryJobPayload = {
-          orderId: params.orderId,
-          farmerId,
-          customerId: params.currentCustomer?.id || "",
-          farmName,
-          customerName: params.customerName,
-          customerPhone: params.deliveryInfo.phone,
-          pickupAddress,
-          dropoffAddress,
-          deliveryWindow: "Same Day Delivery",
-          payoutAmount,
-          miles,
-          pickupNotes: "Pickup customer grocery order from farm.",
-          deliveryNotes: params.deliveryInfo.deliveryInstructions || "",
-        };
-
-        const response = await fetch(
-          `${API_BASE_URL}/driver/create-delivery-job`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(deliveryJobPayload),
-          }
-        );
+      try {
+        const response = await fetch(`${API_BASE_URL}/driver/create-delivery-job`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(deliveryJobPayload),
+        });
 
         const data = await response.json();
 
         if (!response.ok || !data.success) {
           console.log("DELIVERY JOB CREATE FAILED:", data);
         }
+      } catch (error) {
+        console.log("Delivery job creation skipped:", error);
       }
-    } catch (error) {
-      console.log("Delivery job creation error:", error);
+
+      if (freightRequired) {
+        try {
+          await fetch(`${API_BASE_URL}/freight/create-farm-load`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId: params.orderId,
+              farmerId: group.farmerId,
+              farmName: group.farmName,
+              customerId: params.currentCustomer?.id || "",
+              customerName: params.customerName,
+              customerPhone: params.deliveryInfo.phone,
+              pickupAddress,
+              dropoffAddress,
+              miles,
+              productTotal: farmSubtotal,
+              costPerMile: 2.25,
+              freightTotal: Number((miles * 2.25 + freightHandlingFee).toFixed(2)),
+              totalDue: Number((farmSubtotal + miles * 2.25 + freightHandlingFee).toFixed(2)),
+              loadType: "Farm freight",
+              products: group.items,
+              status: "available",
+            }),
+          });
+        } catch (error) {
+          console.log("Freight load create skipped:", error);
+        }
+      }
     }
   }
 
@@ -283,26 +347,20 @@ export default function CustomerCheckout() {
 
     if (
       deliveryOption === "Delivery" &&
-      (!deliveryAddress.trim() ||
-        !city.trim() ||
-        !stateValue.trim() ||
-        !zipCode.trim())
+      (!deliveryAddress.trim() || !city.trim() || !stateValue.trim() || !zipCode.trim())
     ) {
-      Alert.alert(
-        "Missing Delivery Info",
-        "Please enter the full delivery address."
-      );
+      Alert.alert("Missing Delivery Info", "Please enter the full delivery address.");
       return;
     }
 
     const invalidItems = cart.filter(
-      (item: any) => !item.farmerStripeAccountId && !item.stripeAccountId
+      (item: any) => !getFarmerId(item) || !getFarmerStripeAccountId(item)
     );
 
     if (invalidItems.length > 0) {
       Alert.alert(
         "Marketplace Setup Error",
-        "Some cart items are missing farmer Stripe account IDs. Go back to Marketplace, clear the cart, and add the items again."
+        "Some cart items are missing farmer ID or farmer Stripe account ID. Clear the cart and add the items again from the Marketplace."
       );
       return;
     }
@@ -317,13 +375,10 @@ export default function CustomerCheckout() {
       const currentCustomer = safelyParseCustomer(currentCustomerRaw);
 
       const customerName =
-        currentCustomer?.fullName ||
-        currentCustomer?.name ||
-        "Farm2Home Customer";
+        currentCustomer?.fullName || currentCustomer?.name || "Farm2Home Customer";
 
       const deliveryInfo: DeliveryInfo = {
-        deliveryAddress:
-          deliveryOption === "Delivery" ? deliveryAddress.trim() : "Pickup",
+        deliveryAddress: deliveryOption === "Delivery" ? deliveryAddress.trim() : "Pickup",
         city: deliveryOption === "Delivery" ? city.trim() : "",
         state: deliveryOption === "Delivery" ? stateValue.trim() : "",
         zipCode: deliveryOption === "Delivery" ? zipCode.trim() : "",
@@ -340,14 +395,11 @@ export default function CustomerCheckout() {
       const pendingOrder: Farm2HomeOrder = {
         id: orderId,
         customerEmail:
-          currentCustomer?.email ||
-          profile?.email ||
-          user?.email ||
-          "customer@test.com",
+          currentCustomer?.email || profile?.email || user?.email || "customer@test.com",
         customerName,
         items: cart,
         subtotal,
-        deliveryFee,
+        deliveryFee: deliveryFee + freightHandlingFee,
         tip: tipAmount,
         total,
         deliveryInfo,
@@ -362,10 +414,13 @@ export default function CustomerCheckout() {
         cloudOrderId: orderId,
         customerEmail: pendingOrder.customerEmail,
         customerName: pendingOrder.customerName,
+        customerId: currentCustomer?.id || user?.id || "",
         cart,
+        cartGroups,
         subtotal,
         serviceFee,
         deliveryFee,
+        freightHandlingFee,
         tip: tipAmount,
         total,
         deliveryOption,
@@ -383,9 +438,7 @@ export default function CustomerCheckout() {
         `${API_BASE_URL}/payments/create-marketplace-checkout`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         }
       );
@@ -412,11 +465,7 @@ export default function CustomerCheckout() {
       }
     } catch (error: any) {
       console.log("Stripe checkout error:", error);
-
-      Alert.alert(
-        "Checkout Error",
-        error.message || "Unable to start Stripe checkout."
-      );
+      Alert.alert("Checkout Error", error.message || "Unable to start Stripe checkout.");
     } finally {
       setLoading(false);
     }
@@ -452,10 +501,7 @@ export default function CustomerCheckout() {
       >
         <View style={styles.topBar}>
           <Pressable
-            style={({ pressed }) => [
-              styles.backCircle,
-              pressed && styles.pressed,
-            ]}
+            style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
             onPress={() => router.push("/customer/cart" as any)}
           >
             <Text style={styles.backCircleText}>‹</Text>
@@ -464,21 +510,18 @@ export default function CustomerCheckout() {
           <View style={styles.topTitleBlock}>
             <Text style={styles.title}>Checkout</Text>
             <Text style={styles.subtitle}>
-              {itemCount} item{itemCount === 1 ? "" : "s"} from{" "}
-              {cartGroups.length} farm{cartGroups.length === 1 ? "" : "s"}
+              {itemCount} item{itemCount === 1 ? "" : "s"} from {cartGroups.length} farm
+              {cartGroups.length === 1 ? "" : "s"}
             </Text>
           </View>
         </View>
 
         <View style={styles.heroCard}>
-          <View style={styles.heroTextBlock}>
-            <Text style={styles.heroBadge}>Secure Payment</Text>
-            <Text style={styles.heroTitle}>Complete your Farm2Home order</Text>
-            <Text style={styles.heroText}>
-              Pay once through Stripe. Farm2Home keeps a 4% service fee and farmer payouts are split by Stripe account.
-            </Text>
-          </View>
-          <Text style={styles.heroEmoji}>💳</Text>
+          <Text style={styles.heroBadge}>Secure Payment</Text>
+          <Text style={styles.heroTitle}>Complete your Farm2Home order</Text>
+          <Text style={styles.heroText}>
+            Farm2Home keeps a 4% service fee and farmer payouts are split by Stripe account.
+          </Text>
         </View>
 
         <Text style={styles.sectionTitle}>Order Type</Text>
@@ -492,7 +535,6 @@ export default function CustomerCheckout() {
             ]}
             onPress={() => setDeliveryOption("Delivery")}
           >
-            <Text style={styles.optionIcon}>🚚</Text>
             <Text
               style={[
                 styles.optionText,
@@ -519,7 +561,6 @@ export default function CustomerCheckout() {
             ]}
             onPress={() => setDeliveryOption("Pickup")}
           >
-            <Text style={styles.optionIcon}>🧺</Text>
             <Text
               style={[
                 styles.optionText,
@@ -541,97 +582,79 @@ export default function CustomerCheckout() {
 
         <Text style={styles.sectionTitle}>Farm Orders</Text>
 
-        {cart.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyIcon}>🌾</Text>
-            <Text style={styles.emptyTitle}>Your cart is empty</Text>
-            <Text style={styles.emptyText}>
-              Add items from the marketplace before checkout.
-            </Text>
-          </View>
-        ) : (
-          cartGroups.map((group) => {
-            const farmSubtotal = group.items.reduce(
-              (sum, item: any) =>
-                sum + Number(item.price || 0) * Number(item.quantity || 0),
-              0
-            );
+        {cartGroups.map((group) => {
+          const farmSubtotal = group.items.reduce(
+            (sum: number, item: any) =>
+              sum + Number(item.price || 0) * Number(item.quantity || 0),
+            0
+          );
 
-            return (
-              <View key={group.farmName} style={styles.farmCard}>
-                <View style={styles.farmHeader}>
-                  <View style={styles.farmTitleRow}>
-                    <View style={styles.farmIconBox}>
-                      <Text style={styles.farmIcon}>🚜</Text>
-                    </View>
+          const freightRequired = group.items.some((item: any) => isFreightEligibleItem(item));
 
-                    <View style={styles.farmNameBlock}>
-                      <Text style={styles.farmTitle}>{group.farmName}</Text>
-                      <Text style={styles.farmMeta}>
-                        Stripe payout verified during payment
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.farmSubtotal}>
-                    ${farmSubtotal.toFixed(2)}
-                  </Text>
-                </View>
-
-                {group.items.map((item: any) => (
-                  <View key={item.id} style={styles.itemRow}>
-                    <View style={styles.itemInfo}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-
-                      <Text style={styles.itemMeta}>
-                        Qty {item.quantity} · $
-                        {Number(item.price || 0).toFixed(2)}
-                        {item.unit ? ` / ${item.unit}` : " each"}
-                      </Text>
-
-                      <Text style={styles.accountMeta} numberOfLines={1}>
-                        Farmer Stripe:{" "}
-                        {item.farmerStripeAccountId ||
-                          item.stripeAccountId ||
-                          "Missing"}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.itemTotal}>
-                      $
-                      {(
-                        Number(item.price || 0) * Number(item.quantity || 0)
-                      ).toFixed(2)}
+          return (
+            <View key={group.farmKey} style={styles.farmCard}>
+              <View style={styles.farmHeader}>
+                <View style={styles.farmTitleRow}>
+                  <View style={styles.farmIconBox}>
+                    <Text style={styles.farmInitial}>
+                      {group.farmName.slice(0, 1).toUpperCase()}
                     </Text>
                   </View>
-                ))}
+
+                  <View style={styles.farmNameBlock}>
+                    <Text style={styles.farmTitle}>{group.farmName}</Text>
+                    <Text style={styles.farmMeta}>
+                      {group.farmerStripeAccountId
+                        ? "Stripe payout connected"
+                        : "Stripe payout missing"}
+                    </Text>
+                    {freightRequired && (
+                      <Text style={styles.freightMeta}>
+                        Freight workflow required for this farm order
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                <Text style={styles.farmSubtotal}>${farmSubtotal.toFixed(2)}</Text>
               </View>
-            );
-          })
-        )}
+
+              {group.items.map((item: any) => (
+                <View key={String(item.id || item.productId)} style={styles.itemRow}>
+                  <View style={styles.itemInfo}>
+                    <Text style={styles.itemName}>{item.name || item.productName}</Text>
+
+                    <Text style={styles.itemMeta}>
+                      Qty {item.quantity} · ${Number(item.price || 0).toFixed(2)}
+                      {item.unit ? ` / ${item.unit}` : " each"}
+                    </Text>
+
+                    <Text style={styles.accountMeta} numberOfLines={1}>
+                      Farmer ID: {getFarmerId(item) || "Missing"}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.itemTotal}>
+                    ${(Number(item.price || 0) * Number(item.quantity || 0)).toFixed(2)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          );
+        })}
 
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Payment Summary</Text>
 
-          <View style={styles.summaryLine}>
-            <Text style={styles.summaryLabel}>Subtotal</Text>
-            <Text style={styles.summaryValue}>${subtotal.toFixed(2)}</Text>
-          </View>
+          <SummaryLine label="Subtotal" value={subtotal} />
+          <SummaryLine label="Farm2Home Service Fee 4%" value={serviceFee} />
+          <SummaryLine label="Delivery Fee" value={deliveryFee} />
 
-          <View style={styles.summaryLine}>
-            <Text style={styles.summaryLabel}>Farm2Home Service Fee 4%</Text>
-            <Text style={styles.summaryValue}>${serviceFee.toFixed(2)}</Text>
-          </View>
+          {freightHandlingFee > 0 && (
+            <SummaryLine label="Freight Handling" value={freightHandlingFee} />
+          )}
 
-          <View style={styles.summaryLine}>
-            <Text style={styles.summaryLabel}>Delivery Fee</Text>
-            <Text style={styles.summaryValue}>${deliveryFee.toFixed(2)}</Text>
-          </View>
-
-          <View style={styles.summaryLine}>
-            <Text style={styles.summaryLabel}>Tip</Text>
-            <Text style={styles.summaryValue}>${tipAmount.toFixed(2)}</Text>
-          </View>
+          <SummaryLine label="Tip" value={tipAmount} />
 
           <View style={styles.divider} />
 
@@ -676,9 +699,7 @@ export default function CustomerCheckout() {
         />
 
         <Text style={styles.sectionTitle}>
-          {deliveryOption === "Delivery"
-            ? "Delivery Information"
-            : "Pickup Contact"}
+          {deliveryOption === "Delivery" ? "Delivery Information" : "Pickup Contact"}
         </Text>
 
         {deliveryOption === "Delivery" && (
@@ -769,24 +790,23 @@ export default function CustomerCheckout() {
         >
           <Text style={styles.backText}>Back to Cart</Text>
         </Pressable>
-
-        <Text style={styles.cardNote}>
-          Production mode: use a real card in Stripe Live Mode.
-        </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
+function SummaryLine({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={styles.summaryLine}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue}>${value.toFixed(2)}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.background || farmTheme.colors.background,
-  },
-  scrollContent: {
-    padding: 18,
-    paddingBottom: 44,
-  },
+  page: { flex: 1, backgroundColor: COLORS.background || farmTheme.colors.background },
+  scrollContent: { padding: 18, paddingBottom: 44 },
   lockContainer: {
     flex: 1,
     backgroundColor: COLORS.background || farmTheme.colors.background,
@@ -806,16 +826,11 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textAlign: "center",
   },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 18,
-    gap: 12,
-  },
+  topBar: { flexDirection: "row", alignItems: "center", marginBottom: 18, gap: 12 },
   backCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
@@ -823,47 +838,31 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   backCircleText: {
-    fontSize: 34,
+    fontSize: 32,
     color: COLORS.text,
     fontWeight: "900",
     marginTop: -4,
   },
-  topTitleBlock: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
+  topTitleBlock: { flex: 1 },
+  title: { fontSize: 30, fontWeight: "900", color: COLORS.text },
+  subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   heroCard: {
     backgroundColor: COLORS.primary,
-    borderRadius: 30,
-    padding: 20,
+    borderRadius: 18,
+    padding: 18,
     marginBottom: 20,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  heroTextBlock: {
-    flex: 1,
-    paddingRight: 12,
   },
   heroBadge: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.18)",
     color: "#FFFFFF",
     fontWeight: "900",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 999,
     overflow: "hidden",
     marginBottom: 10,
+    fontSize: 12,
   },
   heroTitle: {
     color: "#FFFFFF",
@@ -877,9 +876,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 8,
   },
-  heroEmoji: {
-    fontSize: 54,
-  },
   sectionTitle: {
     color: COLORS.text,
     fontSize: 21,
@@ -887,36 +883,19 @@ const styles = StyleSheet.create({
     marginBottom: 11,
     marginTop: 8,
   },
-  optionRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 18,
-  },
+  optionRow: { flexDirection: "row", gap: 12, marginBottom: 18 },
   optionButton: {
     flex: 1,
     backgroundColor: COLORS.card,
     padding: 15,
-    borderRadius: 22,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: "center",
   },
-  optionActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  optionIcon: {
-    fontSize: 28,
-    marginBottom: 7,
-  },
-  optionText: {
-    fontWeight: "900",
-    color: COLORS.text,
-    fontSize: 16,
-  },
-  optionTextActive: {
-    color: "#FFFFFF",
-  },
+  optionActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  optionText: { fontWeight: "900", color: COLORS.text, fontSize: 16 },
+  optionTextActive: { color: "#FFFFFF" },
   optionSubtext: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -924,76 +903,34 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: "center",
   },
-  optionSubtextActive: {
-    color: "#EAF7E6",
-  },
-  emptyCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 28,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: "center",
-    marginBottom: 18,
-    ...farmTheme.shadow,
-  },
-  emptyIcon: {
-    fontSize: 44,
-    marginBottom: 10,
-  },
-  emptyTitle: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  emptyText: {
-    color: COLORS.muted,
-    lineHeight: 22,
-    textAlign: "center",
-    marginTop: 8,
-    fontWeight: "700",
-  },
+  optionSubtextActive: { color: "#EAF7E6" },
   farmCard: {
     backgroundColor: COLORS.card,
-    padding: 16,
-    borderRadius: 28,
+    padding: 15,
+    borderRadius: 18,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     ...farmTheme.shadow,
   },
-  farmHeader: {
-    marginBottom: 10,
-  },
-  farmTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
+  farmHeader: { marginBottom: 10 },
+  farmTitleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   farmIconBox: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: COLORS.softGreen,
+    width: 52,
+    height: 52,
+    borderRadius: 15,
+    backgroundColor: COLORS.primaryDark,
     justifyContent: "center",
     alignItems: "center",
   },
-  farmIcon: {
-    fontSize: 27,
-  },
-  farmNameBlock: {
-    flex: 1,
-  },
-  farmTitle: {
-    flex: 1,
-    fontSize: 18,
+  farmInitial: { color: "#FFFFFF", fontWeight: "900", fontSize: 22 },
+  farmNameBlock: { flex: 1 },
+  farmTitle: { flex: 1, fontSize: 18, fontWeight: "900", color: COLORS.text },
+  farmMeta: { color: COLORS.muted, fontWeight: "700", marginTop: 3, fontSize: 12 },
+  freightMeta: {
+    color: COLORS.primaryDark,
     fontWeight: "900",
-    color: COLORS.text,
-  },
-  farmMeta: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
+    marginTop: 4,
     fontSize: 12,
   },
   farmSubtotal: {
@@ -1006,7 +943,7 @@ const styles = StyleSheet.create({
   itemRow: {
     backgroundColor: COLORS.lightGreen,
     padding: 13,
-    borderRadius: 18,
+    borderRadius: 14,
     marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
@@ -1014,35 +951,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  itemInfo: {
-    flex: 1,
-  },
-  itemName: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: COLORS.text,
-    marginBottom: 3,
-  },
-  itemMeta: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-  },
+  itemInfo: { flex: 1 },
+  itemName: { fontSize: 16, fontWeight: "900", color: COLORS.text, marginBottom: 3 },
+  itemMeta: { color: COLORS.muted, fontWeight: "700", fontSize: 12 },
   accountMeta: {
     color: "#6B7280",
     fontWeight: "700",
     fontSize: 11,
     marginTop: 4,
   },
-  itemTotal: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 15,
-  },
+  itemTotal: { color: COLORS.primary, fontWeight: "900", fontSize: 15 },
   summaryCard: {
     backgroundColor: COLORS.card,
     padding: 18,
-    borderRadius: 28,
+    borderRadius: 18,
     marginVertical: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -1060,132 +982,65 @@ const styles = StyleSheet.create({
     marginBottom: 11,
     gap: 12,
   },
-  summaryLabel: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    flex: 1,
-  },
-  summaryValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 8,
-  },
-  totalLine: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  totalLabel: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  totalValue: {
-    fontSize: 23,
-    fontWeight: "900",
-    color: COLORS.primary,
-  },
-  tipRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 12,
-  },
+  summaryLabel: { color: COLORS.muted, fontWeight: "800", flex: 1 },
+  summaryValue: { color: COLORS.text, fontWeight: "900" },
+  divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 8 },
+  totalLine: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  totalLabel: { fontSize: 18, fontWeight: "900", color: COLORS.text },
+  totalValue: { fontSize: 23, fontWeight: "900", color: COLORS.primary },
+  tipRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
   tipButton: {
     flex: 1,
     backgroundColor: COLORS.card,
     padding: 13,
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  tipButtonActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  tipText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-  },
-  tipTextActive: {
-    color: "#FFFFFF",
-  },
-  inputRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  inputFlex: {
-    flex: 1,
-  },
-  stateInput: {
-    width: 92,
-  },
+  tipButtonActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  tipText: { color: COLORS.primary, fontWeight: "900" },
+  tipTextActive: { color: "#FFFFFF" },
+  inputRow: { flexDirection: "row", gap: 10 },
+  inputFlex: { flex: 1 },
+  stateInput: { width: 92 },
   input: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 18,
+    borderRadius: 14,
     padding: 15,
     color: COLORS.text,
     fontWeight: "800",
     marginBottom: 12,
   },
-  textArea: {
-    minHeight: 94,
-    textAlignVertical: "top",
-  },
+  textArea: { minHeight: 94, textAlignVertical: "top" },
   payButton: {
     backgroundColor: COLORS.primary,
     paddingHorizontal: 18,
     paddingVertical: 17,
-    borderRadius: 22,
+    borderRadius: 15,
     marginTop: 8,
     minHeight: 68,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  buttonDisabled: {
-    backgroundColor: "#A7B8A2",
-  },
-  payButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
+  buttonDisabled: { backgroundColor: "#A7B8A2" },
+  payButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
   payButtonSubtext: {
     color: "#EAF7E6",
     fontWeight: "700",
     marginTop: 3,
     fontSize: 12,
   },
-  payAmount: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  backButton: {
-    padding: 14,
-  },
+  payAmount: { color: "#FFFFFF", fontWeight: "900", fontSize: 18 },
+  backButton: { padding: 14 },
   backText: {
     marginTop: 6,
     textAlign: "center",
     color: COLORS.primary,
     fontWeight: "900",
   },
-  cardNote: {
-    textAlign: "center",
-    color: COLORS.muted,
-    marginTop: 8,
-    marginBottom: 30,
-    fontWeight: "700",
-    lineHeight: 20,
-  },
-  pressed: {
-    opacity: 0.75,
-  },
+  pressed: { opacity: 0.75 },
 });

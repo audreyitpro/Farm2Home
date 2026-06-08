@@ -2,6 +2,7 @@
 
 import React, { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -9,6 +10,7 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -17,7 +19,6 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../services/supabaseClient";
@@ -28,6 +29,9 @@ function normalize(value: any) {
 }
 
 export default function DriverProfile() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   const [driver, setDriver] = useState<any>(null);
 
   const [fullName, setFullName] = useState("");
@@ -38,9 +42,19 @@ export default function DriverProfile() {
   const [vehicleType, setVehicleType] = useState("");
   const [licenseNumber, setLicenseNumber] = useState("");
   const [serviceArea, setServiceArea] = useState("");
+  const [serviceRadiusMiles, setServiceRadiusMiles] = useState("50");
+
+  const [availableNow, setAvailableNow] = useState(true);
+  const [farm2DriverEligible, setFarm2DriverEligible] = useState(true);
+  const [freightEligible, setFreightEligible] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+
+  const [activeDeliveries, setActiveDeliveries] = useState(0);
+  const [completedDeliveries, setCompletedDeliveries] = useState(0);
+  const [estimatedEarnings, setEstimatedEarnings] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -66,6 +80,8 @@ export default function DriverProfile() {
 
   async function loadDriver() {
     try {
+      setLoading(true);
+
       const stored = await getStoredDriver();
 
       const { data: authData } = await supabase.auth.getUser();
@@ -184,10 +200,44 @@ export default function DriverProfile() {
         vehicleType: dbDriver?.vehicle_type || stored?.vehicleType || "",
         licenseNumber: dbDriver?.license_number || stored?.licenseNumber || "",
         serviceArea: dbDriver?.service_area || stored?.serviceArea || "",
+        serviceRadiusMiles:
+          dbDriver?.service_radius_miles ||
+          stored?.serviceRadiusMiles ||
+          50,
+
+        availableNow:
+          dbDriver?.available_now ??
+          stored?.availableNow ??
+          true,
+
+        farm2DriverEligible:
+          dbDriver?.farm2driver_eligible ??
+          stored?.farm2DriverEligible ??
+          true,
+
+        freightEligible:
+          dbDriver?.freight_eligible ??
+          stored?.freightEligible ??
+          true,
+
+        notificationsEnabled:
+          dbDriver?.notifications_enabled ??
+          stored?.notificationsEnabled ??
+          true,
 
         licenseDocument: dbDriver?.license_document || stored?.licenseDocument || null,
         insuranceDocument: dbDriver?.insurance_document || stored?.insuranceDocument || null,
         uploadedDocs: dbDriver?.uploaded_docs || stored?.uploadedDocs || {},
+
+        backgroundCheckStatus:
+          dbDriver?.background_check_status ||
+          stored?.backgroundCheckStatus ||
+          "Pending",
+
+        insuranceStatus:
+          dbDriver?.insurance_status ||
+          stored?.insuranceStatus ||
+          "Pending",
 
         accountActive:
           dbDriver?.account_active ??
@@ -229,10 +279,67 @@ export default function DriverProfile() {
       setVehicleType(normalizedDriver.vehicleType || "");
       setLicenseNumber(normalizedDriver.licenseNumber || "");
       setServiceArea(normalizedDriver.serviceArea || "");
+      setServiceRadiusMiles(String(normalizedDriver.serviceRadiusMiles || 50));
+      setAvailableNow(Boolean(normalizedDriver.availableNow));
+      setFarm2DriverEligible(Boolean(normalizedDriver.farm2DriverEligible));
+      setFreightEligible(Boolean(normalizedDriver.freightEligible));
+      setNotificationsEnabled(Boolean(normalizedDriver.notificationsEnabled));
+
+      await loadDriverStats(stableId);
     } catch (error) {
       console.log("Load driver profile error:", error);
       Alert.alert("Profile Error", "Unable to load driver profile.");
       router.replace("/driver/login" as any);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadDriverStats(id: string) {
+    try {
+      const { data: deliveryRows } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .or(`driver_id.eq.${id},assigned_driver_id.eq.${id}`);
+
+      const { data: freightRows } = await supabase
+        .from("freight_loads")
+        .select("*")
+        .or(`driver_id.eq.${id},assigned_driver_id.eq.${id},carrier_id.eq.${id}`);
+
+      const all = [
+        ...(Array.isArray(deliveryRows) ? deliveryRows : []),
+        ...(Array.isArray(freightRows) ? freightRows : []),
+      ];
+
+      const active = all.filter((item) =>
+        ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
+          normalize(item.status)
+        )
+      );
+
+      const completed = all.filter((item) =>
+        ["delivered", "completed"].includes(normalize(item.status))
+      );
+
+      const earnings = completed.reduce((sum, item) => {
+        return (
+          sum +
+          Number(
+            item.payout_amount ||
+              item.delivery_fee ||
+              item.freight_total ||
+              item.total_due ||
+              0
+          )
+        );
+      }, 0);
+
+      setActiveDeliveries(active.length);
+      setCompletedDeliveries(completed.length);
+      setEstimatedEarnings(earnings);
+    } catch (error) {
+      console.log("Driver stats skipped:", error);
     }
   }
 
@@ -262,6 +369,11 @@ export default function DriverProfile() {
           vehicle_type: normalizedDriver.vehicleType,
           license_number: normalizedDriver.licenseNumber,
           service_area: normalizedDriver.serviceArea,
+          service_radius_miles: Number(normalizedDriver.serviceRadiusMiles || 50),
+          available_now: normalizedDriver.availableNow,
+          farm2driver_eligible: normalizedDriver.farm2DriverEligible,
+          freight_eligible: normalizedDriver.freightEligible,
+          notifications_enabled: normalizedDriver.notificationsEnabled,
           updated_at: now,
         })
         .eq("id", normalizedDriver.id);
@@ -314,6 +426,8 @@ export default function DriverProfile() {
     }
 
     try {
+      setSaving(true);
+
       const updatedDriver = {
         ...driver,
         fullName: fullName.trim(),
@@ -324,12 +438,19 @@ export default function DriverProfile() {
         vehicleType: vehicleType.trim(),
         licenseNumber: licenseNumber.trim(),
         serviceArea: serviceArea.trim(),
+        serviceRadiusMiles: Number(serviceRadiusMiles || 50),
+        availableNow,
+        farm2DriverEligible,
+        freightEligible,
+        notificationsEnabled,
       };
 
       await persistDriver(updatedDriver, true);
       Alert.alert("Saved", "Driver profile updated.");
     } catch (error: any) {
       Alert.alert("Save Error", error?.message || "Unable to save driver profile.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -552,25 +673,15 @@ export default function DriverProfile() {
     );
   }
 
-  function SectionHeader({
-    icon,
-    title,
-    subtitle,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    title: string;
-    subtitle?: string;
-  }) {
+  if (loading) {
     return (
-      <View style={styles.sectionHeader}>
-        <View style={styles.sectionIcon}>
-          <Ionicons name={icon} size={20} color="#FFFFFF" />
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#10B981" />
+          <Text style={styles.centerText}>Loading driver profile...</Text>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.sectionTitle}>{title}</Text>
-          {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
-        </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -578,20 +689,15 @@ export default function DriverProfile() {
     return (
       <SafeAreaView style={styles.safe}>
         <StatusBar barStyle="light-content" backgroundColor="#020617" />
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.hero}>
-            <Text style={styles.kicker}>Farm2Home Driver</Text>
-            <Text style={styles.title}>Driver Profile</Text>
-            <Text style={styles.subtitle}>No driver profile found.</Text>
-          </View>
-
+        <View style={styles.center}>
+          <Text style={styles.emptyTitle}>No driver profile found</Text>
           <TouchableOpacity
-            style={styles.greenButton}
+            style={styles.primaryButton}
             onPress={() => router.replace("/driver/login" as any)}
           >
-            <Text style={styles.buttonText}>Go to Driver Login</Text>
+            <Text style={styles.primaryButtonText}>Go to Driver Login</Text>
           </TouchableOpacity>
-        </ScrollView>
+        </View>
       </SafeAreaView>
     );
   }
@@ -610,108 +716,117 @@ export default function DriverProfile() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.hero}>
-            <View style={styles.heroTop}>
+          <View style={styles.header}>
+            <View style={styles.headerTop}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{getDriverInitials()}</Text>
               </View>
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.kicker}>Farm2Home Driver</Text>
+                <Text style={styles.eyebrow}>Driver Operations</Text>
                 <Text style={styles.title}>Driver Profile</Text>
                 <Text style={styles.subtitle}>
-                  Manage your account, driver details, membership, and portal access.
+                  Manage account, delivery eligibility, vehicle details, documents, and billing.
                 </Text>
               </View>
             </View>
           </View>
 
           <View style={styles.statusCard}>
-            <View style={styles.statusTop}>
-              <View>
-                <Text style={styles.statusTitle}>Driver Board Membership</Text>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: membershipColor() },
-                  ]}
-                >
-                  <Text style={styles.statusBadgeText}>
-                    {driver.membershipStatus || driver.subscriptionStatus || "Active"}
-                  </Text>
-                </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.statusTitle}>Driver Board Membership</Text>
+              <View style={[styles.statusBadge, { backgroundColor: membershipColor() }]}>
+                <Text style={styles.statusBadgeText}>
+                  {driver.membershipStatus || driver.subscriptionStatus || "Active"}
+                </Text>
               </View>
-
-              <Ionicons name="shield-checkmark-outline" size={34} color="#BBF7D0" />
             </View>
+          </View>
 
-            <Text style={styles.statusSmall}>
-              Driver board membership gives access to available local delivery orders.
-            </Text>
+          <View style={styles.statsRow}>
+            <StatCard label="Active" value={activeDeliveries} />
+            <StatCard label="Completed" value={completedDeliveries} />
+            <StatCard label="Earnings" value={`$${estimatedEarnings.toFixed(0)}`} />
           </View>
 
           <View style={styles.quickGrid}>
-            <QuickNav icon="phone-portrait-outline" label="Driver App" onPress={() => router.push("/driver/mobile-driver-app" as any)} />
-            <QuickNav icon="list-outline" label="Board" onPress={() => router.push("/driver/board" as any)} />
-            <QuickNav icon="wallet-outline" label="Earnings" onPress={() => router.push("/driver/earnings" as any)} />
-            <QuickNav icon="radio-outline" label="Live GPS" onPress={() => router.push("/driver/live-location-provider" as any)} />
+            <QuickNav label="Driver Hub" onPress={() => router.push("/driver/mobile-driver-app" as any)} />
+            <QuickNav label="Board" onPress={() => router.push("/driver/board" as any)} />
+            <QuickNav label="Earnings" onPress={() => router.push("/driver/earnings" as any)} />
+            <QuickNav label="My Deliveries" onPress={() => router.push("/driver/my-deliveries" as any)} />
           </View>
 
           <View style={styles.card}>
             <SectionHeader
-              icon="person-outline"
               title="Profile Information"
-              subtitle="Update your driver contact information."
+              subtitle="Driver contact and account details."
             />
 
-            <Text style={styles.label}>Full Name</Text>
+            <Label text="Full Name" />
             <TextInput style={styles.input} value={fullName} onChangeText={setFullName} placeholder="Full Name" placeholderTextColor="#94A3B8" />
 
-            <Text style={styles.label}>Username</Text>
+            <Label text="Username" />
             <TextInput style={styles.input} value={username} onChangeText={setUsername} autoCapitalize="none" placeholder="Username" placeholderTextColor="#94A3B8" />
 
-            <Text style={styles.label}>Email</Text>
+            <Label text="Email" />
             <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="Email" placeholderTextColor="#94A3B8" />
 
-            <Text style={styles.label}>Phone</Text>
+            <Label text="Phone" />
             <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="Phone" placeholderTextColor="#94A3B8" />
-
-            <TouchableOpacity style={styles.greenButtonNoMargin} onPress={saveProfile}>
-              <Ionicons name="save-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.buttonText}>Save Profile</Text>
-            </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
             <SectionHeader
-              icon="car-outline"
-              title="Driver Details"
-              subtitle="Vehicle, license, service area, and uploaded documents."
+              title="Vehicle and Service Area"
+              subtitle="Manage delivery vehicle, radius, and eligibility."
             />
 
-            <Text style={styles.label}>Vehicle Type</Text>
+            <Label text="Vehicle Type" />
             <TextInput style={styles.input} value={vehicleType} onChangeText={setVehicleType} placeholder="Vehicle Type" placeholderTextColor="#94A3B8" />
 
-            <Text style={styles.label}>License Number</Text>
+            <Label text="License Number" />
             <TextInput style={styles.input} value={licenseNumber} onChangeText={setLicenseNumber} placeholder="License Number" placeholderTextColor="#94A3B8" />
 
-            <Text style={styles.label}>Service Area</Text>
+            <Label text="Service Area" />
             <TextInput style={styles.input} value={serviceArea} onChangeText={setServiceArea} placeholder="Service Area" placeholderTextColor="#94A3B8" />
 
-            <DocumentRow icon="card-outline" label="Uploaded License" value={documentName("license")} />
-            <DocumentRow icon="document-text-outline" label="Uploaded Insurance" value={documentName("insurance")} />
+            <Label text="Service Radius Miles" />
+            <TextInput style={styles.input} value={serviceRadiusMiles} onChangeText={setServiceRadiusMiles} keyboardType="numeric" placeholder="50" placeholderTextColor="#94A3B8" />
 
-            <TouchableOpacity style={styles.greenButtonNoMargin} onPress={saveProfile}>
-              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.buttonText}>Save Driver Details</Text>
+            <SwitchRow title="Available Now" value={availableNow} onValueChange={setAvailableNow} />
+            <SwitchRow title="Farm2Driver Eligible" value={farm2DriverEligible} onValueChange={setFarm2DriverEligible} />
+            <SwitchRow title="Freight Load Eligible" value={freightEligible} onValueChange={setFreightEligible} />
+            <SwitchRow title="Notifications Enabled" value={notificationsEnabled} onValueChange={setNotificationsEnabled} />
+
+            <TouchableOpacity
+              style={[styles.primaryButton, saving && styles.disabledButton]}
+              onPress={saveProfile}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Save Driver Profile</Text>
+              )}
             </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
             <SectionHeader
-              icon="key-outline"
-              title="Change Password"
-              subtitle="Update your secure Supabase Auth password."
+              title="Compliance Documents"
+              subtitle="License, insurance, and background check status."
+            />
+
+            <DocumentRow label="Driver License" value={documentName("license")} />
+            <DocumentRow label="Insurance" value={documentName("insurance")} />
+            <DocumentRow label="Background Check" value={driver.backgroundCheckStatus || "Pending"} />
+            <DocumentRow label="Insurance Status" value={driver.insuranceStatus || "Pending"} />
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              title="Password"
+              subtitle="Update your secure login password."
             />
 
             <TextInput
@@ -732,54 +847,50 @@ export default function DriverProfile() {
               secureTextEntry
             />
 
-            <TouchableOpacity style={styles.blueButton} onPress={changePassword}>
-              <Ionicons name="lock-closed-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.buttonText}>Change Password</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={changePassword}>
+              <Text style={styles.secondaryButtonText}>Change Password</Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
             <SectionHeader
-              icon="card-outline"
-              title="Manage Subscription"
-              subtitle="Manage your $4.99 driver board membership."
+              title="Billing"
+              subtitle="Manage your driver board membership."
             />
 
             <Text style={styles.helpText}>
-              Manage your driver board membership, update your payment method,
-              review billing, or cancel your subscription.
+              Manage payment method, billing, and subscription status for driver board access.
             </Text>
 
-            <TouchableOpacity style={styles.blueButton} onPress={manageSubscription}>
-              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.buttonText}>Manage Driver Membership</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={manageSubscription}>
+              <Text style={styles.secondaryButtonText}>Manage Driver Membership</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
-              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.buttonText}>Cancel Driver Subscription</Text>
+              <Text style={styles.cancelButtonText}>Cancel Driver Subscription</Text>
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
-            style={styles.greenButton}
-            onPress={() => router.push("/driver/mobile-driver-app" as any)}
-          >
-            <Ionicons name="phone-portrait-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.buttonText}>Back to Driver Dashboard</Text>
-          </TouchableOpacity>
+          <View style={styles.card}>
+            <SectionHeader
+              title="Communication"
+              subtitle="Open delivery communication screens."
+            />
+
+            <RouteButton title="Customer Chat" onPress={() => router.push("/driver/customer-chat" as any)} />
+            <RouteButton title="Farmer Chat" onPress={() => router.push("/driver/farmer-chat" as any)} />
+            <RouteButton title="Live Location" onPress={() => router.push("/driver/live-location-provider" as any)} />
+          </View>
 
           <TouchableOpacity
             style={styles.darkButton}
-            onPress={() => router.push("/driver/board" as any)}
+            onPress={() => router.push("/driver/mobile-driver-app" as any)}
           >
-            <Ionicons name="list-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.buttonText}>View Driver Board</Text>
+            <Text style={styles.darkButtonText}>Back to Driver Hub</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.logoutButton} onPress={logout}>
-            <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.buttonText}>Logout</Text>
+            <Text style={styles.logoutButtonText}>Logout</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -787,41 +898,45 @@ export default function DriverProfile() {
   );
 }
 
-function QuickNav({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-}) {
+function Label({ text }: { text: string }) {
+  return <Text style={styles.label}>{text}</Text>;
+}
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+    </View>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string | number }) {
+  return (
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function QuickNav({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.quickCard} onPress={onPress}>
-      <Ionicons name={icon} size={22} color="#10B981" />
       <Text style={styles.quickText}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function DocumentRow({
-  icon,
-  label,
-  value,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
-  const uploaded = value !== "Not uploaded";
+function DocumentRow({ label, value }: { label: string; value: string }) {
+  const good =
+    value !== "Not uploaded" &&
+    !normalize(value).includes("pending") &&
+    !normalize(value).includes("expired");
 
   return (
     <View style={styles.documentRow}>
-      <Ionicons
-        name={uploaded ? "checkmark-circle" : icon}
-        size={20}
-        color={uploaded ? "#10B981" : "#94A3B8"}
-      />
+      <View style={[styles.documentDot, good && styles.documentDotGood]} />
       <View style={{ flex: 1 }}>
         <Text style={styles.documentLabel}>{label}</Text>
         <Text style={styles.documentText}>{value}</Text>
@@ -830,32 +945,76 @@ function DocumentRow({
   );
 }
 
+function SwitchRow({
+  title,
+  value,
+  onValueChange,
+}: {
+  title: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+}) {
+  return (
+    <View style={styles.switchRow}>
+      <Text style={styles.switchTitle}>{title}</Text>
+      <Switch value={value} onValueChange={onValueChange} />
+    </View>
+  );
+}
+
+function RouteButton({ title, onPress }: { title: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.routeButton} onPress={onPress}>
+      <Text style={styles.routeButtonText}>{title}</Text>
+      <Text style={styles.routeArrow}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: freightTheme.colors.background },
   keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
   container: { flex: 1, backgroundColor: freightTheme.colors.background },
   content: { paddingBottom: 90 },
-  hero: {
+  center: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.background,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  centerText: {
+    color: freightTheme.colors.mutedText,
+    marginTop: 10,
+    fontWeight: "800",
+  },
+  emptyTitle: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: 12,
+  },
+  header: {
     backgroundColor: "#020617",
     paddingTop: 22,
     paddingHorizontal: 20,
-    paddingBottom: 28,
+    paddingBottom: 26,
     borderBottomWidth: 1,
     borderBottomColor: "#1E293B",
   },
-  heroTop: { flexDirection: "row", gap: 14, alignItems: "center" },
+  headerTop: { flexDirection: "row", gap: 14, alignItems: "center" },
   avatar: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
+    width: 58,
+    height: 58,
+    borderRadius: 18,
     backgroundColor: "#064E3B",
     borderWidth: 1,
     borderColor: "#10B981",
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { color: "#FFFFFF", fontSize: 22, fontWeight: "900" },
-  kicker: {
+  avatarText: { color: "#FFFFFF", fontSize: 20, fontWeight: "900" },
+  eyebrow: {
     color: "#10B981",
     fontSize: 12,
     fontWeight: "900",
@@ -863,7 +1022,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   title: {
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: "900",
     color: "#FFFFFF",
     marginTop: 6,
@@ -871,87 +1030,89 @@ const styles = StyleSheet.create({
   subtitle: {
     color: "#CBD5E1",
     fontWeight: "700",
-    lineHeight: 22,
-    marginTop: 8,
+    lineHeight: 21,
+    marginTop: 7,
+    fontSize: 13,
   },
   statusCard: {
     backgroundColor: "#064E3B",
-    borderRadius: 20,
-    padding: 18,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
     borderColor: "#10B981",
     marginHorizontal: 18,
-    marginTop: 18,
-    marginBottom: 14,
-  },
-  statusTop: {
+    marginTop: 16,
+    marginBottom: 12,
     flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "center",
   },
   statusTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
     color: "#FFFFFF",
     marginBottom: 8,
   },
   statusBadge: {
     alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 999,
   },
   statusBadgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
-  statusSmall: {
-    marginTop: 12,
-    color: "#BBF7D0",
-    fontWeight: "700",
-    lineHeight: 20,
+  statsRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 12,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: freightTheme.colors.card,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    borderRadius: 14,
+    padding: 13,
+    alignItems: "center",
+  },
+  statValue: {
+    color: freightTheme.colors.primary,
+    fontWeight: "900",
+    fontSize: 20,
+  },
+  statLabel: {
+    color: freightTheme.colors.mutedText,
+    fontWeight: "800",
+    marginTop: 4,
+    fontSize: 12,
   },
   quickGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
     paddingHorizontal: 18,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   quickCard: {
     width: "48%",
     backgroundColor: freightTheme.colors.card,
-    borderRadius: 18,
-    padding: 15,
+    borderRadius: 14,
+    padding: 13,
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
     alignItems: "center",
-    gap: 8,
   },
   quickText: { color: freightTheme.colors.text, fontWeight: "900" },
   card: {
     backgroundColor: freightTheme.colors.card,
-    padding: 18,
-    borderRadius: 22,
+    padding: 16,
+    borderRadius: 16,
     marginHorizontal: 18,
-    marginBottom: 16,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 14,
-  },
-  sectionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: freightTheme.colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  sectionHeader: { marginBottom: 12 },
   sectionTitle: {
-    fontSize: 21,
+    fontSize: 19,
     fontWeight: "900",
     color: freightTheme.colors.text,
   },
@@ -960,6 +1121,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 20,
     marginTop: 3,
+    fontSize: 13,
   },
   label: {
     color: freightTheme.colors.text,
@@ -971,16 +1133,31 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#CBD5E1",
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 12,
+    padding: 13,
     fontWeight: "700",
     marginBottom: 8,
     color: "#111827",
   },
+  switchRow: {
+    backgroundColor: freightTheme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    padding: 12,
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  switchTitle: {
+    flex: 1,
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+  },
   documentRow: {
     backgroundColor: freightTheme.colors.surface,
-    borderRadius: 14,
-    padding: 13,
+    borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
     borderColor: freightTheme.colors.border,
     flexDirection: "row",
@@ -988,9 +1165,16 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 10,
   },
+  documentDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: "#94A3B8",
+  },
+  documentDotGood: { backgroundColor: "#10B981" },
   documentLabel: {
     color: freightTheme.colors.primary,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
@@ -1005,73 +1189,88 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     marginBottom: 12,
   },
-  greenButton: {
+  primaryButton: {
     backgroundColor: freightTheme.colors.primary,
-    padding: 16,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    marginHorizontal: 18,
-    marginTop: 12,
-    flexDirection: "row",
-    gap: 8,
-  },
-  greenButtonNoMargin: {
-    backgroundColor: freightTheme.colors.primary,
-    padding: 16,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 12,
-    flexDirection: "row",
-    gap: 8,
   },
-  blueButton: {
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  secondaryButton: {
     backgroundColor: "#2563EB",
-    padding: 16,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 10,
-    flexDirection: "row",
-    gap: 8,
   },
-  darkButton: {
-    backgroundColor: "#111827",
-    padding: 16,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    marginHorizontal: 18,
-    marginTop: 10,
-    flexDirection: "row",
-    gap: 8,
+  secondaryButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
   cancelButton: {
     backgroundColor: "#DC2626",
-    padding: 16,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 10,
+  },
+  cancelButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  routeButton: {
+    backgroundColor: freightTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: freightTheme.colors.border,
+    borderRadius: 12,
+    padding: 13,
+    marginTop: 8,
     flexDirection: "row",
-    gap: 8,
+    alignItems: "center",
+  },
+  routeButtonText: {
+    flex: 1,
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+  },
+  routeArrow: {
+    color: freightTheme.colors.primary,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  darkButton: {
+    backgroundColor: "#111827",
+    padding: 15,
+    borderRadius: 13,
+    alignItems: "center",
+    marginHorizontal: 18,
+    marginTop: 4,
+  },
+  darkButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
   logoutButton: {
     backgroundColor: "#64748B",
-    padding: 16,
-    borderRadius: 14,
+    padding: 15,
+    borderRadius: 13,
     alignItems: "center",
-    justifyContent: "center",
     marginHorizontal: 18,
     marginTop: 10,
     marginBottom: 40,
-    flexDirection: "row",
-    gap: 8,
   },
-  buttonText: {
+  logoutButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
-    textAlign: "center",
+  },
+  disabledButton: {
+    opacity: 0.65,
   },
 });
