@@ -16,9 +16,9 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
 
 type EarningLoad = {
   id: string;
@@ -49,6 +49,22 @@ type EarningStats = {
   totalMiles: number;
   averageLoadPay: number;
   bonusEstimate: number;
+};
+
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#151922",
+  muted: "#7B8494",
+  border: "#E6E8EF",
+  red: "#E1122D",
+  redSoft: "#FFE6EA",
+  black: "#111827",
+  soft: "#F3F4F8",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  purple: "#7C3AED",
 };
 
 const ACTIVE_STATUSES = [
@@ -247,9 +263,7 @@ export default function DriverEarnings() {
 
     if (currentDriver?.accountActive === false) return false;
     if (membershipStatus === "canceled") return false;
-    if (subscriptionStatus === "canceled") return false;
-    if (subscriptionStatus === "past_due") return false;
-    if (subscriptionStatus === "unpaid") return false;
+    if (["canceled", "past_due", "unpaid"].includes(subscriptionStatus)) return false;
 
     return true;
   }
@@ -383,19 +397,10 @@ export default function DriverEarnings() {
     });
 
     const totalEarnings = completed.reduce((sum, item) => sum + getLoadPay(item), 0);
-
-    const weeklyEarnings = weeklyCompleted.reduce(
-      (sum, item) => sum + getLoadPay(item),
-      0
-    );
-
+    const weeklyEarnings = weeklyCompleted.reduce((sum, item) => sum + getLoadPay(item), 0);
     const totalMiles = completed.reduce((sum, item) => sum + getLoadMiles(item), 0);
-
-    const averageLoadPay =
-      completed.length > 0 ? totalEarnings / completed.length : 0;
-
-    const bonusEstimate =
-      completed.length >= 10 ? 150 : completed.length >= 5 ? 50 : 0;
+    const averageLoadPay = completed.length > 0 ? totalEarnings / completed.length : 0;
+    const bonusEstimate = completed.length >= 10 ? 150 : completed.length >= 5 ? 50 : 0;
 
     setStats({
       totalEarnings,
@@ -417,24 +422,24 @@ export default function DriverEarnings() {
     switch (normalize(status)) {
       case "delivered":
       case "completed":
-        return "#10B981";
+        return COLORS.green;
       case "in_transit":
         return "#0F766E";
       case "picked_up":
-        return "#F59E0B";
+        return COLORS.orange;
       case "accepted":
       case "booked":
       case "arrived_pickup":
       case "arrived_dropoff":
-        return "#7C3AED";
+        return COLORS.purple;
       case "available":
       case "posted":
       case "open":
-        return "#2563EB";
+        return COLORS.blue;
       case "cancelled":
-        return "#DC2626";
+        return COLORS.red;
       default:
-        return "#64748B";
+        return COLORS.muted;
     }
   }
 
@@ -483,23 +488,18 @@ export default function DriverEarnings() {
     } as any);
   }
 
-  function renderStat(label: string, value: string | number, accent = false) {
-    return (
-      <View style={[styles.statCard, accent && styles.statCardAccent]}>
-        <Text style={[styles.statValue, accent && styles.statValueAccent]}>
-          {value}
-        </Text>
-        <Text style={[styles.statLabel, accent && styles.statLabelAccent]}>
-          {label}
-        </Text>
-      </View>
-    );
-  }
-
   function renderLoadCard(item: EarningLoad, completed = false) {
     return (
       <View style={styles.loadCard}>
         <View style={styles.loadHeader}>
+          <View style={styles.loadIcon}>
+            <Ionicons
+              name={item.source === "freight_load" ? "cube" : "bag-handle"}
+              size={21}
+              color={COLORS.red}
+            />
+          </View>
+
           <View style={{ flex: 1 }}>
             <Text style={styles.loadTitle}>{item.title || "Farm2Home Load"}</Text>
             <Text style={styles.commodity}>{item.commodity || "Farm Goods"}</Text>
@@ -511,17 +511,27 @@ export default function DriverEarnings() {
         </View>
 
         <View style={styles.routeBox}>
-          <Text style={styles.routeLabel}>Pickup</Text>
-          <Text style={styles.routeText}>
-            {item.pickup_address || item.pickup_city || "Pickup location"}
-          </Text>
+          <View style={styles.routeStop}>
+            <View style={styles.routeDotStart} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routeText}>
+                {item.pickup_address || item.pickup_city || "Pickup location"}
+              </Text>
+            </View>
+          </View>
 
-          <View style={styles.routeDivider} />
+          <View style={styles.routeLine} />
 
-          <Text style={styles.routeLabel}>Dropoff</Text>
-          <Text style={styles.routeText}>
-            {item.dropoff_address || item.dropoff_city || "Dropoff location"}
-          </Text>
+          <View style={styles.routeStop}>
+            <View style={styles.routeDotEnd} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.routeText}>
+                {item.dropoff_address || item.dropoff_city || "Dropoff location"}
+              </Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.payoutRow}>
@@ -541,11 +551,15 @@ export default function DriverEarnings() {
         </Text>
 
         {completed ? (
-          <Text style={styles.metaText}>
-            Estimated payout date: {estimatedPayoutDate(item.delivered_at)}
-          </Text>
+          <View style={styles.payoutDateBox}>
+            <Ionicons name="calendar" size={16} color={COLORS.red} />
+            <Text style={styles.payoutDateText}>
+              Estimated payout: {estimatedPayoutDate(item.delivered_at)}
+            </Text>
+          </View>
         ) : (
           <TouchableOpacity style={styles.actionButton} onPress={() => openWorkflow(item)}>
+            <Ionicons name="navigate" size={17} color="#FFFFFF" />
             <Text style={styles.actionText}>Open Load Workflow</Text>
           </TouchableOpacity>
         )}
@@ -556,9 +570,9 @@ export default function DriverEarnings() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
         <View style={styles.loadingScreen}>
-          <ActivityIndicator size="large" color="#10B981" />
+          <ActivityIndicator size="large" color={COLORS.red} />
           <Text style={styles.loadingText}>Loading earnings...</Text>
         </View>
       </SafeAreaView>
@@ -567,16 +581,34 @@ export default function DriverEarnings() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>Driver Operations</Text>
-          <Text style={styles.title}>Earnings Center</Text>
-          <Text style={styles.subtitle}>
-            Track completed delivery payouts, weekly earnings, mileage, bonuses,
-            and settlement estimates.
-          </Text>
+        <View style={styles.hero}>
+          <View style={styles.heroTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>Farm2Driver Wallet</Text>
+              <Text style={styles.title}>Earnings</Text>
+              <Text style={styles.subtitle}>Welcome back, {getDriverName()}</Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.profileCircle}
+              onPress={() => router.push("/driver/profile" as any)}
+            >
+              <Ionicons name="person" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.balanceCard}>
+            <Text style={styles.balanceLabel}>Available Balance Estimate</Text>
+            <Text style={styles.balanceValue}>
+              {formatMoney(stats.totalEarnings + stats.bonusEstimate)}
+            </Text>
+            <Text style={styles.balanceSub}>
+              Includes completed loads and bonus estimate.
+            </Text>
+          </View>
         </View>
 
         <View style={styles.navRow}>
@@ -584,14 +616,16 @@ export default function DriverEarnings() {
             style={styles.navButton}
             onPress={() => router.push("/driver/mobile-driver-app" as any)}
           >
+            <Ionicons name="home" size={17} color="#FFFFFF" />
             <Text style={styles.navText}>Driver Hub</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.navButtonOutline}
-            onPress={() => router.push("/driver/profile" as any)}
+            onPress={() => router.push("/driver/my-deliveries" as any)}
           >
-            <Text style={styles.navTextOutline}>Profile</Text>
+            <Ionicons name="cube-outline" size={17} color={COLORS.red} />
+            <Text style={styles.navTextOutline}>My Shipments</Text>
           </TouchableOpacity>
         </View>
 
@@ -601,48 +635,54 @@ export default function DriverEarnings() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
         >
-          <View style={styles.driverCard}>
-            <Text style={styles.driverName}>{getDriverName()}</Text>
-            <Text style={styles.driverMeta}>
-              Earnings are calculated from delivered freight loads and delivery
-              orders assigned to this driver.
-            </Text>
-          </View>
-
           <View style={styles.statsGrid}>
-            {renderStat("Total Earnings", formatMoney(stats.totalEarnings), true)}
-            {renderStat("Weekly Earnings", formatMoney(stats.weeklyEarnings), true)}
-            {renderStat("Completed Loads", stats.completedLoads)}
-            {renderStat("Active Loads", stats.activeLoads)}
-            {renderStat("Total Miles", stats.totalMiles.toFixed(0))}
-            {renderStat("Avg Load Pay", formatMoney(stats.averageLoadPay))}
-            {renderStat("Bonus Estimate", formatMoney(stats.bonusEstimate), true)}
+            <WalletStat
+              label="Total"
+              value={formatMoney(stats.totalEarnings)}
+              icon="wallet"
+              accent
+            />
+            <WalletStat
+              label="Weekly"
+              value={formatMoney(stats.weeklyEarnings)}
+              icon="trending-up"
+              accent
+            />
+            <WalletStat label="Completed" value={stats.completedLoads} icon="checkmark-circle" />
+            <WalletStat label="Active" value={stats.activeLoads} icon="navigate" />
+            <WalletStat label="Miles" value={stats.totalMiles.toFixed(0)} icon="speedometer" />
+            <WalletStat
+              label="Avg Pay"
+              value={formatMoney(stats.averageLoadPay)}
+              icon="cash"
+            />
           </View>
 
           <TouchableOpacity style={styles.refreshButton} onPress={loadEarnings}>
+            <Ionicons name="refresh" size={18} color="#FFFFFF" />
             <Text style={styles.refreshText}>Refresh Earnings</Text>
           </TouchableOpacity>
 
           <View style={styles.settlementCard}>
             <Text style={styles.settlementTitle}>Settlement Summary</Text>
 
-            <Text style={styles.settlementText}>
-              Completed load payout: {formatMoney(stats.totalEarnings)}
-            </Text>
-            <Text style={styles.settlementText}>
-              Bonus estimate: {formatMoney(stats.bonusEstimate)}
-            </Text>
-            <Text style={styles.settlementTotal}>
-              Estimated total settlement:{" "}
-              {formatMoney(stats.totalEarnings + stats.bonusEstimate)}
-            </Text>
+            <SettlementRow label="Completed load payout" value={formatMoney(stats.totalEarnings)} />
+            <SettlementRow label="Bonus estimate" value={formatMoney(stats.bonusEstimate)} />
+
+            <View style={styles.settlementTotalRow}>
+              <Text style={styles.settlementTotalLabel}>Estimated settlement</Text>
+              <Text style={styles.settlementTotal}>
+                {formatMoney(stats.totalEarnings + stats.bonusEstimate)}
+              </Text>
+            </View>
+
             <Text style={styles.settlementNote}>
               Final payout timing depends on admin approval, payment processor,
               dispute checks, and proof-of-delivery verification.
             </Text>
           </View>
 
-          <Text style={styles.sectionTitle}>Active Loads</Text>
+          <Text style={styles.sectionTitle}>Active Shipments</Text>
 
           <FlatList
             data={activeLoads}
@@ -650,6 +690,7 @@ export default function DriverEarnings() {
             scrollEnabled={false}
             ListEmptyComponent={
               <View style={styles.emptyCard}>
+                <Ionicons name="cube-outline" size={34} color={COLORS.red} />
                 <Text style={styles.emptyTitle}>No active loads</Text>
                 <Text style={styles.emptyText}>
                   Accepted and in-transit loads will appear here.
@@ -659,7 +700,7 @@ export default function DriverEarnings() {
             renderItem={({ item }) => renderLoadCard(item, false)}
           />
 
-          <Text style={styles.sectionTitle}>Completed Loads</Text>
+          <Text style={styles.sectionTitle}>Completed Shipments</Text>
 
           <FlatList
             data={completedLoads}
@@ -668,6 +709,7 @@ export default function DriverEarnings() {
             contentContainerStyle={{ paddingBottom: 110 }}
             ListEmptyComponent={
               <View style={styles.emptyCard}>
+                <Ionicons name="checkmark-circle-outline" size={34} color={COLORS.red} />
                 <Text style={styles.emptyTitle}>No completed loads yet</Text>
                 <Text style={styles.emptyText}>
                   Completed deliveries will appear here after proof of delivery.
@@ -682,87 +724,148 @@ export default function DriverEarnings() {
   );
 }
 
+function WalletStat({
+  label,
+  value,
+  icon,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent?: boolean;
+}) {
+  return (
+    <View style={[styles.statCard, accent && styles.statCardAccent]}>
+      <View style={[styles.statIcon, accent && styles.statIconAccent]}>
+        <Ionicons name={icon} size={19} color={accent ? "#FFFFFF" : COLORS.red} />
+      </View>
+      <Text style={[styles.statValue, accent && styles.statValueAccent]}>{value}</Text>
+      <Text style={[styles.statLabel, accent && styles.statLabelAccent]}>{label}</Text>
+    </View>
+  );
+}
+
+function SettlementRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.settlementRow}>
+      <Text style={styles.settlementText}>{label}</Text>
+      <Text style={styles.settlementValue}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
   loadingScreen: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
     alignItems: "center",
     justifyContent: "center",
   },
   loadingText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     marginTop: 10,
     fontWeight: "800",
   },
-  container: { flex: 1, backgroundColor: freightTheme.colors.background },
-  header: {
-    backgroundColor: "#020617",
+  container: { flex: 1, backgroundColor: COLORS.bg },
+  hero: {
+    backgroundColor: COLORS.red,
     paddingTop: 22,
     paddingHorizontal: 20,
-    paddingBottom: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 26,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  profileCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   eyebrow: {
-    color: "#10B981",
+    color: "#FFE6EA",
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 4,
     textTransform: "uppercase",
     letterSpacing: 1,
     fontSize: 12,
   },
   title: {
     color: "#FFFFFF",
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
-    marginBottom: 8,
   },
   subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 22,
+    color: "#FFFFFF",
+    opacity: 0.9,
+    lineHeight: 21,
     fontSize: 14,
     fontWeight: "700",
+    marginTop: 4,
   },
-  navRow: { flexDirection: "row", gap: 10, padding: 16 },
+  balanceCard: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 22,
+    padding: 17,
+    marginTop: 18,
+  },
+  balanceLabel: {
+    color: "#FFE6EA",
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
+  },
+  balanceValue: {
+    color: "#FFFFFF",
+    fontSize: 38,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  balanceSub: {
+    color: "#FFFFFF",
+    opacity: 0.9,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  navRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 16,
+    marginTop: -18,
+    marginBottom: 14,
+  },
   navButton: {
     flex: 1,
-    backgroundColor: freightTheme.colors.primary,
-    padding: 13,
-    borderRadius: 13,
+    backgroundColor: COLORS.red,
+    padding: 14,
+    borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   navButtonOutline: {
     flex: 1,
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    padding: 13,
-    borderRadius: 13,
+    borderColor: COLORS.border,
+    padding: 14,
+    borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   navText: { color: "#FFFFFF", fontWeight: "900" },
-  navTextOutline: { color: freightTheme.colors.primary, fontWeight: "900" },
-  driverCard: {
-    backgroundColor: freightTheme.colors.card,
-    marginHorizontal: 18,
-    marginBottom: 14,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-  },
-  driverName: {
-    color: freightTheme.colors.text,
-    fontSize: 21,
-    fontWeight: "900",
-    marginBottom: 5,
-  },
-  driverMeta: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    lineHeight: 21,
-  },
+  navTextOutline: { color: COLORS.red, fontWeight: "900" },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -772,106 +875,146 @@ const styles = StyleSheet.create({
   },
   statCard: {
     width: "48%",
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    borderRadius: 16,
+    borderColor: COLORS.border,
+    borderRadius: 18,
     padding: 14,
   },
   statCardAccent: {
-    backgroundColor: "#064E3B",
-    borderColor: "#064E3B",
+    backgroundColor: COLORS.black,
+    borderColor: COLORS.black,
+  },
+  statIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 13,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  statIconAccent: {
+    backgroundColor: COLORS.red,
   },
   statValue: {
-    color: freightTheme.colors.primary,
+    color: COLORS.text,
     fontSize: 22,
     fontWeight: "900",
   },
   statValueAccent: { color: "#FFFFFF" },
   statLabel: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "800",
     marginTop: 5,
   },
-  statLabelAccent: { color: "#BBF7D0" },
+  statLabelAccent: { color: "#D1D5DB" },
   refreshButton: {
-    backgroundColor: "#334155",
+    backgroundColor: COLORS.red,
     marginHorizontal: 18,
     padding: 14,
-    borderRadius: 13,
+    borderRadius: 15,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: 16,
+    flexDirection: "row",
+    gap: 8,
   },
   refreshText: { color: "#FFFFFF", fontWeight: "900" },
   settlementCard: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 18,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   settlementTitle: {
-    color: "#FFFFFF",
+    color: COLORS.text,
     fontSize: 20,
     fontWeight: "900",
     marginBottom: 10,
   },
+  settlementRow: {
+    backgroundColor: COLORS.soft,
+    borderRadius: 13,
+    padding: 12,
+    marginBottom: 8,
+    flexDirection: "row",
+    gap: 10,
+  },
   settlementText: {
-    color: "#BBF7D0",
+    flex: 1,
+    color: COLORS.muted,
     fontWeight: "800",
-    marginBottom: 6,
-    lineHeight: 21,
+  },
+  settlementValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  settlementTotalRow: {
+    backgroundColor: COLORS.black,
+    borderRadius: 15,
+    padding: 14,
+    marginTop: 4,
+  },
+  settlementTotalLabel: {
+    color: "#D1D5DB",
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
   },
   settlementTotal: {
     color: "#FFFFFF",
     fontWeight: "900",
+    fontSize: 24,
     marginTop: 4,
-    marginBottom: 6,
-    lineHeight: 21,
   },
   settlementNote: {
-    color: "#D1FAE5",
+    color: COLORS.muted,
     lineHeight: 21,
-    marginTop: 8,
+    marginTop: 12,
     fontWeight: "700",
   },
   sectionTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 22,
     fontWeight: "900",
     paddingHorizontal: 18,
     marginBottom: 12,
   },
   emptyCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 14,
-    padding: 20,
-    borderRadius: 16,
+    padding: 22,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     alignItems: "center",
   },
   emptyTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 18,
     fontWeight: "900",
+    marginTop: 10,
     marginBottom: 6,
   },
   emptyText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     lineHeight: 21,
     fontWeight: "700",
     textAlign: "center",
   },
   loadCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 14,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   loadHeader: {
     flexDirection: "row",
@@ -879,13 +1022,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: "flex-start",
   },
+  loadIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   loadTitle: {
-    color: freightTheme.colors.text,
-    fontSize: 19,
+    color: COLORS.text,
+    fontSize: 18,
     fontWeight: "900",
   },
   commodity: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     marginTop: 3,
   },
@@ -897,30 +1048,49 @@ const styles = StyleSheet.create({
   },
   statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
   routeBox: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
+    backgroundColor: COLORS.soft,
+    borderRadius: 16,
     padding: 13,
     marginBottom: 12,
   },
+  routeStop: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  routeDotStart: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+  },
+  routeDotEnd: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: COLORS.red,
+  },
+  routeLine: {
+    width: 2,
+    height: 22,
+    backgroundColor: COLORS.border,
+    marginLeft: 5,
+    marginVertical: 7,
+  },
   routeLabel: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 11,
     textTransform: "uppercase",
-    marginBottom: 4,
+    marginBottom: 3,
   },
   routeText: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "800",
     lineHeight: 20,
   },
-  routeDivider: {
-    height: 1,
-    backgroundColor: freightTheme.colors.border,
-    marginVertical: 10,
-  },
   metaText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     marginTop: 8,
     lineHeight: 20,
@@ -932,26 +1102,43 @@ const styles = StyleSheet.create({
   },
   payoutBox: {
     flex: 1,
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
+    backgroundColor: COLORS.soft,
+    borderRadius: 14,
     padding: 13,
   },
   payoutLabel: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "900",
     marginBottom: 4,
   },
   payoutValue: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontSize: 20,
     fontWeight: "900",
   },
-  actionButton: {
-    backgroundColor: freightTheme.colors.primary,
-    padding: 13,
+  payoutDateBox: {
+    backgroundColor: COLORS.redSoft,
     borderRadius: 13,
-    alignItems: "center",
+    padding: 12,
     marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  payoutDateText: {
+    color: COLORS.red,
+    fontWeight: "900",
+    flex: 1,
+  },
+  actionButton: {
+    backgroundColor: COLORS.red,
+    padding: 13,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
   },
   actionText: { color: "#FFFFFF", fontWeight: "900" },
 });

@@ -20,7 +20,6 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
-import freightTheme from "../styles/freightTheme";
 import {
   notifyDriverAcceptedLoad,
   notifyDriverArrivedPickup,
@@ -69,6 +68,25 @@ type FreightLoad = {
 
 const TABLE_NAME = "freight_loads";
 
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  amber: "#D97706",
+  purple: "#7C3AED",
+  blue: "#2563EB",
+  teal: "#0F766E",
+  sky: "#0EA5E9",
+  slate: "#64748B",
+};
+
 const fallbackLoads: FreightLoad[] = [
   {
     id: "demo-001",
@@ -99,6 +117,13 @@ function cityKey(location: string) {
 
 function routeKey(load: FreightLoad) {
   return `${cityKey(load.pickup_location)}-${cityKey(load.dropoff_location)}`;
+}
+
+function money(value: number) {
+  return `$${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 export default function FreightBoardScreen() {
@@ -153,10 +178,8 @@ export default function FreightBoardScreen() {
     }
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(currentFreight));
-    await AsyncStorage.setItem(
-      "currentFreightCarrier",
-      JSON.stringify(currentFreight)
-    );
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(currentFreight));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(currentFreight));
     await AsyncStorage.setItem("currentUser", JSON.stringify(currentFreight));
     await AsyncStorage.setItem("userRole", "freight");
     await AsyncStorage.setItem("currentUserRole", "freight");
@@ -182,7 +205,7 @@ export default function FreightBoardScreen() {
       const { data, error } = await supabase
         .from(TABLE_NAME)
         .select("*")
-        .or(`status.eq.available,status.eq.accepted,carrier_id.eq.${currentFreightId}`)
+        .or(`status.eq.available,status.eq.accepted,carrier_id.eq.${currentFreightId},driver_id.eq.${currentFreightId}`)
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -259,9 +282,7 @@ export default function FreightBoardScreen() {
     0
   );
 
-  const availableCount = filteredLoads.filter(
-    (item) => item.status === "available"
-  ).length;
+  const availableCount = filteredLoads.filter((item) => item.status === "available").length;
 
   const activeCount = filteredLoads.filter((item) =>
     ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
@@ -522,23 +543,23 @@ export default function FreightBoardScreen() {
   function statusColor(status: LoadStatus) {
     switch (status) {
       case "available":
-        return "#2563EB";
+        return COLORS.blue;
       case "accepted":
-        return freightTheme.colors.primary;
+        return COLORS.red;
       case "arrived_pickup":
-        return "#0EA5E9";
+        return COLORS.sky;
       case "picked_up":
-        return "#F59E0B";
+        return COLORS.amber;
       case "in_transit":
-        return "#7C3AED";
+        return COLORS.purple;
       case "arrived_dropoff":
-        return "#0F766E";
+        return COLORS.teal;
       case "delivered":
-        return "#10B981";
+        return COLORS.green;
       case "cancelled":
-        return "#DC2626";
+        return COLORS.redDark;
       default:
-        return "#64748B";
+        return COLORS.slate;
     }
   }
 
@@ -578,8 +599,8 @@ export default function FreightBoardScreen() {
   if (loading || accessChecking) {
     return (
       <SafeAreaView style={styles.centered}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
-        <ActivityIndicator size="large" color="#10B981" />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <ActivityIndicator size="large" color={COLORS.red} />
         <Text style={styles.loadingText}>Checking Freight Access...</Text>
       </SafeAreaView>
     );
@@ -588,7 +609,7 @@ export default function FreightBoardScreen() {
   if (!accessAllowed) {
     return (
       <SafeAreaView style={styles.centered}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
         <Text style={styles.lockTitle}>Login Required</Text>
         <Text style={styles.loadingText}>Redirecting to freight login...</Text>
       </SafeAreaView>
@@ -607,7 +628,7 @@ export default function FreightBoardScreen() {
           </View>
 
           <View style={styles.rateBox}>
-            <Text style={styles.rate}>${Number(item.rate || 0).toFixed(0)}</Text>
+            <Text style={styles.rate}>{money(Number(item.rate || 0))}</Text>
             <Text style={styles.rateLabel}>Rate</Text>
           </View>
         </View>
@@ -619,7 +640,7 @@ export default function FreightBoardScreen() {
 
         <View style={styles.routeContainer}>
           <View style={styles.routeStop}>
-            <Ionicons name="radio-button-on" size={18} color="#10B981" />
+            <Ionicons name="radio-button-on" size={18} color={COLORS.red} />
             <View style={{ flex: 1 }}>
               <Text style={styles.routeLabel}>Pickup</Text>
               <Text style={styles.routeText}>{item.pickup_location}</Text>
@@ -632,7 +653,7 @@ export default function FreightBoardScreen() {
           <View style={styles.routeLine} />
 
           <View style={styles.routeStop}>
-            <Ionicons name="location" size={18} color="#10B981" />
+            <Ionicons name="location" size={18} color={COLORS.red} />
             <View style={{ flex: 1 }}>
               <Text style={styles.routeLabel}>Dropoff</Text>
               <Text style={styles.routeText}>{item.dropoff_location}</Text>
@@ -703,7 +724,7 @@ export default function FreightBoardScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
@@ -733,11 +754,7 @@ export default function FreightBoardScreen() {
           style={styles.navButtonOutline}
           onPress={() => router.push("/freight/profile" as any)}
         >
-          <Ionicons
-            name="business-outline"
-            size={18}
-            color={freightTheme.colors.primary}
-          />
+          <Ionicons name="business-outline" size={18} color={COLORS.red} />
           <Text style={styles.navTextOutline}>Profile</Text>
         </TouchableOpacity>
       </View>
@@ -761,7 +778,7 @@ export default function FreightBoardScreen() {
 
       <View style={styles.searchContainer}>
         <View style={styles.searchBox}>
-          <Ionicons name="search-outline" size={20} color="#10B981" />
+          <Ionicons name="search-outline" size={20} color={COLORS.red} />
           <TextInput
             value={query}
             onChangeText={setQuery}
@@ -772,7 +789,7 @@ export default function FreightBoardScreen() {
         </View>
 
         <View style={styles.searchBox}>
-          <Ionicons name="speedometer-outline" size={20} color="#10B981" />
+          <Ionicons name="speedometer-outline" size={20} color={COLORS.red} />
           <TextInput
             value={maxMiles}
             onChangeText={setMaxMiles}
@@ -787,29 +804,20 @@ export default function FreightBoardScreen() {
       {selectedLoads.length > 0 && (
         <View style={styles.batchBar}>
           <View style={styles.batchHeader}>
-            <Ionicons name="layers-outline" size={22} color="#BBF7D0" />
-            <Text style={styles.batchTitle}>
-              Selected: {selectedLoads.length} loads
-            </Text>
+            <Ionicons name="layers-outline" size={22} color="#FFFFFF" />
+            <Text style={styles.batchTitle}>Selected: {selectedLoads.length} loads</Text>
           </View>
 
           <Text style={styles.batchText}>
-            Total Rate: ${selectedTotalRate.toFixed(2)} · Total Miles:{" "}
-            {selectedTotalMiles.toFixed(0)}
+            Total Rate: {money(selectedTotalRate)} · Total Miles: {selectedTotalMiles.toFixed(0)}
           </Text>
 
           <View style={styles.batchButtons}>
-            <TouchableOpacity
-              style={styles.batchAcceptButton}
-              onPress={acceptSelectedLoads}
-            >
+            <TouchableOpacity style={styles.batchAcceptButton} onPress={acceptSelectedLoads}>
               <Text style={styles.batchButtonText}>Accept Selected Loads</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.batchClearButton}
-              onPress={() => setSelectedIds([])}
-            >
+            <TouchableOpacity style={styles.batchClearButton} onPress={() => setSelectedIds([])}>
               <Text style={styles.batchButtonText}>Clear</Text>
             </TouchableOpacity>
           </View>
@@ -824,7 +832,7 @@ export default function FreightBoardScreen() {
         renderItem={renderLoadCard}
         ListEmptyComponent={
           <View style={styles.emptyCard}>
-            <Ionicons name="cube-outline" size={38} color="#10B981" />
+            <Ionicons name="cube-outline" size={38} color={COLORS.red} />
             <Text style={styles.emptyTitle}>No freight loads found.</Text>
             <Text style={styles.emptyText}>
               Adjust your filters or refresh the board to check for new loads.
@@ -847,7 +855,7 @@ function InfoBox({
 }) {
   return (
     <View style={styles.infoBox}>
-      <Ionicons name={icon} size={17} color="#10B981" />
+      <Ionicons name={icon} size={17} color={COLORS.red} />
       <Text style={styles.infoLabel}>{label}</Text>
       <Text style={styles.infoText}>{value}</Text>
     </View>
@@ -857,7 +865,7 @@ function InfoBox({
 const styles = StyleSheet.create({
   centered: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
@@ -866,32 +874,30 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 16,
     fontWeight: "700",
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     textAlign: "center",
   },
   lockTitle: {
-    color: "#DC2626",
+    color: COLORS.red,
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
   container: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
   },
   header: {
-    backgroundColor: "#020617",
+    backgroundColor: COLORS.black,
     paddingHorizontal: 20,
-    paddingTop: 22,
-    paddingBottom: 24,
+    paddingTop: 26,
+    paddingBottom: 26,
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
   },
   kicker: {
-    color: "#10B981",
+    color: "#FCA5A5",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -911,7 +917,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   postButton: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 14,
@@ -930,7 +936,7 @@ const styles = StyleSheet.create({
   },
   navButton: {
     flex: 1,
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
@@ -940,9 +946,9 @@ const styles = StyleSheet.create({
   },
   navButtonOutline: {
     flex: 1,
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: COLORS.red,
     padding: 14,
     borderRadius: 14,
     alignItems: "center",
@@ -955,7 +961,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   navTextOutline: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   summaryRow: {
@@ -966,20 +972,20 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     borderRadius: 18,
     padding: 14,
     alignItems: "center",
   },
   summaryValue: {
-    color: freightTheme.colors.primary,
+    color: COLORS.black,
     fontSize: 25,
     fontWeight: "900",
   },
   summaryLabel: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "800",
     marginTop: 4,
     textAlign: "center",
@@ -990,10 +996,10 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   searchBox: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
@@ -1001,18 +1007,16 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "700",
     paddingVertical: 13,
   },
   batchBar: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.red,
     marginHorizontal: 18,
     marginBottom: 14,
     borderRadius: 18,
     padding: 16,
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
   batchHeader: {
     flexDirection: "row",
@@ -1025,7 +1029,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   batchText: {
-    color: "#BBF7D0",
+    color: "#FFE4E6",
     fontWeight: "800",
     marginTop: 8,
   },
@@ -1036,13 +1040,13 @@ const styles = StyleSheet.create({
   },
   batchAcceptButton: {
     flex: 1,
-    backgroundColor: "#10B981",
+    backgroundColor: COLORS.black,
     padding: 13,
     borderRadius: 14,
     alignItems: "center",
   },
   batchClearButton: {
-    backgroundColor: "#DC2626",
+    backgroundColor: COLORS.redDark,
     padding: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1056,17 +1060,17 @@ const styles = StyleSheet.create({
     paddingBottom: 90,
   },
   card: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderRadius: 22,
     padding: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   selectedCard: {
-    borderColor: "#10B981",
+    borderColor: COLORS.red,
     borderWidth: 2,
-    backgroundColor: "#052E2B",
+    backgroundColor: "#FFF1F2",
   },
   cardTop: {
     flexDirection: "row",
@@ -1076,29 +1080,27 @@ const styles = StyleSheet.create({
   loadTitle: {
     fontSize: 20,
     fontWeight: "900",
-    color: freightTheme.colors.text,
+    color: COLORS.text,
   },
   farmName: {
     marginTop: 4,
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
   },
   rateBox: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.black,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 14,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
   rate: {
     color: "#FFFFFF",
     fontWeight: "900",
-    fontSize: 20,
+    fontSize: 18,
   },
   rateLabel: {
-    color: "#BBF7D0",
+    color: "#D1D5DB",
     fontSize: 11,
     fontWeight: "800",
   },
@@ -1119,11 +1121,11 @@ const styles = StyleSheet.create({
     textTransform: "capitalize",
   },
   routeContainer: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     marginBottom: 12,
   },
   routeStop: {
@@ -1134,26 +1136,26 @@ const styles = StyleSheet.create({
   routeLine: {
     width: 2,
     height: 24,
-    backgroundColor: freightTheme.colors.border,
+    backgroundColor: COLORS.border,
     marginLeft: 8,
     marginVertical: 8,
   },
   routeLabel: {
     fontSize: 11,
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   routeText: {
     fontSize: 15,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     marginTop: 3,
     fontWeight: "900",
     lineHeight: 20,
   },
   routeSub: {
     fontSize: 12,
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     marginTop: 3,
     fontWeight: "700",
   },
@@ -1165,56 +1167,52 @@ const styles = StyleSheet.create({
   infoBox: {
     flexBasis: "48%",
     flexGrow: 1,
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     borderRadius: 14,
     padding: 12,
   },
   infoLabel: {
     fontSize: 11,
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "900",
     textTransform: "uppercase",
     marginTop: 6,
   },
   infoText: {
     fontSize: 13,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "800",
     marginTop: 4,
     lineHeight: 19,
   },
   rateSummary: {
-    backgroundColor: "#0F172A",
+    backgroundColor: COLORS.black,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#1E293B",
     padding: 13,
     marginTop: 12,
   },
   rateSummaryLabel: {
-    color: "#94A3B8",
+    color: "#D1D5DB",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   rateSummaryValue: {
-    color: freightTheme.colors.primary,
+    color: "#FFFFFF",
     fontSize: 22,
     fontWeight: "900",
     marginTop: 4,
   },
   notesBox: {
-    backgroundColor: "#0F172A",
+    backgroundColor: COLORS.black,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#1E293B",
     padding: 13,
     marginTop: 12,
   },
   notesLabel: {
-    color: freightTheme.colors.primary,
+    color: "#FCA5A5",
     fontWeight: "900",
     marginBottom: 4,
   },
@@ -1224,7 +1222,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   selectButton: {
-    backgroundColor: "#2563EB",
+    backgroundColor: COLORS.blue,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1234,7 +1232,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   unselectButton: {
-    backgroundColor: "#DC2626",
+    backgroundColor: COLORS.redDark,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1244,7 +1242,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   actionButton: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: "center",
@@ -1254,7 +1252,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   disabledButton: {
-    backgroundColor: "#64748B",
+    backgroundColor: COLORS.slate,
   },
   actionButtonText: {
     color: "#FFFFFF",
@@ -1262,22 +1260,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   emptyCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderRadius: 22,
     padding: 24,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     marginTop: 20,
   },
   emptyTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 20,
     fontWeight: "900",
     marginTop: 10,
   },
   emptyText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     textAlign: "center",
     marginTop: 8,

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   SafeAreaView,
   ScrollView,
@@ -16,7 +17,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import freightTheme from "../styles/freightTheme";
+import { supabase } from "../data/supabaseClient";
 
 type FreightSettings = {
   pushNotifications: boolean;
@@ -46,11 +47,32 @@ const DEFAULT_SETTINGS: FreightSettings = {
   showOnlyNearbyLoads: false,
   showRefrigeratedLoads: true,
   showLivestockLoads: true,
-  darkMode: true,
+  darkMode: false,
   privacyMode: false,
 };
 
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  amber: "#D97706",
+  slate: "#64748B",
+};
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
 export default function FreightSettingsScreen() {
+  const [loading, setLoading] = useState(true);
+  const [savingSync, setSavingSync] = useState(false);
   const [carrier, setCarrier] = useState<any>(null);
   const [settings, setSettings] = useState<FreightSettings>(DEFAULT_SETTINGS);
 
@@ -60,20 +82,102 @@ export default function FreightSettingsScreen() {
     }, [])
   );
 
+  async function getStoredCarrier() {
+    const raw =
+      (await AsyncStorage.getItem("currentFreightCarrier")) ||
+      (await AsyncStorage.getItem("currentFreight")) ||
+      (await AsyncStorage.getItem("currentFreightUser")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!raw) return null;
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
   async function loadSettings() {
     try {
-      const rawCarrier =
-        (await AsyncStorage.getItem("currentFreightCarrier")) ||
-        (await AsyncStorage.getItem("currentFreight")) ||
-        (await AsyncStorage.getItem("currentUser"));
+      setLoading(true);
 
-      if (!rawCarrier) {
+      const stored = await getStoredCarrier();
+      const { data: authData } = await supabase.auth.getUser();
+      const authUser = authData?.user;
+
+      const carrierId = stored?.id || stored?.freightId || authUser?.id || "";
+      const email = normalize(stored?.email || authUser?.email || "");
+
+      if (!carrierId && !email) {
         router.replace("/freight/login" as any);
         return;
       }
 
-      const parsedCarrier = JSON.parse(rawCarrier);
-      setCarrier(parsedCarrier);
+      let dbCarrier: any = null;
+
+      if (carrierId) {
+        const result = await supabase
+          .from("freight_users")
+          .select("*")
+          .eq("id", carrierId)
+          .maybeSingle();
+
+        if (!result.error && result.data) dbCarrier = result.data;
+      }
+
+      if (!dbCarrier && email) {
+        const result = await supabase
+          .from("freight_users")
+          .select("*")
+          .eq("email", email)
+          .maybeSingle();
+
+        if (!result.error && result.data) dbCarrier = result.data;
+      }
+
+      const mergedCarrier = {
+        ...(stored || {}),
+        ...(dbCarrier || {}),
+        id: dbCarrier?.id || stored?.id || stored?.freightId || authUser?.id || "",
+        freightId: dbCarrier?.id || stored?.freightId || stored?.id || authUser?.id || "",
+        role: "freight",
+        email: normalize(dbCarrier?.email || stored?.email || email),
+        companyName:
+          dbCarrier?.company_name ||
+          dbCarrier?.business_name ||
+          stored?.companyName ||
+          stored?.businessName ||
+          stored?.contactName ||
+          stored?.username ||
+          "Freight Connect Carrier",
+        businessName:
+          dbCarrier?.business_name ||
+          dbCarrier?.company_name ||
+          stored?.businessName ||
+          stored?.companyName ||
+          "Freight Connect Carrier",
+        contactName:
+          dbCarrier?.contact_name ||
+          dbCarrier?.name ||
+          stored?.contactName ||
+          stored?.name ||
+          "",
+        membershipStatus:
+          dbCarrier?.membership_status || stored?.membershipStatus || "Active",
+        subscriptionStatus:
+          dbCarrier?.subscription_status || stored?.subscriptionStatus || "active",
+        accountActive: dbCarrier?.account_active ?? stored?.accountActive ?? true,
+      };
+
+      setCarrier(mergedCarrier);
+
+      await AsyncStorage.setItem("currentFreight", JSON.stringify(mergedCarrier));
+      await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(mergedCarrier));
+      await AsyncStorage.setItem("currentFreightUser", JSON.stringify(mergedCarrier));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(mergedCarrier));
+      await AsyncStorage.setItem("userRole", "freight");
+      await AsyncStorage.setItem("currentUserRole", "freight");
 
       const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
 
@@ -89,6 +193,38 @@ export default function FreightSettingsScreen() {
     } catch (error) {
       console.log("Freight settings load error:", error);
       Alert.alert("Settings Error", "Unable to load freight settings.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function syncCarrierSettings(nextSettings: FreightSettings) {
+    if (!carrier?.id && !carrier?.freightId) return;
+
+    try {
+      setSavingSync(true);
+
+      await supabase
+        .from("freight_users")
+        .update({
+          push_notifications: nextSettings.pushNotifications,
+          new_load_alerts: nextSettings.newLoadAlerts,
+          route_status_alerts: nextSettings.routeStatusAlerts,
+          payout_alerts: nextSettings.payoutAlerts,
+          billing_alerts: nextSettings.billingAlerts,
+          gps_tracking: nextSettings.gpsTracking,
+          background_route_updates: nextSettings.backgroundRouteUpdates,
+          show_only_nearby_loads: nextSettings.showOnlyNearbyLoads,
+          show_refrigerated_loads: nextSettings.showRefrigeratedLoads,
+          show_livestock_loads: nextSettings.showLivestockLoads,
+          privacy_mode: nextSettings.privacyMode,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", carrier.id || carrier.freightId);
+    } catch (error) {
+      console.log("Freight settings sync skipped:", error);
+    } finally {
+      setSavingSync(false);
     }
   }
 
@@ -100,6 +236,7 @@ export default function FreightSettingsScreen() {
 
     setSettings(nextSettings);
     await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(nextSettings));
+    await syncCarrierSettings(nextSettings);
   }
 
   async function resetSettings() {
@@ -113,10 +250,8 @@ export default function FreightSettingsScreen() {
           style: "destructive",
           onPress: async () => {
             setSettings(DEFAULT_SETTINGS);
-            await AsyncStorage.setItem(
-              SETTINGS_KEY,
-              JSON.stringify(DEFAULT_SETTINGS)
-            );
+            await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
+            await syncCarrierSettings(DEFAULT_SETTINGS);
             Alert.alert("Reset Complete", "Freight settings were reset.");
           },
         },
@@ -125,12 +260,16 @@ export default function FreightSettingsScreen() {
   }
 
   async function logout() {
-    await AsyncStorage.removeItem("currentFreightCarrier");
-    await AsyncStorage.removeItem("currentFreight");
-    await AsyncStorage.removeItem("currentFreightUser");
-    await AsyncStorage.removeItem("currentUser");
-    await AsyncStorage.removeItem("userRole");
-    await AsyncStorage.removeItem("currentUserRole");
+    await supabase.auth.signOut();
+
+    await AsyncStorage.multiRemove([
+      "currentFreightCarrier",
+      "currentFreight",
+      "currentFreightUser",
+      "currentUser",
+      "userRole",
+      "currentUserRole",
+    ]);
 
     router.replace("/freight/login" as any);
   }
@@ -150,65 +289,33 @@ export default function FreightSettingsScreen() {
     return carrier?.membershipStatus || carrier?.subscriptionStatus || "Active";
   }
 
-  function SettingRow({
-    icon,
-    label,
-    description,
-    value,
-    onChange,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    label: string;
-    description: string;
-    value: boolean;
-    onChange: (value: boolean) => void;
-  }) {
-    return (
-      <View style={styles.settingRow}>
-        <View style={styles.settingIcon}>
-          <Ionicons name={icon} size={20} color="#10B981" />
-        </View>
+  function statusColor() {
+    const status = normalize(accountStatus());
 
-        <View style={{ flex: 1 }}>
-          <Text style={styles.settingLabel}>{label}</Text>
-          <Text style={styles.settingDescription}>{description}</Text>
-        </View>
+    if (status.includes("cancel")) return COLORS.red;
+    if (status.includes("pending")) return COLORS.amber;
+    if (status.includes("past_due") || status.includes("unpaid")) return COLORS.red;
 
-        <Switch
-          value={value}
-          onValueChange={onChange}
-          trackColor={{ false: "#334155", true: "#064E3B" }}
-          thumbColor={value ? "#10B981" : "#CBD5E1"}
-        />
-      </View>
-    );
+    return COLORS.green;
   }
 
-  function QuickLink({
-    icon,
-    label,
-    route,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    label: string;
-    route: string;
-  }) {
+  if (loading) {
     return (
-      <TouchableOpacity
-        style={styles.quickLink}
-        onPress={() => router.push(route as any)}
-      >
-        <Ionicons name={icon} size={22} color="#10B981" />
-        <Text style={styles.quickLinkText}>{label}</Text>
-      </TouchableOpacity>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.red} />
+          <Text style={styles.centerText}>Loading freight settings...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
@@ -231,30 +338,31 @@ export default function FreightSettingsScreen() {
             <Text style={styles.accountLabel}>Signed in as</Text>
             <Text style={styles.accountName}>{carrierName()}</Text>
             <Text style={styles.accountMeta}>Membership: {accountStatus()}</Text>
+
+            <View style={[styles.accountPill, { backgroundColor: statusColor() }]}>
+              <Text style={styles.accountPillText}>
+                {carrier?.accountActive === false ? "Inactive" : "Carrier Active"}
+              </Text>
+            </View>
           </View>
 
           <View style={styles.accountBadge}>
-            <Ionicons name="shield-checkmark-outline" size={28} color="#BBF7D0" />
+            <Ionicons name="shield-checkmark-outline" size={28} color="#FFFFFF" />
           </View>
         </View>
 
+        <View style={styles.syncCard}>
+          <Ionicons name="cloud-done-outline" size={20} color={COLORS.red} />
+          <Text style={styles.syncText}>
+            {savingSync ? "Syncing settings..." : "Settings saved locally and synced when available."}
+          </Text>
+        </View>
+
         <View style={styles.quickGrid}>
-          <QuickLink
-            icon="grid-outline"
-            label="Dashboard"
-            route="/freight/dashboard"
-          />
+          <QuickLink icon="grid-outline" label="Dashboard" route="/freight/dashboard" />
           <QuickLink icon="list-outline" label="Load Board" route="/freight/board" />
-          <QuickLink
-            icon="cash-outline"
-            label="Earnings"
-            route="/freight/earnings"
-          />
-          <QuickLink
-            icon="business-outline"
-            label="Profile"
-            route="/freight/profile"
-          />
+          <QuickLink icon="briefcase-outline" label="My Loads" route="/freight/my-loads" />
+          <QuickLink icon="business-outline" label="Profile" route="/freight/profile" />
         </View>
 
         <View style={styles.card}>
@@ -371,7 +479,7 @@ export default function FreightSettingsScreen() {
           <SettingRow
             icon="moon-outline"
             label="Dark Mode"
-            description="Use the Freight Connect dark interface."
+            description="Use the Freight Connect dark interface preference."
             value={settings.darkMode}
             onChange={(value) => updateSetting("darkMode", value)}
           />
@@ -402,14 +510,22 @@ export default function FreightSettingsScreen() {
 
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => router.push("/freight/earnings" as any)}
+            onPress={() => router.push("/freight/subscription" as any)}
           >
-            <Ionicons name="cash-outline" size={18} color="#10B981" />
-            <Text style={styles.secondaryButtonText}>Open Earnings</Text>
+            <Ionicons name="card-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryButtonText}>Open Subscription</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => router.push("/freight/support" as any)}
+          >
+            <Ionicons name="help-buoy-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryButtonText}>Open Support</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.secondaryButton} onPress={resetSettings}>
-            <Ionicons name="refresh-outline" size={18} color="#10B981" />
+            <Ionicons name="refresh-outline" size={18} color={COLORS.red} />
             <Text style={styles.secondaryButtonText}>Reset Settings</Text>
           </TouchableOpacity>
 
@@ -420,6 +536,57 @@ export default function FreightSettingsScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function SettingRow({
+  icon,
+  label,
+  description,
+  value,
+  onChange,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  description: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <View style={styles.settingRow}>
+      <View style={styles.settingIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.red} />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text style={styles.settingLabel}>{label}</Text>
+        <Text style={styles.settingDescription}>{description}</Text>
+      </View>
+
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        trackColor={{ false: "#CBD5E1", true: COLORS.red }}
+        thumbColor="#FFFFFF"
+      />
+    </View>
+  );
+}
+
+function QuickLink({
+  icon,
+  label,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  route: string;
+}) {
+  return (
+    <TouchableOpacity style={styles.quickLink} onPress={() => router.push(route as any)}>
+      <Ionicons name={icon} size={22} color={COLORS.red} />
+      <Text style={styles.quickLinkText}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -449,18 +616,28 @@ function SectionHeader({
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
+  },
+  center: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  centerText: {
+    color: COLORS.muted,
+    marginTop: 12,
+    fontWeight: "800",
   },
   content: {
     paddingBottom: 90,
   },
   hero: {
-    backgroundColor: "#020617",
-    paddingTop: 22,
+    backgroundColor: COLORS.black,
+    paddingTop: 28,
     paddingHorizontal: 20,
-    paddingBottom: 26,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 30,
   },
   heroTop: {
     flexDirection: "row",
@@ -470,47 +647,44 @@ const styles = StyleSheet.create({
   heroIcon: {
     width: 58,
     height: 58,
-    borderRadius: 29,
-    backgroundColor: "#064E3B",
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
   eyebrow: {
-    color: "#10B981",
+    color: "#FCA5A5",
     fontWeight: "900",
     marginBottom: 8,
     textTransform: "uppercase",
     letterSpacing: 1,
+    fontSize: 12,
   },
   title: {
     color: "#FFFFFF",
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: "900",
     marginBottom: 10,
   },
   subtitle: {
     color: "#D1D5DB",
-    lineHeight: 23,
-    fontSize: 15,
+    lineHeight: 22,
+    fontSize: 14,
     fontWeight: "700",
   },
   accountCard: {
-    backgroundColor: "#064E3B",
-    borderRadius: 20,
+    backgroundColor: COLORS.red,
+    borderRadius: 22,
     padding: 18,
     marginHorizontal: 18,
     marginTop: 18,
     marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "#10B981",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
   accountLabel: {
-    color: "#BBF7D0",
+    color: "#FFE4E6",
     fontWeight: "900",
   },
   accountName: {
@@ -520,17 +694,47 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   accountMeta: {
-    color: "#D1FAE5",
+    color: "#FFE4E6",
     fontWeight: "700",
     marginTop: 4,
+  },
+  accountPill: {
+    alignSelf: "flex-start",
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  accountPillText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 12,
   },
   accountBadge: {
     width: 52,
     height: 52,
-    borderRadius: 26,
-    backgroundColor: "#052E2B",
+    borderRadius: 20,
+    backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
+  },
+  syncCard: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  syncText: {
+    color: COLORS.text,
+    fontWeight: "800",
+    flex: 1,
+    lineHeight: 20,
   },
   quickGrid: {
     flexDirection: "row",
@@ -541,26 +745,26 @@ const styles = StyleSheet.create({
   },
   quickLink: {
     width: "48%",
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderRadius: 18,
     padding: 15,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     alignItems: "center",
     gap: 8,
   },
   quickLinkText: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
   },
   card: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     padding: 18,
     borderRadius: 22,
     marginHorizontal: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -571,28 +775,28 @@ const styles = StyleSheet.create({
   sectionIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: freightTheme.colors.primary,
+    borderRadius: 16,
+    backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
   },
   sectionTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 21,
     fontWeight: "900",
   },
   sectionSubtitle: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 20,
     marginTop: 3,
   },
   settingRow: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -601,23 +805,23 @@ const styles = StyleSheet.create({
   settingIcon: {
     width: 38,
     height: 38,
-    borderRadius: 19,
-    backgroundColor: "#0F172A",
+    borderRadius: 16,
+    backgroundColor: "#FFF1F2",
     alignItems: "center",
     justifyContent: "center",
   },
   settingLabel: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     marginBottom: 3,
   },
   settingDescription: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 19,
   },
   primaryButton: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
@@ -627,9 +831,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   secondaryButton: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: "#FFF1F2",
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: COLORS.red,
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
@@ -639,11 +843,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   secondaryButtonText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   logoutButton: {
-    backgroundColor: "#DC2626",
+    backgroundColor: COLORS.redDark,
     padding: 16,
     borderRadius: 14,
     alignItems: "center",

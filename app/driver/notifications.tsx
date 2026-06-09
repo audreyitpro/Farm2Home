@@ -17,8 +17,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import freightTheme from "../styles/freightTheme";
-
 type DriverNotification = {
   id: string;
   title: string;
@@ -37,6 +35,22 @@ type DriverNotification = {
 };
 
 const STORAGE_KEY = "farm2homeDriverNotifications";
+
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#151922",
+  muted: "#7B8494",
+  border: "#E6E8EF",
+  red: "#E1122D",
+  redSoft: "#FFE6EA",
+  black: "#111827",
+  soft: "#F3F4F8",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  purple: "#7C3AED",
+};
 
 const DEMO_NOTIFICATIONS: DriverNotification[] = [
   {
@@ -71,7 +85,6 @@ const DEMO_NOTIFICATIONS: DriverNotification[] = [
 export default function DriverNotificationsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [notifications, setNotifications] = useState<DriverNotification[]>([]);
 
   useFocusEffect(
@@ -95,10 +108,7 @@ export default function DriverNotificationsScreen() {
         const parsed = JSON.parse(raw);
         setNotifications(Array.isArray(parsed) ? parsed : DEMO_NOTIFICATIONS);
       } else {
-        await AsyncStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify(DEMO_NOTIFICATIONS)
-        );
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(DEMO_NOTIFICATIONS));
         setNotifications(DEMO_NOTIFICATIONS);
       }
     } catch (error) {
@@ -169,6 +179,25 @@ export default function DriverNotificationsScreen() {
     }
   }
 
+  function colorForType(type: DriverNotification["type"]) {
+    switch (type) {
+      case "new_delivery":
+        return COLORS.red;
+      case "accepted":
+        return COLORS.green;
+      case "pickup":
+        return COLORS.orange;
+      case "dropoff":
+        return COLORS.purple;
+      case "earnings":
+        return COLORS.blue;
+      case "membership":
+        return COLORS.black;
+      default:
+        return COLORS.muted;
+    }
+  }
+
   function labelForType(type: DriverNotification["type"]) {
     switch (type) {
       case "new_delivery":
@@ -205,21 +234,22 @@ export default function DriverNotificationsScreen() {
   }
 
   function renderNotification({ item }: { item: DriverNotification }) {
+    const typeColor = colorForType(item.type);
+
     return (
       <TouchableOpacity
         style={[styles.notificationCard, !item.read && styles.unreadCard]}
         onPress={() => openNotification(item)}
+        activeOpacity={0.85}
       >
         <View style={styles.notificationTop}>
-          <View style={styles.iconCircle}>
+          <View style={[styles.iconCircle, { backgroundColor: typeColor }]}>
             <Ionicons name={iconForType(item.type)} size={22} color="#FFFFFF" />
           </View>
 
           <View style={{ flex: 1 }}>
             <Text style={styles.notificationTitle}>{item.title}</Text>
-            <Text style={styles.notificationDate}>
-              {formatDate(item.createdAt)}
-            </Text>
+            <Text style={styles.notificationDate}>{formatDate(item.createdAt)}</Text>
           </View>
 
           {!item.read && <View style={styles.unreadDot} />}
@@ -228,11 +258,14 @@ export default function DriverNotificationsScreen() {
         <Text style={styles.notificationMessage}>{item.message}</Text>
 
         <View style={styles.footerRow}>
-          <View style={styles.typeBadge}>
+          <View style={[styles.typeBadge, { backgroundColor: COLORS.redSoft }]}>
             <Text style={styles.typeBadgeText}>{labelForType(item.type)}</Text>
           </View>
 
-          <Text style={styles.openText}>Open</Text>
+          <View style={styles.openWrap}>
+            <Text style={styles.openText}>Open</Text>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.red} />
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -241,9 +274,9 @@ export default function DriverNotificationsScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
         <View style={styles.loadingScreen}>
-          <ActivityIndicator size="large" color="#10B981" />
+          <ActivityIndicator size="large" color={COLORS.red} />
           <Text style={styles.loadingText}>Loading notifications...</Text>
         </View>
       </SafeAreaView>
@@ -252,22 +285,22 @@ export default function DriverNotificationsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <View style={styles.container}>
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.eyebrow}>Farm2Home Driver</Text>
+              <Text style={styles.eyebrow}>Farm2Driver Alerts</Text>
               <Text style={styles.title}>Notifications</Text>
               <Text style={styles.subtitle}>
-                View delivery alerts, pickup reminders, earnings notices, and
-                driver membership updates.
+                Track shipment alerts, pickup reminders, delivery updates, earnings,
+                and account notices.
               </Text>
             </View>
 
             <View style={styles.heroIcon}>
-              <Ionicons name="notifications-outline" size={34} color="#FFFFFF" />
+              <Ionicons name="notifications" size={30} color="#FFFFFF" />
             </View>
           </View>
         </View>
@@ -288,19 +321,15 @@ export default function DriverNotificationsScreen() {
             style={styles.navButton}
             onPress={() => router.push("/driver/mobile-driver-app" as any)}
           >
-            <Ionicons name="phone-portrait-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.navText}>Driver App</Text>
+            <Ionicons name="home" size={18} color="#FFFFFF" />
+            <Text style={styles.navText}>Driver Hub</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.navButtonOutline}
             onPress={() => router.push("/driver/board" as any)}
           >
-            <Ionicons
-              name="list-outline"
-              size={18}
-              color={freightTheme.colors.primary}
-            />
+            <Ionicons name="list-outline" size={18} color={COLORS.red} />
             <Text style={styles.navTextOutline}>Board</Text>
           </TouchableOpacity>
         </View>
@@ -325,7 +354,9 @@ export default function DriverNotificationsScreen() {
           }
           ListEmptyComponent={
             <View style={styles.emptyCard}>
-              <Ionicons name="notifications-off-outline" size={38} color="#10B981" />
+              <View style={styles.emptyIcon}>
+                <Ionicons name="notifications-off-outline" size={36} color={COLORS.red} />
+              </View>
               <Text style={styles.emptyTitle}>No notifications</Text>
               <Text style={styles.emptyText}>
                 Delivery alerts and driver updates will appear here.
@@ -342,30 +373,30 @@ export default function DriverNotificationsScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
   },
   loadingScreen: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
     alignItems: "center",
     justifyContent: "center",
   },
   loadingText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     marginTop: 10,
     fontWeight: "800",
   },
   container: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
   },
   hero: {
-    backgroundColor: "#020617",
+    backgroundColor: COLORS.red,
     paddingTop: 22,
     paddingHorizontal: 20,
     paddingBottom: 26,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
   heroTop: {
     flexDirection: "row",
@@ -375,57 +406,55 @@ const styles = StyleSheet.create({
   heroIcon: {
     width: 58,
     height: 58,
-    borderRadius: 29,
-    backgroundColor: "#064E3B",
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
   eyebrow: {
-    color: "#10B981",
+    color: "#FFE6EA",
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 4,
     textTransform: "uppercase",
     letterSpacing: 1,
+    fontSize: 12,
   },
   title: {
     color: "#FFFFFF",
     fontSize: 34,
     fontWeight: "900",
-    marginBottom: 10,
   },
   subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 23,
-    fontSize: 15,
+    color: "#FFFFFF",
+    opacity: 0.9,
+    lineHeight: 21,
+    fontSize: 14,
     fontWeight: "700",
+    marginTop: 8,
   },
   summaryCard: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.black,
     borderRadius: 20,
     padding: 18,
     marginHorizontal: 18,
-    marginTop: 18,
+    marginTop: -18,
     marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "#10B981",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
   summaryLabel: {
-    color: "#BBF7D0",
+    color: "#D1D5DB",
     fontWeight: "900",
   },
   summaryValue: {
     color: "#FFFFFF",
-    fontSize: 34,
+    fontSize: 36,
     fontWeight: "900",
     marginTop: 4,
   },
   markButton: {
-    backgroundColor: "#10B981",
+    backgroundColor: COLORS.red,
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 14,
@@ -442,9 +471,9 @@ const styles = StyleSheet.create({
   },
   navButton: {
     flex: 1,
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     padding: 14,
-    borderRadius: 14,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -452,11 +481,11 @@ const styles = StyleSheet.create({
   },
   navButtonOutline: {
     flex: 1,
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: COLORS.border,
     padding: 14,
-    borderRadius: 14,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -467,7 +496,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   navTextOutline: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   listContent: {
@@ -481,26 +510,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   sectionTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 24,
     fontWeight: "900",
   },
   clearText: {
-    color: "#DC2626",
+    color: COLORS.red,
     fontWeight: "900",
   },
   notificationCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderRadius: 20,
     padding: 18,
     marginHorizontal: 18,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   unreadCard: {
-    borderColor: "#10B981",
-    backgroundColor: "#052E2B",
+    borderColor: COLORS.red,
+    backgroundColor: "#FFF7F8",
   },
   notificationTop: {
     flexDirection: "row",
@@ -509,20 +538,19 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: freightTheme.colors.primary,
+    width: 46,
+    height: 46,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
   },
   notificationTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 18,
     fontWeight: "900",
   },
   notificationDate: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     marginTop: 3,
   },
@@ -530,10 +558,10 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: "#10B981",
+    backgroundColor: COLORS.red,
   },
   notificationMessage: {
-    color: "#CBD5E1",
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 21,
   },
@@ -544,39 +572,51 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   typeBadge: {
-    backgroundColor: freightTheme.colors.surface,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   typeBadgeText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 12,
   },
+  openWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
   openText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   emptyCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginTop: 20,
     padding: 24,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     alignItems: "center",
   },
+  emptyIcon: {
+    width: 66,
+    height: 66,
+    borderRadius: 24,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   emptyTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 20,
     fontWeight: "900",
     marginTop: 10,
     marginBottom: 6,
   },
   emptyText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     lineHeight: 22,
     fontWeight: "700",
     textAlign: "center",

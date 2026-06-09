@@ -18,9 +18,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL } from "../config/api";
+import { getBackendUrl } from "../services/apiConfig";
 import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
 
 type DeliveryJob = {
   id: string;
@@ -28,20 +27,16 @@ type DeliveryJob = {
   order_id?: string;
   farmer_id?: string;
   customer_id?: string;
-
   customerName?: string;
   customerEmail?: string;
   customerPhone?: string;
-
   farmName?: string;
   productName?: string;
   loadType?: string;
-
   pickupCity?: string;
   deliveryCity?: string;
   pickupAddress?: string;
   dropoffAddress?: string;
-
   deliveryInfo?: any;
   deliveryFee?: number;
   freightTotal?: number;
@@ -49,11 +44,9 @@ type DeliveryJob = {
   totalDue?: number;
   tip?: number;
   total?: number;
-
   estimatedMiles?: number;
   fulfillmentStatus?: string;
   status?: string;
-
   assignedDriverId?: string;
   assignedFreightCarrierId?: string;
   routeGroup?: string;
@@ -73,6 +66,23 @@ type DriverProfile = {
   accountActive?: boolean;
   membershipStatus?: string;
   subscriptionStatus?: string;
+};
+
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#151922",
+  muted: "#7B8494",
+  border: "#E6E8EF",
+  red: "#E1122D",
+  redDark: "#B80F25",
+  redSoft: "#FFE6EA",
+  black: "#111827",
+  soft: "#F3F4F8",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  purple: "#7C3AED",
 };
 
 function normalize(value: any) {
@@ -109,11 +119,7 @@ export default function DriverBoardScreen() {
   );
 
   const selectedMiles = useMemo(
-    () =>
-      selectedJobs.reduce(
-        (sum, job) => sum + Number(job.estimatedMiles || 0),
-        0
-      ),
+    () => selectedJobs.reduce((sum, job) => sum + Number(job.estimatedMiles || 0), 0),
     [selectedJobs]
   );
 
@@ -256,9 +262,7 @@ export default function DriverBoardScreen() {
 
     if (currentDriver.accountActive === false) return false;
     if (membershipStatus === "canceled") return false;
-    if (subscriptionStatus === "canceled") return false;
-    if (subscriptionStatus === "past_due") return false;
-    if (subscriptionStatus === "unpaid") return false;
+    if (["canceled", "past_due", "unpaid"].includes(subscriptionStatus)) return false;
 
     return true;
   }
@@ -372,7 +376,7 @@ export default function DriverBoardScreen() {
 
       try {
         const response = await fetch(
-          `${API_BASE_URL}/orders/driver-board?maxMiles=${safeMiles}`
+          `${getBackendUrl()}/orders/driver-board?maxMiles=${safeMiles}`
         );
 
         const data = await response.json();
@@ -536,7 +540,7 @@ export default function DriverBoardScreen() {
   }
 
   async function acceptApiJob(job: DeliveryJob, currentDriver: DriverProfile) {
-    const response = await fetch(`${API_BASE_URL}/orders/${job.id}/accept`, {
+    const response = await fetch(`${getBackendUrl()}/orders/${job.id}/accept`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -624,38 +628,21 @@ export default function DriverBoardScreen() {
       setLoading(true);
 
       for (const job of selectedJobs) {
-        await acceptJobWithoutRouting(job, currentDriver);
+        if (job.source === "api_order") await acceptApiJob(job, currentDriver);
+        if (job.source === "delivery_order") await acceptDeliveryOrder(job, currentDriver);
+        if (job.source === "freight_load") await acceptFreightLoad(job, currentDriver);
       }
 
-      Alert.alert(
-        "Batch Accepted",
-        `${selectedJobs.length} deliveries assigned to you.`
-      );
+      Alert.alert("Batch Accepted", `${selectedJobs.length} deliveries assigned to you.`);
 
       setSelectedIds([]);
       await loadJobs();
       router.push("/driver/my-deliveries" as any);
     } catch (error: any) {
       console.log("Batch accept error:", error);
-      Alert.alert(
-        "Batch Error",
-        error?.message || "Unable to accept selected deliveries."
-      );
+      Alert.alert("Batch Error", error?.message || "Unable to accept selected deliveries.");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function acceptJobWithoutRouting(
-    job: DeliveryJob,
-    currentDriver: DriverProfile
-  ) {
-    if (job.source === "api_order") {
-      await acceptApiJob(job, currentDriver);
-    } else if (job.source === "delivery_order") {
-      await acceptDeliveryOrder(job, currentDriver);
-    } else if (job.source === "freight_load") {
-      await acceptFreightLoad(job, currentDriver);
     }
   }
 
@@ -671,21 +658,21 @@ export default function DriverBoardScreen() {
       case "POSTED":
       case "NEW":
       case "AVAILABLE":
-        return "#2563EB";
+        return COLORS.blue;
       case "BOOKED":
       case "ACCEPTED":
-        return "#7C3AED";
+        return COLORS.purple;
       case "PICKED_UP":
-        return "#F59E0B";
+        return COLORS.orange;
       case "IN_TRANSIT":
         return "#0F766E";
       case "DELIVERED":
       case "COMPLETED":
-        return "#10B981";
+        return COLORS.green;
       case "CANCELLED":
-        return "#DC2626";
+        return COLORS.red;
       default:
-        return "#64748B";
+        return COLORS.muted;
     }
   }
 
@@ -711,6 +698,14 @@ export default function DriverBoardScreen() {
     return (
       <View style={[styles.jobCard, selected && styles.selectedCard]}>
         <View style={styles.jobHeader}>
+          <View style={styles.jobIcon}>
+            <Ionicons
+              name={item.source === "freight_load" ? "cube" : "bag-handle"}
+              size={21}
+              color={COLORS.red}
+            />
+          </View>
+
           <View style={{ flex: 1 }}>
             <Text style={styles.farmName}>{title}</Text>
             <Text style={styles.routeGroup}>
@@ -725,9 +720,9 @@ export default function DriverBoardScreen() {
 
         <View style={styles.routeCard}>
           <View style={styles.routeStop}>
-            <Ionicons name="radio-button-on" size={16} color="#10B981" />
+            <View style={styles.routeDotStart} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Pickup</Text>
+              <Text style={styles.label}>Sender / Pickup</Text>
               <Text style={styles.value}>{pickup}</Text>
             </View>
           </View>
@@ -735,9 +730,9 @@ export default function DriverBoardScreen() {
           <View style={styles.routeLine} />
 
           <View style={styles.routeStop}>
-            <Ionicons name="location" size={16} color="#10B981" />
+            <View style={styles.routeDotEnd} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Dropoff</Text>
+              <Text style={styles.label}>Receiver / Dropoff</Text>
               <Text style={styles.value}>{delivery}</Text>
             </View>
           </View>
@@ -745,7 +740,7 @@ export default function DriverBoardScreen() {
 
         <View style={styles.metaRow}>
           <View style={styles.metaBox}>
-            <Ionicons name="navigate-outline" size={16} color="#10B981" />
+            <Ionicons name="navigate-outline" size={16} color={COLORS.red} />
             <Text style={styles.metaLabel}>Miles</Text>
             <Text style={styles.metaValue}>
               {Number(item.estimatedMiles || 0).toFixed(1)}
@@ -753,7 +748,7 @@ export default function DriverBoardScreen() {
           </View>
 
           <View style={styles.metaBox}>
-            <Ionicons name="cash-outline" size={16} color="#10B981" />
+            <Ionicons name="cash-outline" size={16} color={COLORS.red} />
             <Text style={styles.metaLabel}>Payout</Text>
             <Text style={styles.metaValue}>{formatMoney(payout(item))}</Text>
           </View>
@@ -795,9 +790,9 @@ export default function DriverBoardScreen() {
   if (accessChecking) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#22C55E" />
+          <ActivityIndicator size="large" color={COLORS.red} />
           <Text style={styles.centeredText}>Loading Driver Board...</Text>
         </View>
       </SafeAreaView>
@@ -806,7 +801,7 @@ export default function DriverBoardScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <View style={styles.container}>
         <FlatList
@@ -821,10 +816,10 @@ export default function DriverBoardScreen() {
               <View style={styles.hero}>
                 <View style={styles.heroTop}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.eyebrow}>Driver Portal</Text>
+                    <Text style={styles.eyebrow}>Farm2Driver</Text>
                     <Text style={styles.header}>Driver Board</Text>
                     <Text style={styles.subheader}>
-                      Accept farm delivery, Farm2Driver, and freight jobs from one board.
+                      Select available farm delivery, grocery, and freight shipments.
                     </Text>
                   </View>
 
@@ -832,11 +827,7 @@ export default function DriverBoardScreen() {
                     style={styles.profileButton}
                     onPress={() => router.push("/driver/profile" as any)}
                   >
-                    <Ionicons
-                      name="person-circle-outline"
-                      size={32}
-                      color="#FFFFFF"
-                    />
+                    <Ionicons name="person" size={24} color="#FFFFFF" />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -846,61 +837,60 @@ export default function DriverBoardScreen() {
                   style={styles.topActionButton}
                   onPress={() => router.push("/driver/my-deliveries" as any)}
                 >
-                  <Ionicons name="briefcase-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.topActionText}>My Deliveries</Text>
+                  <Ionicons name="cube-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.topActionText}>My Shipments</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.topActionOutline}
-                  onPress={() => router.push("/driver/profile" as any)}
+                  onPress={() => router.push("/driver/mobile-driver-app" as any)}
                 >
-                  <Ionicons
-                    name="person-outline"
-                    size={18}
-                    color={freightTheme.colors.primary}
-                  />
-                  <Text style={styles.topActionOutlineText}>Profile</Text>
+                  <Ionicons name="home-outline" size={18} color={COLORS.red} />
+                  <Text style={styles.topActionOutlineText}>Home</Text>
                 </TouchableOpacity>
               </View>
 
               <View style={styles.filterCard}>
-                <Text style={styles.filterLabel}>Max miles willing to travel</Text>
-                <TextInput
-                  style={styles.input}
-                  value={maxMiles}
-                  onChangeText={setMaxMiles}
-                  keyboardType="numeric"
-                  placeholder="Max miles willing to travel"
-                  placeholderTextColor="#94A3B8"
-                />
+                <Text style={styles.filterLabel}>Search Radius</Text>
+                <Text style={styles.filterHint}>
+                  Enter the max miles you are willing to travel for pickup or delivery.
+                </Text>
 
-                <TouchableOpacity
-                  style={styles.refreshButton}
-                  onPress={loadJobs}
-                  disabled={refreshing}
-                >
-                  {refreshing ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="refresh-outline" size={18} color="#FFFFFF" />
-                      <Text style={styles.refreshButtonText}>Refresh Board</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
+                <View style={styles.searchRow}>
+                  <TextInput
+                    style={styles.input}
+                    value={maxMiles}
+                    onChangeText={setMaxMiles}
+                    keyboardType="numeric"
+                    placeholder="50"
+                    placeholderTextColor="#94A3B8"
+                  />
+
+                  <TouchableOpacity
+                    style={styles.refreshButton}
+                    onPress={loadJobs}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Ionicons name="search" size={20} color="#FFFFFF" />
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {selectedJobs.length > 0 && (
                 <View style={styles.batchBox}>
                   <View style={styles.batchHeader}>
-                    <Ionicons name="layers-outline" size={20} color="#BBF7D0" />
+                    <Ionicons name="layers-outline" size={20} color="#FFFFFF" />
                     <Text style={styles.batchTitle}>
-                      Selected: {selectedJobs.length} deliveries
+                      {selectedJobs.length} selected
                     </Text>
                   </View>
 
                   <Text style={styles.batchText}>
-                    Total Payout: {formatMoney(selectedPayout)} · Total Miles:{" "}
+                    Total payout: {formatMoney(selectedPayout)} · Total miles:{" "}
                     {selectedMiles.toFixed(1)}
                   </Text>
 
@@ -923,17 +913,17 @@ export default function DriverBoardScreen() {
                     onPress={() => setSelectedIds([])}
                     disabled={loading}
                   >
-                    <Text style={styles.batchButtonText}>Clear Selection</Text>
+                    <Text style={styles.clearButtonText}>Clear Selection</Text>
                   </TouchableOpacity>
                 </View>
               )}
 
-              <Text style={styles.sectionTitle}>Available Deliveries</Text>
+              <Text style={styles.sectionTitle}>Available Shipments</Text>
             </View>
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
-              <Ionicons name="cube-outline" size={32} color="#10B981" />
+              <Ionicons name="cube-outline" size={38} color={COLORS.red} />
               <Text style={styles.emptyTitle}>No deliveries available</Text>
               <Text style={styles.emptyText}>
                 Pull down to refresh. New farmer delivery and freight jobs will appear here.
@@ -948,17 +938,17 @@ export default function DriverBoardScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
-  container: { flex: 1, backgroundColor: freightTheme.colors.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   centered: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
   centeredText: {
-    color: "#CBD5E1",
+    color: COLORS.muted,
     marginTop: 12,
     textAlign: "center",
     fontWeight: "800",
@@ -967,50 +957,55 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 120 },
   headerBox: { marginBottom: 4 },
   hero: {
-    backgroundColor: "#020617",
+    backgroundColor: COLORS.red,
     paddingTop: 18,
     paddingHorizontal: 20,
-    paddingBottom: 22,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 24,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
-  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
+  heroTop: { flexDirection: "row", alignItems: "center", gap: 14 },
   eyebrow: {
-    color: "#10B981",
+    color: "#FFE6EA",
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 4,
     textTransform: "uppercase",
     letterSpacing: 1,
     fontSize: 12,
   },
   header: {
     color: "#FFFFFF",
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: "900",
-    marginBottom: 8,
   },
   subheader: {
-    color: "#CBD5E1",
+    color: "#FFFFFF",
+    opacity: 0.9,
     lineHeight: 20,
     fontWeight: "700",
     fontSize: 13,
+    marginTop: 4,
   },
   profileButton: {
     width: 48,
     height: 48,
     borderRadius: 16,
-    backgroundColor: "#064E3B",
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
-  topActions: { flexDirection: "row", gap: 10, padding: 16 },
+  topActions: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 16,
+    marginTop: -18,
+    marginBottom: 14,
+  },
   topActionButton: {
     flex: 1,
-    backgroundColor: freightTheme.colors.primary,
-    padding: 13,
-    borderRadius: 13,
+    backgroundColor: COLORS.red,
+    padding: 14,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -1018,11 +1013,11 @@ const styles = StyleSheet.create({
   },
   topActionOutline: {
     flex: 1,
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    padding: 13,
-    borderRadius: 13,
+    borderColor: COLORS.border,
+    padding: 14,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -1030,68 +1025,81 @@ const styles = StyleSheet.create({
   },
   topActionText: { color: "#FFFFFF", fontWeight: "900" },
   topActionOutlineText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   filterCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 16,
     marginBottom: 14,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 15,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   filterLabel: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 4,
+    fontSize: 16,
+  },
+  filterHint: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginBottom: 10,
+    lineHeight: 19,
+  },
+  searchRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
   },
   input: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 12,
+    flex: 1,
+    backgroundColor: COLORS.soft,
+    borderRadius: 14,
     padding: 13,
-    color: "#111827",
-    fontWeight: "800",
+    color: COLORS.text,
+    fontWeight: "900",
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   refreshButton: {
-    backgroundColor: "#334155",
-    paddingVertical: 13,
-    borderRadius: 13,
+    backgroundColor: COLORS.red,
+    width: 50,
+    height: 50,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 12,
-    flexDirection: "row",
-    gap: 8,
   },
-  refreshButtonText: { color: "#FFFFFF", fontWeight: "900" },
   batchBox: {
-    backgroundColor: "#064E3B",
-    borderRadius: 16,
+    backgroundColor: COLORS.black,
+    borderRadius: 18,
     padding: 15,
     marginHorizontal: 16,
     marginBottom: 14,
   },
   batchHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   batchTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
-  batchText: { color: "#BBF7D0", fontWeight: "800", marginTop: 8 },
+  batchText: { color: "#E5E7EB", fontWeight: "800", marginTop: 8 },
   batchButton: {
-    backgroundColor: "#22C55E",
+    backgroundColor: COLORS.red,
     padding: 13,
-    borderRadius: 13,
+    borderRadius: 14,
     marginTop: 12,
     alignItems: "center",
   },
   clearButton: {
-    backgroundColor: "#DC2626",
+    backgroundColor: "#374151",
     padding: 13,
-    borderRadius: 13,
+    borderRadius: 14,
     marginTop: 9,
     alignItems: "center",
   },
   batchButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  clearButtonText: { color: "#FFFFFF", fontWeight: "900" },
   sectionTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 22,
     fontWeight: "900",
     paddingHorizontal: 16,
@@ -1099,33 +1107,39 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   jobCard: {
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
     padding: 15,
     marginHorizontal: 16,
     marginBottom: 13,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   selectedCard: {
-    borderColor: "#22C55E",
-    backgroundColor: "#052E2B",
+    borderColor: COLORS.red,
+    backgroundColor: "#FFF7F8",
   },
   jobHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     gap: 12,
     alignItems: "flex-start",
     marginBottom: 12,
   },
+  jobIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   farmName: {
-    flex: 1,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 18,
     fontWeight: "900",
   },
   routeGroup: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     marginTop: 3,
     fontSize: 12,
@@ -1138,27 +1152,39 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
   routeCard: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
+    backgroundColor: COLORS.soft,
+    borderRadius: 16,
     padding: 13,
     marginBottom: 12,
   },
   routeStop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  routeDotStart: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+  },
+  routeDotEnd: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: COLORS.red,
+  },
   routeLine: {
     width: 2,
-    height: 20,
-    backgroundColor: freightTheme.colors.border,
-    marginLeft: 7,
+    height: 22,
+    backgroundColor: COLORS.border,
+    marginLeft: 5,
     marginVertical: 7,
   },
   label: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 11,
     textTransform: "uppercase",
   },
   value: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     lineHeight: 20,
     marginTop: 2,
@@ -1167,26 +1193,26 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: "row", gap: 10, marginBottom: 4 },
   metaBox: {
     flex: 1,
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
+    backgroundColor: COLORS.soft,
+    borderRadius: 14,
     padding: 12,
   },
   metaLabel: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "900",
     marginTop: 5,
     fontSize: 11,
   },
   metaValue: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     fontSize: 17,
     marginTop: 3,
   },
   selectButton: {
-    backgroundColor: "#2563EB",
+    backgroundColor: COLORS.blue,
     paddingVertical: 13,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 15,
@@ -1194,9 +1220,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   unselectButton: {
-    backgroundColor: "#DC2626",
+    backgroundColor: COLORS.black,
     paddingVertical: 13,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 15,
@@ -1205,9 +1231,9 @@ const styles = StyleSheet.create({
   },
   selectButtonText: { color: "#FFFFFF", fontWeight: "900" },
   acceptButton: {
-    backgroundColor: "#15803D",
+    backgroundColor: COLORS.red,
     paddingVertical: 14,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 9,
@@ -1221,23 +1247,23 @@ const styles = StyleSheet.create({
   },
   disabled: { opacity: 0.6 },
   emptyBox: {
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 16,
-    padding: 22,
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    padding: 24,
     alignItems: "center",
     marginHorizontal: 16,
     marginTop: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   emptyTitle: {
-    color: "#FFFFFF",
+    color: COLORS.text,
     fontSize: 18,
     fontWeight: "900",
     marginTop: 10,
   },
   emptyText: {
-    color: "#CBD5E1",
+    color: COLORS.muted,
     textAlign: "center",
     marginTop: 8,
     lineHeight: 21,

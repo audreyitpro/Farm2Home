@@ -5,1000 +5,1055 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
+  Platform,
+  Pressable,
   RefreshControl,
+  SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 
-import { API_BASE_URL } from "../config/api";
-import { enforceSubscriptionAccess } from "../services/lockoutGuard";
-import { supabase } from "../data/supabaseClient";
+import { getBackendUrl } from "../services/apiConfig";
+
+const COLORS = {
+  bg: "#F6F8F2",
+  card: "#FFFFFF",
+  text: "#132116",
+  muted: "#6B7280",
+  border: "#E3E8DD",
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  soft: "#EEF5EA",
+  blue: "#2563EB",
+  amber: "#F59E0B",
+  red: "#DC2626",
+  dark: "#111827",
+  freight: "#1F2937",
+};
+
+type DeliveryKind = "customer_order" | "freight_load";
 
 type DeliveryStatus =
-  | "available"
   | "accepted"
   | "arrived_pickup"
   | "picked_up"
   | "in_transit"
   | "arrived_dropoff"
   | "delivered"
-  | "completed"
   | "cancelled";
 
-type DeliveryJob = {
+type DriverDelivery = {
   id: string;
-  order_id?: string;
-  farmer_id?: string;
-  customer_id?: string;
-  farm_name?: string;
-  customer_name?: string;
-  customer_phone?: string;
-  pickup_address?: string;
-  dropoff_address?: string;
-  delivery_window?: string;
-  payout_amount?: number;
-  delivery_fee?: number;
-  miles?: number;
-  pickup_notes?: string;
-  delivery_notes?: string;
-  status?: DeliveryStatus | string;
-  visibility?: string;
-  source?: string;
-  assigned_driver_id?: string;
-  assigned_driver_name?: string;
-  driver_id?: string;
-  driver_name?: string;
-  accepted_at?: string;
-  arrived_pickup_at?: string;
-  picked_up_at?: string;
-  arrived_dropoff_at?: string;
-  delivered_at?: string;
-  proof_of_pickup_url?: string;
-  proof_of_delivery_url?: string;
-  created_at?: string;
-  updated_at?: string;
+  kind: DeliveryKind;
+  status: DeliveryStatus;
+  title: string;
+  customerName?: string;
+  farmerName?: string;
+  freightCarrierName?: string;
+  pickupName?: string;
+  pickupAddress?: string;
+  dropoffName?: string;
+  dropoffAddress?: string;
+  distanceMiles?: number;
+  payout?: number;
+  orderTotal?: number;
+  itemCount?: number;
+  coldChain?: boolean;
+  batchId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  notes?: string;
+  raw?: any;
 };
 
-type DriverProfile = {
-  id?: string;
-  name?: string;
-  email?: string;
-  phone?: string;
+const STATUS_LABELS: Record<DeliveryStatus, string> = {
+  accepted: "Accepted",
+  arrived_pickup: "Arrived Pickup",
+  picked_up: "Picked Up",
+  in_transit: "In Transit",
+  arrived_dropoff: "Arrived Dropoff",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
 };
 
-const COLORS = {
-  bg: "#0F172A",
-  card: "#FFFFFF",
-  panel: "#1E293B",
-  border: "#334155",
-  text: "#111827",
-  muted: "#64748B",
-  lightText: "#CBD5E1",
-  white: "#FFFFFF",
-  green: "#22C55E",
-  greenDark: "#15803D",
-  blue: "#2563EB",
-  redSoft: "#FEE2E2",
-  redText: "#991B1B",
-  dark: "#111827",
-  greenSoft: "#DCFCE7",
-  blueSoft: "#DBEAFE",
+const STATUS_FLOW: DeliveryStatus[] = [
+  "accepted",
+  "arrived_pickup",
+  "picked_up",
+  "in_transit",
+  "arrived_dropoff",
+  "delivered",
+];
+
+const STORAGE_KEYS = {
+  driverId: "driver_id",
+  userId: "user_id",
 };
+
+function money(value?: number) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function miles(value?: number) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) {
+    return "Miles pending";
+  }
+
+  return `${Number(value).toFixed(1)} mi`;
+}
+
+function normalizeStatus(value: any): DeliveryStatus {
+  const s = String(value || "accepted").toLowerCase();
+
+  if (s === "arrived_pickup") return "arrived_pickup";
+  if (s === "picked_up") return "picked_up";
+  if (s === "in_transit") return "in_transit";
+  if (s === "arrived_dropoff") return "arrived_dropoff";
+  if (s === "delivered") return "delivered";
+  if (s === "cancelled") return "cancelled";
+
+  return "accepted";
+}
+
+function nextStatus(status: DeliveryStatus): DeliveryStatus | null {
+  const index = STATUS_FLOW.indexOf(status);
+  if (index < 0 || index >= STATUS_FLOW.length - 1) return null;
+  return STATUS_FLOW[index + 1];
+}
+
+function getStatusTone(status: DeliveryStatus) {
+  if (status === "delivered") return COLORS.primary;
+  if (status === "cancelled") return COLORS.red;
+  if (status === "accepted") return COLORS.blue;
+  if (status === "arrived_pickup" || status === "arrived_dropoff") {
+    return COLORS.amber;
+  }
+
+  return COLORS.primaryDark;
+}
+
+function openMap(address?: string) {
+  if (!address) {
+    Alert.alert("Address missing", "This delivery does not have an address yet.");
+    return;
+  }
+
+  const encoded = encodeURIComponent(address);
+  const url =
+    Platform.OS === "ios"
+      ? `http://maps.apple.com/?q=${encoded}`
+      : `https://www.google.com/maps/search/?api=1&query=${encoded}`;
+
+  Linking.openURL(url).catch(() => {
+    Alert.alert("Map error", "Unable to open maps on this device.");
+  });
+}
+
+function normalizeDelivery(row: any): DriverDelivery {
+  const kind: DeliveryKind =
+    row.kind ||
+    row.delivery_kind ||
+    row.type ||
+    row.load_type ||
+    (row.freight_load_id || row.freightCarrierName
+      ? "freight_load"
+      : "customer_order");
+
+  const status = normalizeStatus(
+    row.status || row.delivery_status || row.load_status
+  );
+
+  return {
+    id: String(row.id || row.order_id || row.load_id || row.delivery_id),
+    kind,
+    status,
+    title:
+      row.title ||
+      row.order_title ||
+      row.load_title ||
+      (kind === "freight_load" ? "Freight Load" : "Farm2Home Delivery"),
+    customerName: row.customerName || row.customer_name || row.customer?.name,
+    farmerName: row.farmerName || row.farmer_name || row.farmer?.business_name,
+    freightCarrierName:
+      row.freightCarrierName ||
+      row.freight_carrier_name ||
+      row.carrier_name ||
+      row.freight_user?.business_name,
+    pickupName:
+      row.pickupName ||
+      row.pickup_name ||
+      row.farm_name ||
+      row.origin_name ||
+      row.pickup?.name,
+    pickupAddress:
+      row.pickupAddress ||
+      row.pickup_address ||
+      row.origin_address ||
+      row.farm_address ||
+      row.pickup?.address,
+    dropoffName:
+      row.dropoffName ||
+      row.dropoff_name ||
+      row.destination_name ||
+      row.customer_address_name ||
+      row.dropoff?.name,
+    dropoffAddress:
+      row.dropoffAddress ||
+      row.dropoff_address ||
+      row.destination_address ||
+      row.customer_address ||
+      row.dropoff?.address,
+    distanceMiles:
+      row.distanceMiles ??
+      row.distance_miles ??
+      row.miles ??
+      row.estimated_miles ??
+      undefined,
+    payout:
+      row.payout ??
+      row.driver_payout ??
+      row.rate ??
+      row.load_rate ??
+      undefined,
+    orderTotal: row.orderTotal ?? row.order_total ?? row.total ?? undefined,
+    itemCount: row.itemCount ?? row.item_count ?? row.items?.length ?? undefined,
+    coldChain: Boolean(row.coldChain || row.cold_chain || row.temperature_controlled),
+    batchId: row.batchId || row.batch_id || undefined,
+    createdAt: row.createdAt || row.created_at,
+    updatedAt: row.updatedAt || row.updated_at,
+    notes: row.notes || row.delivery_notes || row.special_instructions,
+    raw: row,
+  };
+}
 
 export default function DriverMyDeliveriesScreen() {
-  const [driver, setDriver] = useState<DriverProfile | null>(null);
-  const [jobs, setJobs] = useState<DeliveryJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [updatingId, setUpdatingId] = useState("");
-  const [accessAllowed, setAccessAllowed] = useState(false);
-  const [accessChecking, setAccessChecking] = useState(true);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [deliveries, setDeliveries] = useState<DriverDelivery[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [filter, setFilter] = useState<
+    "active" | "freight" | "customer" | "completed"
+  >("active");
+
+  const loadDeliveries = useCallback(async () => {
+    try {
+      const driverId =
+        (await AsyncStorage.getItem(STORAGE_KEYS.driverId)) ||
+        (await AsyncStorage.getItem(STORAGE_KEYS.userId));
+
+      if (!driverId) {
+        setDeliveries([]);
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(
+        `${getBackendUrl()}/driver/my-deliveries?driverId=${encodeURIComponent(
+          driverId
+        )}`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+
+      const json = await response.json();
+      const rows = Array.isArray(json) ? json : json.deliveries || json.data || [];
+
+      setDeliveries(rows.map(normalizeDelivery));
+    } catch (error) {
+      console.log("Load deliveries error:", error);
+      Alert.alert(
+        "Unable to load deliveries",
+        "Please check your connection and try again."
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      initialize();
-    }, [])
+      setLoading(true);
+      loadDeliveries();
+    }, [loadDeliveries])
   );
 
-  const payoutTotals = useMemo(() => {
-    const active = jobs.filter(
-      (job) => job.status !== "cancelled" && job.status !== "completed" && job.status !== "delivered"
-    );
+  const filteredDeliveries = useMemo(() => {
+    return deliveries.filter((delivery) => {
+      if (filter === "freight") {
+        return delivery.kind === "freight_load" && delivery.status !== "delivered";
+      }
 
-    const completed = jobs.filter(
-      (job) => job.status === "completed" || job.status === "delivered"
+      if (filter === "customer") {
+        return delivery.kind === "customer_order" && delivery.status !== "delivered";
+      }
+
+      if (filter === "completed") {
+        return delivery.status === "delivered";
+      }
+
+      return delivery.status !== "delivered" && delivery.status !== "cancelled";
+    });
+  }, [deliveries, filter]);
+
+  const totals = useMemo(() => {
+    const active = deliveries.filter(
+      (d) => d.status !== "delivered" && d.status !== "cancelled"
     );
 
     return {
-      activeCount: active.length,
-      completedCount: completed.length,
-      totalPayout: jobs.reduce(
-        (sum, job) => sum + Number(job.payout_amount || job.delivery_fee || 0),
-        0
-      ),
-      completedPayout: completed.reduce(
-        (sum, job) => sum + Number(job.payout_amount || job.delivery_fee || 0),
-        0
-      ),
+      active: active.length,
+      payout: active.reduce((sum, item) => sum + Number(item.payout || 0), 0),
+      freight: active.filter((item) => item.kind === "freight_load").length,
+      customer: active.filter((item) => item.kind === "customer_order").length,
     };
-  }, [jobs]);
+  }, [deliveries]);
 
-  async function getCurrentDriver() {
-    const rawDriver =
-      (await AsyncStorage.getItem("currentDriver")) ||
-      (await AsyncStorage.getItem("currentUser"));
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    loadDeliveries();
+  }, [loadDeliveries]);
 
-    if (!rawDriver) return null;
-
+  async function updateDeliveryStatus(
+    delivery: DriverDelivery,
+    status: DeliveryStatus
+  ) {
     try {
-      return JSON.parse(rawDriver);
-    } catch {
-      return null;
-    }
-  }
+      setUpdatingId(delivery.id);
 
-  async function checkDriverAccess(activeDriver?: DriverProfile | null) {
-    const currentDriver = activeDriver || driver || (await getCurrentDriver());
-
-    if (!currentDriver?.id) {
-      router.replace("/driver/login" as any);
-      return false;
-    }
-
-    try {
-      const access = await enforceSubscriptionAccess({
-        role: "driver",
-        userId: currentDriver.id || "",
-        email: currentDriver.email || "",
-        redirectTo: "/subscription/subscription-locked",
-      });
-
-      setAccessAllowed(access.allowed);
-      return access.allowed;
-    } catch (error) {
-      console.log("Driver access check error:", error);
-      setAccessAllowed(true);
-      return true;
-    }
-  }
-
-  async function initialize() {
-    try {
-      setLoading(true);
-      setAccessChecking(true);
-
-      const currentDriver = await getCurrentDriver();
-
-      if (!currentDriver?.id) {
-        Alert.alert(
-          "Driver Login Required",
-          "Please login before viewing your deliveries."
-        );
-        router.replace("/driver/login" as any);
-        return;
-      }
-
-      setDriver(currentDriver);
-
-      const allowed = await checkDriverAccess(currentDriver);
-
-      if (allowed) {
-        await loadAssignedJobs(currentDriver.id);
-      }
-    } catch (error) {
-      console.log("Driver deliveries initialize error:", error);
-      setAccessAllowed(false);
-    } finally {
-      setLoading(false);
-      setAccessChecking(false);
-    }
-  }
-
-  function mapSupabaseDelivery(row: any): DeliveryJob {
-    return {
-      id: String(row.id),
-      order_id: row.order_id || "",
-      farmer_id: row.farmer_id || "",
-      customer_id: row.customer_id || "",
-      farm_name: row.farm_name || row.farmer_name || "Farm Delivery",
-      customer_name: row.customer_name || "",
-      customer_phone: row.customer_phone || "",
-      pickup_address: row.pickup_address || "",
-      dropoff_address: row.dropoff_address || "",
-      delivery_window: row.delivery_window || "",
-      payout_amount: Number(row.payout_amount || row.delivery_fee || 0),
-      delivery_fee: Number(row.delivery_fee || row.payout_amount || 0),
-      miles: Number(row.miles || 0),
-      pickup_notes: row.pickup_notes || "",
-      delivery_notes: row.delivery_notes || "",
-      status: row.status || "accepted",
-      source: row.source || "delivery_orders",
-      assigned_driver_id: row.assigned_driver_id || row.driver_id || "",
-      assigned_driver_name: row.assigned_driver_name || row.driver_name || "",
-      driver_id: row.driver_id || row.assigned_driver_id || "",
-      driver_name: row.driver_name || row.assigned_driver_name || "",
-      accepted_at: row.accepted_at || row.assigned_at || "",
-      arrived_pickup_at: row.arrived_pickup_at || "",
-      picked_up_at: row.picked_up_at || "",
-      arrived_dropoff_at: row.arrived_dropoff_at || "",
-      delivered_at: row.delivered_at || "",
-      proof_of_pickup_url: row.proof_of_pickup_url || "",
-      proof_of_delivery_url: row.proof_of_delivery_url || "",
-      created_at: row.created_at || "",
-      updated_at: row.updated_at || "",
-    };
-  }
-
-  async function loadAssignedJobs(driverId?: string) {
-    try {
-      const activeDriverId = driverId || driver?.id;
-
-      if (!activeDriverId) return;
-
-      setRefreshing(true);
-
-      let loadedJobs: DeliveryJob[] = [];
-
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/driver/assigned-jobs/${activeDriverId}`
-        );
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-          loadedJobs = data.jobs || [];
+      const response = await fetch(
+        `${getBackendUrl()}/driver/update-delivery-status`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            deliveryId: delivery.id,
+            deliveryKind: delivery.kind,
+            status,
+          }),
         }
-      } catch (apiError) {
-        console.log("Assigned jobs API fallback to Supabase:", apiError);
+      );
+
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
       }
 
-      if (loadedJobs.length === 0) {
-        const { data, error } = await supabase
-          .from("delivery_orders")
-          .select("*")
-          .or(`driver_id.eq.${activeDriverId},assigned_driver_id.eq.${activeDriverId}`)
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          console.log("Supabase delivery_orders load error:", error.message);
-        }
-
-        loadedJobs = Array.isArray(data) ? data.map(mapSupabaseDelivery) : [];
-      }
-
-      setJobs(loadedJobs);
-    } catch (error: any) {
-      console.log("Load assigned deliveries error:", error);
+      setDeliveries((current) =>
+        current.map((item) =>
+          item.id === delivery.id
+            ? { ...item, status, updatedAt: new Date().toISOString() }
+            : item
+        )
+      );
+    } catch (error) {
+      console.log("Status update error:", error);
       Alert.alert(
-        "Load Error",
-        error?.message || "Unable to load your deliveries."
+        "Status update failed",
+        "The delivery status could not be updated. Please try again."
       );
     } finally {
-      setRefreshing(false);
+      setUpdatingId(null);
     }
   }
 
-  async function refreshDeliveries() {
-    const allowed = await checkDriverAccess();
+  async function batchAdvance() {
+    const selected = deliveries.filter((item) => selectedIds.includes(item.id));
+    const actionable = selected.filter((item) => nextStatus(item.status));
 
-    if (!allowed) return;
-
-    await loadAssignedJobs(driver?.id);
-  }
-
-  async function updateDeliveryStatus(job: DeliveryJob, status: DeliveryStatus) {
-    try {
-      const allowed = await checkDriverAccess();
-
-      if (!allowed) return;
-
-      if (!driver?.id) {
-        Alert.alert("Driver Error", "Please login again.");
-        router.replace("/driver/login" as any);
-        return;
-      }
-
-      setUpdatingId(job.id);
-
-      let apiUpdated = false;
-
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/driver/update-delivery-status`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              deliveryJobId: job.id,
-              driverId: driver.id,
-              status,
-            }),
-          }
-        );
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-          apiUpdated = true;
-        }
-      } catch (apiError) {
-        console.log("Update status API fallback to Supabase:", apiError);
-      }
-
-      if (!apiUpdated) {
-        const timestampField =
-          status === "arrived_pickup"
-            ? "arrived_pickup_at"
-            : status === "picked_up"
-            ? "picked_up_at"
-            : status === "arrived_dropoff"
-            ? "arrived_dropoff_at"
-            : status === "delivered" || status === "completed"
-            ? "delivered_at"
-            : status === "accepted"
-            ? "accepted_at"
-            : "";
-
-        const payload: any = {
-          status,
-          updated_at: new Date().toISOString(),
-        };
-
-        if (timestampField) {
-          payload[timestampField] = new Date().toISOString();
-        }
-
-        const { error } = await supabase
-          .from("delivery_orders")
-          .update(payload)
-          .eq("id", job.id);
-
-        if (error) {
-          throw error;
-        }
-      }
-
-      Alert.alert("Delivery Updated", "Delivery status updated.");
-
-      await loadAssignedJobs(driver.id);
-    } catch (error: any) {
-      console.log("Update delivery status error:", error);
-      Alert.alert(
-        "Update Error",
-        error?.message || "Unable to update delivery status."
-      );
-    } finally {
-      setUpdatingId("");
+    if (actionable.length === 0) {
+      Alert.alert("No batch action", "Selected deliveries cannot be advanced.");
+      return;
     }
+
+    Alert.alert(
+      "Advance selected deliveries?",
+      `This will update ${actionable.length} selected delivery status.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Advance",
+          onPress: async () => {
+            for (const delivery of actionable) {
+              const next = nextStatus(delivery.status);
+              if (next) {
+                await updateDeliveryStatus(delivery, next);
+              }
+            }
+
+            setSelectedIds([]);
+          },
+        },
+      ]
+    );
   }
 
-  function openProofOfPickup(job: DeliveryJob) {
-    router.push({
-      pathname: "/driver/proof-of-pickup" as any,
-      params: {
-        loadId: job.id,
-        deliveryJobId: job.id,
-      },
-    });
+  function toggleSelected(id: string) {
+    setSelectedIds((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id]
+    );
   }
 
-  function openProofOfDelivery(job: DeliveryJob) {
-    router.push({
-      pathname: "/driver/proof-of-delivery" as any,
-      params: {
-        loadId: job.id,
-        deliveryJobId: job.id,
-      },
-    });
-  }
-
-  function openLiveNavigation(job: DeliveryJob) {
-    router.push({
-      pathname: "/driver/live-location-provider" as any,
-      params: {
-        loadId: job.id,
-        deliveryJobId: job.id,
-      },
-    });
-  }
-
-  function openChat(job: DeliveryJob) {
-    router.push({
-      pathname: "/driver/customer-chat" as any,
-      params: {
-        orderId: job.order_id || job.id,
-        deliveryJobId: job.id,
-        farmerId: job.farmer_id || "",
-        customerId: job.customer_id || "",
-      },
-    });
-  }
-
-  function getStatusLabel(status?: string) {
-    switch (status) {
-      case "available":
-        return "Available";
-      case "accepted":
-        return "Accepted";
-      case "arrived_pickup":
-        return "Arrived Pickup";
-      case "picked_up":
-        return "Picked Up";
-      case "in_transit":
-        return "In Transit";
-      case "arrived_dropoff":
-        return "Arrived Dropoff";
-      case "delivered":
-      case "completed":
-        return "Completed";
-      case "cancelled":
-        return "Cancelled";
-      default:
-        return status || "Assigned";
-    }
-  }
-
-  function getNextAction(job: DeliveryJob) {
-    switch (job.status) {
-      case "accepted":
-        return {
-          label: "Arrived Pickup",
-          status: "arrived_pickup" as DeliveryStatus,
-        };
-
-      case "arrived_pickup":
-        return {
-          label: "Proof of Pickup",
-          proof: "pickup",
-        };
-
-      case "picked_up":
-        return {
-          label: "Start Transit",
-          status: "in_transit" as DeliveryStatus,
-        };
-
-      case "in_transit":
-        return {
-          label: "Arrived Dropoff",
-          status: "arrived_dropoff" as DeliveryStatus,
-        };
-
-      case "arrived_dropoff":
-        return {
-          label: "Proof of Delivery",
-          proof: "delivery",
-        };
-
-      default:
-        return null;
-    }
-  }
-
-  function renderJob({ item }: { item: DeliveryJob }) {
-    const nextAction = getNextAction(item);
-    const isUpdating = updatingId === item.id;
-    const completed = item.status === "completed" || item.status === "delivered";
-    const cancelled = item.status === "cancelled";
+  function renderDelivery({ item }: { item: DriverDelivery }) {
+    const next = nextStatus(item.status);
+    const tone = getStatusTone(item.status);
+    const selected = selectedIds.includes(item.id);
 
     return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
+      <Pressable
+        style={[styles.card, selected && styles.cardSelected]}
+        onLongPress={() => toggleSelected(item.id)}
+      >
+        <View style={styles.cardTop}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.farmName}>
-              {item.farm_name || "Farm Delivery"}
-            </Text>
+            <View style={styles.rowWrap}>
+              <Text style={styles.kindPill}>
+                {item.kind === "freight_load"
+                  ? "Farm2Driver Freight"
+                  : "Farm2Home Order"}
+              </Text>
 
-            <Text style={styles.orderText}>
-              Order #{String(item.order_id || item.id).slice(-6)}
+              {item.coldChain ? <Text style={styles.coldPill}>Cold Chain</Text> : null}
+              {item.batchId ? <Text style={styles.batchPill}>Batch</Text> : null}
+            </View>
+
+            <Text style={styles.cardTitle}>{item.title}</Text>
+            <Text style={styles.cardSub}>
+              {item.kind === "freight_load"
+                ? item.freightCarrierName || "Freight carrier"
+                : item.farmerName || "Local farmer"}
             </Text>
           </View>
 
-          <View
+          <View style={[styles.statusPill, { borderColor: tone }]}>
+            <Text style={[styles.statusText, { color: tone }]}>
+              {STATUS_LABELS[item.status]}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.routeBox}>
+          <View style={styles.routeItem}>
+            <Text style={styles.routeDot}>●</Text>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routeName}>{item.pickupName || "Pickup location"}</Text>
+              <Text style={styles.routeAddress}>
+                {item.pickupAddress || "Pickup address pending"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.routeLine} />
+
+          <View style={styles.routeItem}>
+            <Text style={[styles.routeDot, { color: COLORS.primary }]}>●</Text>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.routeName}>
+                {item.dropoffName || item.customerName || "Dropoff location"}
+              </Text>
+              <Text style={styles.routeAddress}>
+                {item.dropoffAddress || "Dropoff address pending"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.metricRow}>
+          <View style={styles.metric}>
+            <Text style={styles.metricLabel}>Miles</Text>
+            <Text style={styles.metricValue}>{miles(item.distanceMiles)}</Text>
+          </View>
+
+          <View style={styles.metric}>
+            <Text style={styles.metricLabel}>Payout</Text>
+            <Text style={styles.metricValue}>{money(item.payout)}</Text>
+          </View>
+
+          <View style={styles.metric}>
+            <Text style={styles.metricLabel}>
+              {item.kind === "freight_load" ? "Load" : "Items"}
+            </Text>
+            <Text style={styles.metricValue}>
+              {item.kind === "freight_load"
+                ? item.batchId
+                  ? "Batch"
+                  : "Single"
+                : String(item.itemCount || 0)}
+            </Text>
+          </View>
+        </View>
+
+        {item.notes ? <Text style={styles.notes}>Notes: {item.notes}</Text> : null}
+
+        <View style={styles.actionRow}>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => openMap(item.pickupAddress)}
+          >
+            <Text style={styles.secondaryButtonText}>Pickup Map</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => openMap(item.dropoffAddress)}
+          >
+            <Text style={styles.secondaryButtonText}>Dropoff Map</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.actionRow}>
+          <Pressable
             style={[
-              styles.statusBadge,
-              completed && styles.completedBadge,
-              cancelled && styles.cancelledBadge,
+              styles.selectButton,
+              selected && { backgroundColor: COLORS.primaryDark },
             ]}
+            onPress={() => toggleSelected(item.id)}
           >
-            <Text style={styles.statusText}>{getStatusLabel(item.status)}</Text>
-          </View>
+            <Text style={styles.selectButtonText}>
+              {selected ? "Selected" : "Select Batch"}
+            </Text>
+          </Pressable>
+
+          {next ? (
+            <Pressable
+              style={styles.primaryButton}
+              disabled={updatingId === item.id}
+              onPress={() => updateDeliveryStatus(item, next)}
+            >
+              {updatingId === item.id ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryButtonText}>
+                  Mark {STATUS_LABELS[next]}
+                </Text>
+              )}
+            </Pressable>
+          ) : (
+            <View style={styles.disabledButton}>
+              <Text style={styles.disabledButtonText}>Complete</Text>
+            </View>
+          )}
         </View>
-
-        <Text style={styles.sectionLabel}>Pickup</Text>
-        <Text style={styles.addressText}>
-          {item.pickup_address || "Farm pickup location"}
-        </Text>
-
-        <Text style={styles.sectionLabel}>Dropoff</Text>
-        <Text style={styles.addressText}>
-          {item.dropoff_address || "Customer delivery address"}
-        </Text>
-
-        <View style={styles.metaRow}>
-          <View style={styles.metaBox}>
-            <Text style={styles.metaLabel}>Miles</Text>
-            <Text style={styles.metaValue}>
-              {Number(item.miles || 0).toFixed(1)}
-            </Text>
-          </View>
-
-          <View style={styles.metaBox}>
-            <Text style={styles.metaLabel}>Payout</Text>
-            <Text style={styles.metaValue}>
-              ${Number(item.payout_amount || item.delivery_fee || 0).toFixed(2)}
-            </Text>
-          </View>
-        </View>
-
-        {!!item.delivery_window && (
-          <>
-            <Text style={styles.sectionLabel}>Delivery Window</Text>
-            <Text style={styles.addressText}>{item.delivery_window}</Text>
-          </>
-        )}
-
-        {!!item.customer_name && (
-          <>
-            <Text style={styles.sectionLabel}>Customer</Text>
-            <Text style={styles.addressText}>
-              {item.customer_name}
-              {item.customer_phone ? ` · ${item.customer_phone}` : ""}
-            </Text>
-          </>
-        )}
-
-        {!!item.pickup_notes && (
-          <Text style={styles.notesText}>Pickup Notes: {item.pickup_notes}</Text>
-        )}
-
-        {!!item.delivery_notes && (
-          <Text style={styles.notesText}>
-            Delivery Notes: {item.delivery_notes}
-          </Text>
-        )}
-
-        <TouchableOpacity
-          style={styles.navigationButton}
-          onPress={() => openLiveNavigation(item)}
-        >
-          <Text style={styles.navigationButtonText}>Open Live Navigation</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.chatButton}
-          onPress={() => openChat(item)}
-        >
-          <Text style={styles.chatButtonText}>Open Delivery Chat</Text>
-        </TouchableOpacity>
-
-        {nextAction ? (
-          <TouchableOpacity
-            style={[styles.primaryButton, isUpdating && styles.disabled]}
-            onPress={() => {
-              if (nextAction.proof === "pickup") {
-                openProofOfPickup(item);
-                return;
-              }
-
-              if (nextAction.proof === "delivery") {
-                openProofOfDelivery(item);
-                return;
-              }
-
-              if (nextAction.status) {
-                updateDeliveryStatus(item, nextAction.status);
-              }
-            }}
-            disabled={isUpdating}
-          >
-            {isUpdating ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.primaryButtonText}>{nextAction.label}</Text>
-            )}
-          </TouchableOpacity>
-        ) : null}
-
-        {!completed && !cancelled ? (
-          <TouchableOpacity
-            style={styles.cancelButton}
-            onPress={() => updateDeliveryStatus(item, "cancelled")}
-            disabled={isUpdating}
-          >
-            <Text style={styles.cancelButtonText}>Cancel Delivery</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+      </Pressable>
     );
   }
 
-  if (loading || accessChecking) {
+  if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.green} />
-        <Text style={styles.centeredText}>
-          Checking driver delivery access...
-        </Text>
-      </View>
-    );
-  }
-
-  if (!accessAllowed) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.lockTitle}>Driver Membership Required</Text>
-
-        <Text style={styles.centeredText}>
-          Please manage your driver membership to continue.
-        </Text>
-
-        <TouchableOpacity
-          style={styles.manageButton}
-          onPress={() => router.push("/driver/subscription" as any)}
-        >
-          <Text style={styles.manageButtonText}>Manage Driver Membership</Text>
-        </TouchableOpacity>
-      </View>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.loadingText}>Loading driver deliveries...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.header}>
+        <Pressable style={styles.backButton} onPress={() => router.back()}>
+          <Text style={styles.backText}>‹</Text>
+        </Pressable>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>My Deliveries</Text>
+          <Text style={styles.headerSub}>Farm2Driver live route center</Text>
+        </View>
+
+        <Pressable style={styles.refreshButton} onPress={refresh}>
+          <Text style={styles.refreshText}>↻</Text>
+        </Pressable>
+      </View>
+
       <FlatList
-        data={jobs}
-        keyExtractor={(item) => item.id}
-        renderItem={renderJob}
+        data={filteredDeliveries}
+        keyExtractor={(item) => `${item.kind}-${item.id}`}
+        renderItem={renderDelivery}
+        contentContainerStyle={styles.listContent}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={refreshDeliveries}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={refresh} />
         }
-        contentContainerStyle={styles.content}
         ListHeaderComponent={
-          <View style={styles.header}>
-            <Text style={styles.title}>My Deliveries</Text>
+          <>
+            <View style={styles.summaryCard}>
+              <Text style={styles.summaryLabel}>Active Route Value</Text>
+              <Text style={styles.summaryValue}>{money(totals.payout)}</Text>
 
-            <Text style={styles.subtitle}>
-              Manage assigned Farm2Home deliveries, pickup milestones, delivery
-              proof, and customer communication.
-            </Text>
+              <View style={styles.summaryGrid}>
+                <View style={styles.summaryTile}>
+                  <Text style={styles.summaryTileValue}>{totals.active}</Text>
+                  <Text style={styles.summaryTileLabel}>Active</Text>
+                </View>
 
-            <View style={styles.summaryRow}>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>
-                  {payoutTotals.activeCount}
-                </Text>
-                <Text style={styles.summaryLabel}>Active</Text>
-              </View>
+                <View style={styles.summaryTile}>
+                  <Text style={styles.summaryTileValue}>{totals.customer}</Text>
+                  <Text style={styles.summaryTileLabel}>Orders</Text>
+                </View>
 
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>
-                  {payoutTotals.completedCount}
-                </Text>
-                <Text style={styles.summaryLabel}>Completed</Text>
-              </View>
-
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>
-                  ${payoutTotals.completedPayout.toFixed(2)}
-                </Text>
-                <Text style={styles.summaryLabel}>Completed Pay</Text>
+                <View style={styles.summaryTile}>
+                  <Text style={styles.summaryTileValue}>{totals.freight}</Text>
+                  <Text style={styles.summaryTileLabel}>Freight</Text>
+                </View>
               </View>
             </View>
 
-            <TouchableOpacity
-              style={styles.boardButton}
-              onPress={() => router.push("/driver/board" as any)}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filters}
             >
-              <Text style={styles.boardButtonText}>Back to Driver Board</Text>
-            </TouchableOpacity>
-          </View>
+              {[
+                ["active", "Active"],
+                ["customer", "Customer Orders"],
+                ["freight", "Freight Loads"],
+                ["completed", "Completed"],
+              ].map(([key, label]) => {
+                const active = filter === key;
+
+                return (
+                  <Pressable
+                    key={key}
+                    style={[
+                      styles.filterButton,
+                      active && styles.filterButtonActive,
+                    ]}
+                    onPress={() => setFilter(key as any)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterText,
+                        active && styles.filterTextActive,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {selectedIds.length > 0 ? (
+              <View style={styles.batchBar}>
+                <Text style={styles.batchText}>
+                  {selectedIds.length} selected for batch update
+                </Text>
+
+                <Pressable style={styles.batchButton} onPress={batchAdvance}>
+                  <Text style={styles.batchButtonText}>Advance Batch</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </>
         }
         ListEmptyComponent={
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyTitle}>No assigned deliveries</Text>
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No deliveries found</Text>
             <Text style={styles.emptyText}>
-              Accept a delivery from the Driver Board. Assigned jobs will appear
-              here.
+              Accepted customer orders and freight loads will appear here.
             </Text>
+
+            <Pressable
+              style={styles.emptyButton}
+              onPress={() => router.push("/driver/board" as any)}
+            >
+              <Text style={styles.emptyButtonText}>Open Driver Board</Text>
+            </Pressable>
           </View>
         }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-
-  centered: {
+  safe: {
     flex: 1,
     backgroundColor: COLORS.bg,
-    justifyContent: "center",
+  },
+  center: {
+    flex: 1,
     alignItems: "center",
+    justifyContent: "center",
     padding: 24,
   },
-
-  centeredText: {
-    color: COLORS.lightText,
+  loadingText: {
     marginTop: 12,
-    textAlign: "center",
-    fontWeight: "800",
-    lineHeight: 22,
+    color: COLORS.muted,
+    fontWeight: "700",
   },
-
-  lockTitle: {
-    color: "#FCA5A5",
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 12,
+    backgroundColor: COLORS.bg,
+  },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  backText: {
+    fontSize: 34,
+    color: COLORS.text,
+    marginTop: -3,
+  },
+  headerTitle: {
     fontSize: 24,
     fontWeight: "900",
-    textAlign: "center",
+    color: COLORS.text,
   },
-
-  content: {
-    padding: 16,
-    paddingBottom: 110,
-  },
-
-  header: {
-    marginBottom: 16,
-  },
-
-  title: {
-    color: COLORS.white,
-    fontSize: 28,
-    fontWeight: "900",
-    marginTop: 16,
-  },
-
-  subtitle: {
-    color: COLORS.lightText,
-    marginTop: 8,
-    lineHeight: 21,
+  headerSub: {
+    marginTop: 2,
+    color: COLORS.muted,
     fontWeight: "700",
-    fontSize: 13,
   },
-
-  summaryRow: {
+  refreshButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  refreshText: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  listContent: {
+    padding: 18,
+    paddingBottom: 40,
+  },
+  summaryCard: {
+    backgroundColor: COLORS.dark,
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 14,
+  },
+  summaryLabel: {
+    color: "#D1D5DB",
+    fontWeight: "800",
+  },
+  summaryValue: {
+    color: "#FFFFFF",
+    fontSize: 38,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  summaryGrid: {
     flexDirection: "row",
     gap: 10,
-    marginTop: 14,
+    marginTop: 18,
   },
-
-  summaryCard: {
+  summaryTile: {
     flex: 1,
-    backgroundColor: COLORS.panel,
-    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: 18,
     padding: 12,
+  },
+  summaryTileValue: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  summaryTileLabel: {
+    color: "#D1D5DB",
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  filters: {
+    gap: 10,
+    paddingBottom: 14,
+  },
+  filterButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-
-  summaryValue: {
-    color: "#86EFAC",
-    fontSize: 18,
+  filterButtonActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterText: {
+    color: COLORS.text,
     fontWeight: "900",
   },
-
-  summaryLabel: {
-    color: COLORS.lightText,
-    fontSize: 10,
-    fontWeight: "800",
-    marginTop: 5,
+  filterTextActive: {
+    color: "#FFFFFF",
   },
-
-  boardButton: {
-    backgroundColor: COLORS.green,
-    paddingVertical: 13,
-    borderRadius: 13,
+  batchBar: {
+    backgroundColor: COLORS.soft,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: 14,
+    flexDirection: "row",
     alignItems: "center",
-    marginTop: 14,
+    gap: 10,
   },
-
-  boardButtonText: {
-    color: "#052E16",
+  batchText: {
+    flex: 1,
+    color: COLORS.text,
     fontWeight: "900",
   },
-
-  manageButton: {
-    backgroundColor: COLORS.green,
-    paddingVertical: 13,
-    paddingHorizontal: 18,
-    borderRadius: 13,
-    alignItems: "center",
-    marginTop: 16,
+  batchButton: {
+    backgroundColor: COLORS.primaryDark,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-
-  manageButtonText: {
-    color: "#052E16",
+  batchButtonText: {
+    color: "#FFFFFF",
     fontWeight: "900",
   },
-
   card: {
     backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 15,
-    marginBottom: 13,
-  },
-
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 10,
-  },
-
-  farmName: {
-    color: COLORS.text,
-    fontSize: 18,
-    fontWeight: "900",
-  },
-
-  orderText: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    marginTop: 3,
-    fontSize: 12,
-  },
-
-  statusBadge: {
-    backgroundColor: COLORS.blueSoft,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-
-  completedBadge: {
-    backgroundColor: COLORS.greenSoft,
-  },
-
-  cancelledBadge: {
-    backgroundColor: COLORS.redSoft,
-  },
-
-  statusText: {
-    color: "#1D4ED8",
-    fontWeight: "900",
-    fontSize: 11,
-  },
-
-  sectionLabel: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    marginTop: 10,
-    marginBottom: 3,
-    fontSize: 12,
-  },
-
-  addressText: {
-    color: COLORS.text,
-    fontWeight: "800",
-    lineHeight: 19,
-    fontSize: 13,
-  },
-
-  notesText: {
-    color: "#334155",
-    fontWeight: "700",
-    marginTop: 10,
-    lineHeight: 19,
-    fontSize: 12,
-  },
-
-  metaRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 13,
-  },
-
-  metaBox: {
-    flex: 1,
-    backgroundColor: "#F1F5F9",
-    borderRadius: 13,
-    padding: 12,
-  },
-
-  metaLabel: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    fontSize: 11,
-  },
-
-  metaValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 17,
-    marginTop: 3,
-  },
-
-  navigationButton: {
-    backgroundColor: COLORS.blue,
-    paddingVertical: 13,
-    borderRadius: 13,
-    alignItems: "center",
-    marginTop: 14,
-  },
-
-  navigationButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
-
-  chatButton: {
-    backgroundColor: COLORS.dark,
-    paddingVertical: 13,
-    borderRadius: 13,
-    alignItems: "center",
-    marginTop: 9,
-  },
-
-  chatButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
-
-  primaryButton: {
-    backgroundColor: COLORS.greenDark,
-    paddingVertical: 14,
-    borderRadius: 13,
-    alignItems: "center",
-    marginTop: 9,
-  },
-
-  primaryButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: 15,
-  },
-
-  cancelButton: {
-    backgroundColor: COLORS.redSoft,
-    paddingVertical: 13,
-    borderRadius: 13,
-    alignItems: "center",
-    marginTop: 9,
-  },
-
-  cancelButtonText: {
-    color: COLORS.redText,
-    fontWeight: "900",
-  },
-
-  disabled: {
-    opacity: 0.6,
-  },
-
-  emptyBox: {
-    backgroundColor: COLORS.panel,
-    borderRadius: 16,
-    padding: 22,
-    alignItems: "center",
-    marginTop: 24,
+    borderRadius: 24,
+    padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
+    marginBottom: 14,
   },
-
-  emptyTitle: {
-    color: COLORS.white,
-    fontSize: 18,
+  cardSelected: {
+    borderColor: COLORS.primary,
+    borderWidth: 2,
+  },
+  cardTop: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+  },
+  rowWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 8,
+  },
+  kindPill: {
+    backgroundColor: COLORS.soft,
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    fontSize: 12,
+  },
+  coldPill: {
+    backgroundColor: "#E0F2FE",
+    color: "#075985",
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    fontSize: 12,
+  },
+  batchPill: {
+    backgroundColor: "#FEF3C7",
+    color: "#92400E",
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    fontSize: 12,
+  },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 19,
     fontWeight: "900",
   },
-
+  cardSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  statusPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  statusText: {
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  routeBox: {
+    backgroundColor: "#FAFBF8",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    marginTop: 14,
+  },
+  routeItem: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  routeDot: {
+    color: COLORS.blue,
+    fontSize: 16,
+    marginTop: 2,
+  },
+  routeLine: {
+    width: 1,
+    height: 18,
+    backgroundColor: COLORS.border,
+    marginLeft: 7,
+    marginVertical: 4,
+  },
+  routeLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
+  },
+  routeName: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  routeAddress: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  metricRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+  metric: {
+    flex: 1,
+    backgroundColor: COLORS.soft,
+    borderRadius: 16,
+    padding: 12,
+  },
+  metricLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  notes: {
+    marginTop: 12,
+    color: COLORS.text,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  actionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  secondaryButton: {
+    flex: 1,
+    borderRadius: 16,
+    paddingVertical: 12,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+  },
+  secondaryButtonText: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  selectButton: {
+    flex: 1,
+    borderRadius: 16,
+    paddingVertical: 13,
+    backgroundColor: COLORS.freight,
+    alignItems: "center",
+  },
+  selectButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  primaryButton: {
+    flex: 1.4,
+    borderRadius: 16,
+    paddingVertical: 13,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+  },
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  disabledButton: {
+    flex: 1.4,
+    borderRadius: 16,
+    paddingVertical: 13,
+    backgroundColor: "#E5E7EB",
+    alignItems: "center",
+  },
+  disabledButtonText: {
+    color: COLORS.muted,
+    fontWeight: "900",
+  },
+  emptyCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    marginTop: 20,
+  },
+  emptyTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
   emptyText: {
-    color: COLORS.lightText,
+    color: COLORS.muted,
+    fontWeight: "700",
     textAlign: "center",
     marginTop: 8,
     lineHeight: 21,
-    fontWeight: "700",
-    fontSize: 13,
+  },
+  emptyButton: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 13,
+    borderRadius: 16,
+    marginTop: 16,
+  },
+  emptyButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
 });

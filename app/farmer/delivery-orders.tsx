@@ -1,8 +1,11 @@
+// app/farmer/delivery-orders.tsx
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -17,14 +20,12 @@ import {
   updateOrderStatus,
   OrderStatus,
 } from "../data/orderStore";
-
 import { supabase } from "../data/supabaseClient";
 import { enforceSubscriptionAccess } from "../services/lockoutGuard";
 
 const COLORS = {
   primary: "#2E7D32",
   primaryDark: "#14532D",
-  secondary: "#F9A825",
   background: "#F8FAF5",
   card: "#FFFFFF",
   text: "#172017",
@@ -41,12 +42,18 @@ const COLORS = {
   sky: "#0284C7",
 };
 
+function money(value: any) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
 export default function FarmerDeliveryOrders() {
   const [orders, setOrders] = useState<Farm2HomeOrder[]>([]);
   const [farmName, setFarmName] = useState("");
   const [farmerId, setFarmerId] = useState("");
-  const [farmerEmail, setFarmerEmail] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [accessAllowed, setAccessAllowed] = useState(false);
@@ -69,7 +76,6 @@ export default function FarmerDeliveryOrders() {
     });
 
     setAccessAllowed(access.allowed);
-
     return access.allowed;
   }
 
@@ -77,7 +83,9 @@ export default function FarmerDeliveryOrders() {
     try {
       setCheckingAccess(true);
 
-      const saved = await AsyncStorage.getItem("currentFarmer");
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("currentUser"));
 
       if (!saved) {
         router.replace("/farmer/login" as any);
@@ -89,18 +97,22 @@ export default function FarmerDeliveryOrders() {
 
       if (!allowed) return;
 
-      const currentFarmName = farmer.farmName || "";
+      const currentFarmName =
+        farmer.farmName ||
+        farmer.farm_name ||
+        farmer.businessName ||
+        farmer.business_name ||
+        farmer.name ||
+        "";
+
+      const currentFarmerId = farmer.id || farmer.farmerId || "";
 
       setFarmName(currentFarmName);
-      setFarmerId(farmer.id || "");
-      setFarmerEmail(farmer.email || "");
+      setFarmerId(currentFarmerId);
 
       setLoading(true);
 
-      const cloudOrders = await loadSupabaseOrders(
-        currentFarmName,
-        farmer.id || ""
-      );
+      const cloudOrders = await loadSupabaseOrders(currentFarmName, currentFarmerId);
 
       if (cloudOrders.length > 0) {
         setOrders(cloudOrders);
@@ -109,13 +121,13 @@ export default function FarmerDeliveryOrders() {
 
       const farmerOrders = await getOrdersForFarmer(currentFarmName);
 
-      const activeOrders = farmerOrders.filter(
-        (order) =>
-          order.deliveryInfo?.deliveryOption === "Delivery" ||
-          order.deliveryInfo?.deliveryOption === "Pickup"
+      setOrders(
+        farmerOrders.filter(
+          (order) =>
+            order.deliveryInfo?.deliveryOption === "Delivery" ||
+            order.deliveryInfo?.deliveryOption === "Pickup"
+        )
       );
-
-      setOrders(activeOrders);
     } catch (error) {
       console.log("Load farmer delivery orders error:", error);
       Alert.alert("Load Error", "Unable to load delivery orders.");
@@ -125,31 +137,10 @@ export default function FarmerDeliveryOrders() {
     }
   }
 
-  async function loadSupabaseOrders(
-    currentFarmName: string,
-    currentFarmerId: string
-  ) {
+  async function loadSupabaseOrders(currentFarmName: string, currentFarmerId: string) {
     const { data, error } = await supabase
       .from("orders")
-      .select(
-        `
-        *,
-        customers (
-          full_name,
-          email,
-          phone
-        ),
-        order_items (
-          id,
-          product_id,
-          product_name,
-          farm_name,
-          quantity,
-          price
-        )
-      `
-      )
-      .eq("farmer_id", currentFarmerId)
+      .select("*")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -157,49 +148,84 @@ export default function FarmerDeliveryOrders() {
       return [];
     }
 
-    const mappedOrders = (data || []).map((order: any) => ({
-      id: order.id,
-      customerEmail: order.customers?.email || "",
-      customerName: order.customers?.full_name || "",
-      items: (order.order_items || []).map((item: any) => ({
-        id: item.product_id || item.id,
-        name: item.product_name,
-        price: Number(item.price || 0),
-        quantity: Number(item.quantity || 0),
-        farmName: item.farm_name || currentFarmName,
-      })),
-      subtotal: Number(order.subtotal || 0),
-      deliveryFee: Number(order.delivery_fee || 0),
-      tip: Number(order.tip || 0),
-      total: Number(order.total || 0),
-      deliveryInfo: {
-        deliveryAddress: order.delivery_address || "",
-        city: order.city || "",
-        state: order.state || "",
-        zipCode: order.zip_code || "",
-        phone: order.customers?.phone || "",
-        deliveryInstructions: order.delivery_instructions || "",
-        deliveryOption: order.delivery_option || "Delivery",
-      },
-      status: order.status || "PAID",
-      createdAt: order.created_at,
-      updatedAt: order.updated_at || order.created_at,
-    })) as Farm2HomeOrder[];
+    return (data || [])
+      .map((order: any) => {
+        const rawItems = Array.isArray(order.items)
+          ? order.items
+          : Array.isArray(order.order_items)
+          ? order.order_items
+          : [];
 
-    return mappedOrders.filter(
-      (order) =>
-        order.deliveryInfo?.deliveryOption === "Delivery" ||
-        order.deliveryInfo?.deliveryOption === "Pickup"
-    );
+        return {
+          id: String(order.id),
+          customerEmail: order.customer_email || "",
+          customerName: order.customer_name || "",
+          items: rawItems.map((item: any) => ({
+            id: String(item.id || item.product_id || item.productId || ""),
+            productId: item.product_id || item.productId || item.id || "",
+            name: item.name || item.product_name || item.productName || "Farm Product",
+            price: Number(item.price || 0),
+            quantity: Number(item.quantity || 0),
+            farmName: item.farmName || item.farm_name || currentFarmName,
+            farmerId: item.farmerId || item.farmer_id || order.farmer_id || "",
+            category: item.category || "",
+          })),
+          subtotal: Number(order.subtotal || 0),
+          deliveryFee: Number(order.delivery_fee || 0),
+          tip: Number(order.tip || 0),
+          total: Number(order.total || 0),
+          deliveryInfo: {
+            deliveryAddress:
+              order.delivery_info?.deliveryAddress ||
+              order.delivery_info?.delivery_address ||
+              order.delivery_address ||
+              "",
+            city: order.delivery_info?.city || order.city || "",
+            state: order.delivery_info?.state || order.state || "",
+            zipCode:
+              order.delivery_info?.zipCode ||
+              order.delivery_info?.zip_code ||
+              order.zip_code ||
+              "",
+            phone: order.delivery_info?.phone || order.phone || "",
+            deliveryInstructions:
+              order.delivery_info?.deliveryInstructions ||
+              order.delivery_info?.delivery_instructions ||
+              order.delivery_instructions ||
+              "",
+            deliveryOption:
+              order.delivery_info?.deliveryOption ||
+              order.delivery_option ||
+              "Delivery",
+          },
+          status: order.status || "PAID",
+          paymentStatus: order.payment_status || "PAID",
+          createdAt: order.created_at,
+          updatedAt: order.updated_at || order.created_at,
+        } as Farm2HomeOrder;
+      })
+      .filter((order: Farm2HomeOrder) => {
+        const farmerMatch = (order.items || []).some((item: any) => {
+          return (
+            String(item.farmerId || item.farmer_id || "") === currentFarmerId ||
+            normalize(item.farmName) === normalize(currentFarmName)
+          );
+        });
+
+        const fulfillmentMatch =
+          order.deliveryInfo?.deliveryOption === "Delivery" ||
+          order.deliveryInfo?.deliveryOption === "Pickup";
+
+        return farmerMatch && fulfillmentMatch;
+      });
   }
 
   async function changeStatus(orderId: string, status: OrderStatus) {
     try {
       const allowed = await checkFarmerAccess();
-
       if (!allowed) return;
 
-      const { error } = await supabase
+      await supabase
         .from("orders")
         .update({
           status,
@@ -207,14 +233,9 @@ export default function FarmerDeliveryOrders() {
         })
         .eq("id", orderId);
 
-      if (error) {
-        console.log("Supabase update error:", error.message);
-      }
-
       await updateOrderStatus(orderId, status);
 
-      Alert.alert("Order Updated", `Order marked as ${status}`);
-
+      Alert.alert("Order Updated", `Order marked as ${status}.`);
       await loadOrders();
     } catch (error: any) {
       Alert.alert("Update Error", error?.message || "Unable to update order.");
@@ -222,13 +243,94 @@ export default function FarmerDeliveryOrders() {
   }
 
   function getFarmerItems(order: Farm2HomeOrder) {
-    return (order.items || []).filter(
-      (item) => item.farmName?.toLowerCase() === farmName.toLowerCase()
-    );
+    return (order.items || []).filter((item: any) => {
+      return (
+        String(item.farmerId || item.farmer_id || "") === farmerId ||
+        normalize(item.farmName) === normalize(farmName)
+      );
+    });
+  }
+
+  async function postToDriverBoard(order: Farm2HomeOrder) {
+    try {
+      const farmerItems = getFarmerItems(order);
+      const farmerSubtotal = farmerItems.reduce(
+        (sum: number, item: any) =>
+          sum + Number(item.price || 0) * Number(item.quantity || 0),
+        0
+      );
+
+      const payload = {
+        order_id: order.id,
+        farmer_id: farmerId,
+        farm_name: farmName,
+        customer_name: order.customerName || order.customerEmail || "Customer",
+        customer_phone: order.deliveryInfo?.phone || "",
+        pickup_address: "Farm pickup location",
+        dropoff_address: `${order.deliveryInfo?.deliveryAddress || ""}, ${
+          order.deliveryInfo?.city || ""
+        }, ${order.deliveryInfo?.state || ""} ${order.deliveryInfo?.zipCode || ""}`,
+        delivery_fee: Number(order.deliveryFee || farmerSubtotal * 0.08 || 8),
+        payout_amount: Number(order.deliveryFee || farmerSubtotal * 0.08 || 8),
+        miles: 0,
+        status: "available",
+        source: "farmer_delivery_orders",
+        items: farmerItems,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("delivery_orders").insert(payload);
+
+      if (error) throw error;
+
+      await changeStatus(order.id, "DRIVER_ASSIGNED");
+      Alert.alert("Posted", "Delivery was posted to Farm2Driver.");
+    } catch (error: any) {
+      Alert.alert("Driver Board Error", error?.message || "Unable to post delivery.");
+    }
+  }
+
+  function openTracking(order: Farm2HomeOrder) {
+    router.push({
+      pathname: "/customer/order-tracking",
+      params: { orderId: order.id },
+    } as any);
+  }
+
+  function openDriverChat(order: Farm2HomeOrder) {
+    router.push({
+      pathname: "/farmer/driver-chat",
+      params: {
+        orderId: order.id,
+        farmerId,
+      },
+    } as any);
+  }
+
+  function openCustomerDriverChat(order: Farm2HomeOrder) {
+    router.push({
+      pathname: "/farmer/customer-driver-chat",
+      params: {
+        orderId: order.id,
+        farmerId,
+      },
+    } as any);
+  }
+
+  function openChat(order: Farm2HomeOrder) {
+    router.push({
+      pathname: "/chat/chat-center",
+      params: {
+        conversationId: `order_${order.id}`,
+        orderId: order.id,
+        role: "farmer",
+      },
+    } as any);
   }
 
   function getStatusColor(status: string) {
-    switch (status) {
+    switch (String(status || "").toUpperCase()) {
       case "PAID":
         return COLORS.blue;
       case "ACCEPTED":
@@ -236,6 +338,7 @@ export default function FarmerDeliveryOrders() {
       case "PREPARING":
         return COLORS.orange;
       case "READY_FOR_PICKUP":
+      case "READY":
         return COLORS.purple;
       case "DRIVER_ASSIGNED":
         return COLORS.sky;
@@ -253,7 +356,7 @@ export default function FarmerDeliveryOrders() {
   }
 
   function getFriendlyStatus(status: string) {
-    switch (status) {
+    switch (String(status || "").toUpperCase()) {
       case "READY_FOR_PICKUP":
         return "READY";
       case "IN_TRANSIT":
@@ -261,7 +364,7 @@ export default function FarmerDeliveryOrders() {
       case "DRIVER_ASSIGNED":
         return "DRIVER ASSIGNED";
       default:
-        return status;
+        return String(status || "NEW").replace(/_/g, " ");
     }
   }
 
@@ -287,57 +390,21 @@ export default function FarmerDeliveryOrders() {
   function renderButtons(order: Farm2HomeOrder) {
     return (
       <View style={styles.buttonGrid}>
-        <ActionButton
-          label="Accept"
-          color={COLORS.primary}
-          onPress={() => changeStatus(order.id, "ACCEPTED")}
-        />
-
-        <ActionButton
-          label="Preparing"
-          color={COLORS.orange}
-          onPress={() => changeStatus(order.id, "PREPARING")}
-        />
-
-        <ActionButton
-          label="Ready"
-          color={COLORS.purple}
-          onPress={() => changeStatus(order.id, "READY_FOR_PICKUP")}
-        />
+        <ActionButton label="Accept" color={COLORS.primary} onPress={() => changeStatus(order.id, "ACCEPTED")} />
+        <ActionButton label="Preparing" color={COLORS.orange} onPress={() => changeStatus(order.id, "PREPARING")} />
+        <ActionButton label="Ready" color={COLORS.purple} onPress={() => changeStatus(order.id, "READY_FOR_PICKUP")} />
 
         {order.deliveryInfo?.deliveryOption === "Delivery" ? (
           <>
-            <ActionButton
-              label="Assign Driver"
-              color={COLORS.sky}
-              onPress={() => changeStatus(order.id, "DRIVER_ASSIGNED")}
-            />
-
-            <ActionButton
-              label="Out for Delivery"
-              color={COLORS.blue}
-              onPress={() => changeStatus(order.id, "IN_TRANSIT")}
-            />
-
-            <ActionButton
-              label="Delivered"
-              color={COLORS.teal}
-              onPress={() => changeStatus(order.id, "DELIVERED")}
-            />
+            <ActionButton label="Post Driver Board" color={COLORS.sky} onPress={() => postToDriverBoard(order)} />
+            <ActionButton label="Out for Delivery" color={COLORS.blue} onPress={() => changeStatus(order.id, "IN_TRANSIT")} />
+            <ActionButton label="Delivered" color={COLORS.teal} onPress={() => changeStatus(order.id, "DELIVERED")} />
           </>
         ) : (
-          <ActionButton
-            label="Picked Up"
-            color={COLORS.teal}
-            onPress={() => changeStatus(order.id, "PICKED_UP")}
-          />
+          <ActionButton label="Picked Up" color={COLORS.teal} onPress={() => changeStatus(order.id, "PICKED_UP")} />
         )}
 
-        <ActionButton
-          label="Cancel"
-          color={COLORS.danger}
-          onPress={() => changeStatus(order.id, "CANCELLED")}
-        />
+        <ActionButton label="Cancel" color={COLORS.danger} onPress={() => changeStatus(order.id, "CANCELLED")} />
       </View>
     );
   }
@@ -346,9 +413,7 @@ export default function FarmerDeliveryOrders() {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>
-          Checking farmer subscription access...
-        </Text>
+        <Text style={styles.loadingText}>Checking farmer subscription access...</Text>
       </View>
     );
   }
@@ -373,10 +438,7 @@ export default function FarmerDeliveryOrders() {
           <View>
             <View style={styles.topBar}>
               <Pressable
-                style={({ pressed }) => [
-                  styles.backCircle,
-                  pressed && styles.pressed,
-                ]}
+                style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
                 onPress={() => router.replace("/farmer/dashboard" as any)}
               >
                 <Text style={styles.backCircleText}>‹</Text>
@@ -385,22 +447,17 @@ export default function FarmerDeliveryOrders() {
               <View style={styles.topTitleBlock}>
                 <Text style={styles.title}>Delivery Management</Text>
                 <Text style={styles.subtitle}>
-                  {farmName || "Your Farm"} pickup and delivery orders
+                  {farmName || "Farm"} pickup, delivery, and driver operations
                 </Text>
               </View>
             </View>
 
             <View style={styles.heroCard}>
-              <View style={styles.heroTextBlock}>
-                <Text style={styles.heroBadge}>Fulfillment Center</Text>
-                <Text style={styles.heroTitle}>Manage pickup and delivery</Text>
-                <Text style={styles.heroText}>
-                  Prepare orders, assign drivers, track delivery progress, and
-                  complete customer fulfillment.
-                </Text>
-              </View>
-
-              <Text style={styles.heroEmoji}>🚚</Text>
+              <Text style={styles.heroBadge}>Fulfillment Center</Text>
+              <Text style={styles.heroTitle}>Manage pickup and delivery</Text>
+              <Text style={styles.heroText}>
+                Prepare orders, post driver jobs, monitor tracking, and coordinate customer fulfillment.
+              </Text>
             </View>
 
             <View style={styles.statsGrid}>
@@ -420,36 +477,33 @@ export default function FarmerDeliveryOrders() {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>🚚</Text>
+              <Text style={styles.emptyInitial}>0</Text>
               <Text style={styles.emptyTitle}>No active orders found</Text>
               <Text style={styles.emptyText}>
-                Pickup and delivery orders for {farmName || "your farm"} will
-                appear here.
+                Pickup and delivery orders for {farmName || "your farm"} will appear here.
               </Text>
             </View>
           ) : null
         }
         renderItem={({ item }) => {
           const farmerItems = getFarmerItems(item);
-
           const farmerSubtotal = farmerItems.reduce(
-            (sum, product) =>
-              sum + Number(product.price) * Number(product.quantity),
+            (sum: number, product: any) =>
+              sum + Number(product.price || 0) * Number(product.quantity || 0),
             0
           );
 
           return (
             <View style={styles.card}>
               <View style={styles.cardHeader}>
-                <View style={styles.orderIconBox}>
-                  <Text style={styles.orderIcon}>
-                    {item.deliveryInfo?.deliveryOption === "Delivery" ? "🚚" : "🧺"}
+                <View style={styles.orderInitialBox}>
+                  <Text style={styles.orderInitial}>
+                    {item.deliveryInfo?.deliveryOption === "Delivery" ? "D" : "P"}
                   </Text>
                 </View>
 
                 <View style={styles.orderHeaderText}>
-                  <Text style={styles.orderId}>Order #{item.id.slice(-6)}</Text>
-
+                  <Text style={styles.orderId}>Order #{item.id.slice(-8)}</Text>
                   <Text style={styles.dateText}>
                     {item.createdAt
                       ? new Date(item.createdAt).toLocaleString()
@@ -463,19 +517,15 @@ export default function FarmerDeliveryOrders() {
                     { backgroundColor: getStatusColor(item.status) },
                   ]}
                 >
-                  <Text style={styles.statusText}>
-                    {getFriendlyStatus(item.status)}
-                  </Text>
+                  <Text style={styles.statusText}>{getFriendlyStatus(item.status)}</Text>
                 </View>
               </View>
 
               <View style={styles.customerCard}>
                 <Text style={styles.customerTitle}>Customer</Text>
-
                 <Text style={styles.customerText}>
                   {item.customerName || item.customerEmail || "Customer"}
                 </Text>
-
                 <Text style={styles.customerText}>
                   Phone: {item.deliveryInfo?.phone || "Not provided"}
                 </Text>
@@ -497,14 +547,13 @@ export default function FarmerDeliveryOrders() {
                     <Text style={styles.infoText}>
                       Address: {item.deliveryInfo?.deliveryAddress}
                     </Text>
-
                     <Text style={styles.infoText}>
                       {item.deliveryInfo?.city}, {item.deliveryInfo?.state}{" "}
                       {item.deliveryInfo?.zipCode}
                     </Text>
                   </>
                 ) : (
-                  <Text style={styles.infoText}>Customer pickup order</Text>
+                  <Text style={styles.infoText}>Customer pickup order.</Text>
                 )}
 
                 {!!item.deliveryInfo?.deliveryInstructions && (
@@ -514,41 +563,48 @@ export default function FarmerDeliveryOrders() {
                 )}
               </View>
 
-              <Text style={styles.sectionTitle}>Your Farm Items</Text>
+              <Text style={styles.sectionTitle}>Farm Items</Text>
 
               {farmerItems.length === 0 ? (
                 <Text style={styles.emptyLineText}>
                   No items from this farm were found on this order.
                 </Text>
               ) : (
-                farmerItems.map((product, index) => (
+                farmerItems.map((product: any, index: number) => (
                   <View key={`${product.id}-${index}`} style={styles.productRow}>
-                    <View style={styles.productIcon}>
-                      <Text style={styles.productIconText}>🥬</Text>
+                    <View style={styles.productInitialBox}>
+                      <Text style={styles.productInitial}>
+                        {String(product.name || "P").slice(0, 1).toUpperCase()}
+                      </Text>
                     </View>
 
                     <View style={styles.productInfo}>
                       <Text style={styles.productName}>{product.name}</Text>
-
                       <Text style={styles.productMeta}>
-                        Qty {product.quantity} · $
-                        {Number(product.price).toFixed(2)} each
+                        Qty {product.quantity} · {money(product.price)} each
                       </Text>
                     </View>
 
                     <Text style={styles.productTotal}>
-                      $
-                      {(
-                        Number(product.price) * Number(product.quantity)
-                      ).toFixed(2)}
+                      {money(Number(product.price || 0) * Number(product.quantity || 0))}
                     </Text>
                   </View>
                 ))
               )}
 
               <View style={styles.totalBox}>
-                <Text style={styles.totalLabel}>Your Farm Subtotal</Text>
-                <Text style={styles.total}>${farmerSubtotal.toFixed(2)}</Text>
+                <Text style={styles.totalLabel}>Farm Subtotal</Text>
+                <Text style={styles.total}>{money(farmerSubtotal)}</Text>
+              </View>
+
+              <View style={styles.routeGrid}>
+                <RouteButton label="Tracking" onPress={() => openTracking(item)} />
+                <RouteButton label="Customer Chat" onPress={() => openChat(item)} />
+                <RouteButton label="Driver Chat" onPress={() => openDriverChat(item)} />
+                <RouteButton
+                  label="Monitor Chat"
+                  onPress={() => openCustomerDriverChat(item)}
+                />
               </View>
 
               {renderButtons(item)}
@@ -599,11 +655,19 @@ function ActionButton({
   );
 }
 
+function RouteButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.routeButton, pressed && styles.pressed]}
+      onPress={onPress}
+    >
+      <Text style={styles.routeButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
+  page: { flex: 1, backgroundColor: COLORS.background },
   centered: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -624,10 +688,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     textAlign: "center",
   },
-  listContent: {
-    padding: 18,
-    paddingBottom: 120,
-  },
+  listContent: { padding: 18, paddingBottom: 120 },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -635,9 +696,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
@@ -645,47 +706,31 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   backCircleText: {
-    fontSize: 34,
+    fontSize: 32,
     color: COLORS.text,
     fontWeight: "900",
     marginTop: -4,
   },
-  topTitleBlock: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
+  topTitleBlock: { flex: 1 },
+  title: { fontSize: 30, fontWeight: "900", color: COLORS.text },
+  subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   heroCard: {
     backgroundColor: COLORS.primary,
-    borderRadius: 32,
-    padding: 20,
+    borderRadius: 18,
+    padding: 18,
     marginBottom: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  heroTextBlock: {
-    flex: 1,
-    paddingRight: 12,
   },
   heroBadge: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.18)",
     color: "#FFFFFF",
     fontWeight: "900",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 999,
     overflow: "hidden",
     marginBottom: 10,
+    fontSize: 12,
   },
   heroTitle: {
     color: "#FFFFFF",
@@ -699,27 +744,16 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 8,
   },
-  heroEmoji: {
-    fontSize: 56,
-  },
-  statsGrid: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 16,
-  },
+  statsGrid: { flexDirection: "row", gap: 10, marginBottom: 16 },
   statCard: {
     flex: 1,
     backgroundColor: COLORS.card,
-    borderRadius: 24,
-    padding: 14,
+    borderRadius: 16,
+    padding: 13,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  statValue: {
-    color: COLORS.primary,
-    fontSize: 21,
-    fontWeight: "900",
-  },
+  statValue: { color: COLORS.primary, fontSize: 20, fontWeight: "900" },
   statLabel: {
     color: COLORS.muted,
     fontWeight: "800",
@@ -728,16 +762,24 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 28,
+    borderRadius: 18,
     alignItems: "center",
     padding: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
     marginBottom: 16,
   },
-  emptyIcon: {
-    fontSize: 42,
-    marginBottom: 8,
+  emptyInitial: {
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    backgroundColor: COLORS.softGreen,
+    color: COLORS.primary,
+    textAlign: "center",
+    textAlignVertical: "center",
+    fontSize: 24,
+    fontWeight: "900",
+    marginBottom: 10,
   },
   emptyTitle: {
     fontSize: 22,
@@ -756,7 +798,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.card,
     padding: 16,
-    borderRadius: 30,
+    borderRadius: 18,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -766,81 +808,45 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 3,
   },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 14,
-  },
-  orderIconBox: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: COLORS.softGreen,
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  orderInitialBox: {
+    width: 52,
+    height: 52,
+    borderRadius: 15,
+    backgroundColor: COLORS.primaryDark,
     justifyContent: "center",
     alignItems: "center",
   },
-  orderIcon: {
-    fontSize: 27,
-  },
-  orderHeaderText: {
-    flex: 1,
-  },
-  orderId: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  dateText: {
-    color: COLORS.muted,
-    marginTop: 4,
-    fontWeight: "700",
-    fontSize: 12,
-  },
+  orderInitial: { color: "#FFFFFF", fontWeight: "900", fontSize: 22 },
+  orderHeaderText: { flex: 1 },
+  orderId: { fontSize: 18, fontWeight: "900", color: COLORS.text },
+  dateText: { color: COLORS.muted, marginTop: 4, fontWeight: "700", fontSize: 12 },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
     alignSelf: "flex-start",
   },
-  statusText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 11,
-  },
+  statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 11 },
   customerCard: {
     backgroundColor: COLORS.lightGreen,
     padding: 13,
-    borderRadius: 20,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     marginBottom: 12,
   },
-  customerTitle: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 13,
-    marginBottom: 5,
-  },
-  customerText: {
-    color: COLORS.text,
-    fontWeight: "800",
-    marginBottom: 4,
-  },
+  customerTitle: { color: COLORS.primary, fontWeight: "900", fontSize: 13, marginBottom: 5 },
+  customerText: { color: COLORS.text, fontWeight: "800", marginBottom: 4 },
   infoBox: {
     backgroundColor: "#FFF7ED",
     padding: 14,
-    borderRadius: 22,
+    borderRadius: 14,
     marginTop: 8,
     borderWidth: 1,
     borderColor: "#FED7AA",
   },
-  infoTitle: {
-    color: "#9A3412",
-    fontWeight: "900",
-    fontSize: 16,
-    marginBottom: 7,
-  },
+  infoTitle: { color: "#9A3412", fontWeight: "900", fontSize: 16, marginBottom: 7 },
   infoText: {
     color: "#7C2D12",
     marginBottom: 4,
@@ -857,7 +863,7 @@ const styles = StyleSheet.create({
   productRow: {
     backgroundColor: COLORS.lightGreen,
     padding: 12,
-    borderRadius: 20,
+    borderRadius: 14,
     marginBottom: 8,
     flexDirection: "row",
     alignItems: "center",
@@ -865,39 +871,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  productIcon: {
+  productInitialBox: {
     width: 42,
     height: 42,
-    borderRadius: 14,
+    borderRadius: 13,
     backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
   },
-  productIconText: {
-    fontSize: 22,
-  },
-  productInfo: {
-    flex: 1,
-  },
-  productName: {
-    fontWeight: "900",
-    color: COLORS.text,
-    marginBottom: 4,
-  },
-  productMeta: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  productTotal: {
-    color: COLORS.primary,
-    fontWeight: "900",
-  },
-  emptyLineText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginBottom: 10,
-  },
+  productInitial: { color: COLORS.primaryDark, fontSize: 18, fontWeight: "900" },
+  productInfo: { flex: 1 },
+  productName: { fontWeight: "900", color: COLORS.text, marginBottom: 4 },
+  productMeta: { color: COLORS.muted, fontWeight: "700", fontSize: 12 },
+  productTotal: { color: COLORS.primary, fontWeight: "900" },
+  emptyLineText: { color: COLORS.muted, fontWeight: "700", marginBottom: 10 },
   totalBox: {
     marginTop: 14,
     marginBottom: 14,
@@ -905,31 +892,21 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
     paddingTop: 12,
   },
-  totalLabel: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    marginBottom: 4,
+  totalLabel: { color: COLORS.muted, fontWeight: "800", marginBottom: 4 },
+  total: { fontSize: 23, fontWeight: "900", color: COLORS.primary },
+  routeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
+  routeButton: {
+    backgroundColor: COLORS.lightGreen,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
-  total: {
-    fontSize: 23,
-    fontWeight: "900",
-    color: COLORS.primary,
-  },
-  buttonGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  actionButton: {
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    borderRadius: 14,
-  },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  routeButtonText: { color: COLORS.primary, fontWeight: "900", fontSize: 12 },
+  buttonGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  actionButton: { paddingHorizontal: 13, paddingVertical: 11, borderRadius: 12 },
+  buttonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
   backButton: {
     position: "absolute",
     left: 18,
@@ -937,14 +914,9 @@ const styles = StyleSheet.create({
     bottom: 18,
     backgroundColor: COLORS.dark,
     padding: 16,
-    borderRadius: 20,
+    borderRadius: 16,
     alignItems: "center",
   },
-  backText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  pressed: {
-    opacity: 0.75,
-  },
+  backText: { color: "#FFFFFF", fontWeight: "900" },
+  pressed: { opacity: 0.75 },
 });

@@ -26,7 +26,7 @@ function getParamString(value: string | string[] | undefined) {
   return value || "";
 }
 
-export default function FarmerCustomerDriverChatScreen() {
+export default function CustomerDriverChatScreen() {
   const params = useLocalSearchParams();
 
   const orderId = getParamString(params.orderId);
@@ -41,6 +41,7 @@ export default function FarmerCustomerDriverChatScreen() {
   const [driverId, setDriverId] = useState(driverIdParam || "");
   const [customerId, setCustomerId] = useState(customerIdParam || "");
 
+  const [conversationTitle, setConversationTitle] = useState("Customer / Driver Chat");
   const [messages, setMessages] = useState<any[]>([]);
   const [message, setMessage] = useState("");
 
@@ -71,46 +72,73 @@ export default function FarmerCustomerDriverChatScreen() {
 
       setFarmerId(id);
 
-      let activeDriverId = driverIdParam;
-      let activeCustomerId = customerIdParam;
+      const delivery = await resolveDelivery(id);
 
-      if (!activeDriverId || !activeCustomerId) {
-        const { data: delivery } = await supabase
-          .from("delivery_orders")
-          .select("*")
-          .eq("farmer_id", id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+      if (delivery) {
+        setDriverId(
+          delivery.driver_id ||
+            delivery.assigned_driver_id ||
+            driverIdParam ||
+            ""
+        );
 
-        activeDriverId =
-          activeDriverId ||
-          delivery?.driver_id ||
-          delivery?.assigned_driver_id ||
-          "";
+        setCustomerId(
+          delivery.customer_id ||
+            customerIdParam ||
+            ""
+        );
 
-        activeCustomerId =
-          activeCustomerId ||
-          delivery?.customer_id ||
-          "";
+        setConversationTitle(
+          delivery.customer_name
+            ? `${delivery.customer_name} / Driver Chat`
+            : "Customer / Driver Chat"
+        );
       }
 
-      setDriverId(activeDriverId);
-      setCustomerId(activeCustomerId);
-
-      await loadMessages(id, activeDriverId, activeCustomerId);
+      await loadMessages(id);
     } catch (error: any) {
-      Alert.alert("Chat Error", error?.message || "Unable to load customer / driver chat.");
+      Alert.alert("Chat Error", error?.message || "Unable to load customer driver chat.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function loadMessages(
-    activeFarmerId = farmerId,
-    activeDriverId = driverId,
-    activeCustomerId = customerId
-  ) {
+  async function resolveDelivery(activeFarmerId: string) {
+    if (deliveryOrderId) {
+      const { data } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .eq("id", deliveryOrderId)
+        .maybeSingle();
+
+      return data;
+    }
+
+    if (orderId) {
+      const { data } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .eq("order_id", orderId)
+        .eq("farmer_id", activeFarmerId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      return data;
+    }
+
+    const { data } = await supabase
+      .from("delivery_orders")
+      .select("*")
+      .eq("farmer_id", activeFarmerId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return data;
+  }
+
+  async function loadMessages(activeFarmerId = farmerId) {
     let query = supabase
       .from("order_chats")
       .select("*")
@@ -128,7 +156,7 @@ export default function FarmerCustomerDriverChatScreen() {
     const { data, error } = await query;
 
     if (error) {
-      console.log("Farmer customer-driver chat load skipped:", error.message);
+      console.log("Customer driver chat load skipped:", error.message);
       setMessages([]);
       return;
     }
@@ -147,10 +175,8 @@ export default function FarmerCustomerDriverChatScreen() {
     try {
       setSending(true);
 
-      const now = new Date().toISOString();
-
       const payload = {
-        order_id: orderId || deliveryOrderId || "general",
+        order_id: orderId || "general",
         delivery_order_id: deliveryOrderId || null,
         farmer_id: farmerId,
         driver_id: driverId || null,
@@ -162,7 +188,7 @@ export default function FarmerCustomerDriverChatScreen() {
         read_by_farmer: true,
         read_by_driver: false,
         read_by_customer: false,
-        created_at: now,
+        created_at: new Date().toISOString(),
       };
 
       const { error } = await supabase.from("order_chats").insert(payload);
@@ -170,7 +196,7 @@ export default function FarmerCustomerDriverChatScreen() {
       if (error) throw error;
 
       setMessage("");
-      await loadMessages(farmerId, driverId, customerId);
+      await loadMessages(farmerId);
     } catch (error: any) {
       Alert.alert("Send Error", error?.message || "Unable to send message.");
     } finally {
@@ -178,11 +204,28 @@ export default function FarmerCustomerDriverChatScreen() {
     }
   }
 
-  function getSenderLabel(role: string) {
-    if (role === "farmer") return "Farmer";
-    if (role === "driver") return "Driver";
-    if (role === "customer") return "Customer";
-    return "User";
+  function openTracking() {
+    router.push({
+      pathname: "/customer/order-tracking",
+      params: {
+        orderId,
+        deliveryOrderId,
+      },
+    } as any);
+  }
+
+  function getRoleLabel(role: string) {
+    const normalized = String(role || "").toLowerCase();
+
+    if (normalized === "customer") return "Customer";
+    if (normalized === "driver") return "Driver";
+    if (normalized === "farmer") return "Farmer Note";
+
+    return "Message";
+  }
+
+  function isFarmerMessage(item: any) {
+    return String(item.sender_role || "").toLowerCase() === "farmer";
   }
 
   if (loading) {
@@ -191,7 +234,7 @@ export default function FarmerCustomerDriverChatScreen() {
         <StatusBar barStyle="light-content" backgroundColor="#020617" />
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#10B981" />
-          <Text style={styles.centerText}>Loading customer / driver chat...</Text>
+          <Text style={styles.centerText}>Loading customer driver chat...</Text>
         </View>
       </SafeAreaView>
     );
@@ -212,11 +255,21 @@ export default function FarmerCustomerDriverChatScreen() {
 
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Farmer Operations</Text>
-            <Text style={styles.title}>Customer / Driver Chat</Text>
+            <Text style={styles.title}>{conversationTitle}</Text>
             <Text style={styles.subtitle}>
-              Monitor and assist delivery communication
+              Monitor customer and driver delivery coordination.
             </Text>
           </View>
+
+          <Pressable style={styles.trackButton} onPress={openTracking}>
+            <Text style={styles.trackButtonText}>Track</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.metaBar}>
+          <Text style={styles.metaText}>Order ID: {orderId || "Not linked"}</Text>
+          <Text style={styles.metaText}>Delivery ID: {deliveryOrderId || "Not linked"}</Text>
+          <Text style={styles.metaText}>Driver ID: {driverId || "Not assigned"}</Text>
         </View>
 
         <FlatList
@@ -225,20 +278,19 @@ export default function FarmerCustomerDriverChatScreen() {
           contentContainerStyle={styles.messageList}
           ListEmptyComponent={
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No delivery chat yet</Text>
+              <Text style={styles.emptyTitle}>No messages yet</Text>
               <Text style={styles.emptyText}>
                 Customer and driver delivery messages will appear here.
               </Text>
             </View>
           }
           renderItem={({ item }) => {
-            const role = item.sender_role || "user";
-            const isFarmer = role === "farmer";
+            const isFarmer = isFarmerMessage(item);
 
             return (
               <View style={[styles.bubble, isFarmer && styles.myBubble]}>
                 <Text style={[styles.sender, isFarmer && styles.mySender]}>
-                  {getSenderLabel(role)}
+                  {getRoleLabel(item.sender_role)}
                 </Text>
 
                 <Text style={[styles.messageText, isFarmer && styles.myMessageText]}>
@@ -319,6 +371,21 @@ const styles = StyleSheet.create({
   },
   title: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 3 },
   subtitle: { color: "#CBD5E1", fontWeight: "700", fontSize: 12, marginTop: 2 },
+  trackButton: {
+    backgroundColor: "#10B981",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  trackButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
+  metaBar: {
+    backgroundColor: freightTheme.colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: freightTheme.colors.border,
+    padding: 10,
+    gap: 3,
+  },
+  metaText: { color: freightTheme.colors.mutedText, fontWeight: "800", fontSize: 11 },
   messageList: { padding: 16, paddingBottom: 100 },
   emptyCard: {
     backgroundColor: freightTheme.colors.card,
@@ -347,11 +414,11 @@ const styles = StyleSheet.create({
   },
   myBubble: {
     alignSelf: "flex-end",
-    backgroundColor: "#2563EB",
-    borderColor: "#2563EB",
+    backgroundColor: freightTheme.colors.primary,
+    borderColor: freightTheme.colors.primary,
   },
   sender: { color: freightTheme.colors.mutedText, fontSize: 11, fontWeight: "900" },
-  mySender: { color: "#DBEAFE" },
+  mySender: { color: "#BBF7D0" },
   messageText: {
     color: freightTheme.colors.text,
     fontWeight: "700",
@@ -365,7 +432,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontWeight: "700",
   },
-  myTimeText: { color: "#DBEAFE" },
+  myTimeText: { color: "#D1FAE5" },
   inputBar: {
     backgroundColor: freightTheme.colors.card,
     borderTopWidth: 1,

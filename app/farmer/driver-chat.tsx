@@ -35,9 +35,9 @@ export default function FarmerDriverChatScreen() {
 
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [farmer, setFarmer] = useState<any>(null);
   const [farmerId, setFarmerId] = useState("");
   const [driverId, setDriverId] = useState(driverIdParam || "");
+  const [driverName, setDriverName] = useState("Assigned Driver");
   const [messages, setMessages] = useState<any[]>([]);
   const [message, setMessage] = useState("");
 
@@ -58,41 +58,75 @@ export default function FarmerDriverChatScreen() {
         return;
       }
 
-      const parsed = JSON.parse(saved);
-      const id = parsed.id || parsed.farmerId;
+      const farmer = JSON.parse(saved);
+      const id = farmer.id || farmer.farmerId;
 
       if (!id) {
         router.replace("/farmer/login" as any);
         return;
       }
 
-      setFarmer(parsed);
       setFarmerId(id);
 
-      let activeDriverId = driverIdParam;
+      const activeDriver = await resolveDriver(id);
+      setDriverId(activeDriver.id);
+      setDriverName(activeDriver.name);
 
-      if (!activeDriverId) {
-        const { data: delivery } = await supabase
-          .from("delivery_orders")
-          .select("*")
-          .eq("farmer_id", id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        activeDriverId =
-          delivery?.driver_id ||
-          delivery?.assigned_driver_id ||
-          "internal-driver";
-      }
-
-      setDriverId(activeDriverId);
-      await loadMessages(id, activeDriverId);
+      await loadMessages(id, activeDriver.id);
     } catch (error: any) {
       Alert.alert("Chat Error", error?.message || "Unable to load driver chat.");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function resolveDriver(activeFarmerId: string) {
+    if (driverIdParam) {
+      return { id: driverIdParam, name: "Assigned Driver" };
+    }
+
+    if (deliveryOrderId) {
+      const { data } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .eq("id", deliveryOrderId)
+        .maybeSingle();
+
+      const id = data?.driver_id || data?.assigned_driver_id || "";
+      const name = data?.driver_name || data?.assigned_driver_name || "Assigned Driver";
+
+      if (id) return { id, name };
+    }
+
+    if (orderId) {
+      const { data } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .eq("order_id", orderId)
+        .eq("farmer_id", activeFarmerId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const id = data?.driver_id || data?.assigned_driver_id || "";
+      const name = data?.driver_name || data?.assigned_driver_name || "Assigned Driver";
+
+      if (id) return { id, name };
+    }
+
+    const { data: internalDriver } = await supabase
+      .from("farmer_internal_drivers")
+      .select("*")
+      .eq("farmer_id", activeFarmerId)
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return {
+      id: internalDriver?.driver_id || internalDriver?.id || "internal-driver",
+      name: internalDriver?.driver_name || "Internal Farm Driver",
+    };
   }
 
   async function loadMessages(activeFarmerId = farmerId, activeDriverId = driverId) {
@@ -132,10 +166,8 @@ export default function FarmerDriverChatScreen() {
     try {
       setSending(true);
 
-      const now = new Date().toISOString();
-
       const payload = {
-        order_id: orderId || deliveryOrderId || "general",
+        order_id: orderId || "general",
         delivery_order_id: deliveryOrderId || null,
         farmer_id: farmerId,
         driver_id: driverId || null,
@@ -146,7 +178,7 @@ export default function FarmerDriverChatScreen() {
         read_by_farmer: true,
         read_by_driver: false,
         read_by_customer: true,
-        created_at: now,
+        created_at: new Date().toISOString(),
       };
 
       const { error } = await supabase.from("order_chats").insert(payload);
@@ -160,6 +192,16 @@ export default function FarmerDriverChatScreen() {
     } finally {
       setSending(false);
     }
+  }
+
+  function openTracking() {
+    router.push({
+      pathname: "/customer/order-tracking",
+      params: {
+        orderId,
+        deliveryOrderId,
+      },
+    } as any);
   }
 
   if (loading) {
@@ -191,9 +233,20 @@ export default function FarmerDriverChatScreen() {
             <Text style={styles.eyebrow}>Farmer Operations</Text>
             <Text style={styles.title}>Driver Chat</Text>
             <Text style={styles.subtitle}>
-              Coordinate pickup, loading, timing, and delivery details
+              {driverName} · {orderId ? `Order ${orderId.slice(-8)}` : "General coordination"}
             </Text>
           </View>
+
+          <Pressable style={styles.trackButton} onPress={openTracking}>
+            <Text style={styles.trackButtonText}>Track</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.metaBar}>
+          <Text style={styles.metaText}>Driver ID: {driverId || "Not assigned"}</Text>
+          <Text style={styles.metaText}>
+            Delivery ID: {deliveryOrderId || "Not linked"}
+          </Text>
         </View>
 
         <FlatList
@@ -204,7 +257,7 @@ export default function FarmerDriverChatScreen() {
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No messages yet</Text>
               <Text style={styles.emptyText}>
-                Start a conversation with the assigned driver.
+                Start a professional delivery conversation with the assigned driver.
               </Text>
             </View>
           }
@@ -295,6 +348,21 @@ const styles = StyleSheet.create({
   },
   title: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 3 },
   subtitle: { color: "#CBD5E1", fontWeight: "700", fontSize: 12, marginTop: 2 },
+  trackButton: {
+    backgroundColor: "#10B981",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  trackButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
+  metaBar: {
+    backgroundColor: freightTheme.colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: freightTheme.colors.border,
+    padding: 10,
+    gap: 3,
+  },
+  metaText: { color: freightTheme.colors.mutedText, fontWeight: "800", fontSize: 11 },
   messageList: { padding: 16, paddingBottom: 100 },
   emptyCard: {
     backgroundColor: freightTheme.colors.card,

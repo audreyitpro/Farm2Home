@@ -1,14 +1,16 @@
-import React, { useCallback, useState } from "react";
+// app/driver/chat-center.tsx
+
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -21,6 +23,7 @@ type ChatMessage = {
   conversation_id: string;
   order_id?: string | null;
   load_id?: string | null;
+  delivery_order_id?: string | null;
   sender_id?: string | null;
   sender_role: string;
   sender_name: string;
@@ -41,22 +44,42 @@ type CurrentUser = {
   role?: string;
 };
 
+const COLORS = {
+  bg: "#F8FAF5",
+  card: "#FFFFFF",
+  text: "#172017",
+  muted: "#64748B",
+  border: "#E3E8DD",
+  primary: "#2E7D32",
+  primaryDark: "#14532D",
+  soft: "#EEF5EA",
+  dark: "#111827",
+  blue: "#2563EB",
+};
+
 function cleanString(value: any) {
   return String(value || "").trim();
+}
+
+function getParamString(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0] || "";
+  return value || "";
 }
 
 function buildConversationId(params: any) {
   const directId = cleanString(params.conversationId);
   const orderId = cleanString(params.orderId);
   const loadId = cleanString(params.loadId);
+  const deliveryOrderId = cleanString(params.deliveryOrderId || params.deliveryJobId);
   const role = cleanString(params.role).toLowerCase();
 
   if (directId) return directId;
+  if (deliveryOrderId) return `delivery_${deliveryOrderId}`;
   if (orderId) return `order_${orderId}`;
   if (loadId) return `load_${loadId}`;
   if (role) return `support_${role}`;
 
-  return "farm2home_general_support";
+  return "farm2home_driver_support";
 }
 
 async function getStoredJson(key: string) {
@@ -68,25 +91,36 @@ async function getStoredJson(key: string) {
   }
 }
 
-export default function ChatCenter() {
+function formatRole(role: string) {
+  const value = String(role || "USER").toLowerCase();
+
+  if (value === "customer") return "Customer";
+  if (value === "farmer") return "Farmer";
+  if (value === "driver") return "Driver";
+  if (value === "freight") return "Freight";
+  if (value === "admin") return "Admin";
+
+  return value.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export default function DriverChatCenter() {
   const params = useLocalSearchParams();
 
-  const conversationId = buildConversationId(params);
-  const orderId = cleanString(params.orderId);
-  const loadId = cleanString(params.loadId);
-  const roleParam = cleanString(params.role);
+  const conversationId = useMemo(() => buildConversationId(params), [params]);
+  const orderId = getParamString(params.orderId);
+  const loadId = getParamString(params.loadId);
+  const deliveryOrderId = getParamString(params.deliveryOrderId || params.deliveryJobId);
+  const roleParam = getParamString(params.role) || "driver";
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
 
   const [senderId, setSenderId] = useState<string | null>(null);
-  const [senderName, setSenderName] = useState("Farm2Home User");
+  const [senderName, setSenderName] = useState("Farm2Home Driver");
   const [senderEmail, setSenderEmail] = useState("");
-  const [senderRole, setSenderRole] = useState(
-    roleParam ? roleParam.toUpperCase() : "CUSTOMER"
-  );
+  const [senderRole, setSenderRole] = useState(roleParam.toUpperCase());
 
-  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
 
   useFocusEffect(
@@ -95,7 +129,7 @@ export default function ChatCenter() {
       loadMessages();
 
       const channel = supabase
-        .channel(`chat-${conversationId}`)
+        .channel(`driver-chat-${conversationId}`)
         .on(
           "postgres_changes",
           {
@@ -122,15 +156,13 @@ export default function ChatCenter() {
         roleParam ||
         (await AsyncStorage.getItem("currentUserRole")) ||
         (await AsyncStorage.getItem("userRole")) ||
-        "customer";
+        "driver";
 
       const currentUser: CurrentUser =
-        (await getStoredJson("currentUser")) ||
-        (await getStoredJson("currentCustomer")) ||
-        (await getStoredJson("currentFarmer")) ||
-        (await getStoredJson("currentFreight")) ||
-        (await getStoredJson("currentFreightCarrier")) ||
         (await getStoredJson("currentDriver")) ||
+        (await getStoredJson("farm2homeCurrentDriver")) ||
+        (await getStoredJson("farm2homeDriverSession")) ||
+        (await getStoredJson("currentUser")) ||
         {};
 
       const displayName =
@@ -141,14 +173,14 @@ export default function ChatCenter() {
         currentUser.businessName ||
         currentUser.username ||
         currentUser.email ||
-        "Farm2Home User";
+        "Farm2Home Driver";
 
       setSenderId(currentUser.id || currentUser.email || null);
       setSenderEmail(currentUser.email || "");
       setSenderName(displayName);
-      setSenderRole(String(role || "customer").toUpperCase());
+      setSenderRole(String(role || "driver").toUpperCase());
     } catch (error) {
-      console.log("LOAD_CHAT_USER_ERROR:", error);
+      console.log("LOAD_DRIVER_CHAT_USER_ERROR:", error);
     }
   }
 
@@ -163,13 +195,13 @@ export default function ChatCenter() {
         .order("created_at", { ascending: true });
 
       if (error) {
-        console.log("LOAD_CHAT_MESSAGES_ERROR:", error.message);
+        console.log("LOAD_DRIVER_CHAT_MESSAGES_ERROR:", error.message);
         return;
       }
 
       setMessages((data || []) as ChatMessage[]);
     } catch (error) {
-      console.log("LOAD_CHAT_MESSAGES_FAILED:", error);
+      console.log("LOAD_DRIVER_CHAT_MESSAGES_FAILED:", error);
     } finally {
       setMessagesLoading(false);
     }
@@ -177,16 +209,16 @@ export default function ChatCenter() {
 
   async function sendMessage() {
     const cleanMessage = message.trim();
-
     if (!cleanMessage) return;
 
     try {
-      setLoading(true);
+      setSending(true);
 
       const payload = {
         conversation_id: conversationId,
         order_id: orderId || null,
         load_id: loadId || null,
+        delivery_order_id: deliveryOrderId || null,
         sender_id: senderId,
         sender_role: senderRole,
         sender_name: senderName,
@@ -207,20 +239,29 @@ export default function ChatCenter() {
     } catch (error: any) {
       Alert.alert("Message Error", error?.message || "Unable to send message.");
     } finally {
-      setLoading(false);
+      setSending(false);
     }
   }
 
   function isMine(item: ChatMessage) {
-    if (item.sender_id && senderId) {
-      return item.sender_id === senderId;
-    }
+    if (item.sender_id && senderId) return item.sender_id === senderId;
 
     return (
-      item.sender_email &&
-      senderEmail &&
+      !!item.sender_email &&
+      !!senderEmail &&
       item.sender_email.toLowerCase() === senderEmail.toLowerCase()
     );
+  }
+
+  function openTracking() {
+    router.push({
+      pathname: "/customer/order-tracking",
+      params: {
+        orderId,
+        loadId,
+        deliveryOrderId,
+      },
+    } as any);
   }
 
   return (
@@ -229,45 +270,57 @@ export default function ChatCenter() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.header}>
-        <Text style={styles.title}>Farm2Home Chat</Text>
+        <View style={styles.headerTop}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backText}>‹</Text>
+          </Pressable>
 
-        <Text style={styles.subtitle}>
-          Realtime messages for customers, farmers, drivers, freight carriers,
-          and admin support.
-        </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farm2Driver Messaging</Text>
+            <Text style={styles.title}>Chat Center</Text>
+            <Text style={styles.subtitle}>
+              Driver communication for customer orders, farmer pickups, freight loads,
+              and support.
+            </Text>
+          </View>
+        </View>
 
-        <Text style={styles.meta}>Conversation: {conversationId}</Text>
-        <Text style={styles.meta}>Role: {senderRole}</Text>
+        <View style={styles.metaGrid}>
+          <MetaChip label="Conversation" value={conversationId} />
+          <MetaChip label="Role" value={formatRole(senderRole)} />
+          {!!orderId && <MetaChip label="Order" value={orderId} />}
+          {!!deliveryOrderId && <MetaChip label="Delivery" value={deliveryOrderId} />}
+          {!!loadId && <MetaChip label="Load" value={loadId} />}
+        </View>
 
-        {orderId ? <Text style={styles.meta}>Order ID: {orderId}</Text> : null}
-        {loadId ? <Text style={styles.meta}>Load ID: {loadId}</Text> : null}
-
-        <View style={styles.headerButtons}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.refreshButton} onPress={loadMessages}>
+        <View style={styles.headerActions}>
+          <Pressable style={styles.refreshButton} onPress={loadMessages}>
             <Text style={styles.refreshText}>Refresh</Text>
-          </TouchableOpacity>
+          </Pressable>
+
+          {(orderId || deliveryOrderId || loadId) && (
+            <Pressable style={styles.trackButton} onPress={openTracking}>
+              <Text style={styles.trackText}>Track</Text>
+            </Pressable>
+          )}
         </View>
       </View>
 
       {messagesLoading ? (
         <View style={styles.loadingBox}>
-          <ActivityIndicator color="#064E3B" />
+          <ActivityIndicator color={COLORS.primaryDark} />
           <Text style={styles.loadingText}>Loading messages...</Text>
         </View>
       ) : (
         <FlatList
           data={messages}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => String(item.id || `${item.created_at}_${index}`)}
           contentContainerStyle={styles.messageList}
           ListEmptyComponent={
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No messages yet.</Text>
+              <Text style={styles.emptyTitle}>No messages yet</Text>
               <Text style={styles.emptyText}>
-                Start the conversation for this order, load, route, or support
+                Start the conversation for this order, delivery, freight load, or support
                 request.
               </Text>
             </View>
@@ -283,7 +336,7 @@ export default function ChatCenter() {
                 ]}
               >
                 <Text style={[styles.sender, mine && styles.mySender]}>
-                  {item.sender_name} · {item.sender_role}
+                  {item.sender_name || "Farm2Home User"} · {formatRole(item.sender_role)}
                 </Text>
 
                 <Text style={[styles.messageText, mine && styles.myMessageText]}>
@@ -291,7 +344,7 @@ export default function ChatCenter() {
                 </Text>
 
                 <Text style={[styles.timeText, mine && styles.myTimeText]}>
-                  {new Date(item.created_at).toLocaleString()}
+                  {item.created_at ? new Date(item.created_at).toLocaleString() : ""}
                 </Text>
               </View>
             );
@@ -309,64 +362,110 @@ export default function ChatCenter() {
           multiline
         />
 
-        <TouchableOpacity
-          style={[styles.sendButton, loading && styles.disabledButton]}
+        <Pressable
+          style={[styles.sendButton, sending && styles.disabledButton]}
           onPress={sendMessage}
-          disabled={loading}
+          disabled={sending}
         >
-          {loading ? (
+          {sending ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <Text style={styles.sendText}>Send</Text>
           )}
-        </TouchableOpacity>
+        </Pressable>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
+function MetaChip({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.metaChip}>
+      <Text style={styles.metaLabel}>{label}</Text>
+      <Text style={styles.metaValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F7F7F2",
-  },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   header: {
-    backgroundColor: "#064E3B",
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 18,
+    backgroundColor: COLORS.primaryDark,
+    paddingTop: 54,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
   },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 30,
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  subtitle: {
-    color: "#E8F5E9",
-    lineHeight: 22,
-    fontWeight: "700",
-  },
-  meta: {
-    color: "#BBF7D0",
-    fontWeight: "800",
-    marginTop: 6,
-    fontSize: 12,
-  },
-  headerButtons: {
+  headerTop: {
     flexDirection: "row",
+    alignItems: "center",
     gap: 10,
-    marginTop: 16,
   },
   backButton: {
-    backgroundColor: "#111827",
-    paddingHorizontal: 16,
-    paddingVertical: 11,
+    width: 40,
+    height: 40,
     borderRadius: 12,
+    backgroundColor: COLORS.dark,
+    alignItems: "center",
+    justifyContent: "center",
   },
   backText: {
     color: "#FFFFFF",
+    fontSize: 30,
     fontWeight: "900",
+    marginTop: -4,
+  },
+  eyebrow: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 28,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  subtitle: {
+    color: "#E8F5E9",
+    lineHeight: 20,
+    fontWeight: "700",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  metaGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 14,
+  },
+  metaChip: {
+    backgroundColor: "rgba(255,255,255,0.13)",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    maxWidth: "100%",
+  },
+  metaLabel: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    fontSize: 10,
+    textTransform: "uppercase",
+  },
+  metaValue: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+    fontSize: 11,
+    marginTop: 2,
+    maxWidth: 230,
+  },
+  headerActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
   },
   refreshButton: {
     backgroundColor: "#FFFFFF",
@@ -374,38 +473,32 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 12,
   },
-  refreshText: {
-    color: "#064E3B",
-    fontWeight: "900",
+  refreshText: { color: COLORS.primaryDark, fontWeight: "900" },
+  trackButton: {
+    backgroundColor: COLORS.dark,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 12,
   },
-  loadingBox: {
-    padding: 24,
-    alignItems: "center",
-  },
-  loadingText: {
-    marginTop: 10,
-    color: "#064E3B",
-    fontWeight: "900",
-  },
-  messageList: {
-    padding: 16,
-    paddingBottom: 120,
-  },
+  trackText: { color: "#FFFFFF", fontWeight: "900" },
+  loadingBox: { padding: 24, alignItems: "center" },
+  loadingText: { marginTop: 10, color: COLORS.primaryDark, fontWeight: "900" },
+  messageList: { padding: 16, paddingBottom: 120 },
   emptyCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     borderRadius: 18,
     padding: 20,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: COLORS.border,
   },
   emptyTitle: {
-    color: "#111827",
+    color: COLORS.text,
     fontSize: 20,
     fontWeight: "900",
     marginBottom: 6,
   },
   emptyText: {
-    color: "#6B7280",
+    color: COLORS.muted,
     lineHeight: 22,
     fontWeight: "700",
   },
@@ -416,52 +509,46 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   myMessage: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.primaryDark,
     alignSelf: "flex-end",
     borderTopRightRadius: 4,
   },
   otherMessage: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     alignSelf: "flex-start",
     borderTopLeftRadius: 4,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: COLORS.border,
   },
   sender: {
-    color: "#064E3B",
+    color: COLORS.primaryDark,
     fontWeight: "900",
     marginBottom: 6,
     fontSize: 12,
   },
-  mySender: {
-    color: "#DFF5E5",
-  },
+  mySender: { color: "#DFF5E5" },
   messageText: {
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "700",
     lineHeight: 21,
     fontSize: 15,
   },
-  myMessageText: {
-    color: "#FFFFFF",
-  },
+  myMessageText: { color: "#FFFFFF" },
   timeText: {
-    color: "#6B7280",
+    color: COLORS.muted,
     fontSize: 11,
     marginTop: 8,
     fontWeight: "700",
   },
-  myTimeText: {
-    color: "#DFF5E5",
-  },
+  myTimeText: { color: "#DFF5E5" },
   composer: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     borderTopWidth: 1,
-    borderTopColor: "#D1D5DB",
+    borderTopColor: COLORS.border,
     padding: 12,
     flexDirection: "row",
     gap: 10,
@@ -475,22 +562,17 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: "#111827",
+    color: COLORS.dark,
     fontWeight: "700",
   },
   sendButton: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.primaryDark,
     paddingHorizontal: 20,
     paddingVertical: 15,
     borderRadius: 16,
     minWidth: 76,
     alignItems: "center",
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  sendText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  disabledButton: { opacity: 0.6 },
+  sendText: { color: "#FFFFFF", fontWeight: "900" },
 });

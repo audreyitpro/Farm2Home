@@ -19,9 +19,8 @@ import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL } from "../config/api";
+import { getBackendUrl } from "../services/apiConfig";
 import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
 
 type LoadStatus =
   | "accepted"
@@ -30,6 +29,23 @@ type LoadStatus =
   | "in_transit"
   | "arrived_dropoff"
   | "delivered";
+
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#151922",
+  muted: "#7B8494",
+  border: "#E6E8EF",
+  red: "#E1122D",
+  redDark: "#B80F25",
+  redSoft: "#FFE6EA",
+  black: "#111827",
+  soft: "#F3F4F8",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  purple: "#7C3AED",
+};
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
@@ -361,7 +377,10 @@ export default function LiveLocationProviderScreen() {
       setLoading(true);
 
       if (!proofId) {
-        Alert.alert("Missing Delivery ID", "This screen needs a loadId, orderId, or deliveryOrderId.");
+        Alert.alert(
+          "Missing Delivery ID",
+          "This screen needs a loadId, orderId, or deliveryOrderId."
+        );
         return;
       }
 
@@ -417,7 +436,7 @@ export default function LiveLocationProviderScreen() {
     if (!proofId) return;
 
     try {
-      await fetch(`${API_BASE_URL}/orders/${proofId}/status`, {
+      await fetch(`${getBackendUrl()}/orders/${proofId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -493,7 +512,10 @@ export default function LiveLocationProviderScreen() {
 
   async function updateLoadStatus(nextStatus: LoadStatus) {
     if (!proofId) {
-      Alert.alert("Missing Delivery ID", "This screen needs a loadId, orderId, or deliveryOrderId.");
+      Alert.alert(
+        "Missing Delivery ID",
+        "This screen needs a loadId, orderId, or deliveryOrderId."
+      );
       return;
     }
 
@@ -530,19 +552,19 @@ export default function LiveLocationProviderScreen() {
   function statusColor() {
     switch (status) {
       case "accepted":
-        return "#7C3AED";
+        return COLORS.purple;
       case "arrived_pickup":
         return "#0EA5E9";
       case "picked_up":
-        return "#F59E0B";
+        return COLORS.orange;
       case "in_transit":
         return "#0F766E";
       case "arrived_dropoff":
-        return "#2563EB";
+        return COLORS.blue;
       case "delivered":
-        return "#10B981";
+        return COLORS.green;
       default:
-        return "#64748B";
+        return COLORS.muted;
     }
   }
 
@@ -562,60 +584,79 @@ export default function LiveLocationProviderScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
+        <View style={styles.hero}>
+          <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.kicker}>Driver Operations</Text>
-              <Text style={styles.title}>Live Location</Text>
+              <Text style={styles.kicker}>Farm2Driver Tracking</Text>
+              <Text style={styles.title}>Live Map</Text>
               <Text style={styles.subtitle}>
-                Share location and update delivery milestones in real time.
+                Share GPS, update route milestones, and keep customers, farmers, and dispatch informed.
               </Text>
             </View>
 
             <View style={[styles.liveBadge, sharing && styles.liveBadgeActive]}>
               <Ionicons
                 name={sharing ? "radio" : "radio-outline"}
-                size={20}
-                color={sharing ? "#BBF7D0" : "#CBD5E1"}
+                size={22}
+                color="#FFFFFF"
               />
+            </View>
+          </View>
+
+          <View style={styles.mapPreview}>
+            <View style={styles.mapGridLineOne} />
+            <View style={styles.mapGridLineTwo} />
+            <View style={styles.mapRoad} />
+            <View style={styles.mapPinStart}>
+              <Ionicons name="ellipse" size={12} color="#FFFFFF" />
+            </View>
+            <View style={styles.mapPinEnd}>
+              <Ionicons name="location" size={22} color="#FFFFFF" />
+            </View>
+            <View style={styles.truckBubble}>
+              <Ionicons name="car-sport" size={23} color={COLORS.red} />
             </View>
           </View>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardHeading}>Driver</Text>
-          <InfoRow label="Driver Name" value={driverName} />
-          <InfoRow label="Delivery ID" value={proofId || "No delivery selected"} />
+        <View style={styles.statusCard}>
+          <View>
+            <Text style={styles.statusLabel}>Current Status</Text>
+            <Text style={styles.statusTitle}>{formatStatus(status)}</Text>
+          </View>
 
-          <Text style={styles.cardTitle}>Current Status</Text>
           <View style={[styles.statusPill, { backgroundColor: statusColor() }]}>
-            <Text style={styles.statusText}>{formatStatus(status)}</Text>
+            <Text style={styles.statusText}>{sharing ? "Live" : "Idle"}</Text>
           </View>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardHeading}>Current Location</Text>
-
-          <InfoRow label="Latitude" value={latitude ?? "Not available"} />
-          <InfoRow label="Longitude" value={longitude ?? "Not available"} />
+          <Text style={styles.cardHeading}>Shipment Details</Text>
+          <InfoRow icon="person" label="Driver" value={driverName} />
+          <InfoRow icon="cube" label="Delivery ID" value={proofId || "No delivery selected"} />
           <InfoRow
-            label="Speed"
-            value={speed !== null ? `${speed.toFixed(1)} m/s` : "Not available"}
-          />
-          <InfoRow
-            label="Heading"
-            value={heading !== null ? `${heading.toFixed(1)}°` : "Not available"}
-          />
-          <InfoRow
-            label="Updated"
+            icon="time"
+            label="Last Updated"
             value={updatedAt ? new Date(updatedAt).toLocaleString() : "Not yet"}
           />
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardHeading}>GPS Location</Text>
+
+          <View style={styles.gpsGrid}>
+            <GpsTile label="Latitude" value={latitude !== null ? latitude.toFixed(6) : "--"} />
+            <GpsTile label="Longitude" value={longitude !== null ? longitude.toFixed(6) : "--"} />
+            <GpsTile label="Speed" value={speed !== null ? `${speed.toFixed(1)} m/s` : "--"} />
+            <GpsTile label="Heading" value={heading !== null ? `${heading.toFixed(1)}°` : "--"} />
+          </View>
 
           <TouchableOpacity style={styles.mapButton} onPress={openMap}>
-            <Text style={styles.mapButtonText}>Open Map</Text>
+            <Ionicons name="map" size={18} color="#FFFFFF" />
+            <Text style={styles.mapButtonText}>Open Device Map</Text>
           </TouchableOpacity>
         </View>
 
@@ -628,9 +669,12 @@ export default function LiveLocationProviderScreen() {
             {loading && !sharing ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.primaryButtonText}>
-                {sharing ? "Live Location Active" : "Start Live Location"}
-              </Text>
+              <>
+                <Ionicons name="radio" size={18} color="#FFFFFF" />
+                <Text style={styles.primaryButtonText}>
+                  {sharing ? "Live Location Active" : "Start Live Location"}
+                </Text>
+              </>
             )}
           </TouchableOpacity>
 
@@ -639,6 +683,7 @@ export default function LiveLocationProviderScreen() {
             onPress={refreshCurrentLocation}
             disabled={loading}
           >
+            <Ionicons name="refresh" size={18} color={COLORS.red} />
             <Text style={styles.secondaryButtonText}>Refresh Location</Text>
           </TouchableOpacity>
 
@@ -649,6 +694,7 @@ export default function LiveLocationProviderScreen() {
               Alert.alert("Stopped", "Live location sharing has stopped.");
             }}
           >
+            <Ionicons name="stop-circle" size={18} color="#FFFFFF" />
             <Text style={styles.dangerButtonText}>Stop Live Location</Text>
           </TouchableOpacity>
         </View>
@@ -658,12 +704,14 @@ export default function LiveLocationProviderScreen() {
 
           <MilestoneButton
             label="Arrived Pickup"
+            icon="pin"
             onPress={() => updateLoadStatus("arrived_pickup")}
             disabled={loading}
           />
 
           <MilestoneButton
             label="Proof of Pickup"
+            icon="camera"
             onPress={() =>
               router.push({
                 pathname: "/driver/proof-of-pickup",
@@ -679,24 +727,28 @@ export default function LiveLocationProviderScreen() {
 
           <MilestoneButton
             label="Picked Up"
+            icon="cube"
             onPress={() => updateLoadStatus("picked_up")}
             disabled={loading}
           />
 
           <MilestoneButton
             label="In Transit"
+            icon="car"
             onPress={() => updateLoadStatus("in_transit")}
             disabled={loading}
           />
 
           <MilestoneButton
             label="Arrived Dropoff"
+            icon="location"
             onPress={() => updateLoadStatus("arrived_dropoff")}
             disabled={loading}
           />
 
           <MilestoneButton
             label="Proof of Delivery"
+            icon="checkmark-done"
             onPress={() =>
               router.push({
                 pathname: "/driver/proof-of-delivery",
@@ -715,6 +767,7 @@ export default function LiveLocationProviderScreen() {
             onPress={() => updateLoadStatus("delivered")}
             disabled={loading}
           >
+            <Ionicons name="checkmark-circle" size={19} color="#FFFFFF" />
             <Text style={styles.completeButtonText}>Complete Delivery</Text>
           </TouchableOpacity>
         </View>
@@ -730,21 +783,45 @@ export default function LiveLocationProviderScreen() {
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string | number }) {
+function InfoRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string | number;
+}) {
   return (
     <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{String(value)}</Text>
+      <View style={styles.infoIcon}>
+        <Ionicons name={icon} size={17} color={COLORS.red} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue}>{String(value)}</Text>
+      </View>
+    </View>
+  );
+}
+
+function GpsTile({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.gpsTile}>
+      <Text style={styles.gpsLabel}>{label}</Text>
+      <Text style={styles.gpsValue}>{value}</Text>
     </View>
   );
 }
 
 function MilestoneButton({
   label,
+  icon,
   onPress,
   disabled,
 }: {
   label: string;
+  icon: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
   disabled?: boolean;
 }) {
@@ -754,113 +831,236 @@ function MilestoneButton({
       onPress={onPress}
       disabled={disabled}
     >
+      <Ionicons name={icon} size={18} color={COLORS.red} />
       <Text style={styles.actionButtonText}>{label}</Text>
+      <Ionicons name="chevron-forward" size={18} color={COLORS.muted} />
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 100 },
-  header: {
-    backgroundColor: "#020617",
+  hero: {
+    backgroundColor: COLORS.red,
     paddingTop: 22,
     paddingHorizontal: 20,
-    paddingBottom: 26,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 24,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
-  headerTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   kicker: {
-    color: "#10B981",
+    color: "#FFE6EA",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
     color: "#FFFFFF",
-    marginTop: 6,
+    marginTop: 4,
   },
   subtitle: {
-    color: "#CBD5E1",
+    color: "#FFFFFF",
+    opacity: 0.9,
     fontWeight: "700",
-    lineHeight: 22,
-    marginTop: 8,
+    lineHeight: 21,
+    marginTop: 7,
   },
   liveBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: "#334155",
+    width: 50,
+    height: 50,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#475569",
   },
   liveBadgeActive: {
-    backgroundColor: "#064E3B",
-    borderColor: "#10B981",
+    backgroundColor: COLORS.black,
   },
-  card: {
-    backgroundColor: freightTheme.colors.card,
+  mapPreview: {
+    height: 190,
+    backgroundColor: "#CFE6F7",
+    borderRadius: 24,
+    marginTop: 20,
+    overflow: "hidden",
+    position: "relative",
+  },
+  mapGridLineOne: {
+    position: "absolute",
+    width: "150%",
+    height: 3,
+    backgroundColor: "rgba(255,255,255,0.65)",
+    top: 70,
+    left: -50,
+    transform: [{ rotate: "-18deg" }],
+  },
+  mapGridLineTwo: {
+    position: "absolute",
+    width: "140%",
+    height: 3,
+    backgroundColor: "rgba(255,255,255,0.65)",
+    top: 124,
+    left: -40,
+    transform: [{ rotate: "18deg" }],
+  },
+  mapRoad: {
+    position: "absolute",
+    width: 240,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.red,
+    top: 92,
+    left: 42,
+    transform: [{ rotate: "-24deg" }],
+  },
+  mapPinStart: {
+    position: "absolute",
+    top: 124,
+    left: 56,
+    width: 32,
+    height: 32,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    backgroundColor: COLORS.green,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mapPinEnd: {
+    position: "absolute",
+    top: 44,
+    right: 58,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  truckBubble: {
+    position: "absolute",
+    top: 81,
+    left: "47%",
+    width: 52,
+    height: 52,
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: COLORS.redSoft,
+  },
+  statusCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
     padding: 16,
     marginHorizontal: 18,
-    marginTop: 14,
+    marginTop: -18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    alignItems: "center",
   },
-  cardHeading: {
-    color: freightTheme.colors.text,
-    fontSize: 19,
+  statusLabel: {
+    color: COLORS.muted,
     fontWeight: "900",
-    marginBottom: 10,
-  },
-  cardTitle: {
-    color: freightTheme.colors.primary,
-    fontSize: 11,
-    fontWeight: "900",
+    fontSize: 12,
     textTransform: "uppercase",
-    marginTop: 8,
+  },
+  statusTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 2,
   },
   statusPill: {
-    alignSelf: "flex-start",
+    marginLeft: "auto",
     borderRadius: 999,
     paddingVertical: 8,
     paddingHorizontal: 13,
-    marginTop: 6,
   },
   statusText: {
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "900",
   },
+  card: {
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    marginHorizontal: 18,
+    marginTop: 14,
+  },
+  cardHeading: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
   infoRow: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
+    backgroundColor: COLORS.soft,
+    borderRadius: 15,
     padding: 13,
     marginBottom: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  infoIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
   infoLabel: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 11,
     textTransform: "uppercase",
   },
   infoValue: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "800",
-    marginTop: 4,
+    marginTop: 3,
+  },
+  gpsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  gpsTile: {
+    width: "48%",
+    backgroundColor: COLORS.soft,
+    borderRadius: 15,
+    padding: 13,
+  },
+  gpsLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  gpsValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 6,
+    fontSize: 13,
   },
   mapButton: {
-    backgroundColor: "#111827",
-    borderRadius: 13,
-    padding: 13,
+    backgroundColor: COLORS.black,
+    borderRadius: 15,
+    padding: 14,
     alignItems: "center",
-    marginTop: 4,
+    justifyContent: "center",
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
   },
   mapButtonText: {
     color: "#FFFFFF",
@@ -871,35 +1071,44 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   primaryButton: {
-    backgroundColor: freightTheme.colors.primary,
-    borderRadius: 13,
+    backgroundColor: COLORS.red,
+    borderRadius: 15,
     padding: 15,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: 9,
+    flexDirection: "row",
+    gap: 8,
   },
   primaryButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
   secondaryButton: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    borderRadius: 13,
+    borderColor: COLORS.border,
+    borderRadius: 15,
     padding: 15,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: 9,
+    flexDirection: "row",
+    gap: 8,
   },
   secondaryButtonText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   dangerButton: {
-    backgroundColor: "#991B1B",
-    borderRadius: 13,
+    backgroundColor: COLORS.black,
+    borderRadius: 15,
     padding: 15,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: 12,
+    flexDirection: "row",
+    gap: 8,
   },
   dangerButtonText: {
     color: "#FFFFFF",
@@ -910,30 +1119,36 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "900",
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     marginBottom: 11,
   },
   actionButton: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    borderRadius: 13,
+    borderColor: COLORS.border,
+    borderRadius: 15,
     padding: 14,
     alignItems: "center",
     marginBottom: 9,
+    flexDirection: "row",
+    gap: 10,
   },
   actionButtonText: {
-    color: freightTheme.colors.primary,
+    flex: 1,
+    color: COLORS.text,
     fontWeight: "900",
   },
   completeButton: {
-    backgroundColor: "#064E3B",
-    borderRadius: 13,
+    backgroundColor: COLORS.green,
+    borderRadius: 15,
     padding: 15,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 4,
+    flexDirection: "row",
+    gap: 8,
   },
   completeButtonText: {
     color: "#FFFFFF",
@@ -944,7 +1159,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   backButtonText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   disabledButton: {

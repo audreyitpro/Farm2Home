@@ -48,6 +48,29 @@ export default function DriverCustomerChatScreen() {
     initialize();
   }, []);
 
+  useEffect(() => {
+    if (!driver?.id) return;
+
+    const channel = supabase
+      .channel(`driver-customer-chat-${deliveryOrderId || orderId || driver.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "order_chats",
+        },
+        () => {
+          loadMessages(driver.id);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [driver?.id, orderId, deliveryOrderId]);
+
   async function initialize() {
     try {
       setLoading(true);
@@ -123,13 +146,6 @@ export default function DriverCustomerChatScreen() {
     return currentDriver;
   }
 
-  function conversationFilter(row: any) {
-    if (deliveryOrderId && String(row.delivery_order_id || "") === deliveryOrderId) return true;
-    if (orderId && String(row.order_id || "") === orderId) return true;
-    if (!deliveryOrderId && !orderId && String(row.driver_id || "") === String(driver?.id)) return true;
-    return false;
-  }
-
   async function loadMessages(driverId: string) {
     let query = supabase
       .from("order_chats")
@@ -157,7 +173,9 @@ export default function DriverCustomerChatScreen() {
   }
 
   async function sendMessage() {
-    if (!message.trim()) return;
+    const cleanMessage = message.trim();
+
+    if (!cleanMessage) return;
 
     if (!driver?.id) {
       Alert.alert("Driver Login Required", "Please login again.");
@@ -166,8 +184,6 @@ export default function DriverCustomerChatScreen() {
 
     try {
       setSending(true);
-
-      const now = new Date().toISOString();
 
       const payload = {
         order_id: orderId || deliveryOrderId || "general",
@@ -178,11 +194,11 @@ export default function DriverCustomerChatScreen() {
         sender_role: "driver",
         sender_id: driver.id,
         sender_context: "customer_driver",
-        message: message.trim(),
+        message: cleanMessage,
         read_by_farmer: false,
         read_by_driver: true,
         read_by_customer: false,
-        created_at: now,
+        created_at: new Date().toISOString(),
       };
 
       const { error } = await supabase.from("order_chats").insert(payload);
@@ -196,6 +212,17 @@ export default function DriverCustomerChatScreen() {
     } finally {
       setSending(false);
     }
+  }
+
+  function senderLabel(item: any) {
+    const role = normalize(item.sender_role);
+
+    if (role === "driver") return "Driver";
+    if (role === "customer") return "Customer";
+    if (role === "farmer") return "Farmer";
+    if (role === "admin") return "Support";
+
+    return "Farm2Home";
   }
 
   if (loading) {
@@ -226,8 +253,27 @@ export default function DriverCustomerChatScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Driver Communications</Text>
             <Text style={styles.title}>Customer Chat</Text>
-            <Text style={styles.subtitle}>Order-based delivery communication</Text>
+            <Text style={styles.subtitle}>
+              Order-based delivery communication for Farm2Driver.
+            </Text>
           </View>
+        </View>
+
+        <View style={styles.metaBar}>
+          <Text style={styles.metaText}>
+            {deliveryOrderId
+              ? `Delivery #${deliveryOrderId}`
+              : orderId
+              ? `Order #${orderId}`
+              : "General customer delivery chat"}
+          </Text>
+
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={() => driver?.id && loadMessages(driver.id)}
+          >
+            <Text style={styles.refreshText}>Refresh</Text>
+          </TouchableOpacity>
         </View>
 
         <FlatList
@@ -237,20 +283,24 @@ export default function DriverCustomerChatScreen() {
           ListEmptyComponent={
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No messages yet</Text>
-              <Text style={styles.emptyText}>Customer delivery messages will appear here.</Text>
+              <Text style={styles.emptyText}>
+                Customer delivery messages will appear here.
+              </Text>
             </View>
           }
           renderItem={({ item }) => {
-            const isDriver = item.sender_role === "driver";
+            const isDriver = normalize(item.sender_role) === "driver";
 
             return (
               <View style={[styles.bubble, isDriver && styles.myBubble]}>
                 <Text style={[styles.sender, isDriver && styles.mySender]}>
-                  {isDriver ? "Driver" : "Customer"}
+                  {senderLabel(item)}
                 </Text>
+
                 <Text style={[styles.messageText, isDriver && styles.myMessageText]}>
                   {item.message}
                 </Text>
+
                 <Text style={[styles.timeText, isDriver && styles.myTimeText]}>
                   {item.created_at ? new Date(item.created_at).toLocaleString() : ""}
                 </Text>
@@ -325,6 +375,32 @@ const styles = StyleSheet.create({
   },
   title: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 3 },
   subtitle: { color: "#CBD5E1", fontWeight: "700", fontSize: 12, marginTop: 2 },
+  metaBar: {
+    backgroundColor: freightTheme.colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: freightTheme.colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  metaText: {
+    flex: 1,
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+  },
+  refreshButton: {
+    backgroundColor: "#111827",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  refreshText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 12,
+  },
   messageList: { padding: 16, paddingBottom: 100 },
   emptyCard: {
     backgroundColor: freightTheme.colors.card,

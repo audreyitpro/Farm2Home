@@ -23,7 +23,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../services/supabaseClient";
 import { uploadProofOfDeliveryImage } from "../services/storageService";
 import { notifyDeliveryCompleted } from "../services/notificationService";
-import freightTheme from "../styles/freightTheme";
+
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#151922",
+  muted: "#7B8494",
+  border: "#E6E8EF",
+  red: "#E1122D",
+  redSoft: "#FFE6EA",
+  black: "#111827",
+  soft: "#F3F4F8",
+  green: "#10B981",
+  orange: "#F59E0B",
+};
 
 function getParamString(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] || "";
@@ -94,23 +107,21 @@ export default function ProofOfDelivery() {
 
     if (!targetId) return;
 
-    const payload = {
-      status: "delivered",
-      delivered_at: now,
-      proof_of_delivery_url: uploadedUrl,
-      proof_of_delivery_photo_url: uploadedUrl,
-      delivery_receiver_name: receiverName.trim(),
-      delivery_signature_text: signatureText.trim(),
-      delivery_temperature: temperature.trim() || null,
-      delivery_cold_chain_confirmed: coldChainConfirmed,
-      delivery_damage_reported: damageReported,
-      delivery_notes: notes.trim() || null,
-      updated_at: now,
-    };
-
     const { error } = await supabase
       .from("delivery_orders")
-      .update(payload)
+      .update({
+        status: "delivered",
+        delivered_at: now,
+        proof_of_delivery_url: uploadedUrl,
+        proof_of_delivery_photo_url: uploadedUrl,
+        delivery_receiver_name: receiverName.trim(),
+        delivery_signature_text: signatureText.trim(),
+        delivery_temperature: temperature.trim() || null,
+        delivery_cold_chain_confirmed: coldChainConfirmed,
+        delivery_damage_reported: damageReported,
+        delivery_notes: notes.trim() || null,
+        updated_at: now,
+      })
       .eq("id", targetId);
 
     if (error) {
@@ -294,7 +305,7 @@ export default function ProofOfDelivery() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -303,20 +314,34 @@ export default function ProofOfDelivery() {
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.header}>
-            <Text style={styles.eyebrow}>Driver Operations</Text>
-            <Text style={styles.title}>Proof of Delivery</Text>
-            <Text style={styles.subtitle}>
-              Confirm receiver, delivery photo, condition, signature, and final notes.
-            </Text>
+          <View style={styles.hero}>
+            <View style={styles.heroTop}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eyebrow}>Farm2Driver Verification</Text>
+                <Text style={styles.title}>Proof Delivery</Text>
+                <Text style={styles.subtitle}>
+                  Confirm receiver, photo, condition, temperature, signature, and final notes.
+                </Text>
+              </View>
+
+              <View style={styles.heroIcon}>
+                <Ionicons name="checkmark-done" size={26} color="#FFFFFF" />
+              </View>
+            </View>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Delivery Reference</Text>
             <View style={styles.referenceBox}>
-              <Text style={styles.referenceLabel}>Delivery ID</Text>
-              <Text style={styles.referenceText}>{proofId || "Not provided"}</Text>
+              <View style={styles.referenceIcon}>
+                <Ionicons name="cube" size={19} color={COLORS.red} />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.referenceLabel}>Delivery / Load ID</Text>
+                <Text style={styles.referenceText}>{proofId || "Not provided"}</Text>
+              </View>
             </View>
           </View>
 
@@ -327,15 +352,18 @@ export default function ProofOfDelivery() {
               <View style={styles.photoWrap}>
                 <Image source={{ uri: photoUri }} style={styles.photo} />
                 <View style={styles.photoStatus}>
+                  <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
                   <Text style={styles.photoStatusText}>Photo attached</Text>
                 </View>
               </View>
             ) : (
               <View style={styles.photoPlaceholder}>
-                <Ionicons name="camera-outline" size={34} color="#10B981" />
+                <View style={styles.photoPlaceholderIcon}>
+                  <Ionicons name="camera-outline" size={34} color={COLORS.red} />
+                </View>
                 <Text style={styles.photoPlaceholderTitle}>No photo attached</Text>
                 <Text style={styles.photoPlaceholderText}>
-                  Take or upload a clear photo before completing delivery.
+                  Take or upload a clear delivery photo before completing this shipment.
                 </Text>
               </View>
             )}
@@ -346,6 +374,7 @@ export default function ProofOfDelivery() {
                 onPress={takeDeliveryPhoto}
                 disabled={loading}
               >
+                <Ionicons name="camera" size={18} color="#FFFFFF" />
                 <Text style={styles.primaryButtonText}>
                   {photoUri ? "Retake Photo" : "Take Photo"}
                 </Text>
@@ -356,6 +385,7 @@ export default function ProofOfDelivery() {
                 onPress={pickDeliveryPhoto}
                 disabled={loading}
               >
+                <Ionicons name="image" size={18} color={COLORS.red} />
                 <Text style={styles.secondaryButtonText}>Upload</Text>
               </TouchableOpacity>
             </View>
@@ -364,6 +394,7 @@ export default function ProofOfDelivery() {
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Receiver Confirmation</Text>
 
+            <Text style={styles.inputLabel}>Receiver Name</Text>
             <TextInput
               style={styles.input}
               placeholder="Receiver name"
@@ -372,9 +403,10 @@ export default function ProofOfDelivery() {
               onChangeText={setReceiverName}
             />
 
+            <Text style={styles.inputLabel}>Signature / Initials</Text>
             <TextInput
               style={styles.input}
-              placeholder="Receiver initials / signature confirmation"
+              placeholder="Receiver initials or signature confirmation"
               placeholderTextColor="#94A3B8"
               value={signatureText}
               onChangeText={setSignatureText}
@@ -384,9 +416,10 @@ export default function ProofOfDelivery() {
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Condition Details</Text>
 
+            <Text style={styles.inputLabel}>Temperature</Text>
             <TextInput
               style={styles.input}
-              placeholder="Temperature, example: 38°F"
+              placeholder="Example: 38°F"
               placeholderTextColor="#94A3B8"
               value={temperature}
               onChangeText={setTemperature}
@@ -395,36 +428,42 @@ export default function ProofOfDelivery() {
             <TouchableOpacity
               style={[
                 styles.toggleButton,
-                coldChainConfirmed && styles.toggleButtonActive,
+                coldChainConfirmed && styles.coldChainActive,
               ]}
               onPress={() => setColdChainConfirmed((prev) => !prev)}
               disabled={loading}
             >
+              <Ionicons
+                name={coldChainConfirmed ? "snow" : "snow-outline"}
+                size={18}
+                color={coldChainConfirmed ? "#FFFFFF" : COLORS.red}
+              />
               <Text
                 style={[
                   styles.toggleText,
                   coldChainConfirmed && styles.toggleTextActive,
                 ]}
               >
-                {coldChainConfirmed
-                  ? "Cold Chain Confirmed"
-                  : "Confirm Cold Chain"}
+                {coldChainConfirmed ? "Cold Chain Confirmed" : "Confirm Cold Chain"}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[
-                styles.toggleButton,
-                damageReported && styles.damageButtonActive,
-              ]}
+              style={[styles.toggleButton, damageReported && styles.damageButtonActive]}
               onPress={() => setDamageReported((prev) => !prev)}
               disabled={loading}
             >
+              <Ionicons
+                name={damageReported ? "warning" : "warning-outline"}
+                size={18}
+                color={damageReported ? "#FFFFFF" : COLORS.red}
+              />
               <Text style={[styles.toggleText, damageReported && styles.toggleTextActive]}>
                 {damageReported ? "Damage Reported" : "Report Damage"}
               </Text>
             </TouchableOpacity>
 
+            <Text style={styles.inputLabel}>Delivery Notes</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
               placeholder="Delivery notes, condition notes, exceptions..."
@@ -443,7 +482,10 @@ export default function ProofOfDelivery() {
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.submitText}>Submit Proof and Complete Delivery</Text>
+              <>
+                <Ionicons name="checkmark-circle" size={19} color="#FFFFFF" />
+                <Text style={styles.submitText}>Submit Proof and Complete Delivery</Text>
+              </>
             )}
           </TouchableOpacity>
 
@@ -463,71 +505,96 @@ export default function ProofOfDelivery() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
   },
   keyboard: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
   },
   content: {
     paddingBottom: 100,
   },
-  header: {
-    backgroundColor: "#020617",
+  hero: {
+    backgroundColor: COLORS.red,
     paddingTop: 22,
     paddingHorizontal: 20,
     paddingBottom: 26,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  heroIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   eyebrow: {
-    color: "#10B981",
+    color: "#FFE6EA",
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 4,
     textTransform: "uppercase",
     letterSpacing: 1,
     fontSize: 12,
   },
   title: {
     color: "#FFFFFF",
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
-    marginBottom: 9,
   },
   subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 22,
+    color: "#FFFFFF",
+    opacity: 0.9,
+    lineHeight: 21,
     fontSize: 14,
     fontWeight: "700",
+    marginTop: 8,
   },
   card: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginTop: 14,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   sectionTitle: {
-    color: freightTheme.colors.text,
-    fontSize: 18,
+    color: COLORS.text,
+    fontSize: 19,
     fontWeight: "900",
     marginBottom: 11,
   },
   referenceBox: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
+    backgroundColor: COLORS.soft,
+    borderRadius: 15,
     padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  referenceIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
   referenceLabel: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   referenceText: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     lineHeight: 21,
     marginTop: 4,
@@ -537,42 +604,53 @@ const styles = StyleSheet.create({
   },
   photo: {
     width: "100%",
-    height: 210,
-    borderRadius: 14,
-    backgroundColor: "#0F172A",
+    height: 220,
+    borderRadius: 18,
+    backgroundColor: COLORS.black,
   },
   photoStatus: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.green,
     borderRadius: 999,
     paddingVertical: 7,
     paddingHorizontal: 11,
     alignSelf: "flex-start",
     marginTop: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
   },
   photoStatusText: {
-    color: "#BBF7D0",
+    color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 12,
   },
   photoPlaceholder: {
-    height: 170,
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 14,
+    minHeight: 180,
+    backgroundColor: COLORS.soft,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    padding: 18,
+    borderColor: COLORS.border,
+    padding: 20,
+  },
+  photoPlaceholderIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
   photoPlaceholderTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     fontSize: 17,
-    marginTop: 9,
+    marginTop: 10,
   },
   photoPlaceholderText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     textAlign: "center",
     marginTop: 6,
@@ -585,63 +663,75 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     flex: 1,
-    backgroundColor: freightTheme.colors.primary,
-    padding: 13,
-    borderRadius: 13,
+    backgroundColor: COLORS.red,
+    padding: 14,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   secondaryButton: {
-    flex: 0.7,
-    backgroundColor: freightTheme.colors.surface,
-    padding: 13,
-    borderRadius: 13,
+    flex: 0.75,
+    backgroundColor: COLORS.redSoft,
+    padding: 14,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: "#FFD6DE",
+    flexDirection: "row",
+    gap: 7,
   },
   primaryButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
   secondaryButtonText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
+  inputLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginBottom: 7,
+  },
   input: {
-    backgroundColor: "#FFFFFF",
-    color: "#111827",
-    borderRadius: 12,
+    backgroundColor: COLORS.soft,
+    color: COLORS.text,
+    borderRadius: 14,
     padding: 13,
-    marginBottom: 10,
+    marginBottom: 12,
     fontWeight: "700",
     borderWidth: 1,
-    borderColor: "#CBD5E1",
+    borderColor: COLORS.border,
   },
   textArea: {
     minHeight: 105,
     textAlignVertical: "top",
   },
   toggleButton: {
-    backgroundColor: "#F3F4F6",
+    backgroundColor: COLORS.soft,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
-    padding: 13,
-    borderRadius: 12,
-    marginBottom: 9,
+    borderColor: COLORS.border,
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 10,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
-  toggleButtonActive: {
-    backgroundColor: "#10B981",
-    borderColor: "#10B981",
+  coldChainActive: {
+    backgroundColor: COLORS.green,
+    borderColor: COLORS.green,
   },
   damageButtonActive: {
-    backgroundColor: "#DC2626",
-    borderColor: "#DC2626",
+    backgroundColor: COLORS.orange,
+    borderColor: COLORS.orange,
   },
   toggleText: {
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "900",
     textAlign: "center",
   },
@@ -649,13 +739,15 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   submitButton: {
-    backgroundColor: "#10B981",
+    backgroundColor: COLORS.red,
     marginHorizontal: 18,
     marginTop: 18,
     padding: 16,
-    borderRadius: 14,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   disabledButton: {
     opacity: 0.6,
@@ -666,11 +758,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   backButton: {
-    backgroundColor: "#111827",
+    backgroundColor: COLORS.black,
     marginHorizontal: 18,
     marginTop: 12,
     padding: 14,
-    borderRadius: 14,
+    borderRadius: 15,
     alignItems: "center",
   },
   backText: {

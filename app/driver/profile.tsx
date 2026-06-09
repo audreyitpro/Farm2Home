@@ -1,6 +1,6 @@
 // app/driver/profile.tsx
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,17 +20,43 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
 
-import { API_BASE_URL } from "../config/api";
+import { getBackendUrl } from "../services/apiConfig";
 import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
+
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  white: "#FFFFFF",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  amber: "#D97706",
+  blue: "#2563EB",
+  slate: "#475569",
+};
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
+function money(value: number) {
+  return `$${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 export default function DriverProfile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const [driver, setDriver] = useState<any>(null);
 
@@ -54,13 +80,25 @@ export default function DriverProfile() {
 
   const [activeDeliveries, setActiveDeliveries] = useState(0);
   const [completedDeliveries, setCompletedDeliveries] = useState(0);
-  const [estimatedEarnings, setEstimatedEarnings] = useState(0);
+  const [activeFreight, setActiveFreight] = useState(0);
+  const [completedFreight, setCompletedFreight] = useState(0);
+  const [weeklyEarnings, setWeeklyEarnings] = useState(0);
+  const [lifetimeEarnings, setLifetimeEarnings] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
       loadDriver();
     }, [])
   );
+
+  const driverName = useMemo(() => {
+    return driver?.fullName || driver?.name || fullName || "Farm2Home Driver";
+  }, [driver, fullName]);
+
+  const initials = useMemo(() => {
+    const parts = String(driverName).split(" ").filter(Boolean);
+    return `${parts[0]?.[0] || "D"}${parts[1]?.[0] || ""}`.toUpperCase();
+  }, [driverName]);
 
   async function getStoredDriver() {
     const raw =
@@ -83,7 +121,6 @@ export default function DriverProfile() {
       setLoading(true);
 
       const stored = await getStoredDriver();
-
       const { data: authData } = await supabase.auth.getUser();
       const authUser = authData?.user;
 
@@ -105,52 +142,44 @@ export default function DriverProfile() {
       let profile: any = null;
 
       if (authUserId) {
-        const driverResult = await supabase
+        const result = await supabase
           .from("drivers")
           .select("*")
           .eq("id", authUserId)
           .maybeSingle();
 
-        if (!driverResult.error && driverResult.data) {
-          dbDriver = driverResult.data;
-        }
+        if (!result.error && result.data) dbDriver = result.data;
       }
 
       if (!dbDriver && authEmail) {
-        const driverResult = await supabase
+        const result = await supabase
           .from("drivers")
           .select("*")
           .eq("email", authEmail)
           .maybeSingle();
 
-        if (!driverResult.error && driverResult.data) {
-          dbDriver = driverResult.data;
-        }
+        if (!result.error && result.data) dbDriver = result.data;
       }
 
       if (dbDriver?.profile_id) {
-        const profileResult = await supabase
+        const result = await supabase
           .from("profiles")
           .select("*")
           .eq("id", dbDriver.profile_id)
           .maybeSingle();
 
-        if (!profileResult.error && profileResult.data) {
-          profile = profileResult.data;
-        }
+        if (!result.error && result.data) profile = result.data;
       }
 
       if (!profile && authUserId) {
-        const profileResult = await supabase
+        const result = await supabase
           .from("profiles")
           .select("*")
           .eq("auth_user_id", authUserId)
           .eq("role", "driver")
           .maybeSingle();
 
-        if (!profileResult.error && profileResult.data) {
-          profile = profileResult.data;
-        }
+        if (!result.error && result.data) profile = result.data;
       }
 
       const stableId =
@@ -169,14 +198,12 @@ export default function DriverProfile() {
       const normalizedDriver = {
         ...(stored || {}),
         ...(dbDriver || {}),
-
         id: stableId,
         driverId: stableId,
         authUserId: dbDriver?.auth_user_id || profile?.auth_user_id || authUserId,
         profileId: dbDriver?.profile_id || stored?.profileId || profile?.id || "",
         profile_id: dbDriver?.profile_id || stored?.profile_id || profile?.id || "",
         role: "driver",
-
         fullName:
           dbDriver?.full_name ||
           dbDriver?.name ||
@@ -184,7 +211,6 @@ export default function DriverProfile() {
           stored?.fullName ||
           stored?.name ||
           "Farm2Home Driver",
-
         name:
           dbDriver?.name ||
           dbDriver?.full_name ||
@@ -192,80 +218,40 @@ export default function DriverProfile() {
           stored?.name ||
           stored?.fullName ||
           "Farm2Home Driver",
-
         username: dbDriver?.username || profile?.username || stored?.username || "",
         email: normalize(dbDriver?.email || profile?.email || stored?.email || authEmail),
         phone: dbDriver?.phone || profile?.phone || stored?.phone || "",
-
         vehicleType: dbDriver?.vehicle_type || stored?.vehicleType || "",
         licenseNumber: dbDriver?.license_number || stored?.licenseNumber || "",
         serviceArea: dbDriver?.service_area || stored?.serviceArea || "",
         serviceRadiusMiles:
-          dbDriver?.service_radius_miles ||
-          stored?.serviceRadiusMiles ||
-          50,
-
-        availableNow:
-          dbDriver?.available_now ??
-          stored?.availableNow ??
-          true,
-
+          dbDriver?.service_radius_miles || stored?.serviceRadiusMiles || 50,
+        availableNow: dbDriver?.available_now ?? stored?.availableNow ?? true,
         farm2DriverEligible:
-          dbDriver?.farm2driver_eligible ??
-          stored?.farm2DriverEligible ??
-          true,
-
-        freightEligible:
-          dbDriver?.freight_eligible ??
-          stored?.freightEligible ??
-          true,
-
+          dbDriver?.farm2driver_eligible ?? stored?.farm2DriverEligible ?? true,
+        freightEligible: dbDriver?.freight_eligible ?? stored?.freightEligible ?? true,
         notificationsEnabled:
-          dbDriver?.notifications_enabled ??
-          stored?.notificationsEnabled ??
-          true,
-
+          dbDriver?.notifications_enabled ?? stored?.notificationsEnabled ?? true,
         licenseDocument: dbDriver?.license_document || stored?.licenseDocument || null,
         insuranceDocument: dbDriver?.insurance_document || stored?.insuranceDocument || null,
         uploadedDocs: dbDriver?.uploaded_docs || stored?.uploadedDocs || {},
-
         backgroundCheckStatus:
-          dbDriver?.background_check_status ||
-          stored?.backgroundCheckStatus ||
-          "Pending",
-
-        insuranceStatus:
-          dbDriver?.insurance_status ||
-          stored?.insuranceStatus ||
-          "Pending",
-
+          dbDriver?.background_check_status || stored?.backgroundCheckStatus || "Pending",
+        insuranceStatus: dbDriver?.insurance_status || stored?.insuranceStatus || "Pending",
+        documentsStatus:
+          dbDriver?.documents_status || stored?.documentsStatus || stored?.documentStatus || "Pending",
         accountActive:
-          dbDriver?.account_active ??
-          profile?.account_active ??
-          stored?.accountActive ??
-          true,
-
+          dbDriver?.account_active ?? profile?.account_active ?? stored?.accountActive ?? true,
         membershipStatus:
-          dbDriver?.membership_status ||
-          stored?.membershipStatus ||
-          "Active",
-
+          dbDriver?.membership_status || stored?.membershipStatus || "Active",
         subscriptionStatus:
-          dbDriver?.subscription_status ||
-          stored?.subscriptionStatus ||
-          "active",
-
-        stripeCustomerId:
-          dbDriver?.stripe_customer_id ||
-          stored?.stripeCustomerId ||
-          "",
-
+          dbDriver?.subscription_status || stored?.subscriptionStatus || "active",
+        stripeCustomerId: dbDriver?.stripe_customer_id || stored?.stripeCustomerId || "",
         stripeSubscriptionId:
           dbDriver?.stripe_subscription_id ||
           stored?.stripeSubscriptionId ||
           stored?.subscriptionId ||
           "",
-
         updatedAt: new Date().toISOString(),
       };
 
@@ -307,37 +293,84 @@ export default function DriverProfile() {
         .select("*")
         .or(`driver_id.eq.${id},assigned_driver_id.eq.${id},carrier_id.eq.${id}`);
 
-      const all = [
-        ...(Array.isArray(deliveryRows) ? deliveryRows : []),
-        ...(Array.isArray(freightRows) ? freightRows : []),
+      const deliveries = Array.isArray(deliveryRows) ? deliveryRows : [];
+      const freight = Array.isArray(freightRows) ? freightRows : [];
+
+      const activeStatuses = [
+        "accepted",
+        "assigned",
+        "arrived_pickup",
+        "picked_up",
+        "pickup_confirmed",
+        "in_transit",
+        "out_for_delivery",
+        "arrived_dropoff",
       ];
 
-      const active = all.filter((item) =>
-        ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
-          normalize(item.status)
-        )
+      const completedStatuses = ["delivered", "completed"];
+
+      setActiveDeliveries(
+        deliveries.filter((item) => activeStatuses.includes(normalize(item.status))).length
       );
 
-      const completed = all.filter((item) =>
-        ["delivered", "completed"].includes(normalize(item.status))
+      setCompletedDeliveries(
+        deliveries.filter((item) => completedStatuses.includes(normalize(item.status))).length
       );
 
-      const earnings = completed.reduce((sum, item) => {
+      setActiveFreight(
+        freight.filter((item) => activeStatuses.includes(normalize(item.status))).length
+      );
+
+      setCompletedFreight(
+        freight.filter((item) => completedStatuses.includes(normalize(item.status))).length
+      );
+
+      const allCompleted = [...deliveries, ...freight].filter((item) =>
+        completedStatuses.includes(normalize(item.status))
+      );
+
+      const weekStart = new Date();
+      weekStart.setDate(weekStart.getDate() - 7);
+
+      const total = allCompleted.reduce((sum, item) => {
         return (
           sum +
           Number(
-            item.payout_amount ||
+            item.driver_payout ||
+              item.payout_amount ||
+              item.payout ||
               item.delivery_fee ||
               item.freight_total ||
               item.total_due ||
               0
-          )
+          ) +
+          Number(item.tip || 0)
         );
       }, 0);
 
-      setActiveDeliveries(active.length);
-      setCompletedDeliveries(completed.length);
-      setEstimatedEarnings(earnings);
+      const weekly = allCompleted
+        .filter((item) => {
+          const date = item.completed_at || item.delivered_at || item.updated_at || item.created_at;
+          return date ? new Date(date) >= weekStart : false;
+        })
+        .reduce((sum, item) => {
+          return (
+            sum +
+            Number(
+              item.driver_payout ||
+                item.payout_amount ||
+                item.payout ||
+                item.delivery_fee ||
+                item.freight_total ||
+                item.total_due ||
+                0
+            ) +
+            Number(item.tip || 0)
+          );
+        }, 0);
+
+      setLifetimeEarnings(total);
+      setWeeklyEarnings(weekly);
     } catch (error) {
       console.log("Driver stats skipped:", error);
     }
@@ -410,20 +443,9 @@ export default function DriverProfile() {
   }
 
   async function saveProfile() {
-    if (!driver) {
-      Alert.alert("No Driver", "No driver profile was found.");
-      return;
-    }
-
-    if (!fullName.trim()) {
-      Alert.alert("Name Required", "Please enter your full name.");
-      return;
-    }
-
-    if (!username.trim()) {
-      Alert.alert("Username Required", "Please enter your username.");
-      return;
-    }
+    if (!driver) return Alert.alert("No Driver", "No driver profile was found.");
+    if (!fullName.trim()) return Alert.alert("Name Required", "Please enter your full name.");
+    if (!username.trim()) return Alert.alert("Username Required", "Please enter your username.");
 
     try {
       setSaving(true);
@@ -455,34 +477,23 @@ export default function DriverProfile() {
   }
 
   async function changePassword() {
-    if (!newPassword.trim()) {
-      Alert.alert("New Password Required", "Enter your new password.");
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      Alert.alert("Password Too Short", "Password must be at least 6 characters.");
-      return;
-    }
-
-    if (newPassword !== confirmNewPassword) {
-      Alert.alert("Password Mismatch", "New passwords do not match.");
-      return;
-    }
+    if (!newPassword.trim()) return Alert.alert("New Password Required", "Enter your new password.");
+    if (newPassword.length < 6) return Alert.alert("Password Too Short", "Password must be at least 6 characters.");
+    if (newPassword !== confirmNewPassword) return Alert.alert("Password Mismatch", "New passwords do not match.");
 
     try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
+      setPasswordSaving(true);
 
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
 
       setNewPassword("");
       setConfirmNewPassword("");
-
       Alert.alert("Password Updated", "Your password was changed successfully.");
     } catch (error: any) {
       Alert.alert("Password Error", error?.message || "Unable to change password.");
+    } finally {
+      setPasswordSaving(false);
     }
   }
 
@@ -505,42 +516,36 @@ export default function DriverProfile() {
       driver?.driverStripeCustomerId;
 
     if (!stripeCustomerId) {
-      Alert.alert(
-        "Missing Stripe Customer",
-        "No Stripe customer ID was found for this driver account."
-      );
+      Alert.alert("Missing Stripe Customer", "No Stripe customer ID was found for this driver account.");
       return;
     }
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-customer-portal-session`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            customerId: stripeCustomerId,
-            returnUrl: "farm2home://driver/profile",
-          }),
-        }
-      );
+      setBillingLoading(true);
+
+      const response = await fetch(`${getBackendUrl()}/payments/create-customer-portal-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerId: stripeCustomerId,
+          role: "driver",
+          driverId: driver?.id,
+          returnUrl: Platform.OS === "web" ? window.location.href : "farm2home://driver/profile",
+        }),
+      });
 
       const data = await response.json();
 
       if (!response.ok || data.error || !data.url) {
-        Alert.alert(
-          "Billing Error",
-          data.error || "Unable to open subscription portal."
-        );
+        Alert.alert("Billing Error", data.error || "Unable to open subscription portal.");
         return;
       }
 
       await openUrl(data.url);
     } catch (error: any) {
-      Alert.alert(
-        "Billing Error",
-        error?.message || "Unable to open subscription portal."
-      );
+      Alert.alert("Billing Error", error?.message || "Unable to open subscription portal.");
+    } finally {
+      setBillingLoading(false);
     }
   }
 
@@ -566,18 +571,17 @@ export default function DriverProfile() {
           style: "destructive",
           onPress: async () => {
             try {
-              const response = await fetch(
-                `${API_BASE_URL}/payments/cancel-subscription`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    subscriptionId,
-                    driverId: driver?.id,
-                    role: "driver",
-                  }),
-                }
-              );
+              setCancelLoading(true);
+
+              const response = await fetch(`${getBackendUrl()}/payments/cancel-subscription`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  subscriptionId,
+                  driverId: driver?.id,
+                  role: "driver",
+                }),
+              });
 
               const data = await response.json();
 
@@ -596,20 +600,21 @@ export default function DriverProfile() {
                 })
                 .eq("id", driver.id);
 
-              const updatedDriver = {
-                ...driver,
-                membershipStatus: "Canceled",
-                subscriptionStatus: "canceled",
-                accountActive: false,
-              };
+              await persistDriver(
+                {
+                  ...driver,
+                  membershipStatus: "Canceled",
+                  subscriptionStatus: "canceled",
+                  accountActive: false,
+                },
+                false
+              );
 
-              await persistDriver(updatedDriver, false);
               Alert.alert("Canceled", "Driver subscription was canceled.");
             } catch (error: any) {
-              Alert.alert(
-                "Cancel Error",
-                error?.message || "Unable to cancel subscription."
-              );
+              Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
+            } finally {
+              setCancelLoading(false);
             }
           },
         },
@@ -635,22 +640,10 @@ export default function DriverProfile() {
   function membershipColor() {
     const value = normalize(driver?.membershipStatus || driver?.subscriptionStatus);
 
-    if (value.includes("cancel")) return "#DC2626";
-    if (value.includes("pending")) return "#F59E0B";
-    if (value.includes("past_due") || value.includes("unpaid")) return "#DC2626";
-    return "#10B981";
-  }
-
-  function getDriverName() {
-    return driver?.fullName || driver?.name || driver?.username || "Farm2Home Driver";
-  }
-
-  function getDriverInitials() {
-    const name = getDriverName();
-    const parts = name.split(" ").filter(Boolean);
-    const first = parts[0]?.[0] || "D";
-    const second = parts[1]?.[0] || "";
-    return `${first}${second}`.toUpperCase();
+    if (value.includes("cancel")) return COLORS.red;
+    if (value.includes("pending")) return COLORS.amber;
+    if (value.includes("past_due") || value.includes("unpaid")) return COLORS.red;
+    return COLORS.green;
   }
 
   function documentName(type: "license" | "insurance") {
@@ -676,9 +669,9 @@ export default function DriverProfile() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#10B981" />
+          <ActivityIndicator size="large" color={COLORS.red} />
           <Text style={styles.centerText}>Loading driver profile...</Text>
         </View>
       </SafeAreaView>
@@ -688,13 +681,10 @@ export default function DriverProfile() {
   if (!driver) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>No driver profile found</Text>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => router.replace("/driver/login" as any)}
-          >
+          <TouchableOpacity style={styles.primaryButton} onPress={() => router.replace("/driver/login" as any)}>
             <Text style={styles.primaryButtonText}>Go to Driver Login</Text>
           </TouchableOpacity>
         </View>
@@ -704,188 +694,144 @@ export default function DriverProfile() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <KeyboardAvoidingView
-        style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView
           style={styles.container}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.header}>
-            <View style={styles.headerTop}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{getDriverInitials()}</Text>
-              </View>
-
-              <View style={{ flex: 1 }}>
-                <Text style={styles.eyebrow}>Driver Operations</Text>
-                <Text style={styles.title}>Driver Profile</Text>
-                <Text style={styles.subtitle}>
-                  Manage account, delivery eligibility, vehicle details, documents, and billing.
-                </Text>
-              </View>
+          <View style={styles.hero}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initials}</Text>
             </View>
-          </View>
 
-          <View style={styles.statusCard}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.statusTitle}>Driver Board Membership</Text>
-              <View style={[styles.statusBadge, { backgroundColor: membershipColor() }]}>
-                <Text style={styles.statusBadgeText}>
-                  {driver.membershipStatus || driver.subscriptionStatus || "Active"}
-                </Text>
+              <Text style={styles.eyebrow}>Farm2Driver Operations</Text>
+              <Text style={styles.title}>{driverName}</Text>
+              <Text style={styles.subtitle}>{email || driver?.email}</Text>
+
+              <View style={styles.badgeRow}>
+                <View style={[styles.badge, { backgroundColor: membershipColor() }]}>
+                  <Text style={styles.badgeText}>
+                    {driver.membershipStatus || driver.subscriptionStatus || "Active"}
+                  </Text>
+                </View>
+
+                <View style={[styles.badge, { backgroundColor: farm2DriverEligible ? COLORS.green : COLORS.amber }]}>
+                  <Text style={styles.badgeText}>
+                    {farm2DriverEligible ? "Local Eligible" : "Local Review"}
+                  </Text>
+                </View>
+
+                <View style={[styles.badge, { backgroundColor: freightEligible ? COLORS.black : COLORS.slate }]}>
+                  <Text style={styles.badgeText}>
+                    {freightEligible ? "Freight Ready" : "Freight Pending"}
+                  </Text>
+                </View>
               </View>
             </View>
           </View>
 
-          <View style={styles.statsRow}>
-            <StatCard label="Active" value={activeDeliveries} />
-            <StatCard label="Completed" value={completedDeliveries} />
-            <StatCard label="Earnings" value={`$${estimatedEarnings.toFixed(0)}`} />
+          <View style={styles.statsGrid}>
+            <StatCard label="Weekly" value={money(weeklyEarnings)} />
+            <StatCard label="Lifetime" value={money(lifetimeEarnings)} />
+            <StatCard label="Active" value={activeDeliveries + activeFreight} />
+            <StatCard label="Completed" value={completedDeliveries + completedFreight} />
           </View>
 
           <View style={styles.quickGrid}>
             <QuickNav label="Driver Hub" onPress={() => router.push("/driver/mobile-driver-app" as any)} />
-            <QuickNav label="Board" onPress={() => router.push("/driver/board" as any)} />
-            <QuickNav label="Earnings" onPress={() => router.push("/driver/earnings" as any)} />
+            <QuickNav label="Driver Board" onPress={() => router.push("/driver/board" as any)} />
             <QuickNav label="My Deliveries" onPress={() => router.push("/driver/my-deliveries" as any)} />
+            <QuickNav label="Earnings" onPress={() => router.push("/driver/earnings" as any)} />
           </View>
 
-          <View style={styles.card}>
-            <SectionHeader
-              title="Profile Information"
-              subtitle="Driver contact and account details."
-            />
-
+          <Card title="Profile Information" subtitle="Driver contact and account details.">
             <Label text="Full Name" />
-            <TextInput style={styles.input} value={fullName} onChangeText={setFullName} placeholder="Full Name" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.input} value={fullName} onChangeText={setFullName} placeholder="Full Name" placeholderTextColor="#9CA3AF" />
 
             <Label text="Username" />
-            <TextInput style={styles.input} value={username} onChangeText={setUsername} autoCapitalize="none" placeholder="Username" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.input} value={username} onChangeText={setUsername} autoCapitalize="none" placeholder="Username" placeholderTextColor="#9CA3AF" />
 
             <Label text="Email" />
-            <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="Email" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="Email" placeholderTextColor="#9CA3AF" />
 
             <Label text="Phone" />
-            <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="Phone" placeholderTextColor="#94A3B8" />
-          </View>
+            <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="Phone" placeholderTextColor="#9CA3AF" />
+          </Card>
 
-          <View style={styles.card}>
-            <SectionHeader
-              title="Vehicle and Service Area"
-              subtitle="Manage delivery vehicle, radius, and eligibility."
-            />
+          <Card title="Vehicle Card" subtitle="Manage delivery vehicle, license, area, and driver availability.">
+            <View style={styles.vehicleCard}>
+              <Text style={styles.vehicleTitle}>{vehicleType || "Vehicle not added"}</Text>
+              <Text style={styles.vehicleSub}>License: {licenseNumber || "Not added"}</Text>
+              <Text style={styles.vehicleSub}>Service Area: {serviceArea || "Not added"}</Text>
+              <Text style={styles.vehicleSub}>Radius: {serviceRadiusMiles || "50"} miles</Text>
+            </View>
 
             <Label text="Vehicle Type" />
-            <TextInput style={styles.input} value={vehicleType} onChangeText={setVehicleType} placeholder="Vehicle Type" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.input} value={vehicleType} onChangeText={setVehicleType} placeholder="Cargo van, pickup truck, car..." placeholderTextColor="#9CA3AF" />
 
             <Label text="License Number" />
-            <TextInput style={styles.input} value={licenseNumber} onChangeText={setLicenseNumber} placeholder="License Number" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.input} value={licenseNumber} onChangeText={setLicenseNumber} placeholder="License Number" placeholderTextColor="#9CA3AF" />
 
             <Label text="Service Area" />
-            <TextInput style={styles.input} value={serviceArea} onChangeText={setServiceArea} placeholder="Service Area" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.input} value={serviceArea} onChangeText={setServiceArea} placeholder="Detroit Metro, Macomb County..." placeholderTextColor="#9CA3AF" />
 
             <Label text="Service Radius Miles" />
-            <TextInput style={styles.input} value={serviceRadiusMiles} onChangeText={setServiceRadiusMiles} keyboardType="numeric" placeholder="50" placeholderTextColor="#94A3B8" />
+            <TextInput style={styles.input} value={serviceRadiusMiles} onChangeText={setServiceRadiusMiles} keyboardType="numeric" placeholder="50" placeholderTextColor="#9CA3AF" />
 
             <SwitchRow title="Available Now" value={availableNow} onValueChange={setAvailableNow} />
-            <SwitchRow title="Farm2Driver Eligible" value={farm2DriverEligible} onValueChange={setFarm2DriverEligible} />
+            <SwitchRow title="Farm2Driver Local Eligible" value={farm2DriverEligible} onValueChange={setFarm2DriverEligible} />
             <SwitchRow title="Freight Load Eligible" value={freightEligible} onValueChange={setFreightEligible} />
             <SwitchRow title="Notifications Enabled" value={notificationsEnabled} onValueChange={setNotificationsEnabled} />
 
-            <TouchableOpacity
-              style={[styles.primaryButton, saving && styles.disabledButton]}
-              onPress={saveProfile}
-              disabled={saving}
-            >
-              {saving ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.primaryButtonText}>Save Driver Profile</Text>
-              )}
+            <TouchableOpacity style={[styles.primaryButton, saving && styles.disabledButton]} onPress={saveProfile} disabled={saving}>
+              {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryButtonText}>Save Driver Profile</Text>}
             </TouchableOpacity>
-          </View>
+          </Card>
 
-          <View style={styles.card}>
-            <SectionHeader
-              title="Compliance Documents"
-              subtitle="License, insurance, and background check status."
-            />
-
+          <Card title="Compliance" subtitle="Driver documents, insurance, and background check status.">
             <DocumentRow label="Driver License" value={documentName("license")} />
             <DocumentRow label="Insurance" value={documentName("insurance")} />
+            <DocumentRow label="Document Status" value={driver.documentsStatus || "Pending"} />
             <DocumentRow label="Background Check" value={driver.backgroundCheckStatus || "Pending"} />
             <DocumentRow label="Insurance Status" value={driver.insuranceStatus || "Pending"} />
-          </View>
+          </Card>
 
-          <View style={styles.card}>
-            <SectionHeader
-              title="Password"
-              subtitle="Update your secure login password."
-            />
+          <Card title="Billing" subtitle="Manage your Farm2Driver membership and Stripe billing.">
+            <StatusLine label="Membership" value={driver.membershipStatus || driver.subscriptionStatus || "Active"} />
+            <StatusLine label="Stripe Customer" value={driver.stripeCustomerId ? "Connected" : "Missing"} />
 
-            <TextInput
-              style={styles.input}
-              placeholder="New password"
-              placeholderTextColor="#94A3B8"
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm new password"
-              placeholderTextColor="#94A3B8"
-              value={confirmNewPassword}
-              onChangeText={setConfirmNewPassword}
-              secureTextEntry
-            />
-
-            <TouchableOpacity style={styles.secondaryButton} onPress={changePassword}>
-              <Text style={styles.secondaryButtonText}>Change Password</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.card}>
-            <SectionHeader
-              title="Billing"
-              subtitle="Manage your driver board membership."
-            />
-
-            <Text style={styles.helpText}>
-              Manage payment method, billing, and subscription status for driver board access.
-            </Text>
-
-            <TouchableOpacity style={styles.secondaryButton} onPress={manageSubscription}>
-              <Text style={styles.secondaryButtonText}>Manage Driver Membership</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={manageSubscription} disabled={billingLoading}>
+              {billingLoading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.secondaryButtonText}>Manage Driver Membership</Text>}
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription}>
-              <Text style={styles.cancelButtonText}>Cancel Driver Subscription</Text>
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription} disabled={cancelLoading}>
+              {cancelLoading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.cancelButtonText}>Cancel Driver Subscription</Text>}
             </TouchableOpacity>
-          </View>
+          </Card>
 
-          <View style={styles.card}>
-            <SectionHeader
-              title="Communication"
-              subtitle="Open delivery communication screens."
-            />
+          <Card title="Password" subtitle="Update your secure driver login password.">
+            <TextInput style={styles.input} placeholder="New password" placeholderTextColor="#9CA3AF" value={newPassword} onChangeText={setNewPassword} secureTextEntry />
+            <TextInput style={styles.input} placeholder="Confirm new password" placeholderTextColor="#9CA3AF" value={confirmNewPassword} onChangeText={setConfirmNewPassword} secureTextEntry />
 
+            <TouchableOpacity style={styles.secondaryButton} onPress={changePassword} disabled={passwordSaving}>
+              {passwordSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.secondaryButtonText}>Change Password</Text>}
+            </TouchableOpacity>
+          </Card>
+
+          <Card title="Communication Shortcuts" subtitle="Open delivery communication and live operations screens.">
+            <RouteButton title="Chat Center" onPress={() => router.push("/chat-center" as any)} />
             <RouteButton title="Customer Chat" onPress={() => router.push("/driver/customer-chat" as any)} />
             <RouteButton title="Farmer Chat" onPress={() => router.push("/driver/farmer-chat" as any)} />
+            <RouteButton title="Notifications" onPress={() => router.push("/driver/notifications" as any)} />
             <RouteButton title="Live Location" onPress={() => router.push("/driver/live-location-provider" as any)} />
-          </View>
+          </Card>
 
-          <TouchableOpacity
-            style={styles.darkButton}
-            onPress={() => router.push("/driver/mobile-driver-app" as any)}
-          >
+          <TouchableOpacity style={styles.darkButton} onPress={() => router.push("/driver/mobile-driver-app" as any)}>
             <Text style={styles.darkButtonText}>Back to Driver Hub</Text>
           </TouchableOpacity>
 
@@ -898,17 +844,18 @@ export default function DriverProfile() {
   );
 }
 
-function Label({ text }: { text: string }) {
-  return <Text style={styles.label}>{text}</Text>;
-}
-
-function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+function Card({ title, subtitle, children }: any) {
   return (
-    <View style={styles.sectionHeader}>
+    <View style={styles.card}>
       <Text style={styles.sectionTitle}>{title}</Text>
       {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+      {children}
     </View>
   );
+}
+
+function Label({ text }: { text: string }) {
+  return <Text style={styles.label}>{text}</Text>;
 }
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -945,19 +892,25 @@ function DocumentRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SwitchRow({
-  title,
-  value,
-  onValueChange,
-}: {
-  title: string;
-  value: boolean;
-  onValueChange: (value: boolean) => void;
-}) {
+function StatusLine({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statusLine}>
+      <Text style={styles.statusLabel}>{label}</Text>
+      <Text style={styles.statusValue}>{value}</Text>
+    </View>
+  );
+}
+
+function SwitchRow({ title, value, onValueChange }: any) {
   return (
     <View style={styles.switchRow}>
       <Text style={styles.switchTitle}>{title}</Text>
-      <Switch value={value} onValueChange={onValueChange} />
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ false: "#CBD5E1", true: COLORS.red }}
+        thumbColor="#FFFFFF"
+      />
     </View>
   );
 }
@@ -972,114 +925,105 @@ function RouteButton({ title, onPress }: { title: string; onPress: () => void })
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
-  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
-  container: { flex: 1, backgroundColor: freightTheme.colors.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1 },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 90 },
   center: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
   },
   centerText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     marginTop: 10,
     fontWeight: "800",
   },
   emptyTitle: {
-    color: "#FFFFFF",
+    color: COLORS.text,
     fontSize: 22,
     fontWeight: "900",
     marginBottom: 12,
   },
-  header: {
-    backgroundColor: "#020617",
-    paddingTop: 22,
+  hero: {
+    backgroundColor: COLORS.black,
+    paddingTop: 28,
     paddingHorizontal: 20,
-    paddingBottom: 26,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 28,
+    flexDirection: "row",
+    gap: 15,
+    alignItems: "center",
   },
-  headerTop: { flexDirection: "row", gap: 14, alignItems: "center" },
   avatar: {
-    width: 58,
-    height: 58,
-    borderRadius: 18,
-    backgroundColor: "#064E3B",
-    borderWidth: 1,
-    borderColor: "#10B981",
+    width: 70,
+    height: 70,
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { color: "#FFFFFF", fontSize: 20, fontWeight: "900" },
+  avatarText: { color: "#FFFFFF", fontSize: 23, fontWeight: "900" },
   eyebrow: {
-    color: "#10B981",
+    color: "#FCA5A5",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 27,
     fontWeight: "900",
     color: "#FFFFFF",
-    marginTop: 6,
+    marginTop: 5,
   },
   subtitle: {
-    color: "#CBD5E1",
+    color: "#D1D5DB",
     fontWeight: "700",
-    lineHeight: 21,
-    marginTop: 7,
+    marginTop: 5,
     fontSize: 13,
   },
-  statusCard: {
-    backgroundColor: "#064E3B",
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#10B981",
-    marginHorizontal: 18,
-    marginTop: 16,
-    marginBottom: 12,
+  badgeRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
   },
-  statusTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    marginBottom: 8,
-  },
-  statusBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 11,
+  badge: {
+    paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
   },
-  statusBadgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
-  statsRow: {
+  badgeText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 11,
+  },
+  statsGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
     paddingHorizontal: 18,
+    marginTop: 16,
     marginBottom: 12,
   },
   statCard: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.card,
+    flexGrow: 1,
+    flexBasis: "47%",
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    borderRadius: 14,
-    padding: 13,
-    alignItems: "center",
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 15,
   },
   statValue: {
-    color: freightTheme.colors.primary,
+    color: COLORS.black,
     fontWeight: "900",
     fontSize: 20,
   },
   statLabel: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "800",
     marginTop: 4,
     fontSize: 12,
@@ -1093,57 +1037,73 @@ const styles = StyleSheet.create({
   },
   quickCard: {
     width: "48%",
-    backgroundColor: freightTheme.colors.card,
-    borderRadius: 14,
-    padding: 13,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    backgroundColor: COLORS.black,
+    borderRadius: 16,
+    padding: 14,
     alignItems: "center",
   },
-  quickText: { color: freightTheme.colors.text, fontWeight: "900" },
+  quickText: { color: "#FFFFFF", fontWeight: "900" },
   card: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     padding: 16,
-    borderRadius: 16,
+    borderRadius: 20,
     marginHorizontal: 18,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
-  sectionHeader: { marginBottom: 12 },
   sectionTitle: {
     fontSize: 19,
     fontWeight: "900",
-    color: freightTheme.colors.text,
+    color: COLORS.text,
   },
   sectionSubtitle: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 20,
-    marginTop: 3,
+    marginTop: 4,
+    marginBottom: 12,
     fontSize: 13,
   },
   label: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     marginTop: 8,
     marginBottom: 6,
     fontWeight: "900",
   },
   input: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 12,
+    borderColor: COLORS.border,
+    borderRadius: 14,
     padding: 13,
     fontWeight: "700",
     marginBottom: 8,
-    color: "#111827",
+    color: COLORS.text,
+  },
+  vehicleCard: {
+    backgroundColor: "#FFF1F2",
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#FDA4AF",
+    marginBottom: 12,
+  },
+  vehicleTitle: {
+    color: COLORS.redDark,
+    fontWeight: "900",
+    fontSize: 17,
+  },
+  vehicleSub: {
+    color: COLORS.text,
+    fontWeight: "700",
+    marginTop: 4,
   },
   switchRow: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     padding: 12,
     marginTop: 8,
     flexDirection: "row",
@@ -1151,15 +1111,15 @@ const styles = StyleSheet.create({
   },
   switchTitle: {
     flex: 1,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
   },
   documentRow: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
     padding: 12,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -1171,28 +1131,41 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: "#94A3B8",
   },
-  documentDotGood: { backgroundColor: "#10B981" },
+  documentDotGood: { backgroundColor: COLORS.green },
   documentLabel: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   documentText: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "800",
     marginTop: 3,
   },
-  helpText: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    lineHeight: 21,
-    marginBottom: 12,
+  statusLine: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 12,
+    marginBottom: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  statusLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  statusValue: {
+    color: COLORS.red,
+    fontWeight: "900",
   },
   primaryButton: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     padding: 14,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 12,
@@ -1202,9 +1175,9 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   secondaryButton: {
-    backgroundColor: "#2563EB",
+    backgroundColor: COLORS.black,
     padding: 14,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 10,
@@ -1214,9 +1187,9 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   cancelButton: {
-    backgroundColor: "#DC2626",
+    backgroundColor: COLORS.red,
     padding: 14,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 10,
@@ -1226,10 +1199,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   routeButton: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    borderRadius: 12,
+    borderColor: COLORS.border,
+    borderRadius: 14,
     padding: 13,
     marginTop: 8,
     flexDirection: "row",
@@ -1237,18 +1210,18 @@ const styles = StyleSheet.create({
   },
   routeButtonText: {
     flex: 1,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
   },
   routeArrow: {
-    color: freightTheme.colors.primary,
-    fontSize: 22,
+    color: COLORS.red,
+    fontSize: 24,
     fontWeight: "900",
   },
   darkButton: {
-    backgroundColor: "#111827",
+    backgroundColor: COLORS.black,
     padding: 15,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     marginHorizontal: 18,
     marginTop: 4,
@@ -1260,7 +1233,7 @@ const styles = StyleSheet.create({
   logoutButton: {
     backgroundColor: "#64748B",
     padding: 15,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     marginHorizontal: 18,
     marginTop: 10,

@@ -21,9 +21,8 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 
-import { API_BASE_URL } from "../config/api";
+import { getBackendUrl } from "../services/apiConfig";
 import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
 
 type LoadSource = "api_order" | "delivery_order" | "freight_load";
 
@@ -74,13 +73,27 @@ type DriverProfile = {
   subscriptionStatus: string;
 };
 
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#151922",
+  muted: "#7B8494",
+  border: "#E6E8EF",
+  red: "#E1122D",
+  redDark: "#B80F25",
+  redSoft: "#FFE6EA",
+  black: "#111827",
+  soft: "#F3F4F8",
+  green: "#10B981",
+  blue: "#2563EB",
+  orange: "#F59E0B",
+  purple: "#7C3AED",
+};
+
 const ACTIVE_STATUSES = [
   "ACCEPTED",
   "BOOKED",
   "READY",
-  "ARRIVED_PICKUP",
-  "ARRIVED_PICKUP",
-  "ARRIVED_PICKUP",
   "ARRIVED_PICKUP",
   "PICKED_UP",
   "IN_TRANSIT",
@@ -111,11 +124,9 @@ function money(value: any) {
 export default function MobileDriverApp() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
   const [driverId, setDriverId] = useState("");
   const [driverName, setDriverName] = useState("Farm2Home Driver");
   const [loads, setLoads] = useState<DriverLoad[]>([]);
-
   const [stats, setStats] = useState<DriverStats>({
     activeLoads: 0,
     completedLoads: 0,
@@ -170,9 +181,7 @@ export default function MobileDriverApp() {
         .eq("id", authUserId)
         .maybeSingle();
 
-      if (!driverResult.error && driverResult.data) {
-        dbDriver = driverResult.data;
-      }
+      if (!driverResult.error && driverResult.data) dbDriver = driverResult.data;
     }
 
     if (!dbDriver && authEmail) {
@@ -182,9 +191,7 @@ export default function MobileDriverApp() {
         .eq("email", authEmail)
         .maybeSingle();
 
-      if (!driverResult.error && driverResult.data) {
-        dbDriver = driverResult.data;
-      }
+      if (!driverResult.error && driverResult.data) dbDriver = driverResult.data;
     }
 
     if (authUserId) {
@@ -195,9 +202,7 @@ export default function MobileDriverApp() {
         .eq("role", "driver")
         .maybeSingle();
 
-      if (!profileResult.error && profileResult.data) {
-        profile = profileResult.data;
-      }
+      if (!profileResult.error && profileResult.data) profile = profileResult.data;
     }
 
     if (!profile && authEmail) {
@@ -208,9 +213,7 @@ export default function MobileDriverApp() {
         .eq("role", "driver")
         .maybeSingle();
 
-      if (!profileResult.error && profileResult.data) {
-        profile = profileResult.data;
-      }
+      if (!profileResult.error && profileResult.data) profile = profileResult.data;
     }
 
     const stableId =
@@ -226,13 +229,10 @@ export default function MobileDriverApp() {
     const driver: DriverProfile = {
       ...(parsed || {}),
       ...(dbDriver || {}),
-
       id: stableId,
       driverId: stableId,
       role: "driver",
-
       email: normalize(dbDriver?.email || profile?.email || parsed?.email || authEmail),
-
       fullName:
         dbDriver?.full_name ||
         dbDriver?.name ||
@@ -240,7 +240,6 @@ export default function MobileDriverApp() {
         parsed?.fullName ||
         parsed?.name ||
         "Farm2Home Driver",
-
       name:
         dbDriver?.name ||
         dbDriver?.full_name ||
@@ -248,18 +247,14 @@ export default function MobileDriverApp() {
         parsed?.name ||
         parsed?.fullName ||
         "Farm2Home Driver",
-
       username: dbDriver?.username || profile?.username || parsed?.username || "",
-
       accountActive:
         dbDriver?.account_active ??
         profile?.account_active ??
         parsed?.accountActive ??
         true,
-
       membershipStatus:
         dbDriver?.membership_status || parsed?.membershipStatus || "Active",
-
       subscriptionStatus:
         dbDriver?.subscription_status || parsed?.subscriptionStatus || "active",
     };
@@ -279,9 +274,7 @@ export default function MobileDriverApp() {
     const membershipStatus = normalize(driver.membershipStatus);
 
     if (driver.accountActive === false) return false;
-    if (subscriptionStatus === "canceled") return false;
-    if (subscriptionStatus === "past_due") return false;
-    if (subscriptionStatus === "unpaid") return false;
+    if (["canceled", "past_due", "unpaid"].includes(subscriptionStatus)) return false;
     if (membershipStatus === "canceled") return false;
 
     return true;
@@ -334,17 +327,15 @@ export default function MobileDriverApp() {
     const all: DriverLoad[] = [];
 
     try {
-      const response = await fetch(`${API_BASE_URL}/orders`);
+      const response = await fetch(`${getBackendUrl()}/orders`);
       const data = await response.json();
 
       if (response.ok && Array.isArray(data.orders)) {
         const mapped = data.orders
           .filter((order: any) => {
             const status = normalizeStatusValue(order.fulfillmentStatus || order.status || "NEW");
-
             const assignedToMe =
-              order.assignedDriverId === activeDriverId ||
-              order.driverId === activeDriverId;
+              order.assignedDriverId === activeDriverId || order.driverId === activeDriverId;
 
             const openForDriver =
               !order.assignedDriverId &&
@@ -533,13 +524,9 @@ export default function MobileDriverApp() {
         return;
       }
 
-      if (load.source === "api_order") {
-        await acceptApiOrder(load, currentDriver);
-      } else if (load.source === "delivery_order") {
-        await acceptDeliveryOrder(load, currentDriver);
-      } else if (load.source === "freight_load") {
-        await acceptFreightLoad(load, currentDriver);
-      }
+      if (load.source === "api_order") await acceptApiOrder(load, currentDriver);
+      if (load.source === "delivery_order") await acceptDeliveryOrder(load, currentDriver);
+      if (load.source === "freight_load") await acceptFreightLoad(load, currentDriver);
 
       Alert.alert("Accepted", "This delivery is now assigned to you.");
       await loadDriverDashboard();
@@ -551,7 +538,7 @@ export default function MobileDriverApp() {
   }
 
   async function acceptApiOrder(load: DriverLoad, driver: DriverProfile) {
-    const response = await fetch(`${API_BASE_URL}/orders/${load.id}/accept`, {
+    const response = await fetch(`${getBackendUrl()}/orders/${load.id}/accept`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -640,7 +627,7 @@ export default function MobileDriverApp() {
       if (dbStatus === "delivered") payload.delivered_at = now;
 
       if (load.source === "api_order") {
-        const response = await fetch(`${API_BASE_URL}/orders/${load.id}/status`, {
+        const response = await fetch(`${getBackendUrl()}/orders/${load.id}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -688,14 +675,13 @@ export default function MobileDriverApp() {
   async function updateDriverGps(load: DriverLoad, status: string) {
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
-
       if (!permission.granted) return;
 
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
 
-      const payload = {
+      await supabase.from("driver_locations").insert({
         load_id: load.source === "freight_load" ? load.id : load.order_id || load.id,
         order_id: load.order_id || load.id,
         delivery_order_id: load.source === "delivery_order" ? load.id : null,
@@ -707,9 +693,7 @@ export default function MobileDriverApp() {
         heading: location.coords.heading || null,
         status,
         updated_at: new Date().toISOString(),
-      };
-
-      await supabase.from("driver_locations").insert(payload);
+      });
     } catch (error) {
       console.log("Save driver GPS skipped:", error);
     }
@@ -735,25 +719,25 @@ export default function MobileDriverApp() {
       case "NEW":
       case "AVAILABLE":
       case "POSTED":
-        return "#2563EB";
+        return COLORS.blue;
       case "BOOKED":
       case "ACCEPTED":
       case "READY":
-        return "#7C3AED";
+        return COLORS.purple;
       case "ARRIVED_PICKUP":
         return "#0EA5E9";
       case "PICKED_UP":
-        return "#F59E0B";
+        return COLORS.orange;
       case "IN_TRANSIT":
       case "ARRIVED_DROPOFF":
         return "#0F766E";
       case "DELIVERED":
       case "COMPLETED":
-        return "#10B981";
+        return COLORS.green;
       case "CANCELLED":
-        return "#DC2626";
+        return COLORS.red;
       default:
-        return "#64748B";
+        return COLORS.muted;
     }
   }
 
@@ -835,11 +819,7 @@ export default function MobileDriverApp() {
 
     if (OPEN_STATUSES.includes(status)) {
       return (
-        <TouchableOpacity
-          style={styles.acceptButton}
-          onPress={() => acceptLoad(load)}
-          disabled={loading}
-        >
+        <TouchableOpacity style={styles.primaryAction} onPress={() => acceptLoad(load)}>
           <Text style={styles.actionText}>Accept Delivery</Text>
         </TouchableOpacity>
       );
@@ -848,29 +828,19 @@ export default function MobileDriverApp() {
     if (status === "BOOKED" || status === "ACCEPTED" || status === "READY") {
       return (
         <View style={styles.actionGrid}>
-          <TouchableOpacity
-            style={styles.blueButton}
-            onPress={() => openLiveLocation(load)}
-            disabled={loading}
-          >
-            <Text style={styles.actionText}>Live Tracking</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.orangeButton}
+          <ActionButton label="Track" icon="navigate" onPress={() => openLiveLocation(load)} />
+          <ActionButton
+            label="Arrived"
+            icon="pin"
             onPress={() => updateLoadStatus(load, "arrived_pickup")}
-            disabled={loading}
-          >
-            <Text style={styles.actionText}>Arrived Pickup</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.greenButton}
+            color={COLORS.orange}
+          />
+          <ActionButton
+            label="Proof Pickup"
+            icon="camera"
             onPress={() => openProofPickup(load)}
-            disabled={loading}
-          >
-            <Text style={styles.actionText}>Proof Pickup</Text>
-          </TouchableOpacity>
+            color={COLORS.green}
+          />
         </View>
       );
     }
@@ -878,21 +848,17 @@ export default function MobileDriverApp() {
     if (status === "PICKED_UP") {
       return (
         <View style={styles.actionGrid}>
-          <TouchableOpacity
-            style={styles.blueButton}
+          <ActionButton
+            label="Start Route"
+            icon="car"
             onPress={() => updateLoadStatus(load, "in_transit")}
-            disabled={loading}
-          >
-            <Text style={styles.actionText}>Start Delivery</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.mapButton}
+          />
+          <ActionButton
+            label="Live Track"
+            icon="navigate-circle"
             onPress={() => openLiveLocation(load)}
-            disabled={loading}
-          >
-            <Text style={styles.actionText}>Live Tracking</Text>
-          </TouchableOpacity>
+            color={COLORS.black}
+          />
         </View>
       );
     }
@@ -900,21 +866,18 @@ export default function MobileDriverApp() {
     if (status === "IN_TRANSIT" || status === "ARRIVED_DROPOFF") {
       return (
         <View style={styles.actionGrid}>
-          <TouchableOpacity
-            style={styles.orangeButton}
+          <ActionButton
+            label="Arrived Drop"
+            icon="location"
             onPress={() => updateLoadStatus(load, "arrived_dropoff")}
-            disabled={loading}
-          >
-            <Text style={styles.actionText}>Arrived Dropoff</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.proofButton}
+            color={COLORS.orange}
+          />
+          <ActionButton
+            label="Proof Delivery"
+            icon="checkmark-done"
             onPress={() => openProofDelivery(load)}
-            disabled={loading}
-          >
-            <Text style={styles.actionText}>Proof Delivery</Text>
-          </TouchableOpacity>
+            color={COLORS.purple}
+          />
         </View>
       );
     }
@@ -922,6 +885,7 @@ export default function MobileDriverApp() {
     if (status === "DELIVERED" || status === "COMPLETED") {
       return (
         <View style={styles.completedBadge}>
+          <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
           <Text style={styles.completedText}>Completed</Text>
         </View>
       );
@@ -932,19 +896,25 @@ export default function MobileDriverApp() {
 
   function renderLoadCard({ item }: { item: DriverLoad }) {
     const status = normalizeStatus(item);
-
     const pickupText = `${item.pickup_city || item.pickupAddress || "Pickup"} ${
       item.pickup_state || ""
     }`.trim();
-
-    const deliveryText = `${
-      item.delivery_city || item.dropoffAddress || "Delivery"
-    } ${item.delivery_state || ""}`.trim();
+    const deliveryText = `${item.delivery_city || item.dropoffAddress || "Delivery"} ${
+      item.delivery_state || ""
+    }`.trim();
 
     return (
       <View style={styles.loadCard}>
-        <TouchableOpacity onPress={() => openLoadDetails(item)}>
+        <TouchableOpacity onPress={() => openLoadDetails(item)} activeOpacity={0.8}>
           <View style={styles.loadHeader}>
+            <View style={styles.loadIcon}>
+              <Ionicons
+                name={item.source === "freight_load" ? "cube" : "bag-handle"}
+                size={21}
+                color={COLORS.red}
+              />
+            </View>
+
             <View style={{ flex: 1 }}>
               <Text style={styles.loadTitle}>{item.title || "Farm2Home Delivery"}</Text>
               <Text style={styles.commodity}>{item.commodity || "Farm Goods"}</Text>
@@ -961,15 +931,13 @@ export default function MobileDriverApp() {
             style={styles.routeStop}
             onPress={() => openMap(item.pickupAddress || pickupText)}
           >
-            <Ionicons name="radio-button-on" size={16} color="#10B981" />
+            <View style={styles.routeDotStart} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routeLabel}>Sender / Pickup</Text>
               <Text style={styles.routeText}>{pickupText}</Text>
-              {!!item.pickupAddress && (
-                <Text style={styles.routeSubText}>{item.pickupAddress}</Text>
-              )}
+              {!!item.pickupAddress && <Text style={styles.routeSubText}>{item.pickupAddress}</Text>}
             </View>
-            <Ionicons name="open-outline" size={16} color="#94A3B8" />
+            <Ionicons name="open-outline" size={17} color={COLORS.muted} />
           </TouchableOpacity>
 
           <View style={styles.routeLine} />
@@ -978,38 +946,32 @@ export default function MobileDriverApp() {
             style={styles.routeStop}
             onPress={() => openMap(item.dropoffAddress || deliveryText)}
           >
-            <Ionicons name="location" size={16} color="#10B981" />
+            <View style={styles.routeDotEnd} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.routeLabel}>Receiver / Dropoff</Text>
               <Text style={styles.routeText}>{deliveryText}</Text>
-              {!!item.dropoffAddress && (
-                <Text style={styles.routeSubText}>{item.dropoffAddress}</Text>
-              )}
+              {!!item.dropoffAddress && <Text style={styles.routeSubText}>{item.dropoffAddress}</Text>}
             </View>
-            <Ionicons name="open-outline" size={16} color="#94A3B8" />
+            <Ionicons name="open-outline" size={17} color={COLORS.muted} />
           </TouchableOpacity>
         </View>
 
         <View style={styles.metaGrid}>
-          <View style={styles.metaPill}>
-            <Text style={styles.metaText}>{money(item.rate || item.deliveryFee)}</Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.metaPill}
-            onPress={() => callCustomer(item.customerPhone)}
-          >
-            <Text style={styles.metaText}>Customer</Text>
+          <MetaPill icon="cash" text={money(item.rate || item.deliveryFee)} />
+          <MetaPill icon="speedometer" text={item.miles ? `${item.miles} mi` : "Miles pending"} />
+          <TouchableOpacity style={styles.metaPill} onPress={() => callCustomer(item.customerPhone)}>
+            <Ionicons name="call" size={14} color={COLORS.red} />
+            <Text style={styles.metaText}>Contact</Text>
           </TouchableOpacity>
-
           <TouchableOpacity style={styles.metaPill} onPress={() => openLoadDetails(item)}>
+            <Ionicons name="document-text" size={14} color={COLORS.red} />
             <Text style={styles.metaText}>Details</Text>
           </TouchableOpacity>
         </View>
 
         {!!item.notes && (
           <View style={styles.notesBox}>
-            <Text style={styles.notesLabel}>Notes</Text>
+            <Text style={styles.notesLabel}>Delivery Notes</Text>
             <Text style={styles.notesText}>{item.notes}</Text>
           </View>
         )}
@@ -1021,108 +983,94 @@ export default function MobileDriverApp() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <View style={styles.container}>
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.eyebrow}>Driver Operations</Text>
-              <Text style={styles.title}>Driver Hub</Text>
-              <Text style={styles.subtitle}>
-                Manage boards, active deliveries, location, proofs, earnings, and profile settings.
-              </Text>
+              <Text style={styles.eyebrow}>Farm2Driver</Text>
+              <Text style={styles.title}>Home</Text>
+              <Text style={styles.subtitle}>Welcome back, {driverName}</Text>
             </View>
 
             <TouchableOpacity
               style={styles.profileCircle}
               onPress={() => router.push("/driver/profile" as any)}
             >
-              <Ionicons name="person-circle-outline" size={32} color="#FFFFFF" />
+              <Ionicons name="person" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.heroStats}>
+            <View>
+              <Text style={styles.heroStatLabel}>Today Earnings</Text>
+              <Text style={styles.heroStatValue}>{money(stats.earnings)}</Text>
+            </View>
+
+            <TouchableOpacity style={styles.heroSmallButton} onPress={() => router.push("/driver/earnings" as any)}>
+              <Text style={styles.heroSmallButtonText}>View</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        <View style={styles.navGrid}>
-          <NavButton title="Board" onPress={() => router.push("/driver/board" as any)} />
-          <NavButton title="My Deliveries" onPress={() => router.push("/driver/my-deliveries" as any)} />
-          <NavButton title="Earnings" onPress={() => router.push("/driver/earnings" as any)} />
-          <NavButton title="Profile" onPress={() => router.push("/driver/profile" as any)} />
+        <View style={styles.quickActions}>
+          <QuickButton icon="grid" label="Board" onPress={() => router.push("/driver/board" as any)} />
+          <QuickButton icon="cube" label="Loads" onPress={() => router.push("/driver/my-deliveries" as any)} />
+          <QuickButton icon="wallet" label="Wallet" onPress={() => router.push("/driver/earnings" as any)} />
+          <QuickButton icon="notifications" label="Alerts" onPress={() => router.push("/driver/notifications" as any)} />
         </View>
 
         {loading && loads.length === 0 ? (
           <View style={styles.loadingCard}>
-            <ActivityIndicator size="large" color={freightTheme.colors.primary} />
+            <ActivityIndicator size="large" color={COLORS.red} />
             <Text style={styles.loadingText}>Loading driver hub...</Text>
           </View>
         ) : (
           <ScrollView
             showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />
-            }
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />}
           >
-            <View style={styles.driverCard}>
-              <Text style={styles.driverName}>{driverName}</Text>
-              <Text style={styles.driverMeta}>
-                Manage active Farm2Home orders and delivery workflow.
-              </Text>
-            </View>
-
-            <View style={styles.statsRow}>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{stats.openLoads}</Text>
-                <Text style={styles.statLabel}>Open</Text>
-              </View>
-
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{stats.activeLoads}</Text>
-                <Text style={styles.statLabel}>Active</Text>
-              </View>
-
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{stats.completedLoads}</Text>
-                <Text style={styles.statLabel}>Done</Text>
-              </View>
-            </View>
-
-            <View style={styles.earningsCard}>
-              <View>
-                <Text style={styles.earningsLabel}>Completed Delivery Earnings</Text>
-                <Text style={styles.earningsValue}>{money(stats.earnings)}</Text>
-              </View>
+            <View style={styles.summaryRow}>
+              <SummaryCard label="Open" value={stats.openLoads} icon="add-circle" />
+              <SummaryCard label="Active" value={stats.activeLoads} icon="navigate" />
+              <SummaryCard label="Done" value={stats.completedLoads} icon="checkmark-circle" />
             </View>
 
             {activeDriverLoads.length > 0 && (
-              <View style={styles.activeNotice}>
+              <TouchableOpacity
+                style={styles.activeNotice}
+                onPress={() => router.push("/driver/my-deliveries" as any)}
+              >
+                <Ionicons name="radio" size={20} color="#FFFFFF" />
                 <Text style={styles.activeNoticeText}>
-                  You have {activeDriverLoads.length} active delivery workflow
-                  {activeDriverLoads.length > 1 ? "s" : ""}.
+                  {activeDriverLoads.length} active route{activeDriverLoads.length > 1 ? "s" : ""}
                 </Text>
-              </View>
+                <Ionicons name="chevron-forward" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              style={styles.refreshButton}
-              onPress={loadDriverDashboard}
-              disabled={loading}
-            >
+            <TouchableOpacity style={styles.refreshButton} onPress={loadDriverDashboard} disabled={loading}>
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.refreshText}>Refresh Deliveries</Text>
+                <>
+                  <Ionicons name="refresh" size={18} color="#FFFFFF" />
+                  <Text style={styles.refreshText}>Refresh Deliveries</Text>
+                </>
               )}
             </TouchableOpacity>
 
-            <Text style={styles.sectionTitle}>Available and Assigned Deliveries</Text>
+            <Text style={styles.sectionTitle}>My Shipments</Text>
 
             <FlatList
               data={loads}
               keyExtractor={(item, index) => `${item.source}_${item.id}_${index}`}
               scrollEnabled={false}
-              contentContainerStyle={{ paddingBottom: 110 }}
+              contentContainerStyle={{ paddingBottom: 120 }}
               ListEmptyComponent={
                 <View style={styles.emptyCard}>
+                  <Ionicons name="cube-outline" size={38} color={COLORS.red} />
                   <Text style={styles.emptyTitle}>No deliveries available</Text>
                   <Text style={styles.emptyText}>
                     Open the Driver Board to select available deliveries in your area.
@@ -1145,197 +1093,252 @@ export default function MobileDriverApp() {
   );
 }
 
-function NavButton({ title, onPress }: { title: string; onPress: () => void }) {
+function QuickButton({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
   return (
-    <TouchableOpacity style={styles.navButton} onPress={onPress}>
-      <Text style={styles.navText}>{title}</Text>
+    <TouchableOpacity style={styles.quickButton} onPress={onPress}>
+      <View style={styles.quickIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.red} />
+      </View>
+      <Text style={styles.quickLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={styles.summaryCard}>
+      <Ionicons name={icon} size={20} color={COLORS.red} />
+      <Text style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function MetaPill({
+  icon,
+  text,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  text: string;
+}) {
+  return (
+    <View style={styles.metaPill}>
+      <Ionicons name={icon} size={14} color={COLORS.red} />
+      <Text style={styles.metaText}>{text}</Text>
+    </View>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  onPress,
+  color = COLORS.blue,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  color?: string;
+}) {
+  return (
+    <TouchableOpacity style={[styles.actionButton, { backgroundColor: color }]} onPress={onPress}>
+      <Ionicons name={icon} size={16} color="#FFFFFF" />
+      <Text style={styles.actionText}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
-  container: { flex: 1, backgroundColor: freightTheme.colors.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   hero: {
-    backgroundColor: "#020617",
+    backgroundColor: COLORS.red,
     paddingTop: 18,
     paddingHorizontal: 20,
     paddingBottom: 22,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
-  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
+  heroTop: { flexDirection: "row", alignItems: "center", gap: 14 },
   profileCircle: {
     width: 48,
     height: 48,
     borderRadius: 16,
-    backgroundColor: "#064E3B",
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
   eyebrow: {
-    color: "#10B981",
+    color: "#FFE6EA",
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 4,
     textTransform: "uppercase",
     letterSpacing: 1,
     fontSize: 12,
   },
   title: {
     color: "#FFFFFF",
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
-    marginBottom: 8,
   },
   subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 22,
+    color: "#FFFFFF",
+    opacity: 0.9,
+    lineHeight: 20,
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
+    marginTop: 4,
   },
-  navGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
+  heroStats: {
+    marginTop: 18,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: 20,
     padding: 16,
-  },
-  navButton: {
-    width: "48%",
-    backgroundColor: freightTheme.colors.card,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    padding: 13,
-    borderRadius: 13,
+    flexDirection: "row",
     alignItems: "center",
   },
-  navText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
+  heroStatLabel: { color: "#FFE6EA", fontWeight: "900", fontSize: 12 },
+  heroStatValue: { color: "#FFFFFF", fontSize: 30, fontWeight: "900", marginTop: 4 },
+  heroSmallButton: {
+    marginLeft: "auto",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
   },
+  heroSmallButtonText: { color: COLORS.red, fontWeight: "900" },
+  quickActions: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    marginTop: -18,
+    marginBottom: 14,
+    gap: 10,
+  },
+  quickButton: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  quickIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+  quickLabel: { color: COLORS.text, fontWeight: "900", fontSize: 12 },
   loadingCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     margin: 18,
     padding: 24,
-    borderRadius: 16,
+    borderRadius: 18,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
-  loadingText: {
-    color: freightTheme.colors.mutedText,
-    marginTop: 10,
-    fontWeight: "800",
-  },
-  driverCard: {
-    backgroundColor: freightTheme.colors.card,
-    marginHorizontal: 18,
-    marginBottom: 14,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-  },
-  driverName: {
-    color: freightTheme.colors.text,
-    fontSize: 21,
-    fontWeight: "900",
-    marginBottom: 5,
-  },
-  driverMeta: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    lineHeight: 21,
-  },
-  statsRow: {
+  loadingText: { color: COLORS.muted, marginTop: 10, fontWeight: "800" },
+  summaryRow: {
     flexDirection: "row",
     gap: 10,
     paddingHorizontal: 18,
     marginBottom: 14,
   },
-  statCard: {
+  summaryCard: {
     flex: 1,
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    borderRadius: 16,
-    padding: 13,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
     alignItems: "center",
   },
-  statValue: {
-    color: freightTheme.colors.primary,
-    fontSize: 23,
+  summaryValue: {
+    color: COLORS.text,
+    fontSize: 24,
     fontWeight: "900",
+    marginTop: 6,
   },
-  statLabel: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "800",
-    marginTop: 4,
-  },
-  earningsCard: {
-    backgroundColor: "#064E3B",
-    marginHorizontal: 18,
-    marginBottom: 14,
-    borderRadius: 16,
-    padding: 16,
-  },
-  earningsLabel: { color: "#BBF7D0", fontWeight: "900", marginBottom: 6 },
-  earningsValue: { color: "#FFFFFF", fontSize: 28, fontWeight: "900" },
+  summaryLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 2 },
   activeNotice: {
-    backgroundColor: "#052E2B",
+    backgroundColor: COLORS.black,
     marginHorizontal: 18,
     marginBottom: 14,
-    borderRadius: 14,
-    padding: 13,
-    borderWidth: 1,
-    borderColor: "#0F766E",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   activeNoticeText: {
-    color: "#CCFBF1",
-    fontWeight: "800",
-    lineHeight: 20,
+    flex: 1,
+    color: "#FFFFFF",
+    fontWeight: "900",
   },
   refreshButton: {
-    backgroundColor: "#334155",
+    backgroundColor: COLORS.red,
     marginHorizontal: 18,
     padding: 14,
-    borderRadius: 13,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
+    flexDirection: "row",
+    gap: 8,
   },
   refreshText: { color: "#FFFFFF", fontWeight: "900" },
   sectionTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 22,
     fontWeight: "900",
     paddingHorizontal: 18,
     marginBottom: 12,
   },
   emptyCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
-    padding: 22,
-    borderRadius: 16,
+    padding: 24,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     alignItems: "center",
   },
   emptyTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontSize: 18,
     fontWeight: "900",
+    marginTop: 10,
     marginBottom: 6,
   },
   emptyText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     lineHeight: 21,
     fontWeight: "700",
     textAlign: "center",
   },
   emptyButton: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     marginTop: 15,
     paddingVertical: 13,
     paddingHorizontal: 18,
@@ -1343,13 +1346,13 @@ const styles = StyleSheet.create({
   },
   emptyButtonText: { color: "#FFFFFF", fontWeight: "900" },
   loadCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 14,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   loadHeader: {
     flexDirection: "row",
@@ -1357,16 +1360,16 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: "flex-start",
   },
-  loadTitle: {
-    color: freightTheme.colors.text,
-    fontSize: 19,
-    fontWeight: "900",
+  loadIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  commodity: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginTop: 3,
-  },
+  loadTitle: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
+  commodity: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -1375,117 +1378,88 @@ const styles = StyleSheet.create({
   },
   statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
   routeBox: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.soft,
     padding: 13,
-    borderRadius: 13,
+    borderRadius: 16,
     marginBottom: 11,
   },
   routeStop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  routeDotStart: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+  },
+  routeDotEnd: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: COLORS.red,
+  },
   routeLine: {
     width: 2,
-    height: 21,
-    backgroundColor: freightTheme.colors.border,
-    marginLeft: 7,
+    height: 23,
+    backgroundColor: COLORS.border,
+    marginLeft: 5,
     marginVertical: 7,
   },
   routeLabel: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 11,
     textTransform: "uppercase",
     marginBottom: 2,
   },
-  routeText: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-    fontSize: 14,
-  },
-  routeSubText: {
-    color: freightTheme.colors.mutedText,
-    marginTop: 2,
-    fontWeight: "600",
-    fontSize: 12,
-  },
-  metaGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 10,
-  },
+  routeText: { color: COLORS.text, fontWeight: "900", fontSize: 14 },
+  routeSubText: { color: COLORS.muted, marginTop: 2, fontWeight: "600", fontSize: 12 },
+  metaGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
   metaPill: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.soft,
     borderRadius: 999,
     paddingHorizontal: 11,
     paddingVertical: 8,
+    flexDirection: "row",
+    gap: 5,
+    alignItems: "center",
   },
-  metaText: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "800",
-  },
+  metaText: { color: COLORS.muted, fontWeight: "800" },
   notesBox: {
-    backgroundColor: "#0F172A",
-    borderRadius: 13,
+    backgroundColor: "#FFF5F7",
+    borderRadius: 14,
     padding: 12,
     marginBottom: 11,
     borderWidth: 1,
-    borderColor: "#1E293B",
+    borderColor: "#FFD6DE",
   },
-  notesLabel: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-    marginBottom: 5,
-  },
-  notesText: {
-    color: "#E5E7EB",
-    fontWeight: "700",
-    lineHeight: 20,
-  },
+  notesLabel: { color: COLORS.red, fontWeight: "900", marginBottom: 5 },
+  notesText: { color: COLORS.text, fontWeight: "700", lineHeight: 20 },
   loadActions: { marginTop: 8 },
   actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  acceptButton: {
-    backgroundColor: freightTheme.colors.primary,
+  primaryAction: {
+    backgroundColor: COLORS.red,
     paddingHorizontal: 17,
     paddingVertical: 13,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  blueButton: {
-    backgroundColor: "#2563EB",
+  actionButton: {
     paddingHorizontal: 13,
     paddingVertical: 12,
-    borderRadius: 12,
-  },
-  orangeButton: {
-    backgroundColor: "#F59E0B",
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  greenButton: {
-    backgroundColor: "#10B981",
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  mapButton: {
-    backgroundColor: "#334155",
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  proofButton: {
-    backgroundColor: "#7C3AED",
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   actionText: { color: "#FFFFFF", fontWeight: "900" },
   completedBadge: {
-    backgroundColor: "#10B981",
+    backgroundColor: COLORS.green,
     padding: 13,
     borderRadius: 13,
     alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 6,
   },
   completedText: { color: "#FFFFFF", fontWeight: "900" },
 });

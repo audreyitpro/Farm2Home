@@ -48,6 +48,29 @@ export default function DriverFarmerChatScreen() {
     initialize();
   }, []);
 
+  useEffect(() => {
+    if (!driver?.id) return;
+
+    const channel = supabase
+      .channel(`driver-farmer-chat-${deliveryOrderId || orderId || driver.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "order_chats",
+        },
+        () => {
+          loadMessages(driver.id);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [driver?.id, orderId, deliveryOrderId]);
+
   async function initialize() {
     try {
       setLoading(true);
@@ -150,7 +173,9 @@ export default function DriverFarmerChatScreen() {
   }
 
   async function sendMessage() {
-    if (!message.trim()) return;
+    const cleanMessage = message.trim();
+
+    if (!cleanMessage) return;
 
     if (!driver?.id) {
       Alert.alert("Driver Login Required", "Please login again.");
@@ -159,8 +184,6 @@ export default function DriverFarmerChatScreen() {
 
     try {
       setSending(true);
-
-      const now = new Date().toISOString();
 
       const payload = {
         order_id: orderId || deliveryOrderId || "general",
@@ -171,11 +194,11 @@ export default function DriverFarmerChatScreen() {
         sender_role: "driver",
         sender_id: driver.id,
         sender_context: "farmer_driver",
-        message: message.trim(),
+        message: cleanMessage,
         read_by_farmer: false,
         read_by_driver: true,
         read_by_customer: true,
-        created_at: now,
+        created_at: new Date().toISOString(),
       };
 
       const { error } = await supabase.from("order_chats").insert(payload);
@@ -189,6 +212,17 @@ export default function DriverFarmerChatScreen() {
     } finally {
       setSending(false);
     }
+  }
+
+  function senderLabel(item: any) {
+    const role = normalize(item.sender_role);
+
+    if (role === "driver") return "Driver";
+    if (role === "farmer") return "Farmer";
+    if (role === "customer") return "Customer";
+    if (role === "admin") return "Support";
+
+    return "Farm2Home";
   }
 
   if (loading) {
@@ -219,8 +253,27 @@ export default function DriverFarmerChatScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Driver Communications</Text>
             <Text style={styles.title}>Farmer Chat</Text>
-            <Text style={styles.subtitle}>Coordinate pickup, timing, and delivery notes</Text>
+            <Text style={styles.subtitle}>
+              Coordinate pickup timing, farm notes, substitutions, and delivery readiness.
+            </Text>
           </View>
+        </View>
+
+        <View style={styles.metaBar}>
+          <Text style={styles.metaText}>
+            {deliveryOrderId
+              ? `Delivery #${deliveryOrderId}`
+              : orderId
+              ? `Order #${orderId}`
+              : "General farmer pickup chat"}
+          </Text>
+
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={() => driver?.id && loadMessages(driver.id)}
+          >
+            <Text style={styles.refreshText}>Refresh</Text>
+          </TouchableOpacity>
         </View>
 
         <FlatList
@@ -230,20 +283,24 @@ export default function DriverFarmerChatScreen() {
           ListEmptyComponent={
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No messages yet</Text>
-              <Text style={styles.emptyText}>Farmer pickup messages will appear here.</Text>
+              <Text style={styles.emptyText}>
+                Farmer pickup messages and delivery notes will appear here.
+              </Text>
             </View>
           }
           renderItem={({ item }) => {
-            const isDriver = item.sender_role === "driver";
+            const isDriver = normalize(item.sender_role) === "driver";
 
             return (
               <View style={[styles.bubble, isDriver && styles.myBubble]}>
                 <Text style={[styles.sender, isDriver && styles.mySender]}>
-                  {isDriver ? "Driver" : "Farmer"}
+                  {senderLabel(item)}
                 </Text>
+
                 <Text style={[styles.messageText, isDriver && styles.myMessageText]}>
                   {item.message}
                 </Text>
+
                 <Text style={[styles.timeText, isDriver && styles.myTimeText]}>
                   {item.created_at ? new Date(item.created_at).toLocaleString() : ""}
                 </Text>
@@ -318,6 +375,32 @@ const styles = StyleSheet.create({
   },
   title: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 3 },
   subtitle: { color: "#CBD5E1", fontWeight: "700", fontSize: 12, marginTop: 2 },
+  metaBar: {
+    backgroundColor: freightTheme.colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: freightTheme.colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  metaText: {
+    flex: 1,
+    color: freightTheme.colors.text,
+    fontWeight: "900",
+  },
+  refreshButton: {
+    backgroundColor: "#111827",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  refreshText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 12,
+  },
   messageList: { padding: 16, paddingBottom: 100 },
   emptyCard: {
     backgroundColor: freightTheme.colors.card,

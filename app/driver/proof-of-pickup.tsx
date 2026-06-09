@@ -21,11 +21,23 @@ import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL } from "../config/api";
+import { getBackendUrl } from "../services/apiConfig";
 import { supabase } from "../services/supabaseClient";
 import { uploadProofOfPickupImage } from "../services/storageService";
 import { notifyPickupCompleted } from "../services/notificationService";
-import freightTheme from "../styles/freightTheme";
+
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#151922",
+  muted: "#7B8494",
+  border: "#E6E8EF",
+  red: "#E1122D",
+  redSoft: "#FFE6EA",
+  black: "#111827",
+  soft: "#F3F4F8",
+  green: "#10B981",
+};
 
 function getParamString(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] || "";
@@ -232,7 +244,7 @@ export default function ProofOfPickupScreen() {
     if (!proofId) return;
 
     try {
-      await fetch(`${API_BASE_URL}/orders/${proofId}/status`, {
+      await fetch(`${getBackendUrl()}/orders/${proofId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -432,7 +444,7 @@ export default function ProofOfPickupScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -443,19 +455,32 @@ export default function ProofOfPickupScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.header}>
-            <Text style={styles.kicker}>Driver Operations</Text>
-            <Text style={styles.title}>Proof of Pickup</Text>
+          <View style={styles.hero}>
+            <View style={styles.heroTop}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.kicker}>Farm2Driver Verification</Text>
+                <Text style={styles.title}>Proof Pickup</Text>
+                <Text style={styles.subtitle}>
+                  Capture photo proof, confirm pickup contact, and move this shipment into picked-up status.
+                </Text>
+              </View>
 
-            <Text style={styles.subtitle}>
-              Capture pickup proof, confirm pickup contact, and move this delivery into picked up status.
-            </Text>
+              <View style={styles.heroIcon}>
+                <Ionicons name="camera" size={26} color="#FFFFFF" />
+              </View>
+            </View>
           </View>
 
           <View style={styles.card}>
             <View style={styles.loadBox}>
-              <Text style={styles.label}>Delivery / Load ID</Text>
-              <Text style={styles.loadId}>{proofId || "Missing delivery ID"}</Text>
+              <View style={styles.loadIcon}>
+                <Ionicons name="cube" size={19} color={COLORS.red} />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Delivery / Load ID</Text>
+                <Text style={styles.loadId}>{proofId || "Missing delivery ID"}</Text>
+              </View>
             </View>
 
             <Text style={styles.inputLabel}>Pickup Contact Name</Text>
@@ -483,6 +508,7 @@ export default function ProofOfPickupScreen() {
                 onPress={takePhoto}
                 disabled={loading}
               >
+                <Ionicons name="camera" size={18} color="#FFFFFF" />
                 <Text style={styles.photoButtonText}>
                   {photoUri ? "Retake Photo" : "Take Photo"}
                 </Text>
@@ -493,6 +519,7 @@ export default function ProofOfPickupScreen() {
                 onPress={chooseFromLibrary}
                 disabled={loading}
               >
+                <Ionicons name="image" size={18} color={COLORS.red} />
                 <Text style={styles.libraryButtonText}>Upload</Text>
               </TouchableOpacity>
             </View>
@@ -501,12 +528,15 @@ export default function ProofOfPickupScreen() {
               <View style={styles.previewWrap}>
                 <Image source={{ uri: photoUri }} style={styles.preview} />
                 <View style={styles.previewBadge}>
+                  <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
                   <Text style={styles.previewBadgeText}>Photo attached</Text>
                 </View>
               </View>
             ) : (
               <View style={styles.emptyPhotoBox}>
-                <Ionicons name="camera-outline" size={34} color="#10B981" />
+                <View style={styles.emptyPhotoIcon}>
+                  <Ionicons name="camera-outline" size={34} color={COLORS.red} />
+                </View>
                 <Text style={styles.emptyPhotoTitle}>No pickup photo yet</Text>
                 <Text style={styles.emptyPhotoText}>
                   Take a clear photo of the picked-up order before submitting.
@@ -522,9 +552,10 @@ export default function ProofOfPickupScreen() {
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.submitButtonText}>
-                  Submit Pickup Proof
-                </Text>
+                <>
+                  <Ionicons name="checkmark-done" size={18} color="#FFFFFF" />
+                  <Text style={styles.submitButtonText}>Submit Pickup Proof</Text>
+                </>
               )}
             </TouchableOpacity>
 
@@ -533,6 +564,7 @@ export default function ProofOfPickupScreen() {
               onPress={goToLiveLocation}
               disabled={loading}
             >
+              <Ionicons name="navigate" size={18} color="#FFFFFF" />
               <Text style={styles.secondaryActionText}>Open Live Tracking</Text>
             </TouchableOpacity>
 
@@ -553,82 +585,108 @@ export default function ProofOfPickupScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
   },
   keyboard: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
   },
   scrollContent: {
     paddingBottom: 120,
   },
-  header: {
-    backgroundColor: "#020617",
+  hero: {
+    backgroundColor: COLORS.red,
     paddingTop: 22,
     paddingHorizontal: 20,
     paddingBottom: 26,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
   },
   kicker: {
-    color: "#10B981",
+    color: "#FFE6EA",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 1,
   },
   title: {
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
     color: "#FFFFFF",
-    marginTop: 6,
+    marginTop: 4,
   },
   subtitle: {
-    color: "#CBD5E1",
+    color: "#FFFFFF",
+    opacity: 0.9,
     fontWeight: "700",
-    lineHeight: 22,
+    lineHeight: 21,
     marginTop: 8,
     fontSize: 14,
   },
+  heroIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   card: {
-    backgroundColor: freightTheme.colors.card,
-    margin: 18,
-    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginTop: -18,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   loadBox: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
+    backgroundColor: COLORS.soft,
+    borderRadius: 15,
     padding: 13,
     marginBottom: 14,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  loadIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
   label: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   loadId: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
-    marginTop: 5,
+    marginTop: 4,
     lineHeight: 20,
   },
   inputLabel: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     marginBottom: 7,
   },
   input: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.soft,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 12,
+    borderColor: COLORS.border,
+    borderRadius: 14,
     padding: 13,
     marginBottom: 12,
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "700",
   },
   textArea: {
@@ -642,28 +700,32 @@ const styles = StyleSheet.create({
   },
   photoButton: {
     flex: 1,
-    backgroundColor: freightTheme.colors.primary,
-    borderRadius: 13,
-    padding: 13,
+    backgroundColor: COLORS.red,
+    borderRadius: 14,
+    padding: 14,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   photoButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
   libraryButton: {
-    flex: 0.7,
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 13,
-    padding: 13,
+    flex: 0.75,
+    backgroundColor: COLORS.redSoft,
+    borderRadius: 14,
+    padding: 14,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: "#FFD6DE",
   },
   libraryButtonText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   previewWrap: {
@@ -671,40 +733,51 @@ const styles = StyleSheet.create({
   },
   preview: {
     width: "100%",
-    height: 220,
-    borderRadius: 14,
-    backgroundColor: "#0F172A",
+    height: 230,
+    borderRadius: 18,
+    backgroundColor: COLORS.black,
   },
   previewBadge: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.green,
     borderRadius: 999,
     paddingVertical: 7,
     paddingHorizontal: 11,
     alignSelf: "flex-start",
     marginTop: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
   },
   previewBadgeText: {
-    color: "#BBF7D0",
+    color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 12,
   },
   emptyPhotoBox: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 14,
-    padding: 20,
+    backgroundColor: COLORS.soft,
+    borderRadius: 18,
+    padding: 22,
     alignItems: "center",
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
+  },
+  emptyPhotoIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
   emptyPhotoTitle: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     fontSize: 17,
-    marginTop: 9,
+    marginTop: 10,
   },
   emptyPhotoText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 20,
     textAlign: "center",
@@ -712,22 +785,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   submitButton: {
-    backgroundColor: "#064E3B",
-    borderRadius: 13,
+    backgroundColor: COLORS.red,
+    borderRadius: 15,
     padding: 15,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   submitButtonText: {
     color: "#FFFFFF",
     fontWeight: "900",
   },
   secondaryAction: {
-    backgroundColor: "#111827",
-    borderRadius: 13,
+    backgroundColor: COLORS.black,
+    borderRadius: 15,
     padding: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
   },
   secondaryActionText: {
     color: "#FFFFFF",
@@ -738,7 +816,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   backButtonText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   disabledButton: {
