@@ -1,3 +1,5 @@
+// backend/server.js
+
 require("dotenv").config();
 
 const express = require("express");
@@ -17,9 +19,7 @@ const payoutRetryRoutes = require("./routes/payout-retry");
 const app = express();
 
 const PORT = process.env.PORT || 4242;
-
 const APP_URL = process.env.APP_URL || "https://farm2home-rho.vercel.app";
-
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   process.env.API_BASE_URL ||
@@ -36,10 +36,6 @@ const pendingStripeSplits = new Map();
 
 global.pendingMarketplaceSplits = pendingStripeSplits;
 global.completedMarketplaceTransfers = new Map();
-
-/* =====================================================
-   HELPERS
-===================================================== */
 
 function requireStripe(res) {
   if (!stripe) {
@@ -60,7 +56,7 @@ function toCents(value) {
 function appendQueryParams(baseUrl, params) {
   const url = new URL(baseUrl);
 
-  Object.entries(params).forEach(([key, value]) => {
+  Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       url.searchParams.set(key, String(value));
     }
@@ -126,14 +122,16 @@ app.use(
 );
 
 /* =====================================================
-   STRIPE WEBHOOK ROUTE
-   MUST STAY BEFORE express.json()
+   STRIPE WEBHOOK ROUTES
+   THESE MUST STAY BEFORE express.json()
 ===================================================== */
 
 app.use("/stripe", stripeWebhookRoutes);
+app.use("/payments", paymentsRoutes);
 
 /* =====================================================
    JSON MIDDLEWARE
+   DO NOT PLACE THIS BEFORE STRIPE WEBHOOK ROUTES
 ===================================================== */
 
 app.use(express.json({ limit: "10mb" }));
@@ -160,6 +158,7 @@ app.get("/health", (req, res) => {
     webhookConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
     appUrl: APP_URL,
     apiBaseUrl: API_BASE_URL,
+    paymentsRoutesMountedBeforeJson: true,
     driverRoutesMounted: true,
     stripeWebhookMounted: true,
     deliveryPayoutRoutesMounted: true,
@@ -168,7 +167,7 @@ app.get("/health", (req, res) => {
 });
 
 /* =====================================================
-   FARMER STRIPE CONNECT
+   FARMER STRIPE CONNECT LEGACY ROUTES
 ===================================================== */
 
 app.post("/create-farmer-stripe-account", async (req, res) => {
@@ -298,7 +297,7 @@ app.get("/farmer-stripe-account-status/:accountId", async (req, res) => {
 });
 
 /* =====================================================
-   MARKETPLACE CHECKOUT
+   MARKETPLACE CHECKOUT LEGACY ROUTE
 ===================================================== */
 
 app.post("/create-marketplace-checkout", async (req, res) => {
@@ -539,7 +538,6 @@ app.post("/calculate-distance", async (req, res) => {
 ===================================================== */
 
 app.use("/orders", ordersRoutes);
-app.use("/payments", paymentsRoutes);
 app.use("/chat", chatRoutes);
 app.use("/freight", freightRoutes);
 app.use("/driver", driverRoutes);
