@@ -1,4 +1,4 @@
-// app/freight/my-loads.tsx
+// app/freight/live-loads.tsx
 
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -53,11 +53,14 @@ type FreightLoad = {
   distance_miles?: number;
   rate?: number;
   status?: string;
-  notes?: string;
   carrier_id?: string;
   driver_id?: string;
   accepted_by?: string;
   accepted_at?: string;
+  arrived_pickup_at?: string;
+  picked_up_at?: string;
+  arrived_dropoff_at?: string;
+  delivered_at?: string;
   updated_at?: string;
 };
 
@@ -75,33 +78,32 @@ function money(value: number) {
 function statusColor(status: string) {
   const value = normalize(status);
 
+  if (value === "available") return COLORS.blue;
   if (value === "accepted") return COLORS.red;
   if (value === "arrived_pickup") return COLORS.teal;
   if (value === "picked_up") return COLORS.amber;
   if (value === "in_transit") return COLORS.purple;
   if (value === "arrived_dropoff") return COLORS.teal;
   if (value === "delivered" || value === "completed") return COLORS.green;
-  if (value === "cancelled") return COLORS.redDark;
 
   return COLORS.slate;
 }
 
 function statusLabel(status: string) {
-  return String(status || "accepted")
+  return String(status || "available")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export default function MyFreightLoads() {
+export default function FreightLiveLoadsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [carrier, setCarrier] = useState<any>(null);
   const [loads, setLoads] = useState<FreightLoad[]>([]);
 
   useFocusEffect(
     useCallback(() => {
-      loadMyLoads();
+      loadLiveLoads();
     }, [])
   );
 
@@ -121,7 +123,7 @@ export default function MyFreightLoads() {
     }
   }
 
-  async function loadMyLoads() {
+  async function loadLiveLoads() {
     try {
       setLoading(true);
 
@@ -165,18 +167,25 @@ export default function MyFreightLoads() {
         .from("freight_loads")
         .select("*")
         .or(`carrier_id.eq.${id},driver_id.eq.${id},accepted_by.eq.${id}`)
+        .in("status", [
+          "accepted",
+          "arrived_pickup",
+          "picked_up",
+          "in_transit",
+          "arrived_dropoff",
+        ])
         .order("updated_at", { ascending: false });
 
       if (error) {
-        console.log("My freight loads error:", error.message);
+        console.log("Live freight loads error:", error.message);
         setLoads([]);
         return;
       }
 
       setLoads(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.log("Load my freight loads error:", error);
-      Alert.alert("Load Error", "Unable to load your freight loads.");
+      console.log("Load live freight error:", error);
+      Alert.alert("Live Loads Error", "Unable to load live freight loads.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -185,21 +194,23 @@ export default function MyFreightLoads() {
 
   async function onRefresh() {
     setRefreshing(true);
-    await loadMyLoads();
+    await loadLiveLoads();
   }
 
-  async function updateLoadStatus(load: FreightLoad, status: string) {
+  async function updateStatus(load: FreightLoad, nextStatus: string) {
     try {
       const now = new Date().toISOString();
 
       const payload: any = {
-        status,
+        status: nextStatus,
         updated_at: now,
       };
 
-      if (status === "picked_up") payload.picked_up_at = now;
-      if (status === "in_transit") payload.in_transit_at = now;
-      if (status === "delivered") payload.delivered_at = now;
+      if (nextStatus === "arrived_pickup") payload.arrived_pickup_at = now;
+      if (nextStatus === "picked_up") payload.picked_up_at = now;
+      if (nextStatus === "in_transit") payload.in_transit_at = now;
+      if (nextStatus === "arrived_dropoff") payload.arrived_dropoff_at = now;
+      if (nextStatus === "delivered") payload.delivered_at = now;
 
       const { error } = await supabase
         .from("freight_loads")
@@ -208,14 +219,13 @@ export default function MyFreightLoads() {
 
       if (error) throw error;
 
-      await loadMyLoads();
-      Alert.alert("Load Updated", `Load marked as ${statusLabel(status)}.`);
+      await loadLiveLoads();
     } catch (error: any) {
-      Alert.alert("Update Error", error?.message || "Unable to update this load.");
+      Alert.alert("Update Error", error?.message || "Unable to update load.");
     }
   }
 
-  function renderActions(load: FreightLoad) {
+  function nextAction(load: FreightLoad) {
     const status = normalize(load.status);
 
     if (status === "accepted") {
@@ -223,8 +233,7 @@ export default function MyFreightLoads() {
         <ActionButton
           title="Arrived Pickup"
           icon="location-outline"
-          color={COLORS.red}
-          onPress={() => updateLoadStatus(load, "arrived_pickup")}
+          onPress={() => updateStatus(load, "arrived_pickup")}
         />
       );
     }
@@ -232,9 +241,8 @@ export default function MyFreightLoads() {
     if (status === "arrived_pickup") {
       return (
         <ActionButton
-          title="Proof Pickup"
+          title="Proof of Pickup"
           icon="camera-outline"
-          color={COLORS.teal}
           onPress={() =>
             router.push({
               pathname: "/driver/proof-of-pickup" as any,
@@ -250,8 +258,7 @@ export default function MyFreightLoads() {
         <ActionButton
           title="Start Transit"
           icon="navigate-outline"
-          color={COLORS.purple}
-          onPress={() => updateLoadStatus(load, "in_transit")}
+          onPress={() => updateStatus(load, "in_transit")}
         />
       );
     }
@@ -261,8 +268,7 @@ export default function MyFreightLoads() {
         <ActionButton
           title="Arrived Dropoff"
           icon="flag-outline"
-          color={COLORS.teal}
-          onPress={() => updateLoadStatus(load, "arrived_dropoff")}
+          onPress={() => updateStatus(load, "arrived_dropoff")}
         />
       );
     }
@@ -270,9 +276,8 @@ export default function MyFreightLoads() {
     if (status === "arrived_dropoff") {
       return (
         <ActionButton
-          title="Proof Delivery"
+          title="Proof of Delivery"
           icon="checkmark-done-outline"
-          color={COLORS.green}
           onPress={() =>
             router.push({
               pathname: "/driver/proof-of-delivery" as any,
@@ -283,42 +288,20 @@ export default function MyFreightLoads() {
       );
     }
 
-    if (status === "delivered" || status === "completed") {
-      return (
-        <View style={styles.completeBadge}>
-          <Ionicons name="checkmark-done-circle" size={17} color="#FFFFFF" />
-          <Text style={styles.completeText}>Completed</Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.inactiveBadge}>
-        <Text style={styles.inactiveText}>{statusLabel(load.status || "")}</Text>
-      </View>
-    );
+    return null;
   }
 
-  const stats = useMemo(() => {
-    const active = loads.filter((x) =>
-      ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
-        normalize(x.status)
-      )
-    );
-    const completed = loads.filter((x) =>
-      ["delivered", "completed"].includes(normalize(x.status))
-    );
-    const totalValue = loads.reduce((sum, x) => sum + Number(x.rate || 0), 0);
-
-    return { active: active.length, completed: completed.length, totalValue };
-  }, [loads]);
+  const totalValue = useMemo(
+    () => loads.reduce((sum, load) => sum + Number(load.rate || 0), 0),
+    [loads]
+  );
 
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
         <ActivityIndicator size="large" color={COLORS.red} />
-        <Text style={styles.centerText}>Loading my freight loads...</Text>
+        <Text style={styles.centerText}>Loading live freight loads...</Text>
       </SafeAreaView>
     );
   }
@@ -329,22 +312,20 @@ export default function MyFreightLoads() {
 
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-        <Text style={styles.title}>My Loads</Text>
+        <Text style={styles.title}>Live Loads</Text>
         <Text style={styles.subtitle}>
-          {carrier?.companyName || "Freight Connect Carrier"} · Manage accepted, active,
-          and completed freight loads.
+          Track active freight movement, route status, pickup progress, and dropoff workflow.
         </Text>
       </View>
 
       <View style={styles.summaryRow}>
-        <SummaryCard label="Active" value={stats.active} />
-        <SummaryCard label="Completed" value={stats.completed} />
-        <SummaryCard label="Value" value={money(stats.totalValue)} />
+        <SummaryCard label="Live Loads" value={loads.length} />
+        <SummaryCard label="Route Value" value={money(totalValue)} />
       </View>
 
       <View style={styles.navRow}>
-        <NavButton title="Load Board" icon="list-outline" route="/freight/board" />
-        <NavButton title="Live Loads" icon="pulse-outline" route="/freight/live-loads" outline />
+        <NavButton title="Dashboard" icon="grid-outline" route="/freight/dashboard" />
+        <NavButton title="Board" icon="list-outline" route="/freight/board" outline />
       </View>
 
       <FlatList
@@ -354,19 +335,19 @@ export default function MyFreightLoads() {
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyCard}>
-            <Ionicons name="cube-outline" size={38} color={COLORS.red} />
-            <Text style={styles.emptyTitle}>No claimed loads yet.</Text>
+            <Ionicons name="trail-sign-outline" size={38} color={COLORS.red} />
+            <Text style={styles.emptyTitle}>No live freight loads.</Text>
             <Text style={styles.emptyText}>
-              Claim a delivery from the freight board to manage it here.
+              Accepted freight loads will appear here while they are active.
             </Text>
           </View>
         }
         renderItem={({ item }) => (
           <View style={styles.card}>
-            <View style={styles.headerRow}>
+            <View style={styles.cardTop}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.loadTitle}>{item.title || item.commodity || "Freight Load"}</Text>
-                <Text style={styles.loadId}>Load #{String(item.id).slice(-6)}</Text>
+                <Text style={styles.farmName}>{item.farmer_name || "Farm2Home Partner"}</Text>
               </View>
 
               <View style={[styles.statusPill, { backgroundColor: statusColor(item.status || "") }]}>
@@ -375,41 +356,36 @@ export default function MyFreightLoads() {
             </View>
 
             <View style={styles.routeBox}>
-              <Text style={styles.route}>{item.pickup_location || "Pickup TBD"}</Text>
-              <Text style={styles.arrow}>→</Text>
-              <Text style={styles.route}>{item.dropoff_location || "Dropoff TBD"}</Text>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routeText}>{item.pickup_location || "Pickup TBD"}</Text>
+              <View style={styles.routeLine} />
+              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.routeText}>{item.dropoff_location || "Dropoff TBD"}</Text>
             </View>
 
-            <View style={styles.detailsBox}>
-              <Text style={styles.detail}>Commodity: {item.commodity || "Farm Freight"}</Text>
-              <Text style={styles.detail}>Pickup: {item.pickup_date || "TBD"} · {item.pickup_time || "TBD"}</Text>
-              <Text style={styles.detail}>Equipment: {item.equipment_type || "Standard"}</Text>
-              <Text style={styles.detail}>Posted By: {item.farmer_name || "Farm2Home Partner"}</Text>
+            <View style={styles.infoGrid}>
+              <Info label="Pickup" value={`${item.pickup_date || "TBD"} · ${item.pickup_time || "TBD"}`} />
+              <Info label="Equipment" value={item.equipment_type || "Standard"} />
+              <Info label="Miles" value={`${Number(item.distance_miles || 0).toFixed(0)} mi`} />
+              <Info label="Rate" value={money(Number(item.rate || 0))} />
             </View>
 
-            {!!item.notes && <Text style={styles.description}>{item.notes}</Text>}
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={styles.trackButton}
+                onPress={() =>
+                  router.push({
+                    pathname: "/freight/live-route" as any,
+                    params: { loadId: item.id },
+                  })
+                }
+              >
+                <Ionicons name="map-outline" size={18} color={COLORS.red} />
+                <Text style={styles.trackButtonText}>Live Route</Text>
+              </TouchableOpacity>
 
-            <View style={styles.footerRow}>
-              <View style={styles.payoutBlock}>
-                <Text style={styles.rateLabel}>Payout</Text>
-                <Text style={styles.payout}>{money(Number(item.rate || 0))}</Text>
-              </View>
-
-              {renderActions(item)}
+              {nextAction(item)}
             </View>
-
-            <TouchableOpacity
-              style={styles.routeButton}
-              onPress={() =>
-                router.push({
-                  pathname: "/freight/live-route" as any,
-                  params: { loadId: item.id },
-                })
-              }
-            >
-              <Ionicons name="map-outline" size={18} color={COLORS.red} />
-              <Text style={styles.routeButtonText}>Open Live Route</Text>
-            </TouchableOpacity>
           </View>
         )}
       />
@@ -438,10 +414,19 @@ function NavButton({ title, icon, route, outline }: any) {
   );
 }
 
-function ActionButton({ title, icon, color, onPress }: any) {
+function Info({ label, value }: { label: string; value: string }) {
   return (
-    <TouchableOpacity style={[styles.actionButton, { backgroundColor: color }]} onPress={onPress}>
-      <Ionicons name={icon} size={17} color="#FFFFFF" />
+    <View style={styles.infoBox}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoText}>{value}</Text>
+    </View>
+  );
+}
+
+function ActionButton({ title, icon, onPress }: any) {
+  return (
+    <TouchableOpacity style={styles.actionButton} onPress={onPress}>
+      <Ionicons name={icon} size={18} color="#FFFFFF" />
       <Text style={styles.actionText}>{title}</Text>
     </TouchableOpacity>
   );
@@ -478,9 +463,10 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     color: "#D1D5DB",
-    marginTop: 8,
     lineHeight: 22,
+    fontSize: 14,
     fontWeight: "700",
+    marginTop: 8,
   },
   summaryRow: {
     flexDirection: "row",
@@ -494,9 +480,9 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 14,
+    padding: 15,
   },
-  summaryValue: { color: COLORS.black, fontSize: 21, fontWeight: "900" },
+  summaryValue: { color: COLORS.black, fontSize: 22, fontWeight: "900" },
   summaryLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 4 },
   navRow: {
     flexDirection: "row",
@@ -507,8 +493,8 @@ const styles = StyleSheet.create({
   navButton: {
     flex: 1,
     backgroundColor: COLORS.red,
-    padding: 14,
     borderRadius: 14,
+    padding: 14,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -517,28 +503,127 @@ const styles = StyleSheet.create({
   navOutline: {
     flex: 1,
     backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.red,
-    padding: 14,
     borderRadius: 14,
+    padding: 14,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
+    borderWidth: 1,
+    borderColor: COLORS.red,
   },
   navText: { color: "#FFFFFF", fontWeight: "900" },
   navOutlineText: { color: COLORS.red, fontWeight: "900" },
   listContent: { paddingHorizontal: 18, paddingBottom: 90 },
+  card: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.red,
+  },
+  cardTop: { flexDirection: "row", gap: 12, marginBottom: 12 },
+  loadTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
+  farmName: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  statusPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  statusText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
+  routeBox: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+  },
+  routeLabel: {
+    color: COLORS.red,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  routeText: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 4,
+    lineHeight: 20,
+  },
+  routeLine: {
+    width: 2,
+    height: 20,
+    backgroundColor: COLORS.border,
+    marginVertical: 8,
+    marginLeft: 8,
+  },
+  infoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  infoBox: {
+    flexBasis: "48%",
+    flexGrow: 1,
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 12,
+  },
+  infoLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  infoText: {
+    color: COLORS.text,
+    fontWeight: "800",
+    marginTop: 5,
+    lineHeight: 19,
+  },
+  actionRow: { flexDirection: "row", gap: 10, marginTop: 14 },
+  trackButton: {
+    flex: 1,
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    borderRadius: 14,
+    padding: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  trackButtonText: { color: COLORS.red, fontWeight: "900" },
+  actionButton: {
+    flex: 1,
+    backgroundColor: COLORS.red,
+    borderRadius: 14,
+    padding: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  actionText: { color: "#FFFFFF", fontWeight: "900" },
   emptyCard: {
     backgroundColor: COLORS.card,
-    borderColor: COLORS.border,
-    borderWidth: 1,
     borderRadius: 22,
     padding: 24,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
     marginTop: 20,
   },
-  emptyTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginTop: 10 },
+  emptyTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 10,
+  },
   emptyText: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -546,102 +631,4 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 22,
   },
-  card: {
-    backgroundColor: COLORS.card,
-    borderColor: COLORS.border,
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 16,
-  },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
-  loadTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
-  loadId: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  statusPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
-  statusText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
-  routeBox: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 14,
-    marginTop: 14,
-  },
-  route: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
-  arrow: { color: COLORS.red, fontSize: 22, fontWeight: "900", marginVertical: 4 },
-  detailsBox: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginTop: 12,
-  },
-  detail: { color: COLORS.text, fontWeight: "700", marginBottom: 6 },
-  description: {
-    color: COLORS.muted,
-    lineHeight: 21,
-    marginTop: 12,
-    fontWeight: "700",
-  },
-  footerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    marginTop: 14,
-  },
-  payoutBlock: { flex: 1 },
-  rateLabel: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    marginBottom: 4,
-    textTransform: "uppercase",
-    fontSize: 12,
-  },
-  payout: { color: COLORS.red, fontSize: 28, fontWeight: "900" },
-  actionButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 14,
-    flexDirection: "row",
-    gap: 7,
-    alignItems: "center",
-  },
-  actionText: { color: "#FFFFFF", fontWeight: "900" },
-  completeBadge: {
-    backgroundColor: COLORS.green,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 14,
-    flexDirection: "row",
-    gap: 7,
-    alignItems: "center",
-  },
-  completeText: { color: "#FFFFFF", fontWeight: "900" },
-  inactiveBadge: {
-    backgroundColor: COLORS.slate,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 14,
-  },
-  inactiveText: { color: "#FFFFFF", fontWeight: "900" },
-  routeButton: {
-    backgroundColor: "#FFF1F2",
-    borderWidth: 1,
-    borderColor: COLORS.red,
-    borderRadius: 14,
-    padding: 13,
-    marginTop: 12,
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  routeButtonText: { color: COLORS.red, fontWeight: "900" },
 });
