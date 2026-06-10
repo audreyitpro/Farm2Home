@@ -325,6 +325,122 @@ async function findProfile({ role, profileId, email }) {
   return null;
 }
 
+async function safeUpdateByIdOrEmail(table, payload, profileId, email) {
+  if (!supabase) return { saved: false };
+
+  const cleanProfileId = cleanString(profileId);
+  const cleanEmail = normalizeEmail(email);
+
+  let lastError = null;
+
+  if (cleanProfileId) {
+    const result = await supabase
+      .from(table)
+      .update(payload)
+      .eq("id", cleanProfileId)
+      .select("id")
+      .maybeSingle();
+
+    if (!result.error && result.data?.id) {
+      return { saved: true, id: result.data.id };
+    }
+
+    if (result.error) lastError = result.error;
+  }
+
+  if (cleanEmail) {
+    const result = await supabase
+      .from(table)
+      .update(payload)
+      .eq("email", cleanEmail)
+      .select("id")
+      .maybeSingle();
+
+    if (!result.error && result.data?.id) {
+      return { saved: true, id: result.data.id };
+    }
+
+    if (result.error) lastError = result.error;
+  }
+
+  return { saved: false, error: lastError };
+}
+
+async function saveConnectAccountDirect({
+  role,
+  profileId,
+  email,
+  accountId,
+  payoutsEnabled = false,
+  chargesEnabled = false,
+  onboardingComplete = false,
+  status,
+}) {
+  if (!supabase || !accountId) {
+    return { saved: false, error: "Missing Supabase or accountId." };
+  }
+
+  const config = getProfileConfig(role);
+  const connectStatus =
+    status || (onboardingComplete ? "complete" : "created");
+
+  const minimalPayload = {
+    stripe_account_id: accountId,
+    stripe_connect_status: connectStatus,
+    updated_at: new Date().toISOString(),
+  };
+
+  const minimal = await safeUpdateByIdOrEmail(
+    config.table,
+    minimalPayload,
+    profileId,
+    email
+  );
+
+  if (!minimal.saved) {
+    console.log(
+      `Minimal connect save failed for ${config.table}:`,
+      minimal.error?.message || minimal.error || "No matching row"
+    );
+  }
+
+  const fullPayload = {
+    stripe_account_id: accountId,
+    stripe_connect_status: connectStatus,
+    payouts_enabled: Boolean(payoutsEnabled),
+    charges_enabled: Boolean(chargesEnabled),
+    stripe_payouts_enabled: Boolean(payoutsEnabled),
+    stripe_charges_enabled: Boolean(chargesEnabled),
+    stripe_onboarding_complete: Boolean(onboardingComplete),
+    updated_at: new Date().toISOString(),
+  };
+
+  const full = await safeUpdateByIdOrEmail(
+    config.table,
+    fullPayload,
+    profileId,
+    email
+  );
+
+  if (!full.saved && full.error) {
+    console.log(
+      `Full connect save skipped/failed for ${config.table}:`,
+      full.error.message
+    );
+  }
+
+  if (normalizeRole(role) === "farmer") {
+    await safeUpdateByIdOrEmail(
+      "admin_verifications",
+      minimalPayload,
+      profileId,
+      email
+    );
+  }
+
+  return minimal.saved ? minimal : full;
+}
+
 async function upsertProfile({
   role,
   profileId,
@@ -382,12 +498,10 @@ async function upsertProfile({
 
   if (payoutsEnabled !== undefined) {
     payload.payouts_enabled = Boolean(payoutsEnabled);
-    payload.stripe_payouts_enabled = Boolean(payoutsEnabled);
   }
 
   if (chargesEnabled !== undefined) {
     payload.charges_enabled = Boolean(chargesEnabled);
-    payload.stripe_charges_enabled = Boolean(chargesEnabled);
   }
 
   if (onboardingComplete !== undefined) {
@@ -404,32 +518,16 @@ async function upsertProfile({
 
   let matchedId = cleanProfileId;
 
-  if (cleanProfileId) {
-    const updated = await supabase
-      .from(config.table)
-      .update(payload)
-      .eq("id", cleanProfileId)
-      .select("id")
-      .maybeSingle();
+  const updated = await safeUpdateByIdOrEmail(
+    config.table,
+    payload,
+    cleanProfileId,
+    cleanEmail
+  );
 
-    if (!updated.error && updated.data?.id) {
-      matchedId = updated.data.id;
-      return updated.data;
-    }
-  }
-
-  if (cleanEmail) {
-    const updatedByEmail = await supabase
-      .from(config.table)
-      .update(payload)
-      .eq("email", cleanEmail)
-      .select("id")
-      .maybeSingle();
-
-    if (!updatedByEmail.error && updatedByEmail.data?.id) {
-      matchedId = updatedByEmail.data.id;
-      return updatedByEmail.data;
-    }
+  if (updated.saved) {
+    matchedId = updated.id || cleanProfileId;
+    return { id: matchedId };
   }
 
   if (cleanProfileId) {
@@ -507,24 +605,6 @@ async function updateFarmerApplicationPayment(session) {
     subscriptionStatus: "not_started",
     accountActive: false,
   });
-
-  const farmerUpdate = {
-    application_fee_paid: true,
-    farmer_membership_paid: false,
-    monthly_membership_started: false,
-    stripe_customer_id: stripeCustomerId,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (farmerId) {
-    await supabase.from("farmers").update(farmerUpdate).eq("id", farmerId);
-    await supabase.from("admin_verifications").update(farmerUpdate).eq("farmer_id", farmerId);
-  }
-
-  if (email) {
-    await supabase.from("farmers").update(farmerUpdate).eq("email", email);
-    await supabase.from("admin_verifications").update(farmerUpdate).eq("email", email);
-  }
 }
 
 async function saveSubscriptionFromStripe({ subscription, session, roleOverride }) {
@@ -621,32 +701,6 @@ async function saveSubscriptionFromStripe({ subscription, session, roleOverride 
     membershipStatus: active ? "active" : status,
     accountActive: active,
   });
-
-  if (role === "farmer") {
-    const farmerUpdate = {
-      stripe_customer_id: stripeCustomerId || null,
-      stripe_subscription_id: stripeSubscriptionId || null,
-      subscription_status: status,
-      membership_status: active ? "active" : status,
-      farmer_membership_paid: active,
-      monthly_membership_started: active,
-      farmer_monthly_subscription_paid: active,
-      subscription_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    if (active) farmerUpdate.membership_started_at = new Date().toISOString();
-
-    if (userId) {
-      await supabase.from("farmers").update(farmerUpdate).eq("id", userId);
-      await supabase.from("admin_verifications").update(farmerUpdate).eq("farmer_id", userId);
-    }
-
-    if (email) {
-      await supabase.from("farmers").update(farmerUpdate).eq("email", email);
-      await supabase.from("admin_verifications").update(farmerUpdate).eq("email", email);
-    }
-  }
 }
 
 async function updateSubscriptionFromInvoice(invoice) {
@@ -720,8 +774,6 @@ async function handleCheckoutSessionCompleted(session) {
       session,
       roleOverride: role,
     });
-
-    return;
   }
 }
 
@@ -1053,11 +1105,6 @@ router.post("/create-farmer-application-fee-checkout", async (req, res) => {
   }
 });
 
-router.post("/payments/create-farmer-application-fee-checkout", (req, res) => {
-  req.url = "/create-farmer-application-fee-checkout";
-  return router.handle(req, res);
-});
-
 router.post("/verify-farmer-application-fee", async (req, res) => {
   try {
     if (!requireSupabase(res)) return;
@@ -1292,6 +1339,17 @@ router.post("/create-connect-account", async (req, res) => {
       finalAccountId = account.id;
     }
 
+    const directSave = await saveConnectAccountDirect({
+      role: normalizedRole,
+      profileId: finalProfileId,
+      email: finalEmail,
+      accountId: finalAccountId,
+      payoutsEnabled: false,
+      chargesEnabled: false,
+      onboardingComplete: false,
+      status: "created",
+    });
+
     await upsertProfile({
       role: normalizedRole,
       profileId: finalProfileId,
@@ -1332,6 +1390,8 @@ router.post("/create-connect-account", async (req, res) => {
       onboardingUrl: accountLink.url,
       url: accountLink.url,
       reusedExistingAccount: Boolean(profile?.stripe_account_id),
+      savedToSupabase: Boolean(directSave?.saved),
+      saveError: directSave?.error?.message || null,
     });
   } catch (error) {
     console.error("create-connect-account error:", error);
@@ -1398,15 +1458,15 @@ router.post("/check-connect-account", async (req, res) => {
     try {
       account = await stripe.accounts.retrieve(activeAccountId);
     } catch {
-      await upsertProfile({
+      await saveConnectAccountDirect({
         role: normalizedRole,
         profileId: finalProfileId,
         email: finalEmail,
-        stripeAccountId: null,
+        accountId: null,
         payoutsEnabled: false,
         chargesEnabled: false,
         onboardingComplete: false,
-        complianceStatus: "stripe_pending",
+        status: "not_started",
       });
 
       return res.status(404).json({
@@ -1418,6 +1478,17 @@ router.post("/check-connect-account", async (req, res) => {
     }
 
     const onboardingComplete = Boolean(account.details_submitted);
+
+    await saveConnectAccountDirect({
+      role: normalizedRole,
+      profileId: finalProfileId,
+      email: finalEmail,
+      accountId: activeAccountId,
+      payoutsEnabled: Boolean(account.payouts_enabled),
+      chargesEnabled: Boolean(account.charges_enabled),
+      onboardingComplete,
+      status: onboardingComplete ? "complete" : "created",
+    });
 
     await upsertProfile({
       role: normalizedRole,
@@ -1801,6 +1872,17 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
           cleanString(metadata.farmerId) ||
           cleanString(metadata.driverId) ||
           cleanString(metadata.freightId);
+
+        await saveConnectAccountDirect({
+          role,
+          profileId,
+          email: metadata.email,
+          accountId: account.id,
+          payoutsEnabled: Boolean(account.payouts_enabled),
+          chargesEnabled: Boolean(account.charges_enabled),
+          onboardingComplete: Boolean(account.details_submitted),
+          status: account.details_submitted ? "complete" : "created",
+        });
 
         await upsertProfile({
           role,
