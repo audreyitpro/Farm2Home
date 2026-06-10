@@ -22,8 +22,22 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
-import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
+import { supabase } from "../data/supabaseClient";
+
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  amber: "#D97706",
+  slate: "#64748B",
+};
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -107,97 +121,26 @@ export default function FreightRegister() {
   }
 
   async function checkDuplicateFreight(cleanEmail: string, cleanUsername: string) {
-    const checks = await Promise.all([
-      supabase
-        .from("freight_users")
-        .select("id,email,username")
-        .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-        .maybeSingle(),
-      supabase
-        .from("freight_carriers")
-        .select("id,email,username")
-        .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-        .maybeSingle(),
-    ]);
+    const { data, error } = await supabase
+      .from("freight_users")
+      .select("id,email,username")
+      .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
+      .maybeSingle();
 
-    for (const result of checks) {
-      if (result.error) {
-        console.log("Freight duplicate check error:", result.error.message);
-        continue;
-      }
+    if (error) {
+      console.log("Freight duplicate check error:", error.message);
+      return false;
+    }
 
-      if (result.data) {
-        Alert.alert(
-          "Account Exists",
-          "A freight account already exists with this email or username."
-        );
-        return true;
-      }
+    if (data) {
+      Alert.alert(
+        "Account Exists",
+        "A freight account already exists with this email or username."
+      );
+      return true;
     }
 
     return false;
-  }
-
-  async function createOrUpdateProfile({
-    authUserId,
-    cleanCompanyName,
-    cleanContactName,
-    cleanEmail,
-    cleanPhone,
-  }: {
-    authUserId: string;
-    cleanCompanyName: string;
-    cleanContactName: string;
-    cleanEmail: string;
-    cleanPhone: string;
-  }) {
-    const { data: existingProfile, error: existingProfileError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("email", cleanEmail)
-      .maybeSingle();
-
-    if (existingProfileError) throw existingProfileError;
-
-    if (existingProfile?.id) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({
-          auth_user_id: authUserId,
-          role: "freight",
-          full_name: cleanContactName,
-          name: cleanContactName,
-          phone: cleanPhone,
-          company_name: cleanCompanyName,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingProfile.id)
-        .select("*")
-        .single();
-
-      if (error) throw error;
-      return data;
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .insert({
-        auth_user_id: authUserId,
-        role: "freight",
-        full_name: cleanContactName,
-        name: cleanContactName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        company_name: cleanCompanyName,
-        account_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .select("*")
-      .single();
-
-    if (error) throw error;
-    return data;
   }
 
   async function saveFreightSession(carrier: any) {
@@ -211,6 +154,57 @@ export default function FreightRegister() {
     await AsyncStorage.setItem("currentUserRole", "freight");
   }
 
+  async function upsertProfile(payload: any) {
+    const { data: existingProfile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", payload.id)
+      .maybeSingle();
+
+    if (existingProfile?.id) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update({
+          auth_user_id: payload.id,
+          role: "freight",
+          full_name: payload.contact_name,
+          name: payload.contact_name,
+          email: payload.email,
+          phone: payload.phone,
+          company_name: payload.company_name,
+          account_active: true,
+          updated_at: payload.updated_at,
+        })
+        .eq("id", payload.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .insert({
+        id: payload.id,
+        auth_user_id: payload.id,
+        role: "freight",
+        full_name: payload.contact_name,
+        name: payload.contact_name,
+        email: payload.email,
+        phone: payload.phone,
+        company_name: payload.company_name,
+        account_active: true,
+        created_at: payload.created_at,
+        updated_at: payload.updated_at,
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
   async function createAdminVerificationRecord(carrier: any) {
     const adminRecord = {
       id: carrier.id,
@@ -220,7 +214,7 @@ export default function FreightRegister() {
       account_type: "FREIGHT_CARRIER",
 
       company_name: carrier.company_name,
-      business_name: carrier.company_name,
+      business_name: carrier.business_name,
       contact_name: carrier.contact_name,
       owner_name: carrier.owner_name,
       email: carrier.email,
@@ -234,7 +228,7 @@ export default function FreightRegister() {
 
       mdot_number: carrier.mdot_number,
       mc_number: carrier.mc_number,
-      dot_number: carrier.mdot_number,
+      dot_number: carrier.dot_number,
 
       insurance_provider: carrier.insurance_provider,
       insurance_policy_number: carrier.insurance_policy_number,
@@ -256,8 +250,8 @@ export default function FreightRegister() {
       account_active: true,
       store_unlocked: false,
 
-      membership_status: "Pending",
-      subscription_status: "pending",
+      membership_status: "not_started",
+      subscription_status: "not_started",
       freight_membership_paid: false,
 
       created_at: carrier.created_at,
@@ -352,6 +346,11 @@ export default function FreightRegister() {
 
     if (!validateSecurityQuestions()) return;
 
+    if (!cleanBusinessAddress || !cleanCity || !cleanState || !cleanZipCode) {
+      Alert.alert("Missing Address", "Business address, city, state, and zip code are required.");
+      return;
+    }
+
     if (!cleanMdotNumber || !cleanMcNumber) {
       Alert.alert("Missing Authority", "MDOT number and MC number are required.");
       return;
@@ -410,24 +409,11 @@ export default function FreightRegister() {
         return;
       }
 
-      const profile = await createOrUpdateProfile({
-        authUserId: carrierId,
-        cleanCompanyName,
-        cleanContactName,
-        cleanEmail,
-        cleanPhone,
-      });
-
-      if (!profile?.id) {
-        Alert.alert("Profile Error", "Unable to create freight profile record.");
-        return;
-      }
-
       const now = new Date().toISOString();
 
       const freightPayload = {
         id: carrierId,
-        profile_id: profile.id,
+        profile_id: carrierId,
         auth_user_id: carrierId,
         role: "freight",
 
@@ -442,6 +428,16 @@ export default function FreightRegister() {
         username: cleanUsername,
 
         account_active: true,
+
+        stripe_account_id: null,
+        stripe_customer_id: null,
+        stripe_subscription_id: null,
+        stripe_connect_status: "not_started",
+        payouts_enabled: false,
+        charges_enabled: false,
+        stripe_payouts_enabled: false,
+        stripe_charges_enabled: false,
+        stripe_onboarding_complete: false,
 
         security_question_1: securityQuestion1,
         security_answer_1: normalizeAnswer(securityAnswer1),
@@ -469,39 +465,47 @@ export default function FreightRegister() {
 
         approved: false,
         verification_status: "PENDING_VERIFICATION",
-        membership_status: "Pending",
-        subscription_status: "pending",
+        compliance_status: "PENDING_VERIFICATION",
+        membership_status: "not_started",
+        subscription_status: "not_started",
         freight_membership_paid: false,
 
-        notifications_enabled: false,
+        push_notifications: true,
+        new_load_alerts: true,
+        route_status_alerts: true,
+        payout_alerts: true,
+        billing_alerts: true,
+        gps_tracking: true,
+        background_route_updates: false,
+        show_only_nearby_loads: false,
+        show_refrigerated_loads: true,
+        show_livestock_loads: true,
+        privacy_mode: false,
+
+        notifications_enabled: true,
         expo_push_token: "",
 
         created_at: now,
         updated_at: now,
       };
 
-      const freightUserResult = await supabase
+      await upsertProfile(freightPayload);
+
+      const { data: freightUser, error: freightUserError } = await supabase
         .from("freight_users")
-        .upsert(freightPayload, { onConflict: "id" });
+        .upsert(freightPayload, { onConflict: "id" })
+        .select("*")
+        .single();
 
-      if (freightUserResult.error) {
-        Alert.alert("Freight User Error", freightUserResult.error.message);
-        return;
-      }
-
-      const carrierResult = await supabase
-        .from("freight_carriers")
-        .upsert(freightPayload, { onConflict: "id" });
-
-      if (carrierResult.error) {
-        Alert.alert("Freight Carrier Error", carrierResult.error.message);
+      if (freightUserError) {
+        Alert.alert("Freight User Error", freightUserError.message);
         return;
       }
 
       const localCarrier = {
         id: carrierId,
         freightId: carrierId,
-        profileId: profile.id,
+        profileId: carrierId,
         authUserId: carrierId,
         role: "freight" as const,
 
@@ -515,6 +519,14 @@ export default function FreightRegister() {
         username: cleanUsername,
 
         accountActive: true,
+
+        stripeAccountId: "",
+        stripeCustomerId: "",
+        stripeSubscriptionId: "",
+        stripeConnectStatus: "not_started",
+        payoutsEnabled: false,
+        chargesEnabled: false,
+        onboardingComplete: false,
 
         securityQuestion1,
         securityAnswer1: normalizeAnswer(securityAnswer1),
@@ -542,8 +554,9 @@ export default function FreightRegister() {
 
         approved: false,
         verificationStatus: "PENDING_VERIFICATION",
-        membershipStatus: "Pending",
-        subscriptionStatus: "pending",
+        complianceStatus: "PENDING_VERIFICATION",
+        membershipStatus: "not_started",
+        subscriptionStatus: "not_started",
         freightMembershipPaid: false,
 
         createdAt: now,
@@ -551,7 +564,7 @@ export default function FreightRegister() {
       };
 
       await saveFreightSession(localCarrier);
-      await createAdminVerificationRecord(freightPayload);
+      await createAdminVerificationRecord(freightUser);
       await notifyAdminFreightVerification(localCarrier);
 
       const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
@@ -565,9 +578,8 @@ export default function FreightRegister() {
           userId: carrierId,
           freightId: carrierId,
           companyName: cleanCompanyName,
+          businessName: cleanCompanyName,
           planType: "freight",
-          successUrl: `${APP_URL}/freight/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
-          cancelUrl: `${APP_URL}/freight/register`,
         }),
       });
 
@@ -585,7 +597,7 @@ export default function FreightRegister() {
           "Account Saved",
           data.error ||
             data.message ||
-            "Your freight account was saved, but Stripe checkout did not open. Check STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID."
+            "Your freight account was saved, but Stripe checkout did not open."
         );
         router.replace("/freight/login" as any);
         return;
@@ -593,16 +605,32 @@ export default function FreightRegister() {
 
       const checkoutCarrier = {
         ...localCarrier,
+        stripeCustomerId: data.stripeCustomerId || data.customerId || "",
         stripeCheckoutSessionId: data.id || data.sessionId || null,
-        membershipStatus: "Checkout Started",
+        membershipStatus: "pending_payment",
+        subscriptionStatus: "pending_payment",
         updatedAt: new Date().toISOString(),
       };
 
       await saveFreightSession(checkoutCarrier);
+
+      await supabase
+        .from("freight_users")
+        .update({
+          stripe_customer_id: data.stripeCustomerId || data.customerId || null,
+          membership_status: "pending_payment",
+          subscription_status: "pending_payment",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", carrierId);
+
       await openCheckoutUrl(data.url);
     } catch (error: any) {
       console.log("FREIGHT REGISTER ERROR:", error);
-      Alert.alert("Registration Error", error?.message || "Unable to complete freight registration.");
+      Alert.alert(
+        "Registration Error",
+        error?.message || "Unable to complete freight registration."
+      );
     } finally {
       setLoading(false);
     }
@@ -630,7 +658,12 @@ export default function FreightRegister() {
                 onPress={() => setSelectedQuestion(question)}
                 activeOpacity={0.85}
               >
-                <Text style={[styles.questionChipText, active && styles.questionChipTextActive]}>
+                <Text
+                  style={[
+                    styles.questionChipText,
+                    active && styles.questionChipTextActive,
+                  ]}
+                >
                   {question}
                 </Text>
               </TouchableOpacity>
@@ -675,7 +708,7 @@ export default function FreightRegister() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -696,20 +729,20 @@ export default function FreightRegister() {
             <Text style={styles.title}>Carrier Registration</Text>
 
             <Text style={styles.subtitle}>
-              AI driver network-style carrier verification for livestock,
-              refrigerated food, and Farm2Home delivery loads.
+              Professional freight verification for livestock, refrigerated food,
+              Farm2Home delivery loads, and Farm2Driver logistics operations.
             </Text>
           </View>
 
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
-              <Ionicons name="alert-circle-outline" size={22} color="#F59E0B" />
-              <Text style={styles.noticeTitle}>Carrier Approval Required</Text>
+              <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
+              <Text style={styles.noticeTitle}>Carrier Verification Required</Text>
             </View>
 
             <Text style={styles.noticeText}>
-              Your account will stay pending until Farm2Home admin reviews your
-              authority, insurance, vehicle, and compliance documents.
+              Your account will be saved to Supabase immediately. Stripe customer,
+              subscription, and payout IDs will be permanently saved as each Stripe step is completed.
             </Text>
           </View>
 
@@ -720,7 +753,7 @@ export default function FreightRegister() {
             </View>
 
             <View style={styles.priceIcon}>
-              <Ionicons name="flash-outline" size={22} color="#BBF7D0" />
+              <Ionicons name="flash-outline" size={22} color="#FFFFFF" />
             </View>
           </View>
 
@@ -781,12 +814,12 @@ export default function FreightRegister() {
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Active MC / Operating Authority</Text>
-              <Switch value={authorityActive} onValueChange={setAuthorityActive} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={authorityActive ? "#10B981" : "#CBD5E1"} />
+              <Switch value={authorityActive} onValueChange={setAuthorityActive} />
             </View>
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Active Insurance</Text>
-              <Switch value={insuranceActive} onValueChange={setInsuranceActive} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={insuranceActive ? "#10B981" : "#CBD5E1"} />
+              <Switch value={insuranceActive} onValueChange={setInsuranceActive} />
             </View>
           </View>
 
@@ -795,12 +828,12 @@ export default function FreightRegister() {
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Licensed to Move Livestock</Text>
-              <Switch value={licensedLivestock} onValueChange={setLicensedLivestock} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={licensedLivestock ? "#10B981" : "#CBD5E1"} />
+              <Switch value={licensedLivestock} onValueChange={setLicensedLivestock} />
             </View>
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Licensed for Refrigerated Fresh Food</Text>
-              <Switch value={licensedRefrigeratedFood} onValueChange={setLicensedRefrigeratedFood} trackColor={{ false: "#334155", true: "#064E3B" }} thumbColor={licensedRefrigeratedFood ? "#10B981" : "#CBD5E1"} />
+              <Switch value={licensedRefrigeratedFood} onValueChange={setLicensedRefrigeratedFood} />
             </View>
           </View>
 
@@ -830,31 +863,27 @@ export default function FreightRegister() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
-  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
-  page: { flex: 1, backgroundColor: freightTheme.colors.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+  page: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 90 },
   heroCard: {
-    backgroundColor: "#020617",
-    paddingTop: 24,
+    backgroundColor: COLORS.black,
+    paddingTop: 26,
     paddingHorizontal: 20,
-    paddingBottom: 28,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 30,
   },
   heroIcon: {
     width: 64,
     height: 64,
-    borderRadius: 32,
-    backgroundColor: "#064E3B",
-    borderWidth: 1,
-    borderColor: "#10B981",
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   kicker: {
-    color: "#10B981",
+    color: "#FCA5A5",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -869,8 +898,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   noticeBox: {
-    backgroundColor: "#451A03",
-    borderColor: "#F59E0B",
+    backgroundColor: "#FFFBEB",
+    borderColor: COLORS.amber,
     borderWidth: 1,
     borderRadius: 18,
     padding: 15,
@@ -879,81 +908,79 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   noticeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
-  noticeTitle: { color: "#FCD34D", fontWeight: "900", fontSize: 17 },
-  noticeText: { color: "#FEF3C7", fontWeight: "700", lineHeight: 22 },
+  noticeTitle: { color: COLORS.text, fontWeight: "900", fontSize: 17 },
+  noticeText: { color: COLORS.text, fontWeight: "700", lineHeight: 22 },
   priceBox: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.red,
     padding: 18,
     borderRadius: 20,
     marginHorizontal: 18,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#10B981",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
   price: { fontSize: 27, fontWeight: "900", color: "#FFFFFF" },
-  priceSub: { color: "#BBF7D0", marginTop: 4, fontWeight: "800" },
+  priceSub: { color: "#FFE4E6", marginTop: 4, fontWeight: "800" },
   priceIcon: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: "#052E2B",
+    borderRadius: 18,
+    backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
   },
   card: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 16,
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   securityCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 16,
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   sectionHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 16 },
   sectionIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: freightTheme.colors.primary,
+    borderRadius: 16,
+    backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
   },
-  section: { fontSize: 20, fontWeight: "900", color: freightTheme.colors.text },
+  section: { fontSize: 20, fontWeight: "900", color: COLORS.text },
   sectionSubtitle: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 20,
     marginTop: 3,
   },
   input: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.surface,
     padding: 14,
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
+    borderColor: COLORS.border,
     fontSize: 16,
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "700",
   },
   securityBox: { marginBottom: 12 },
-  securityLabel: { color: freightTheme.colors.text, fontWeight: "900", marginBottom: 8 },
+  securityLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
   questionChip: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
@@ -962,18 +989,18 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
   questionChipActive: {
-    backgroundColor: freightTheme.colors.primary,
-    borderColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
   },
-  questionChipText: { color: freightTheme.colors.primary, fontWeight: "900" },
+  questionChipText: { color: COLORS.red, fontWeight: "900" },
   questionChipTextActive: { color: "#FFFFFF" },
   switchRow: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     padding: 14,
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -982,10 +1009,10 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: "800",
     paddingRight: 12,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
   },
   button: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     padding: 16,
     borderRadius: 16,
     marginHorizontal: 18,
@@ -994,8 +1021,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
-    zIndex: 9999,
-    elevation: 20,
   },
   disabledButton: { opacity: 0.6 },
   buttonText: {
@@ -1005,7 +1030,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   link: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     textAlign: "center",
     fontWeight: "900",
     marginTop: 18,

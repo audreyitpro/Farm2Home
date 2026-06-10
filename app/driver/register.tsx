@@ -23,8 +23,21 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
-import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
+import { supabase } from "../data/supabaseClient";
+
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  amber: "#D97706",
+};
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -88,41 +101,28 @@ export default function DriverRegisterScreen() {
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
-  async function createOrUpdateProfile({
-    authUserId,
-    cleanFullName,
-    cleanEmail,
-    cleanPhone,
-    cleanUsername,
-  }: {
-    authUserId: string;
-    cleanFullName: string;
-    cleanEmail: string;
-    cleanPhone: string;
-    cleanUsername: string;
-  }) {
-    const { data: existingProfile, error: existingProfileError } = await supabase
+  async function upsertProfile(payload: any) {
+    const { data: existingProfile } = await supabase
       .from("profiles")
-      .select("*")
-      .eq("email", cleanEmail)
+      .select("id")
+      .eq("id", payload.id)
       .maybeSingle();
-
-    if (existingProfileError) throw existingProfileError;
 
     if (existingProfile?.id) {
       const { data, error } = await supabase
         .from("profiles")
         .update({
-          auth_user_id: authUserId,
+          auth_user_id: payload.id,
           role: "driver",
-          full_name: cleanFullName,
-          name: cleanFullName,
-          phone: cleanPhone,
-          username: cleanUsername,
+          full_name: payload.full_name,
+          name: payload.name,
+          email: payload.email,
+          phone: payload.phone,
+          username: payload.username,
           account_active: true,
-          updated_at: new Date().toISOString(),
+          updated_at: payload.updated_at,
         })
-        .eq("id", existingProfile.id)
+        .eq("id", payload.id)
         .select("*")
         .single();
 
@@ -133,16 +133,17 @@ export default function DriverRegisterScreen() {
     const { data, error } = await supabase
       .from("profiles")
       .insert({
-        auth_user_id: authUserId,
+        id: payload.id,
+        auth_user_id: payload.id,
         role: "driver",
-        full_name: cleanFullName,
-        name: cleanFullName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
+        full_name: payload.full_name,
+        name: payload.name,
+        email: payload.email,
+        phone: payload.phone,
+        username: payload.username,
         account_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: payload.created_at,
+        updated_at: payload.updated_at,
       })
       .select("*")
       .single();
@@ -252,30 +253,21 @@ export default function DriverRegisterScreen() {
   }
 
   async function checkDuplicateDriver(cleanEmail: string, cleanUsername: string) {
-    const driverCheck = await supabase
+    const { data, error } = await supabase
       .from("drivers")
       .select("id,email,username")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
       .maybeSingle();
 
-    if (!driverCheck.error && driverCheck.data) {
+    if (error) {
+      console.log("Driver duplicate check error:", error.message);
+      return false;
+    }
+
+    if (data) {
       Alert.alert(
         "Account Exists",
         "A driver account already exists with this email or username."
-      );
-      return true;
-    }
-
-    const profileCheck = await supabase
-      .from("profiles")
-      .select("id,email,username")
-      .eq("email", cleanEmail)
-      .maybeSingle();
-
-    if (!profileCheck.error && profileCheck.data) {
-      Alert.alert(
-        "Account Exists",
-        "A profile already exists with this email. Please login instead."
       );
       return true;
     }
@@ -355,13 +347,11 @@ export default function DriverRegisterScreen() {
     cleanFullName,
     cleanUsername,
     driverId,
-    profileId,
   }: {
     cleanEmail: string;
     cleanFullName: string;
     cleanUsername: string;
     driverId: string;
-    profileId: string;
   }) {
     const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
       method: "POST",
@@ -373,7 +363,7 @@ export default function DriverRegisterScreen() {
         username: cleanUsername,
         userId: driverId,
         driverId,
-        profileId,
+        profileId: driverId,
         planType: "driver",
         successUrl: `${APP_URL}/driver/mobile-driver-app?driverId=${driverId}&stripeReturn=true&session_id={CHECKOUT_SESSION_ID}`,
         cancelUrl: `${APP_URL}/driver/register?driverId=${driverId}&stripeCancel=true`,
@@ -389,15 +379,12 @@ export default function DriverRegisterScreen() {
       data = { raw: text };
     }
 
-    console.log("DRIVER STRIPE STATUS:", response.status);
-    console.log("DRIVER STRIPE RESPONSE:", data);
-
     if (!response.ok || !data.url) {
       throw new Error(
         data.error ||
           data.message ||
           data.raw ||
-          "Stripe checkout URL was not returned. Check STRIPE_DRIVER_MEMBERSHIP_PRICE_ID and backend planType driver."
+          "Stripe checkout URL was not returned."
       );
     }
 
@@ -445,19 +432,6 @@ export default function DriverRegisterScreen() {
         return;
       }
 
-      const profile = await createOrUpdateProfile({
-        authUserId: driverId,
-        cleanFullName,
-        cleanEmail,
-        cleanPhone,
-        cleanUsername,
-      });
-
-      if (!profile?.id) {
-        Alert.alert("Profile Error", "Unable to create driver profile record.");
-        return;
-      }
-
       const now = new Date().toISOString();
 
       const uploadedLicense = await uploadDriverDocument(
@@ -475,7 +449,7 @@ export default function DriverRegisterScreen() {
       const driverPayload = {
         id: driverId,
         auth_user_id: driverId,
-        profile_id: profile.id,
+        profile_id: driverId,
         role: "driver",
 
         full_name: cleanFullName,
@@ -510,18 +484,29 @@ export default function DriverRegisterScreen() {
         approved: true,
         verified: true,
         account_active: true,
-        subscription_status: "pending",
-        membership_status: "Pending",
 
-        stripe_customer_id: "",
-        stripe_subscription_id: "",
+        stripe_account_id: null,
+        stripe_customer_id: null,
+        stripe_subscription_id: null,
+        stripe_connect_status: "not_started",
+        payouts_enabled: false,
+        charges_enabled: false,
+        stripe_payouts_enabled: false,
+        stripe_charges_enabled: false,
+        stripe_onboarding_complete: false,
 
-        notifications_enabled: false,
+        subscription_status: "not_started",
+        membership_status: "not_started",
+        driver_membership_paid: false,
+
+        notifications_enabled: true,
         expo_push_token: "",
 
         created_at: now,
         updated_at: now,
       };
+
+      await upsertProfile(driverPayload);
 
       const { error: driverError } = await supabase
         .from("drivers")
@@ -536,8 +521,8 @@ export default function DriverRegisterScreen() {
         id: driverId,
         driverId,
         authUserId: driverId,
-        profileId: profile.id,
-        profile_id: profile.id,
+        profileId: driverId,
+        profile_id: driverId,
         role: "driver",
 
         fullName: cleanFullName,
@@ -572,11 +557,18 @@ export default function DriverRegisterScreen() {
         approved: true,
         verified: true,
         accountActive: true,
-        subscriptionStatus: "pending",
-        membershipStatus: "Pending",
 
+        stripeAccountId: "",
         stripeCustomerId: "",
         stripeSubscriptionId: "",
+        stripeConnectStatus: "not_started",
+        payoutsEnabled: false,
+        chargesEnabled: false,
+        onboardingComplete: false,
+
+        subscriptionStatus: "not_started",
+        membershipStatus: "not_started",
+        driverMembershipPaid: false,
 
         createdAt: now,
         updatedAt: now,
@@ -590,23 +582,32 @@ export default function DriverRegisterScreen() {
           cleanFullName,
           cleanUsername,
           driverId,
-          profileId: profile.id,
         });
+
+        const stripeCustomerId = data.stripeCustomerId || data.customerId || "";
+
+        await supabase
+          .from("drivers")
+          .update({
+            stripe_customer_id: stripeCustomerId || null,
+            membership_status: "pending_payment",
+            subscription_status: "pending_payment",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", driverId);
 
         const checkoutDriver = {
           ...localDriver,
+          stripeCustomerId,
           stripeCheckoutSessionId: data.id || data.sessionId || null,
-          membershipStatus: "Checkout Started",
-          subscriptionStatus: "pending",
+          membershipStatus: "pending_payment",
+          subscriptionStatus: "pending_payment",
           updatedAt: new Date().toISOString(),
         };
 
         await saveDriverSession(checkoutDriver);
         await openCheckoutUrl(data.url);
-        return;
       } catch (stripeError: any) {
-        console.log("Stripe driver checkout error:", stripeError);
-
         Alert.alert(
           "Driver Account Created",
           stripeError?.message ||
@@ -614,7 +615,6 @@ export default function DriverRegisterScreen() {
         );
 
         router.replace("/driver/profile" as any);
-        return;
       }
     } catch (error: any) {
       console.log("Driver register error:", error);
@@ -698,7 +698,7 @@ export default function DriverRegisterScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -718,8 +718,16 @@ export default function DriverRegisterScreen() {
             <Text style={styles.kicker}>Farm2Home Driver Portal</Text>
             <Text style={styles.title}>Driver Registration</Text>
             <Text style={styles.subtitle}>
-              Join the Farm2Home driver board to accept local farm delivery
-              orders and earn from nearby deliveries.
+              Join the Farm2Driver board to accept local farm delivery orders,
+              freight-linked jobs, and route-based delivery opportunities.
+            </Text>
+          </View>
+
+          <View style={styles.noticeBox}>
+            <Text style={styles.noticeTitle}>Permanent Profile Setup</Text>
+            <Text style={styles.noticeText}>
+              Your driver profile is saved to Supabase immediately. Stripe customer,
+              subscription, and payout IDs are permanently saved as each Stripe step is completed.
             </Text>
           </View>
 
@@ -729,7 +737,7 @@ export default function DriverRegisterScreen() {
               <Text style={styles.priceSub}>Access the Driver Delivery Board</Text>
             </View>
             <View style={styles.priceBadge}>
-              <Ionicons name="flash-outline" size={20} color="#BBF7D0" />
+              <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
             </View>
           </View>
 
@@ -740,32 +748,9 @@ export default function DriverRegisterScreen() {
               subtitle="Basic contact details for your driver profile."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Full Name"
-              placeholderTextColor="#94A3B8"
-              value={fullName}
-              onChangeText={setFullName}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              placeholderTextColor="#94A3B8"
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Phone"
-              placeholderTextColor="#94A3B8"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
+            <TextInput style={styles.input} placeholder="Full Name" placeholderTextColor="#94A3B8" value={fullName} onChangeText={setFullName} />
+            <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#94A3B8" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+            <TextInput style={styles.input} placeholder="Phone" placeholderTextColor="#94A3B8" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
           </View>
 
           <View style={styles.formCard}>
@@ -775,35 +760,9 @@ export default function DriverRegisterScreen() {
               subtitle="Create credentials for the Driver Portal."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Create Username"
-              placeholderTextColor="#94A3B8"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Create Password"
-              placeholderTextColor="#94A3B8"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm Password"
-              placeholderTextColor="#94A3B8"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
+            <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
+            <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+            <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" />
           </View>
 
           <View style={styles.formCard}>
@@ -813,102 +772,37 @@ export default function DriverRegisterScreen() {
               subtitle="Vehicle, license, insurance, and service area."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Vehicle Type"
-              placeholderTextColor="#94A3B8"
-              value={vehicleType}
-              onChangeText={setVehicleType}
-            />
+            <TextInput style={styles.input} placeholder="Vehicle Type" placeholderTextColor="#94A3B8" value={vehicleType} onChangeText={setVehicleType} />
+            <TextInput style={styles.input} placeholder="Driver License Number" placeholderTextColor="#94A3B8" value={licenseNumber} onChangeText={setLicenseNumber} />
+            <TextInput style={styles.input} placeholder="Service Area" placeholderTextColor="#94A3B8" value={serviceArea} onChangeText={setServiceArea} />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Driver License Number"
-              placeholderTextColor="#94A3B8"
-              value={licenseNumber}
-              onChangeText={setLicenseNumber}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Service Area"
-              placeholderTextColor="#94A3B8"
-              value={serviceArea}
-              onChangeText={setServiceArea}
-            />
-
-            <TouchableOpacity
-              style={styles.uploadButton}
-              onPress={() => pickDocument("license")}
-            >
-              <Ionicons
-                name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"}
-                size={20}
-                color={licenseDocument ? "#BBF7D0" : freightTheme.colors.primary}
-              />
-              <Text
-                style={[
-                  styles.uploadText,
-                  licenseDocument && styles.uploadTextComplete,
-                ]}
-              >
-                {licenseDocument
-                  ? `License: ${licenseDocument.name}`
-                  : "Upload Driver License"}
+            <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("license")}>
+              <Ionicons name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={COLORS.red} />
+              <Text style={styles.uploadText}>
+                {licenseDocument ? `License: ${licenseDocument.name}` : "Upload Driver License"}
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.uploadButton}
-              onPress={() => pickDocument("insurance")}
-            >
-              <Ionicons
-                name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"}
-                size={20}
-                color={insuranceDocument ? "#BBF7D0" : freightTheme.colors.primary}
-              />
-              <Text
-                style={[
-                  styles.uploadText,
-                  insuranceDocument && styles.uploadTextComplete,
-                ]}
-              >
-                {insuranceDocument
-                  ? `Insurance: ${insuranceDocument.name}`
-                  : "Upload Insurance"}
+            <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("insurance")}>
+              <Ionicons name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={COLORS.red} />
+              <Text style={styles.uploadText}>
+                {insuranceDocument ? `Insurance: ${insuranceDocument.name}` : "Upload Insurance"}
               </Text>
             </TouchableOpacity>
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>I have active auto insurance</Text>
-              <Switch
-                value={hasInsurance}
-                onValueChange={setHasInsurance}
-                trackColor={{ false: "#334155", true: "#064E3B" }}
-                thumbColor={hasInsurance ? "#10B981" : "#CBD5E1"}
-              />
+              <Switch value={hasInsurance} onValueChange={setHasInsurance} />
             </View>
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>I have a valid driver license</Text>
-              <Switch
-                value={hasValidLicense}
-                onValueChange={setHasValidLicense}
-                trackColor={{ false: "#334155", true: "#064E3B" }}
-                thumbColor={hasValidLicense ? "#10B981" : "#CBD5E1"}
-              />
+              <Switch value={hasValidLicense} onValueChange={setHasValidLicense} />
             </View>
 
             <View style={styles.switchRow}>
-              <Text style={styles.switchText}>
-                I authorize Farm2Home to review driver eligibility
-              </Text>
-              <Switch
-                value={acceptsBackgroundCheck}
-                onValueChange={setAcceptsBackgroundCheck}
-                trackColor={{ false: "#334155", true: "#064E3B" }}
-                thumbColor={acceptsBackgroundCheck ? "#10B981" : "#CBD5E1"}
-              />
+              <Text style={styles.switchText}>I authorize Farm2Home to review driver eligibility</Text>
+              <Switch value={acceptsBackgroundCheck} onValueChange={setAcceptsBackgroundCheck} />
             </View>
           </View>
 
@@ -919,29 +813,9 @@ export default function DriverRegisterScreen() {
               subtitle="Choose 3 questions for account verification."
             />
 
-            {renderQuestionPicker(
-              "Security Question 1",
-              securityQuestion1,
-              setSecurityQuestion1,
-              securityAnswer1,
-              setSecurityAnswer1
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 2",
-              securityQuestion2,
-              setSecurityQuestion2,
-              securityAnswer2,
-              setSecurityAnswer2
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 3",
-              securityQuestion3,
-              setSecurityQuestion3,
-              securityAnswer3,
-              setSecurityAnswer3
-            )}
+            {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
+            {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
+            {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
           </View>
 
           <TouchableOpacity
@@ -960,10 +834,7 @@ export default function DriverRegisterScreen() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => router.push("/driver/login" as any)}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity onPress={() => router.push("/driver/login" as any)} activeOpacity={0.85}>
             <Text style={styles.link}>Already registered? Driver Login</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -973,31 +844,27 @@ export default function DriverRegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
-  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
-  page: { flex: 1, backgroundColor: freightTheme.colors.background },
-  content: { paddingBottom: 80 },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+  page: { flex: 1, backgroundColor: COLORS.bg },
+  content: { paddingBottom: 90 },
   heroCard: {
-    backgroundColor: "#020617",
-    paddingTop: 24,
+    backgroundColor: COLORS.black,
+    paddingTop: 26,
     paddingHorizontal: 20,
-    paddingBottom: 28,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 30,
   },
   heroIcon: {
     width: 62,
     height: 62,
-    borderRadius: 31,
-    backgroundColor: "#064E3B",
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
     marginBottom: 14,
   },
   kicker: {
-    color: "#10B981",
+    color: "#FCA5A5",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -1016,15 +883,24 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 8,
   },
+  noticeBox: {
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 16,
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 14,
+  },
+  noticeTitle: { color: COLORS.text, fontWeight: "900", fontSize: 17 },
+  noticeText: { color: COLORS.muted, fontWeight: "700", lineHeight: 22, marginTop: 6 },
   priceBox: {
-    backgroundColor: "#064E3B",
+    backgroundColor: COLORS.red,
     padding: 18,
     borderRadius: 20,
     marginHorizontal: 18,
-    marginTop: 18,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#10B981",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1035,35 +911,35 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   priceSub: {
-    color: "#BBF7D0",
+    color: "#FFE4E6",
     marginTop: 4,
     fontWeight: "800",
   },
   priceBadge: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: "#052E2B",
+    borderRadius: 18,
+    backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
   },
   formCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 16,
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   securityCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 16,
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -1074,37 +950,37 @@ const styles = StyleSheet.create({
   sectionIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: freightTheme.colors.primary,
+    borderRadius: 16,
+    backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
   },
   section: {
     fontSize: 20,
     fontWeight: "900",
-    color: freightTheme.colors.text,
+    color: COLORS.text,
   },
   sectionSubtitle: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 20,
     marginTop: 3,
   },
   input: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.surface,
     padding: 14,
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
+    borderColor: COLORS.border,
     fontSize: 16,
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "700",
   },
   uploadButton: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: "#FFF1F2",
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: COLORS.red,
     padding: 15,
     borderRadius: 14,
     marginBottom: 12,
@@ -1113,20 +989,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   uploadText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
     flex: 1,
   },
-  uploadTextComplete: {
-    color: "#BBF7D0",
-  },
   switchRow: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     padding: 14,
     borderRadius: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -1135,18 +1008,18 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: "800",
     paddingRight: 12,
-    color: freightTheme.colors.text,
+    color: COLORS.text,
   },
   questionBox: { marginBottom: 12 },
   questionLabel: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "900",
     marginBottom: 8,
   },
   questionChip: {
-    backgroundColor: freightTheme.colors.surface,
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
+    borderColor: COLORS.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
@@ -1155,18 +1028,18 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
   questionChipActive: {
-    backgroundColor: freightTheme.colors.primary,
-    borderColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
   },
   questionChipText: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     fontWeight: "900",
   },
   questionChipTextActive: {
     color: "#FFFFFF",
   },
   button: {
-    backgroundColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.red,
     padding: 16,
     borderRadius: 16,
     marginHorizontal: 18,
@@ -1184,7 +1057,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   link: {
-    color: freightTheme.colors.primary,
+    color: COLORS.red,
     textAlign: "center",
     fontWeight: "900",
     marginTop: 18,
