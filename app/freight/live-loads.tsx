@@ -25,6 +25,12 @@ const FREIGHT_ROUTES = {
   liveLoads: "/freight/live-loads",
   myLoads: "/freight/my-loads",
   liveRoute: "/freight/live-route",
+  routeDetails: "/freight/route-details",
+  routeExceptions: "/freight/route-exceptions",
+  loadIssues: "/freight/load-issues",
+  loadChat: "/freight/load-chat",
+  communicationCenter: "/freight/communication-center",
+  notifications: "/freight/notifications",
   proofOfPickup: "/freight/proof-of-pickup",
   proofOfDelivery: "/freight/proof-of-delivery",
   profile: "/freight/profile",
@@ -35,24 +41,6 @@ const FREIGHT_ROUTES = {
 } as const;
 
 type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
-
-const COLORS = {
-  bg: "#F4F5F7",
-  card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  amber: "#D97706",
-  purple: "#7C3AED",
-  blue: "#2563EB",
-  teal: "#0F766E",
-  slate: "#64748B",
-};
 
 type FreightLoad = {
   id: string;
@@ -71,6 +59,7 @@ type FreightLoad = {
   rate?: number;
   status?: string;
   carrier_id?: string;
+  freight_user_id?: string;
   driver_id?: string;
   accepted_by?: string;
   accepted_at?: string;
@@ -80,6 +69,24 @@ type FreightLoad = {
   arrived_dropoff_at?: string;
   delivered_at?: string;
   updated_at?: string;
+};
+
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  amber: "#D97706",
+  purple: "#7C3AED",
+  blue: "#2563EB",
+  teal: "#0F766E",
+  slate: "#64748B",
 };
 
 function normalize(value: any) {
@@ -100,7 +107,6 @@ function goTo(route: FreightRoute) {
 function statusColor(status: string) {
   const value = normalize(status);
 
-  if (value === "available") return COLORS.blue;
   if (value === "accepted") return COLORS.red;
   if (value === "arrived_pickup") return COLORS.teal;
   if (value === "picked_up") return COLORS.amber;
@@ -111,8 +117,8 @@ function statusColor(status: string) {
   return COLORS.slate;
 }
 
-function statusLabel(status: string) {
-  return String(status || "available")
+function statusLabel(status?: string) {
+  return String(status || "accepted")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -120,6 +126,7 @@ function statusLabel(status: string) {
 export default function FreightLiveLoadsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [updatingId, setUpdatingId] = useState("");
   const [carrier, setCarrier] = useState<any>(null);
   const [loads, setLoads] = useState<FreightLoad[]>([]);
 
@@ -165,13 +172,9 @@ export default function FreightLiveLoadsScreen() {
         nextCarrier.company_name ||
         "Freight Connect Carrier",
       stripeAccountId:
-        nextCarrier.stripeAccountId ||
-        nextCarrier.stripe_account_id ||
-        "",
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
       stripe_account_id:
-        nextCarrier.stripe_account_id ||
-        nextCarrier.stripeAccountId ||
-        "",
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -191,9 +194,7 @@ export default function FreightLiveLoadsScreen() {
 
       const stored = await getStoredCarrier();
       const { data: authData } = await supabase.auth.getUser();
-      const authUser = authData?.user;
-
-      const email = normalize(stored?.email || authUser?.email || "");
+      const email = normalize(stored?.email || authData?.user?.email || "");
 
       if (!email) {
         router.replace(FREIGHT_ROUTES.login as any);
@@ -219,7 +220,7 @@ export default function FreightLiveLoadsScreen() {
         return;
       }
 
-      const mergedCarrier = {
+      const mergedCarrier = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
         id: dbCarrier.id,
@@ -249,16 +250,16 @@ export default function FreightLiveLoadsScreen() {
           stored?.stripe_account_id ||
           stored?.stripeAccountId ||
           "",
-      };
-
-      await persistCarrier(mergedCarrier);
+      });
 
       const carrierId = mergedCarrier.id;
 
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
-        .or(`carrier_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`)
+        .or(
+          `carrier_id.eq.${carrierId},freight_user_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`
+        )
         .in("status", [
           "accepted",
           "arrived_pickup",
@@ -289,8 +290,27 @@ export default function FreightLiveLoadsScreen() {
     await loadLiveLoads();
   }
 
+  async function createNotification(load: FreightLoad, title: string, message: string) {
+    if (!carrier?.id) return;
+
+    await supabase.from("freight_notifications").insert({
+      freight_user_id: carrier.id,
+      freight_id: carrier.id,
+      user_id: carrier.id,
+      load_id: load.id,
+      title,
+      message,
+      type: "load",
+      is_read: false,
+      read: false,
+      created_at: new Date().toISOString(),
+    });
+  }
+
   async function updateStatus(load: FreightLoad, nextStatus: string) {
     try {
+      setUpdatingId(load.id);
+
       const now = new Date().toISOString();
 
       const payload: any = {
@@ -302,7 +322,11 @@ export default function FreightLiveLoadsScreen() {
       if (nextStatus === "picked_up") payload.picked_up_at = now;
       if (nextStatus === "in_transit") payload.in_transit_at = now;
       if (nextStatus === "arrived_dropoff") payload.arrived_dropoff_at = now;
-      if (nextStatus === "delivered") payload.delivered_at = now;
+      if (nextStatus === "delivered") {
+        payload.delivered_at = now;
+        payload.settlement_status = "pending";
+        payload.payout_status = "pending";
+      }
 
       const { error } = await supabase
         .from("freight_loads")
@@ -311,41 +335,37 @@ export default function FreightLiveLoadsScreen() {
 
       if (error) throw error;
 
+      await createNotification(
+        load,
+        "Live Load Updated",
+        `${load.title || "Freight Load"} marked as ${statusLabel(nextStatus)}.`
+      );
+
       await loadLiveLoads();
     } catch (error: any) {
       Alert.alert("Update Error", error?.message || "Unable to update load.");
+    } finally {
+      setUpdatingId("");
     }
   }
 
-  function openLiveRoute(load: FreightLoad) {
+  function openRoute(route: FreightRoute, load: FreightLoad) {
     router.push({
-      pathname: FREIGHT_ROUTES.liveRoute as any,
-      params: { loadId: load.id },
-    });
-  }
-
-  function openProofOfPickup(load: FreightLoad) {
-    router.push({
-      pathname: FREIGHT_ROUTES.proofOfPickup as any,
-      params: { loadId: load.id },
-    });
-  }
-
-  function openProofOfDelivery(load: FreightLoad) {
-    router.push({
-      pathname: FREIGHT_ROUTES.proofOfDelivery as any,
+      pathname: route as any,
       params: { loadId: load.id },
     });
   }
 
   function nextAction(load: FreightLoad) {
     const status = normalize(load.status);
+    const busy = updatingId === load.id;
 
     if (status === "accepted") {
       return (
         <ActionButton
           title="Arrived Pickup"
           icon="location-outline"
+          loading={busy}
           onPress={() => updateStatus(load, "arrived_pickup")}
         />
       );
@@ -354,9 +374,10 @@ export default function FreightLiveLoadsScreen() {
     if (status === "arrived_pickup") {
       return (
         <ActionButton
-          title="Proof of Pickup"
+          title="Proof Pickup"
           icon="camera-outline"
-          onPress={() => openProofOfPickup(load)}
+          loading={busy}
+          onPress={() => openRoute(FREIGHT_ROUTES.proofOfPickup, load)}
         />
       );
     }
@@ -366,6 +387,7 @@ export default function FreightLiveLoadsScreen() {
         <ActionButton
           title="Start Transit"
           icon="navigate-outline"
+          loading={busy}
           onPress={() => updateStatus(load, "in_transit")}
         />
       );
@@ -376,6 +398,7 @@ export default function FreightLiveLoadsScreen() {
         <ActionButton
           title="Arrived Dropoff"
           icon="flag-outline"
+          loading={busy}
           onPress={() => updateStatus(load, "arrived_dropoff")}
         />
       );
@@ -384,9 +407,10 @@ export default function FreightLiveLoadsScreen() {
     if (status === "arrived_dropoff") {
       return (
         <ActionButton
-          title="Proof of Delivery"
+          title="Proof Delivery"
           icon="checkmark-done-outline"
-          onPress={() => openProofOfDelivery(load)}
+          loading={busy}
+          onPress={() => openRoute(FREIGHT_ROUTES.proofOfDelivery, load)}
         />
       );
     }
@@ -396,6 +420,11 @@ export default function FreightLiveLoadsScreen() {
 
   const totalValue = useMemo(
     () => loads.reduce((sum, load) => sum + Number(load.rate || 0), 0),
+    [loads]
+  );
+
+  const totalMiles = useMemo(
+    () => loads.reduce((sum, load) => sum + Number(load.distance_miles || 0), 0),
     [loads]
   );
 
@@ -418,7 +447,7 @@ export default function FreightLiveLoadsScreen() {
           <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
           <Text style={styles.title}>Live Loads</Text>
           <Text style={styles.subtitle}>
-            Track active freight movement, route status, pickup progress, and dropoff workflow.
+            Track active freight movement, route status, pickup progress, chat, issues, and dropoff workflow.
           </Text>
         </View>
 
@@ -430,18 +459,19 @@ export default function FreightLiveLoadsScreen() {
       <View style={styles.summaryRow}>
         <SummaryCard label="Live Loads" value={loads.length} />
         <SummaryCard label="Route Value" value={money(totalValue)} />
+        <SummaryCard label="Miles" value={`${totalMiles.toFixed(0)} mi`} />
       </View>
 
       <View style={styles.navRow}>
         <NavButton title="Dashboard" icon="grid-outline" route={FREIGHT_ROUTES.dashboard} />
-        <NavButton title="Board" icon="list-outline" route={FREIGHT_ROUTES.board} outline />
+        <NavButton title="Chat Center" icon="chatbubbles-outline" route={FREIGHT_ROUTES.communicationCenter} outline />
       </View>
 
       <View style={styles.quickGrid}>
         <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
-        <QuickLink icon="person-outline" label="Profile" route={FREIGHT_ROUTES.profile} />
+        <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
+        <QuickLink icon="notifications-outline" label="Alerts" route={FREIGHT_ROUTES.notifications} />
         <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-        <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
       </View>
 
       <FlatList
@@ -492,12 +522,29 @@ export default function FreightLiveLoadsScreen() {
             </View>
 
             <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.trackButton} onPress={() => openLiveRoute(item)}>
+              {nextAction(item)}
+            </View>
+
+            <View style={styles.secondaryGrid}>
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => openRoute(FREIGHT_ROUTES.liveRoute, item)}>
                 <Ionicons name="map-outline" size={18} color={COLORS.red} />
-                <Text style={styles.trackButtonText}>Live Route</Text>
+                <Text style={styles.secondaryText}>Live Route</Text>
               </TouchableOpacity>
 
-              {nextAction(item)}
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => openRoute(FREIGHT_ROUTES.routeDetails, item)}>
+                <Ionicons name="trail-sign-outline" size={18} color={COLORS.red} />
+                <Text style={styles.secondaryText}>Details</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => openRoute(FREIGHT_ROUTES.loadChat, item)}>
+                <Ionicons name="chatbubble-outline" size={18} color={COLORS.red} />
+                <Text style={styles.secondaryText}>Chat</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => openRoute(FREIGHT_ROUTES.loadIssues, item)}>
+                <Ionicons name="alert-circle-outline" size={18} color={COLORS.red} />
+                <Text style={styles.secondaryText}>Issue</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -566,15 +613,21 @@ function Info({ label, value }: { label: string; value: string }) {
 function ActionButton({
   title,
   icon,
+  loading,
   onPress,
 }: {
   title: string;
   icon: keyof typeof Ionicons.glyphMap;
+  loading?: boolean;
   onPress: () => void;
 }) {
   return (
-    <TouchableOpacity style={styles.actionButton} onPress={onPress}>
-      <Ionicons name={icon} size={18} color="#FFFFFF" />
+    <TouchableOpacity style={styles.actionButton} onPress={onPress} disabled={loading}>
+      {loading ? (
+        <ActivityIndicator size="small" color="#FFFFFF" />
+      ) : (
+        <Ionicons name={icon} size={18} color="#FFFFFF" />
+      )}
       <Text style={styles.actionText}>{title}</Text>
     </TouchableOpacity>
   );
@@ -761,22 +814,10 @@ const styles = StyleSheet.create({
     marginTop: 5,
     lineHeight: 19,
   },
-  actionRow: { flexDirection: "row", gap: 10, marginTop: 14 },
-  trackButton: {
-    flex: 1,
-    backgroundColor: "#FFF1F2",
-    borderWidth: 1,
-    borderColor: COLORS.red,
-    borderRadius: 14,
-    padding: 13,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 7,
+  actionRow: {
+    marginTop: 14,
   },
-  trackButtonText: { color: COLORS.red, fontWeight: "900" },
   actionButton: {
-    flex: 1,
     backgroundColor: COLORS.red,
     borderRadius: 14,
     padding: 13,
@@ -786,6 +827,29 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   actionText: { color: "#FFFFFF", fontWeight: "900" },
+  secondaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+  secondaryButton: {
+    width: "48%",
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  secondaryText: {
+    color: COLORS.red,
+    fontWeight: "900",
+    fontSize: 12,
+  },
   emptyCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,

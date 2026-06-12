@@ -20,62 +20,60 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-type FreightRoute =
-  | "/freight/dashboard"
-  | "/freight/board"
-  | "/freight/live-loads"
-  | "/freight/my-loads"
-  | "/freight/create-load"
-  | "/freight/post-load"
-  | "/freight/carrier-booking"
-  | "/freight/load-history"
-  | "/freight/load-payment-tracking"
-  | "/freight/analytics"
-  | "/freight/carrier-performance"
-  | "/freight/tracking"
-  | "/freight/live-route"
-  | "/freight/documents"
-  | "/freight/proof-of-pickup"
-  | "/freight/proof-of-delivery"
-  | "/freight/connect-bank"
-  | "/freight/subscription"
-  | "/freight/profile"
-  | "/freight/settings"
-  | "/freight/support"
-  | "/freight/help"
-  | "/freight/ai-brokerage-center"
-  | "/freight/navigation-assistant"
-  | "/freight/route-status-updates"
-  | "/freight/earnings";
-
 const FREIGHT_ROUTES = {
   dashboard: "/freight/dashboard",
   board: "/freight/board",
   liveLoads: "/freight/live-loads",
   myLoads: "/freight/my-loads",
-  createLoad: "/freight/create-load",
-  postLoad: "/freight/post-load",
-  carrierBooking: "/freight/carrier-booking",
-  loadHistory: "/freight/load-history",
-  payments: "/freight/load-payment-tracking",
-  analytics: "/freight/analytics",
-  performance: "/freight/carrier-performance",
+
   tracking: "/freight/tracking",
   liveRoute: "/freight/live-route",
-  documents: "/freight/documents",
-  proofOfPickup: "/freight/proof-of-pickup",
-  proofOfDelivery: "/freight/proof-of-delivery",
+  routeDetails: "/freight/route-details",
+  routeExceptions: "/freight/route-exceptions",
+  loadIssues: "/freight/load-issues",
+
+  communicationCenter: "/freight/communication-center",
+  loadChat: "/freight/load-chat",
+  dispatchAlerts: "/freight/dispatch-alerts",
+  notifications: "/freight/notifications",
+
+  serviceArea: "/freight/service-area",
+  aiLoadMatching: "/freight/ai-load-matching",
+  loadRecommendations: "/freight/load-recommendations",
+  rateOptimizer: "/freight/rate-optimizer",
+  costCalculator: "/freight/cost-calculator",
+
+  fuelTracker: "/freight/fuel-tracker",
+  maintenanceTracker: "/freight/maintenance-tracker",
+  expenseCenter: "/freight/expense-center",
+  profitabilityDashboard: "/freight/profitability-dashboard",
+  taxCenter: "/freight/tax-center",
+  yearEndSummary: "/freight/year-end-summary",
+  reportExport: "/freight/report-export",
+
+  businessDocuments: "/freight/business-documents",
+  complianceVault: "/freight/compliance-vault",
+  reviewStatus: "/freight/review-status",
+  safety: "/freight/safety",
+  insurance: "/freight/insurance",
+  adminReview: "/freight/admin-review",
+
+  settlements: "/freight/settlements",
+  payoutCenter: "/freight/payout-center",
+  deliveryHistory: "/freight/delivery-history",
+  analytics: "/freight/analytics",
+  earnings: "/freight/earnings",
   connectBank: "/freight/connect-bank",
-  subscription: "/freight/subscription",
+
   profile: "/freight/profile",
   settings: "/freight/settings",
   support: "/freight/support",
   help: "/freight/help",
-  aiBrokerage: "/freight/ai-brokerage-center",
-  navigationAssistant: "/freight/navigation-assistant",
-  routeUpdates: "/freight/route-status-updates",
-  earnings: "/freight/earnings",
+  subscription: "/freight/subscription",
+  managementCenter: "/freight/freight-management-center",
 } as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
 
 type FreightStatus =
   | "OPEN"
@@ -83,15 +81,7 @@ type FreightStatus =
   | "PICKED_UP"
   | "IN_TRANSIT"
   | "DELIVERED"
-  | "available"
-  | "accepted"
-  | "arrived_pickup"
-  | "picked_up"
-  | "in_transit"
-  | "arrived_dropoff"
-  | "delivered"
-  | "completed"
-  | "cancelled";
+  | "CANCELLED";
 
 type FreightLoad = {
   id: string;
@@ -131,7 +121,6 @@ const COLORS = {
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
-  redDark: "#9F1117",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
@@ -141,41 +130,6 @@ const COLORS = {
   blue: "#2563EB",
   slate: "#64748B",
 };
-
-const MOCK_LOADS: FreightLoad[] = [
-  {
-    id: "load_1",
-    title: "Fresh Produce Delivery",
-    commodity: "Organic Vegetables",
-    pickupCity: "Detroit",
-    pickupState: "MI",
-    deliveryCity: "Ann Arbor",
-    deliveryState: "MI",
-    rate: 425,
-    miles: 48,
-    weight: "2,400 lbs",
-    farmerName: "Green Valley Farms",
-    status: "OPEN",
-    equipment: "Cargo Van",
-    pickupDate: "Today · 5:30 PM",
-  },
-  {
-    id: "load_2",
-    title: "Farm Eggs Delivery",
-    commodity: "Fresh Eggs",
-    pickupCity: "Lansing",
-    pickupState: "MI",
-    deliveryCity: "Grand Rapids",
-    deliveryState: "MI",
-    rate: 560,
-    miles: 92,
-    weight: "1,900 lbs",
-    farmerName: "Sunrise Acres",
-    status: "BOOKED",
-    equipment: "Sprinter Van",
-    pickupDate: "Tomorrow · 7:00 AM",
-  },
-];
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
@@ -191,6 +145,7 @@ function money(value: number) {
 function splitCityState(location?: string | null) {
   const raw = String(location || "").trim();
   const parts = raw.split(",").map((x) => x.trim());
+
   return {
     city: parts[0] || "TBD",
     state: parts[1] || "",
@@ -200,37 +155,28 @@ function splitCityState(location?: string | null) {
 function mapDbStatus(status: any): FreightStatus {
   const value = normalize(status);
 
-  if (value === "available") return "OPEN";
-  if (value === "accepted") return "BOOKED";
-  if (value === "arrived_pickup") return "BOOKED";
-  if (value === "picked_up") return "PICKED_UP";
-  if (value === "in_transit") return "IN_TRANSIT";
-  if (value === "arrived_dropoff") return "IN_TRANSIT";
+  if (value === "available" || value === "open") return "OPEN";
+  if (value === "accepted" || value === "assigned" || value === "booked") return "BOOKED";
+  if (value === "picked_up" || value === "arrived_pickup") return "PICKED_UP";
+  if (value === "in_transit" || value === "arrived_dropoff") return "IN_TRANSIT";
   if (value === "delivered" || value === "completed") return "DELIVERED";
+  if (value === "cancelled") return "CANCELLED";
 
-  return String(status || "OPEN").toUpperCase() as FreightStatus;
+  return "OPEN";
 }
 
 function toDbStatus(status: FreightStatus) {
-  switch (status) {
-    case "OPEN":
-      return "available";
-    case "BOOKED":
-      return "accepted";
-    case "PICKED_UP":
-      return "picked_up";
-    case "IN_TRANSIT":
-      return "in_transit";
-    case "DELIVERED":
-      return "delivered";
-    default:
-      return normalize(status);
-  }
+  if (status === "OPEN") return "available";
+  if (status === "BOOKED") return "accepted";
+  if (status === "PICKED_UP") return "picked_up";
+  if (status === "IN_TRANSIT") return "in_transit";
+  if (status === "DELIVERED") return "delivered";
+  return "cancelled";
 }
 
 function mapDbLoad(row: any): FreightLoad {
-  const pickup = splitCityState(row.pickup_location);
-  const dropoff = splitCityState(row.dropoff_location);
+  const pickup = splitCityState(row.pickup_location || row.pickup_address);
+  const dropoff = splitCityState(row.dropoff_location || row.dropoff_address);
 
   return {
     ...row,
@@ -241,9 +187,11 @@ function mapDbLoad(row: any): FreightLoad {
     pickupState: pickup.state,
     deliveryCity: dropoff.city,
     deliveryState: dropoff.state,
-    rate: Number(row.rate || row.freight_total || row.total_due || row.payout || 0),
+    rate: Number(row.rate || row.freight_total || row.total_due || row.payout_amount || 0),
     miles: Number(row.distance_miles || row.miles || 0),
-    weight: row.weight_lbs ? `${Number(row.weight_lbs).toLocaleString()} lbs` : row.weight || "TBD",
+    weight: row.weight_lbs
+      ? `${Number(row.weight_lbs).toLocaleString()} lbs`
+      : row.weight || "TBD",
     farmerName: row.farmer_name || row.farmerName || "Farm2Home Partner",
     status: mapDbStatus(row.status),
     equipment: row.equipment_type || row.equipment || "Standard",
@@ -261,7 +209,7 @@ function goTo(route: FreightRoute) {
 export default function FreightDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [carrierName, setCarrierName] = useState("Carrier");
+  const [carrierName, setCarrierName] = useState("Freight Connect Carrier");
   const [carrier, setCarrier] = useState<any>(null);
   const [loads, setLoads] = useState<FreightLoad[]>([]);
 
@@ -287,80 +235,101 @@ export default function FreightDashboard() {
     }
   }
 
+  async function persistCarrier(nextCarrier: any) {
+    const normalizedCarrier = {
+      ...nextCarrier,
+      id: nextCarrier.id || nextCarrier.freightId,
+      freightId: nextCarrier.freightId || nextCarrier.id,
+      role: "freight",
+      email: normalize(nextCarrier.email),
+      companyName:
+        nextCarrier.companyName ||
+        nextCarrier.businessName ||
+        nextCarrier.company_name ||
+        nextCarrier.business_name ||
+        "Freight Connect Carrier",
+      businessName:
+        nextCarrier.businessName ||
+        nextCarrier.companyName ||
+        nextCarrier.business_name ||
+        nextCarrier.company_name ||
+        "Freight Connect Carrier",
+    };
+
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
+
+    setCarrier(normalizedCarrier);
+    setCarrierName(normalizedCarrier.companyName);
+    return normalizedCarrier;
+  }
+
   async function loadDashboard() {
     try {
       setLoading(true);
 
       const stored = await getStoredCarrier();
       const { data: authData } = await supabase.auth.getUser();
-      const authUser = authData?.user;
+      const email = normalize(stored?.email || authData?.user?.email || "");
 
-      const email = normalize(stored?.email || authUser?.email || "");
-      let dbCarrier: any = null;
-
-      if (email) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", email)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
+      if (!email) {
+        router.replace("/freight/login" as any);
+        return;
       }
 
-      const mergedCarrier = {
+      const { data: dbCarrier, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (error) {
+        console.log("Freight dashboard carrier error:", error.message);
+      }
+
+      if (!dbCarrier) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "Please complete freight registration first."
+        );
+        router.replace("/freight/register" as any);
+        return;
+      }
+
+      const mergedCarrier = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
-        id: dbCarrier?.id || stored?.id || stored?.freightId || authUser?.id || "",
-        freightId: dbCarrier?.id || stored?.freightId || stored?.id || authUser?.id || "",
+        id: dbCarrier.id,
+        freightId: dbCarrier.id,
         role: "freight",
-        email: normalize(dbCarrier?.email || stored?.email || email),
+        email: normalize(dbCarrier.email || email),
         companyName:
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
+          dbCarrier.company_name ||
+          dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
           "Freight Connect Carrier",
         businessName:
-          dbCarrier?.business_name ||
-          dbCarrier?.company_name ||
+          dbCarrier.business_name ||
+          dbCarrier.company_name ||
           stored?.businessName ||
           stored?.companyName ||
           "Freight Connect Carrier",
-        contactName:
-          dbCarrier?.contact_name ||
-          dbCarrier?.name ||
-          stored?.contactName ||
-          stored?.ownerName ||
-          stored?.fullName ||
-          "",
         membershipStatus:
-          dbCarrier?.membership_status || stored?.membershipStatus || "Active",
+          dbCarrier.membership_status || stored?.membershipStatus || "Active",
         subscriptionStatus:
-          dbCarrier?.subscription_status || stored?.subscriptionStatus || "active",
-        stripeAccountId: dbCarrier?.stripe_account_id || stored?.stripeAccountId || null,
-        payoutsEnabled: dbCarrier?.payouts_enabled ?? stored?.payoutsEnabled ?? false,
-        chargesEnabled: dbCarrier?.charges_enabled ?? stored?.chargesEnabled ?? false,
-        stripeOnboardingComplete:
-          dbCarrier?.stripe_onboarding_complete ?? stored?.stripeOnboardingComplete ?? false,
-        accountActive: dbCarrier?.account_active ?? stored?.accountActive ?? true,
-      };
+          dbCarrier.subscription_status || stored?.subscriptionStatus || "active",
+      });
 
-      setCarrier(mergedCarrier);
-      setCarrierName(mergedCarrier.companyName || "Freight Connect Carrier");
-
-      await AsyncStorage.setItem("currentFreight", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("currentFreightUser", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("userRole", "freight");
-      await AsyncStorage.setItem("currentUserRole", "freight");
-
-      await loadFreightLoads(mergedCarrier.id || mergedCarrier.freightId);
+      await loadFreightLoads(mergedCarrier.id);
     } catch (error) {
       console.log("Freight dashboard load error:", error);
-      setCarrierName("Freight Connect Carrier");
-      setLoads(MOCK_LOADS);
+      Alert.alert("Dashboard Error", "Unable to load freight dashboard.");
+      setLoads([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -369,29 +338,24 @@ export default function FreightDashboard() {
 
   async function loadFreightLoads(carrierId: string) {
     try {
-      if (!carrierId) {
-        setLoads(MOCK_LOADS);
-        return;
-      }
-
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
         .or(
-          `status.eq.available,carrier_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`
+          `status.eq.available,status.eq.open,carrier_id.eq.${carrierId},freight_user_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`
         )
         .order("created_at", { ascending: false });
 
       if (error) {
         console.log("Freight loads error:", error.message);
-        setLoads(MOCK_LOADS);
+        setLoads([]);
         return;
       }
 
-      setLoads(Array.isArray(data) && data.length > 0 ? data.map(mapDbLoad) : MOCK_LOADS);
+      setLoads(Array.isArray(data) ? data.map(mapDbLoad) : []);
     } catch (error) {
       console.log("Freight load sync skipped:", error);
-      setLoads(MOCK_LOADS);
+      setLoads([]);
     }
   }
 
@@ -400,108 +364,95 @@ export default function FreightDashboard() {
     await loadDashboard();
   }
 
-  function getStatusColor(status: FreightStatus) {
-    switch (mapDbStatus(status)) {
-      case "OPEN":
-        return COLORS.blue;
-      case "BOOKED":
-        return COLORS.red;
-      case "PICKED_UP":
-        return COLORS.amber;
-      case "IN_TRANSIT":
-        return COLORS.purple;
-      case "DELIVERED":
-        return COLORS.green;
-      default:
-        return COLORS.slate;
-    }
-  }
-
-  function getStatusIcon(status: FreightStatus): keyof typeof Ionicons.glyphMap {
-    switch (mapDbStatus(status)) {
-      case "OPEN":
-        return "cube-outline";
-      case "BOOKED":
-        return "checkmark-circle-outline";
-      case "PICKED_UP":
-        return "archive-outline";
-      case "IN_TRANSIT":
-        return "navigate-outline";
-      case "DELIVERED":
-        return "checkmark-done-outline";
-      default:
-        return "ellipse-outline";
-    }
-  }
-
   async function updateLoadStatus(load: FreightLoad, nextStatus: FreightStatus) {
+    if (!carrier?.id) {
+      Alert.alert("Carrier Missing", "Please log in again.");
+      return;
+    }
+
     const now = new Date().toISOString();
 
-    setLoads((prev) =>
-      prev.map((item) => (item.id === load.id ? { ...item, status: nextStatus } : item))
-    );
+    const updatePayload: any = {
+      status: toDbStatus(nextStatus),
+      updated_at: now,
+    };
 
-    if (!load.id.startsWith("load_")) {
-      const updatePayload: any = {
-        status: toDbStatus(nextStatus),
-        updated_at: now,
-      };
-
-      if (nextStatus === "BOOKED") {
-        updatePayload.carrier_id = carrier?.id || carrier?.freightId || null;
-        updatePayload.accepted_by =
-          carrier?.companyName || carrier?.businessName || carrierName || "Freight Carrier";
-        updatePayload.accepted_at = now;
-      }
-
-      if (nextStatus === "PICKED_UP") updatePayload.picked_up_at = now;
-      if (nextStatus === "DELIVERED") updatePayload.delivered_at = now;
-
-      const { error } = await supabase.from("freight_loads").update(updatePayload).eq("id", load.id);
-
-      if (error) Alert.alert("Update Warning", error.message);
+    if (nextStatus === "BOOKED") {
+      updatePayload.carrier_id = carrier.id;
+      updatePayload.freight_user_id = carrier.id;
+      updatePayload.accepted_by = carrier.id;
+      updatePayload.accepted_at = now;
+      updatePayload.carrier_name = carrier.companyName || carrier.businessName || carrierName;
+      updatePayload.carrier_email = carrier.email || null;
     }
+
+    if (nextStatus === "PICKED_UP") updatePayload.picked_up_at = now;
+    if (nextStatus === "DELIVERED") {
+      updatePayload.delivered_at = now;
+      updatePayload.settlement_status = "pending";
+      updatePayload.payout_status = "pending";
+    }
+
+    const { error } = await supabase
+      .from("freight_loads")
+      .update(updatePayload)
+      .eq("id", load.id);
+
+    if (error) {
+      Alert.alert("Update Failed", error.message);
+      return;
+    }
+
+    await supabase.from("freight_notifications").insert({
+      freight_user_id: carrier.id,
+      load_id: load.id,
+      title:
+        nextStatus === "BOOKED"
+          ? "Load Accepted"
+          : nextStatus === "PICKED_UP"
+          ? "Pickup Confirmed"
+          : nextStatus === "IN_TRANSIT"
+          ? "Load In Transit"
+          : nextStatus === "DELIVERED"
+          ? "Delivery Completed"
+          : "Load Updated",
+      message: `${load.title} is now ${nextStatus.replace(/_/g, " ")}.`,
+      type: "load",
+      is_read: false,
+      created_at: now,
+    });
+
+    await loadFreightLoads(carrier.id);
   }
 
   async function acceptLoad(load: FreightLoad) {
     await updateLoadStatus(load, "BOOKED");
-    Alert.alert("Load Accepted", `${load.title} has been assigned to your carrier account.`);
-  }
 
-  async function moveToPickedUp(load: FreightLoad) {
-    await updateLoadStatus(load, "PICKED_UP");
-    Alert.alert("Pickup Confirmed", `${load.title} is now marked picked up.`);
-  }
-
-  async function moveToTransit(load: FreightLoad) {
-    await updateLoadStatus(load, "IN_TRANSIT");
-    Alert.alert("Route Updated", `${load.title} is now in transit.`);
-  }
-
-  async function completeLoad(load: FreightLoad) {
-    await updateLoadStatus(load, "DELIVERED");
-    Alert.alert("Delivery Completed", `${load.title} has been completed.`);
-  }
-
-  function openLiveTracking(load: FreightLoad) {
-    router.push({
-      pathname: FREIGHT_ROUTES.liveRoute as any,
-      params: {
-        loadId: load.id,
-        title: load.title,
+    Alert.alert("Load Accepted", `${load.title} has been assigned to your carrier account.`, [
+      {
+        text: "View My Loads",
+        onPress: () => goTo(FREIGHT_ROUTES.myLoads),
       },
-    });
+      {
+        text: "Stay Here",
+        style: "cancel",
+      },
+    ]);
   }
+
+  const openLoads = useMemo(
+    () => loads.filter((item) => mapDbStatus(item.status) === "OPEN"),
+    [loads]
+  );
 
   const activeLoads = useMemo(
     () =>
       loads.filter((item) =>
-        ["BOOKED", "PICKED_UP", "IN_TRANSIT"].includes(String(mapDbStatus(item.status)))
+        ["BOOKED", "PICKED_UP", "IN_TRANSIT"].includes(mapDbStatus(item.status))
       ),
     [loads]
   );
 
-  const openLoads = useMemo(() => loads.filter((item) => mapDbStatus(item.status) === "OPEN"), [loads]);
   const completedLoads = useMemo(
     () => loads.filter((item) => mapDbStatus(item.status) === "DELIVERED"),
     [loads]
@@ -517,20 +468,34 @@ export default function FreightDashboard() {
     [activeLoads]
   );
 
-  function renderWorkflowText(status: FreightStatus) {
-    switch (mapDbStatus(status)) {
+  function openLoadRoute(route: FreightRoute, load?: FreightLoad) {
+    if (!load) {
+      goTo(route);
+      return;
+    }
+
+    router.push({
+      pathname: route as any,
+      params: {
+        loadId: load.id,
+      },
+    });
+  }
+
+  function getStatusColor(status: FreightStatus) {
+    switch (status) {
       case "OPEN":
-        return "Review load details and accept if available.";
+        return COLORS.blue;
       case "BOOKED":
-        return "Proceed to pickup and confirm arrival.";
+        return COLORS.red;
       case "PICKED_UP":
-        return "Start delivery route and update transit status.";
+        return COLORS.amber;
       case "IN_TRANSIT":
-        return "Complete delivery and capture confirmation.";
+        return COLORS.purple;
       case "DELIVERED":
-        return "Delivery completed and ready for settlement.";
+        return COLORS.green;
       default:
-        return "Follow the route workflow.";
+        return COLORS.slate;
     }
   }
 
@@ -548,7 +513,10 @@ export default function FreightDashboard() {
 
     if (status === "BOOKED") {
       return (
-        <TouchableOpacity style={styles.warningAction} onPress={() => moveToPickedUp(load)}>
+        <TouchableOpacity
+          style={styles.warningAction}
+          onPress={() => updateLoadStatus(load, "PICKED_UP")}
+        >
           <Ionicons name="archive-outline" size={18} color="#FFFFFF" />
           <Text style={styles.primaryActionText}>Confirm Pickup</Text>
         </TouchableOpacity>
@@ -557,7 +525,10 @@ export default function FreightDashboard() {
 
     if (status === "PICKED_UP") {
       return (
-        <TouchableOpacity style={styles.transitAction} onPress={() => moveToTransit(load)}>
+        <TouchableOpacity
+          style={styles.transitAction}
+          onPress={() => updateLoadStatus(load, "IN_TRANSIT")}
+        >
           <Ionicons name="navigate-outline" size={18} color="#FFFFFF" />
           <Text style={styles.primaryActionText}>Start Transit</Text>
         </TouchableOpacity>
@@ -566,7 +537,10 @@ export default function FreightDashboard() {
 
     if (status === "IN_TRANSIT") {
       return (
-        <TouchableOpacity style={styles.successAction} onPress={() => completeLoad(load)}>
+        <TouchableOpacity
+          style={styles.successAction}
+          onPress={() => updateLoadStatus(load, "DELIVERED")}
+        >
           <Ionicons name="checkmark-done-outline" size={18} color="#FFFFFF" />
           <Text style={styles.primaryActionText}>Complete Delivery</Text>
         </TouchableOpacity>
@@ -583,49 +557,24 @@ export default function FreightDashboard() {
 
   function renderLoad({ item }: { item: FreightLoad }) {
     const status = mapDbStatus(item.status);
-    const payoutPerMile = item.miles > 0 ? Number(item.rate || 0) / Number(item.miles) : 0;
+    const payoutPerMile = item.miles > 0 ? item.rate / item.miles : 0;
 
     return (
       <View style={styles.loadCard}>
         <View style={styles.cardTopRow}>
-          <View style={styles.routeColumn}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.loadTitle}>{item.title}</Text>
+            <Text style={styles.commodity}>{item.commodity}</Text>
             <Text style={styles.routeText}>
-              {item.pickupCity}, {item.pickupState}
-            </Text>
-
-            <View style={styles.routeMiddle}>
-              <View style={styles.routeLine} />
-              <Ionicons name="arrow-down" size={18} color={COLORS.red} />
-              <View style={styles.routeLine} />
-            </View>
-
-            <Text style={styles.routeText}>
-              {item.deliveryCity}, {item.deliveryState}
+              {item.pickupCity}, {item.pickupState} → {item.deliveryCity},{" "}
+              {item.deliveryState}
             </Text>
           </View>
 
           <View style={[styles.statusBadge, { backgroundColor: getStatusColor(status) }]}>
-            <Ionicons name={getStatusIcon(status)} size={14} color="#FFFFFF" />
-            <Text style={styles.statusText}>{String(status).replace(/_/g, " ")}</Text>
+            <Text style={styles.statusText}>{status.replace(/_/g, " ")}</Text>
           </View>
         </View>
-
-        <View style={styles.workflowCard}>
-          <Text style={styles.workflowLabel}>Route Workflow</Text>
-          <Text style={styles.workflowText}>{renderWorkflowText(status)}</Text>
-        </View>
-
-        <TouchableOpacity
-          onPress={() =>
-            router.push({
-              pathname: "/freight/load-detail" as any,
-              params: { loadId: item.id },
-            })
-          }
-        >
-          <Text style={styles.loadTitle}>{item.title}</Text>
-          <Text style={styles.commodity}>{item.commodity}</Text>
-        </TouchableOpacity>
 
         <View style={styles.detailGrid}>
           <DetailBox icon="calendar-outline" label="Pickup" value={item.pickupDate || "TBD"} />
@@ -648,28 +597,78 @@ export default function FreightDashboard() {
 
             <TouchableOpacity
               style={styles.trackAction}
-              onPress={() =>
-                router.push({
-                  pathname: "/freight/load-details" as any,
-                  params: { loadId: item.id },
-                })
-              }
+              onPress={() => openLoadRoute(FREIGHT_ROUTES.routeDetails, item)}
             >
               <Ionicons name="document-text-outline" size={18} color={COLORS.red} />
               <Text style={styles.trackActionText}>Details</Text>
             </TouchableOpacity>
 
-            {status !== "OPEN" && (
-              <TouchableOpacity style={styles.trackAction} onPress={() => openLiveTracking(item)}>
-                <Ionicons name="map-outline" size={18} color={COLORS.red} />
-                <Text style={styles.trackActionText}>Live Route</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.trackAction}
+              onPress={() => openLoadRoute(FREIGHT_ROUTES.liveRoute, item)}
+            >
+              <Ionicons name="map-outline" size={18} color={COLORS.red} />
+              <Text style={styles.trackActionText}>Live Route</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.trackAction}
+              onPress={() => openLoadRoute(FREIGHT_ROUTES.loadChat, item)}
+            >
+              <Ionicons name="chatbubble-outline" size={18} color={COLORS.red} />
+              <Text style={styles.trackActionText}>Chat</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
     );
   }
+
+  const quickActions: {
+    title: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    route: FreightRoute;
+  }[] = [
+    { title: "My Loads", icon: "briefcase-outline", route: FREIGHT_ROUTES.myLoads },
+    { title: "Live Loads", icon: "pulse-outline", route: FREIGHT_ROUTES.liveLoads },
+    { title: "Freight Tracking", icon: "navigate-outline", route: FREIGHT_ROUTES.tracking },
+    { title: "Live Route", icon: "map-outline", route: FREIGHT_ROUTES.liveRoute },
+    { title: "Route Details", icon: "trail-sign-outline", route: FREIGHT_ROUTES.routeDetails },
+    { title: "Route Exceptions", icon: "warning-outline", route: FREIGHT_ROUTES.routeExceptions },
+    { title: "Load Issues", icon: "alert-circle-outline", route: FREIGHT_ROUTES.loadIssues },
+    { title: "Chat Center", icon: "chatbubbles-outline", route: FREIGHT_ROUTES.communicationCenter },
+    { title: "Load Chat", icon: "chatbubble-outline", route: FREIGHT_ROUTES.loadChat },
+    { title: "Dispatch Alerts", icon: "megaphone-outline", route: FREIGHT_ROUTES.dispatchAlerts },
+    { title: "Notifications", icon: "notifications-outline", route: FREIGHT_ROUTES.notifications },
+    { title: "Payout Center", icon: "wallet-outline", route: FREIGHT_ROUTES.payoutCenter },
+    { title: "Settlements", icon: "receipt-outline", route: FREIGHT_ROUTES.settlements },
+    { title: "Delivery History", icon: "time-outline", route: FREIGHT_ROUTES.deliveryHistory },
+    { title: "Earnings", icon: "cash-outline", route: FREIGHT_ROUTES.earnings },
+    { title: "Analytics", icon: "bar-chart-outline", route: FREIGHT_ROUTES.analytics },
+    { title: "Connect Bank", icon: "business-outline", route: FREIGHT_ROUTES.connectBank },
+    { title: "Documents", icon: "folder-open-outline", route: FREIGHT_ROUTES.businessDocuments },
+    { title: "Compliance Vault", icon: "shield-checkmark-outline", route: FREIGHT_ROUTES.complianceVault },
+    { title: "Review Status", icon: "clipboard-outline", route: FREIGHT_ROUTES.reviewStatus },
+    { title: "Safety", icon: "medical-outline", route: FREIGHT_ROUTES.safety },
+    { title: "Insurance", icon: "umbrella-outline", route: FREIGHT_ROUTES.insurance },
+    { title: "Admin Review", icon: "reader-outline", route: FREIGHT_ROUTES.adminReview },
+    { title: "Service Area", icon: "map-outline", route: FREIGHT_ROUTES.serviceArea },
+    { title: "AI Matching", icon: "sparkles-outline", route: FREIGHT_ROUTES.aiLoadMatching },
+    { title: "Recommendations", icon: "bulb-outline", route: FREIGHT_ROUTES.loadRecommendations },
+    { title: "Rate Optimizer", icon: "trending-up-outline", route: FREIGHT_ROUTES.rateOptimizer },
+    { title: "Cost Calculator", icon: "calculator-outline", route: FREIGHT_ROUTES.costCalculator },
+    { title: "Fuel Tracker", icon: "speedometer-outline", route: FREIGHT_ROUTES.fuelTracker },
+    { title: "Maintenance", icon: "construct-outline", route: FREIGHT_ROUTES.maintenanceTracker },
+    { title: "Expenses", icon: "receipt-outline", route: FREIGHT_ROUTES.expenseCenter },
+    { title: "Profitability", icon: "analytics-outline", route: FREIGHT_ROUTES.profitabilityDashboard },
+    { title: "Taxes", icon: "document-text-outline", route: FREIGHT_ROUTES.taxCenter },
+    { title: "Year End", icon: "calendar-outline", route: FREIGHT_ROUTES.yearEndSummary },
+    { title: "Export Reports", icon: "download-outline", route: FREIGHT_ROUTES.reportExport },
+    { title: "Profile", icon: "person-outline", route: FREIGHT_ROUTES.profile },
+    { title: "Settings", icon: "settings-outline", route: FREIGHT_ROUTES.settings },
+    { title: "Support", icon: "headset-outline", route: FREIGHT_ROUTES.support },
+    { title: "Help", icon: "help-circle-outline", route: FREIGHT_ROUTES.help },
+  ];
 
   if (loading) {
     return (
@@ -695,13 +694,16 @@ export default function FreightDashboard() {
               <Text style={styles.heroEyebrow}>Farm2Home Freight Connect</Text>
               <Text style={styles.heroTitle}>Freight Operations Center</Text>
               <Text style={styles.heroSubtitle}>
-                Manage load opportunities, dispatch status, route workflow, payout visibility,
+                Manage load opportunities, dispatch, tracking, documents, payout visibility,
                 and delivery completion from one carrier workspace.
               </Text>
             </View>
 
-            <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.navigationAssistant)}>
-              <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
+            <TouchableOpacity
+              style={styles.heroIcon}
+              onPress={() => goTo(FREIGHT_ROUTES.notifications)}
+            >
+              <Ionicons name="notifications-outline" size={34} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
@@ -721,16 +723,19 @@ export default function FreightDashboard() {
             <Text style={styles.navText}>Load Board</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.navButtonOutline} onPress={() => goTo(FREIGHT_ROUTES.profile)}>
-            <Ionicons name="business-outline" size={18} color={COLORS.red} />
-            <Text style={styles.navTextOutline}>Profile</Text>
+          <TouchableOpacity
+            style={styles.navButtonOutline}
+            onPress={() => goTo(FREIGHT_ROUTES.communicationCenter)}
+          >
+            <Ionicons name="chatbubbles-outline" size={18} color={COLORS.red} />
+            <Text style={styles.navTextOutline}>Chat Center</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.metricsRow}>
-          <MetricCard icon="cube-outline" label="Open Loads" value={openLoads.length} route={FREIGHT_ROUTES.liveLoads} />
-          <MetricCard icon="navigate-outline" label="Active Routes" value={activeLoads.length} route={FREIGHT_ROUTES.tracking} />
-          <MetricCard icon="checkmark-done-outline" label="Completed" value={completedLoads.length} route={FREIGHT_ROUTES.loadHistory} />
+          <MetricCard icon="cube-outline" label="Open Loads" value={openLoads.length} route={FREIGHT_ROUTES.board} />
+          <MetricCard icon="navigate-outline" label="Active Routes" value={activeLoads.length} route={FREIGHT_ROUTES.liveRoute} />
+          <MetricCard icon="checkmark-done-outline" label="Completed" value={completedLoads.length} route={FREIGHT_ROUTES.deliveryHistory} />
         </View>
 
         <View style={styles.revenueCard}>
@@ -747,24 +752,9 @@ export default function FreightDashboard() {
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickAction title="My Loads" icon="briefcase-outline" route={FREIGHT_ROUTES.myLoads} />
-          <QuickAction title="Live Loads" icon="pulse-outline" route={FREIGHT_ROUTES.liveLoads} />
-          <QuickAction title="Create Load" icon="add-circle-outline" route={FREIGHT_ROUTES.createLoad} />
-          <QuickAction title="Post Load" icon="megaphone-outline" route={FREIGHT_ROUTES.postLoad} />
-          <QuickAction title="Carrier Booking" icon="calendar-outline" route={FREIGHT_ROUTES.carrierBooking} />
-          <QuickAction title="Payments" icon="wallet-outline" route={FREIGHT_ROUTES.payments} />
-          <QuickAction title="Connect Bank" icon="business-outline" route={FREIGHT_ROUTES.connectBank} />
-          <QuickAction title="Earnings" icon="cash-outline" route={FREIGHT_ROUTES.earnings} />
-          <QuickAction title="Analytics" icon="bar-chart-outline" route={FREIGHT_ROUTES.analytics} />
-          <QuickAction title="Performance" icon="speedometer-outline" route={FREIGHT_ROUTES.performance} />
-          <QuickAction title="Documents" icon="folder-open-outline" route={FREIGHT_ROUTES.documents} />
-          <QuickAction title="Subscription" icon="card-outline" route={FREIGHT_ROUTES.subscription} />
-          <QuickAction title="AI Brokerage" icon="sparkles-outline" route={FREIGHT_ROUTES.aiBrokerage} />
-          <QuickAction title="Navigation" icon="navigate-circle-outline" route={FREIGHT_ROUTES.navigationAssistant} />
-          <QuickAction title="Route Updates" icon="git-branch-outline" route={FREIGHT_ROUTES.routeUpdates} />
-          <QuickAction title="Settings" icon="settings-outline" route={FREIGHT_ROUTES.settings} />
-          <QuickAction title="Support" icon="headset-outline" route={FREIGHT_ROUTES.support} />
-          <QuickAction title="Help" icon="help-circle-outline" route={FREIGHT_ROUTES.help} />
+          {quickActions.map((item) => (
+            <QuickAction key={item.title} title={item.title} icon={item.icon} route={item.route} />
+          ))}
         </View>
 
         <View style={styles.sectionHeader}>
@@ -797,7 +787,17 @@ export default function FreightDashboard() {
   );
 }
 
-function MetricCard({ icon, label, value, route }: any) {
+function MetricCard({
+  icon,
+  label,
+  value,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: number;
+  route: FreightRoute;
+}) {
   return (
     <TouchableOpacity style={styles.statCard} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
@@ -807,7 +807,15 @@ function MetricCard({ icon, label, value, route }: any) {
   );
 }
 
-function DetailBox({ icon, label, value }: any) {
+function DetailBox({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
   return (
     <View style={styles.detailBox}>
       <Ionicons name={icon} size={17} color={COLORS.red} />
@@ -817,7 +825,15 @@ function DetailBox({ icon, label, value }: any) {
   );
 }
 
-function QuickAction({ title, icon, route }: { title: string; icon: keyof typeof Ionicons.glyphMap; route: FreightRoute }) {
+function QuickAction({
+  title,
+  icon,
+  route,
+}: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: FreightRoute;
+}) {
   return (
     <TouchableOpacity style={styles.quickCard} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={23} color={COLORS.red} />
@@ -990,18 +1006,14 @@ const styles = StyleSheet.create({
     borderLeftColor: COLORS.red,
   },
   cardTopRow: { flexDirection: "row", gap: 12, justifyContent: "space-between", marginBottom: 14 },
-  routeColumn: { flex: 1 },
-  routeText: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
-  routeMiddle: { flexDirection: "row", alignItems: "center", gap: 6, marginVertical: 4 },
-  routeLine: { width: 2, height: 10, backgroundColor: COLORS.border, marginLeft: 8 },
+  loadTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginBottom: 4 },
+  commodity: { color: COLORS.muted, fontWeight: "800", marginBottom: 8 },
+  routeText: { color: COLORS.text, fontSize: 16, fontWeight: "900" },
   statusBadge: {
     paddingHorizontal: 11,
     paddingVertical: 8,
     borderRadius: 999,
     alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
     maxWidth: 145,
   },
   statusText: {
@@ -1010,18 +1022,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textTransform: "capitalize",
   },
-  workflowCard: {
-    backgroundColor: COLORS.surface,
-    padding: 12,
-    borderRadius: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  workflowLabel: { color: COLORS.red, fontWeight: "900", fontSize: 12, textTransform: "uppercase" },
-  workflowText: { color: COLORS.text, marginTop: 5, fontWeight: "700", lineHeight: 20 },
-  loadTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginBottom: 4 },
-  commodity: { color: COLORS.muted, fontWeight: "800", marginBottom: 12 },
   detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 4 },
   detailBox: {
     width: "48%",

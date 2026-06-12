@@ -26,8 +26,13 @@ const FREIGHT_ROUTES = {
   myLoads: "/freight/my-loads",
   liveLoads: "/freight/live-loads",
   postLoad: "/freight/post-load",
-  createLoad: "/freight/create-load",
   liveRoute: "/freight/live-route",
+  routeDetails: "/freight/route-details",
+  routeExceptions: "/freight/route-exceptions",
+  loadIssues: "/freight/load-issues",
+  loadChat: "/freight/load-chat",
+  communicationCenter: "/freight/communication-center",
+  notifications: "/freight/notifications",
   proofOfPickup: "/freight/proof-of-pickup",
   proofOfDelivery: "/freight/proof-of-delivery",
   profile: "/freight/profile",
@@ -70,6 +75,7 @@ type FreightLoad = {
   status: LoadStatus;
   driver_id?: string | null;
   carrier_id?: string | null;
+  freight_user_id?: string | null;
   accepted_by?: string | null;
   batch_id?: string | null;
   created_at?: string;
@@ -103,26 +109,6 @@ const COLORS = {
   slate: "#64748B",
 };
 
-const fallbackLoads: FreightLoad[] = [
-  {
-    id: "demo-001",
-    title: "Fresh Produce Load",
-    farmer_name: "Green Valley Farms",
-    pickup_location: "Sterling Heights, MI",
-    dropoff_location: "Detroit, MI",
-    pickup_date: "Today",
-    pickup_time: "2:00 PM",
-    equipment_type: "Box Truck",
-    weight_lbs: 850,
-    temperature_required: "Cool",
-    rate: 325,
-    distance_miles: 28,
-    commodity: "Fresh vegetables",
-    notes: "Handle carefully",
-    status: "available",
-  },
-];
-
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
@@ -146,6 +132,41 @@ function goTo(route: FreightRoute) {
   router.push(route as any);
 }
 
+function mapLoad(row: any): FreightLoad {
+  return {
+    id: String(row.id),
+    title: row.title || row.commodity || "Freight Load",
+    farmer_name: row.farmer_name || row.farmerName || "Farm2Home Partner",
+    pickup_location: row.pickup_location || row.pickup_address || "Pickup TBD",
+    dropoff_location: row.dropoff_location || row.dropoff_address || "Dropoff TBD",
+    pickup_date: row.pickup_date || "Scheduled",
+    pickup_time: row.pickup_time || "TBD",
+    dropoff_date: row.dropoff_date || null,
+    dropoff_time: row.dropoff_time || null,
+    equipment_type: row.equipment_type || row.equipment || "Standard",
+    weight_lbs: row.weight_lbs || null,
+    temperature_required: row.temperature_required || null,
+    rate: Number(row.rate || row.freight_total || row.total_due || row.payout_amount || 0),
+    distance_miles: Number(row.distance_miles || row.miles || 0),
+    commodity: row.commodity || "Farm Freight",
+    notes: row.notes || null,
+    status: normalize(row.status || "available") as LoadStatus,
+    driver_id: row.driver_id || null,
+    carrier_id: row.carrier_id || null,
+    freight_user_id: row.freight_user_id || null,
+    accepted_by: row.accepted_by || null,
+    batch_id: row.batch_id || null,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+    accepted_at: row.accepted_at || null,
+    arrived_pickup_at: row.arrived_pickup_at || null,
+    picked_up_at: row.picked_up_at || null,
+    in_transit_at: row.in_transit_at || null,
+    arrived_dropoff_at: row.arrived_dropoff_at || null,
+    delivered_at: row.delivered_at || null,
+  };
+}
+
 export default function FreightBoardScreen() {
   const params = useLocalSearchParams();
 
@@ -158,6 +179,7 @@ export default function FreightBoardScreen() {
   const [query, setQuery] = useState("");
   const [maxMiles, setMaxMiles] = useState("150");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [updatingId, setUpdatingId] = useState<string>("");
 
   const rawCreatedLoadId = params.createdLoadId;
   const createdLoadId = Array.isArray(rawCreatedLoadId)
@@ -214,21 +236,13 @@ export default function FreightBoardScreen() {
         "Freight Connect Carrier",
       accountActive: nextCarrier.accountActive ?? nextCarrier.account_active ?? true,
       membershipStatus:
-        nextCarrier.membershipStatus ||
-        nextCarrier.membership_status ||
-        "Active",
+        nextCarrier.membershipStatus || nextCarrier.membership_status || "Active",
       subscriptionStatus:
-        nextCarrier.subscriptionStatus ||
-        nextCarrier.subscription_status ||
-        "active",
+        nextCarrier.subscriptionStatus || nextCarrier.subscription_status || "active",
       stripeAccountId:
-        nextCarrier.stripeAccountId ||
-        nextCarrier.stripe_account_id ||
-        "",
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
       stripe_account_id:
-        nextCarrier.stripe_account_id ||
-        nextCarrier.stripeAccountId ||
-        "",
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -245,8 +259,7 @@ export default function FreightBoardScreen() {
   async function checkFreightAccess() {
     const stored = await getStoredFreightUser();
     const { data: authData } = await supabase.auth.getUser();
-    const authUser = authData?.user;
-    const email = normalize(stored?.email || authUser?.email || "");
+    const email = normalize(stored?.email || authData?.user?.email || "");
 
     if (!email) {
       setAccessAllowed(false);
@@ -274,7 +287,7 @@ export default function FreightBoardScreen() {
       return null;
     }
 
-    const mergedCarrier = {
+    const mergedCarrier = await persistCarrier({
       ...(stored || {}),
       ...(dbCarrier || {}),
       id: dbCarrier.id,
@@ -295,17 +308,11 @@ export default function FreightBoardScreen() {
         stored?.companyName ||
         "Freight Connect Carrier",
       contactName:
-        dbCarrier.contact_name ||
-        dbCarrier.name ||
-        stored?.contactName ||
-        stored?.name ||
-        "",
+        dbCarrier.contact_name || dbCarrier.name || stored?.contactName || stored?.name || "",
       username: dbCarrier.username || stored?.username || "",
       accountActive: dbCarrier.account_active ?? stored?.accountActive ?? true,
-      membershipStatus:
-        dbCarrier.membership_status || stored?.membershipStatus || "Active",
-      subscriptionStatus:
-        dbCarrier.subscription_status || stored?.subscriptionStatus || "active",
+      membershipStatus: dbCarrier.membership_status || stored?.membershipStatus || "Active",
+      subscriptionStatus: dbCarrier.subscription_status || stored?.subscriptionStatus || "active",
       stripeAccountId:
         dbCarrier.stripe_account_id ||
         stored?.stripeAccountId ||
@@ -316,9 +323,8 @@ export default function FreightBoardScreen() {
         stored?.stripe_account_id ||
         stored?.stripeAccountId ||
         "",
-    };
+    });
 
-    await persistCarrier(mergedCarrier);
     setAccessAllowed(true);
     return mergedCarrier;
   }
@@ -338,19 +344,19 @@ export default function FreightBoardScreen() {
         .from(TABLE_NAME)
         .select("*")
         .or(
-          `status.eq.available,carrier_id.eq.${currentFreightId},driver_id.eq.${currentFreightId},accepted_by.eq.${currentFreightId}`
+          `status.eq.available,status.eq.open,carrier_id.eq.${currentFreightId},freight_user_id.eq.${currentFreightId},driver_id.eq.${currentFreightId},accepted_by.eq.${currentFreightId}`
         )
         .order("created_at", { ascending: false });
 
       if (error) {
         console.log("Freight board error:", error.message);
-        setLoads(fallbackLoads);
+        setLoads([]);
       } else {
-        setLoads(Array.isArray(data) && data.length > 0 ? (data as FreightLoad[]) : fallbackLoads);
+        setLoads(Array.isArray(data) ? data.map(mapLoad) : []);
       }
     } catch (err) {
       console.log("Freight board exception:", err);
-      setLoads(fallbackLoads);
+      setLoads([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -390,18 +396,23 @@ export default function FreightBoardScreen() {
   );
 
   const selectedTotalRate = selectedLoads.reduce((sum, item) => sum + Number(item.rate || 0), 0);
-  const selectedTotalMiles = selectedLoads.reduce((sum, item) => sum + Number(item.distance_miles || 0), 0);
+  const selectedTotalMiles = selectedLoads.reduce(
+    (sum, item) => sum + Number(item.distance_miles || 0),
+    0
+  );
 
-  const availableCount = filteredLoads.filter((item) => item.status === "available").length;
+  const availableCount = filteredLoads.filter(
+    (item) => normalize(item.status) === "available" || normalize(item.status) === "open"
+  ).length;
 
   const activeCount = filteredLoads.filter((item) =>
     ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
-      item.status
+      normalize(item.status)
     )
   ).length;
 
   function toggleSelect(load: FreightLoad) {
-    if (load.status !== "available") {
+    if (normalize(load.status) !== "available" && normalize(load.status) !== "open") {
       Alert.alert("Unavailable", "Only available loads can be selected for batch pickup.");
       return;
     }
@@ -440,13 +451,28 @@ export default function FreightBoardScreen() {
       prev.map((item) => (item.id === load.id ? { ...item, ...safeUpdates } : item))
     );
 
-    if (!load.id.startsWith("demo")) {
-      const { error } = await supabase.from(TABLE_NAME).update(safeUpdates).eq("id", load.id);
+    const { error } = await supabase.from(TABLE_NAME).update(safeUpdates).eq("id", load.id);
 
-      if (error) {
-        Alert.alert("Update Warning", error.message);
-      }
+    if (error) {
+      Alert.alert("Update Warning", error.message);
     }
+  }
+
+  async function createNotification(load: FreightLoad, title: string, message: string) {
+    if (!carrier?.id) return;
+
+    await supabase.from("freight_notifications").insert({
+      freight_user_id: carrier.id,
+      freight_id: carrier.id,
+      user_id: carrier.id,
+      load_id: load.id,
+      title,
+      message,
+      type: "load",
+      is_read: false,
+      read: false,
+      created_at: new Date().toISOString(),
+    });
   }
 
   async function acceptFreightLoad(load: FreightLoad) {
@@ -454,38 +480,66 @@ export default function FreightBoardScreen() {
       const currentFreight = await checkFreightAccess();
       if (!currentFreight?.id) return;
 
+      setUpdatingId(load.id);
+
       const freightCarrierId = currentFreight.id;
+      const now = new Date().toISOString();
 
-      const acceptedBy =
-        currentFreight.companyName ||
-        currentFreight.businessName ||
-        currentFreight.contactName ||
-        currentFreight.username ||
-        "Farm2Home Freight Carrier";
-
-      const updates = {
-        status: "accepted" as LoadStatus,
+      const updates: any = {
+        status: "accepted",
         carrier_id: freightCarrierId,
-        accepted_by: acceptedBy,
-        accepted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        freight_user_id: freightCarrierId,
+        accepted_by: freightCarrierId,
+        accepted_at: now,
+        updated_at: now,
+        carrier_name:
+          currentFreight.companyName ||
+          currentFreight.businessName ||
+          currentFreight.contactName ||
+          "Farm2Home Freight Carrier",
+        carrier_email: currentFreight.email || null,
       };
 
-      if (!load.id.startsWith("demo")) {
-        const { error } = await supabase.from(TABLE_NAME).update(updates).eq("id", load.id);
+      const { error } = await supabase.from(TABLE_NAME).update(updates).eq("id", load.id);
 
-        if (error) {
-          Alert.alert("Accept Error", error.message);
-          return;
-        }
+      if (error) {
+        Alert.alert("Accept Error", error.message);
+        return;
       }
 
+      await createNotification(
+        load,
+        "Load Accepted",
+        `${load.title} has been assigned to your freight account.`
+      );
+
       setSelectedIds((prev) => prev.filter((id) => id !== load.id));
-      Alert.alert("Load Accepted", "This freight load is now assigned to your freight account.");
+
+      Alert.alert("Load Accepted", "This freight load is now assigned to your freight account.", [
+        {
+          text: "View My Loads",
+          onPress: () => router.push(FREIGHT_ROUTES.myLoads as any),
+        },
+        {
+          text: "Live Route",
+          onPress: () =>
+            router.push({
+              pathname: FREIGHT_ROUTES.liveRoute as any,
+              params: { loadId: load.id },
+            }),
+        },
+        {
+          text: "Stay Here",
+          style: "cancel",
+        },
+      ]);
+
       await loadBoard();
     } catch (err: any) {
       console.log("Accept load error:", err);
       Alert.alert("Error", err?.message || "Unable to accept freight load.");
+    } finally {
+      setUpdatingId("");
     }
   }
 
@@ -503,30 +557,29 @@ export default function FreightBoardScreen() {
     }
 
     const freightCarrierId = currentFreight.id;
-
-    const acceptedBy =
-      currentFreight.companyName ||
-      currentFreight.businessName ||
-      currentFreight.contactName ||
-      currentFreight.username ||
-      "Farm2Home Freight Carrier";
-
     const batchId = `freight_batch_${Date.now()}`;
     const acceptedAt = new Date().toISOString();
 
     try {
-      for (const load of selectedLoads) {
-        if (load.id.startsWith("demo")) continue;
+      setUpdatingId("batch");
 
+      for (const load of selectedLoads) {
         const { error } = await supabase
           .from(TABLE_NAME)
           .update({
             status: "accepted",
             carrier_id: freightCarrierId,
-            accepted_by: acceptedBy,
+            freight_user_id: freightCarrierId,
+            accepted_by: freightCarrierId,
             accepted_at: acceptedAt,
             updated_at: acceptedAt,
             batch_id: batchId,
+            carrier_name:
+              currentFreight.companyName ||
+              currentFreight.businessName ||
+              currentFreight.contactName ||
+              "Farm2Home Freight Carrier",
+            carrier_email: currentFreight.email || null,
           })
           .eq("id", load.id);
 
@@ -534,16 +587,36 @@ export default function FreightBoardScreen() {
           Alert.alert("Batch Error", error.message);
           return;
         }
+
+        await createNotification(
+          load,
+          "Batch Load Accepted",
+          `${load.title} was accepted as part of batch ${batchId}.`
+        );
       }
 
       setSelectedIds([]);
+
       Alert.alert(
         "Batch Accepted",
-        `${selectedLoads.length} loads were assigned to you in one freight route batch.`
+        `${selectedLoads.length} loads were assigned to you in one freight route batch.`,
+        [
+          {
+            text: "View My Loads",
+            onPress: () => router.push(FREIGHT_ROUTES.myLoads as any),
+          },
+          {
+            text: "Stay Here",
+            style: "cancel",
+          },
+        ]
       );
+
       await loadBoard();
     } catch (error: any) {
       Alert.alert("Batch Error", error?.message || "Unable to accept selected loads.");
+    } finally {
+      setUpdatingId("");
     }
   }
 
@@ -552,12 +625,14 @@ export default function FreightBoardScreen() {
       const currentFreight = await checkFreightAccess();
       if (!currentFreight?.id) return;
 
-      if (load.status === "available") {
+      const status = normalize(load.status);
+
+      if (status === "available" || status === "open") {
         await acceptFreightLoad(load);
         return;
       }
 
-      if (load.status === "accepted") {
+      if (status === "accepted") {
         await saveLoadUpdates(load, {
           status: "arrived_pickup",
           arrived_pickup_at: new Date().toISOString(),
@@ -565,7 +640,7 @@ export default function FreightBoardScreen() {
         return;
       }
 
-      if (load.status === "arrived_pickup") {
+      if (status === "arrived_pickup") {
         router.push({
           pathname: FREIGHT_ROUTES.proofOfPickup as any,
           params: { loadId: load.id },
@@ -573,7 +648,7 @@ export default function FreightBoardScreen() {
         return;
       }
 
-      if (load.status === "picked_up") {
+      if (status === "picked_up") {
         await saveLoadUpdates(load, {
           status: "in_transit",
           in_transit_at: new Date().toISOString(),
@@ -581,7 +656,7 @@ export default function FreightBoardScreen() {
         return;
       }
 
-      if (load.status === "in_transit") {
+      if (status === "in_transit") {
         await saveLoadUpdates(load, {
           status: "arrived_dropoff",
           arrived_dropoff_at: new Date().toISOString(),
@@ -589,7 +664,7 @@ export default function FreightBoardScreen() {
         return;
       }
 
-      if (load.status === "arrived_dropoff") {
+      if (status === "arrived_dropoff") {
         router.push({
           pathname: FREIGHT_ROUTES.proofOfDelivery as any,
           params: { loadId: load.id },
@@ -597,7 +672,7 @@ export default function FreightBoardScreen() {
         return;
       }
 
-      if (load.status === "delivered" || load.status === "completed") {
+      if (status === "delivered" || status === "completed") {
         Alert.alert("Delivered", "This freight load has already been completed.");
       }
     } catch (err) {
@@ -612,38 +687,31 @@ export default function FreightBoardScreen() {
     goTo(FREIGHT_ROUTES.postLoad);
   }
 
-  function openLiveRoute(load: FreightLoad) {
+  function openRoute(route: FreightRoute, load: FreightLoad) {
     router.push({
-      pathname: FREIGHT_ROUTES.liveRoute as any,
+      pathname: route as any,
       params: { loadId: load.id },
     });
   }
 
   function getButtonLabel(status: LoadStatus) {
-    switch (status) {
-      case "available":
-        return "Accept Load";
-      case "accepted":
-        return "Arrived Pickup";
-      case "arrived_pickup":
-        return "Proof Of Pickup";
-      case "picked_up":
-        return "Start Transit";
-      case "in_transit":
-        return "Arrived Dropoff";
-      case "arrived_dropoff":
-        return "Proof Of Delivery";
-      case "delivered":
-      case "completed":
-        return "Delivered";
-      default:
-        return "View";
-    }
+    const value = normalize(status);
+
+    if (value === "available" || value === "open") return "Accept Load";
+    if (value === "accepted") return "Arrived Pickup";
+    if (value === "arrived_pickup") return "Proof Of Pickup";
+    if (value === "picked_up") return "Start Transit";
+    if (value === "in_transit") return "Arrived Dropoff";
+    if (value === "arrived_dropoff") return "Proof Of Delivery";
+    if (value === "delivered" || value === "completed") return "Delivered";
+
+    return "View";
   }
 
   function getStatusColor(status: LoadStatus) {
-    switch (status) {
+    switch (normalize(status)) {
       case "available":
+      case "open":
         return COLORS.blue;
       case "accepted":
         return COLORS.red;
@@ -666,8 +734,9 @@ export default function FreightBoardScreen() {
   }
 
   function statusIcon(status: LoadStatus): keyof typeof Ionicons.glyphMap {
-    switch (status) {
+    switch (normalize(status)) {
       case "available":
+      case "open":
         return "cube-outline";
       case "accepted":
         return "checkmark-circle-outline";
@@ -701,28 +770,11 @@ export default function FreightBoardScreen() {
     return Number(load.rate || 0) / miles;
   }
 
-  if (loading || accessChecking) {
-    return (
-      <SafeAreaView style={styles.centered}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
-        <ActivityIndicator size="large" color={COLORS.red} />
-        <Text style={styles.loadingText}>Checking Freight Access...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  if (!accessAllowed) {
-    return (
-      <SafeAreaView style={styles.centered}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
-        <Text style={styles.lockTitle}>Login Required</Text>
-        <Text style={styles.loadingText}>Redirecting to freight login...</Text>
-      </SafeAreaView>
-    );
-  }
-
   function renderLoadCard({ item }: { item: FreightLoad }) {
     const selected = selectedIds.includes(item.id);
+    const completed = ["delivered", "completed"].includes(normalize(item.status));
+    const isAvailable = ["available", "open"].includes(normalize(item.status));
+    const busy = updatingId === item.id;
 
     return (
       <View style={[styles.card, selected && styles.selectedCard]}>
@@ -796,10 +848,11 @@ export default function FreightBoardScreen() {
           </View>
         )}
 
-        {item.status === "available" && (
+        {isAvailable && (
           <TouchableOpacity
             style={selected ? styles.unselectButton : styles.selectButton}
             onPress={() => toggleSelect(item)}
+            disabled={Boolean(updatingId)}
           >
             <Ionicons
               name={selected ? "remove-circle-outline" : "add-circle-outline"}
@@ -813,21 +866,60 @@ export default function FreightBoardScreen() {
         )}
 
         <TouchableOpacity
-          style={[styles.actionButton, ["delivered", "completed"].includes(item.status) && styles.disabledButton]}
+          style={[styles.actionButton, completed && styles.disabledButton]}
           onPress={() => handleLoadAction(item)}
-          disabled={["delivered", "completed"].includes(item.status)}
+          disabled={completed || Boolean(updatingId)}
         >
-          <Ionicons name={statusIcon(item.status)} size={18} color="#FFFFFF" />
+          {busy ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Ionicons name={statusIcon(item.status)} size={18} color="#FFFFFF" />
+          )}
           <Text style={styles.actionButtonText}>{getButtonLabel(item.status)}</Text>
         </TouchableOpacity>
 
-        {item.status !== "available" && (
-          <TouchableOpacity style={styles.liveRouteButton} onPress={() => openLiveRoute(item)}>
-            <Ionicons name="map-outline" size={18} color={COLORS.red} />
-            <Text style={styles.liveRouteText}>Open Live Route</Text>
+        <View style={styles.secondaryGrid}>
+          <TouchableOpacity style={styles.secondaryRouteButton} onPress={() => openRoute(FREIGHT_ROUTES.routeDetails, item)}>
+            <Ionicons name="trail-sign-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryRouteText}>Details</Text>
           </TouchableOpacity>
-        )}
+
+          <TouchableOpacity style={styles.secondaryRouteButton} onPress={() => openRoute(FREIGHT_ROUTES.liveRoute, item)}>
+            <Ionicons name="map-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryRouteText}>Live Route</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.secondaryRouteButton} onPress={() => openRoute(FREIGHT_ROUTES.loadChat, item)}>
+            <Ionicons name="chatbubble-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryRouteText}>Chat</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.secondaryRouteButton} onPress={() => openRoute(FREIGHT_ROUTES.loadIssues, item)}>
+            <Ionicons name="alert-circle-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryRouteText}>Issue</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+    );
+  }
+
+  if (loading || accessChecking) {
+    return (
+      <SafeAreaView style={styles.centered}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <ActivityIndicator size="large" color={COLORS.red} />
+        <Text style={styles.loadingText}>Checking Freight Access...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <SafeAreaView style={styles.centered}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <Text style={styles.lockTitle}>Login Required</Text>
+        <Text style={styles.loadingText}>Redirecting to freight login...</Text>
+      </SafeAreaView>
     );
   }
 
@@ -856,17 +948,17 @@ export default function FreightBoardScreen() {
           <Text style={styles.navText}>Dashboard</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.navButtonOutline} onPress={() => goTo(FREIGHT_ROUTES.profile)}>
-          <Ionicons name="business-outline" size={18} color={COLORS.red} />
-          <Text style={styles.navTextOutline}>Profile</Text>
+        <TouchableOpacity style={styles.navButtonOutline} onPress={() => goTo(FREIGHT_ROUTES.communicationCenter)}>
+          <Ionicons name="chatbubbles-outline" size={18} color={COLORS.red} />
+          <Text style={styles.navTextOutline}>Chat Center</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.quickGrid}>
         <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
         <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+        <QuickLink icon="notifications-outline" label="Alerts" route={FREIGHT_ROUTES.notifications} />
         <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-        <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
       </View>
 
       <View style={styles.summaryRow}>
@@ -919,12 +1011,21 @@ export default function FreightBoardScreen() {
           </View>
 
           <Text style={styles.batchText}>
-            Total Rate: {money(selectedTotalRate)} · Total Miles: {selectedTotalMiles.toFixed(0)}
+            Total Rate: {money(selectedTotalRate)} · Total Miles:{" "}
+            {selectedTotalMiles.toFixed(0)}
           </Text>
 
           <View style={styles.batchButtons}>
-            <TouchableOpacity style={styles.batchAcceptButton} onPress={acceptSelectedLoads}>
-              <Text style={styles.batchButtonText}>Accept Selected Loads</Text>
+            <TouchableOpacity
+              style={styles.batchAcceptButton}
+              onPress={acceptSelectedLoads}
+              disabled={Boolean(updatingId)}
+            >
+              {updatingId === "batch" ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.batchButtonText}>Accept Selected Loads</Text>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.batchClearButton} onPress={() => setSelectedIds([])}>
@@ -1409,21 +1510,28 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 14,
   },
-  liveRouteButton: {
+  secondaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+  secondaryRouteButton: {
+    width: "48%",
     backgroundColor: "#FFF1F2",
     borderWidth: 1,
     borderColor: COLORS.red,
-    paddingVertical: 13,
+    paddingVertical: 12,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 10,
     flexDirection: "row",
-    gap: 8,
+    gap: 7,
   },
-  liveRouteText: {
+  secondaryRouteText: {
     color: COLORS.red,
     fontWeight: "900",
+    fontSize: 12,
   },
   emptyCard: {
     backgroundColor: COLORS.card,
