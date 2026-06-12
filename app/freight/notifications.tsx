@@ -24,12 +24,21 @@ const FREIGHT_ROUTES = {
   board: "/freight/board",
   myLoads: "/freight/my-loads",
   liveLoads: "/freight/live-loads",
+  liveRoute: "/freight/live-route",
+  routeDetails: "/freight/route-details",
+  loadIssues: "/freight/load-issues",
+  routeExceptions: "/freight/route-exceptions",
   earnings: "/freight/earnings",
   analytics: "/freight/analytics",
   connectBank: "/freight/connect-bank",
+  settlements: "/freight/settlements",
+  payoutCenter: "/freight/payout-center",
   support: "/freight/support",
   settings: "/freight/settings",
   profile: "/freight/profile",
+  safety: "/freight/safety",
+  insurance: "/freight/insurance",
+  adminReview: "/freight/admin-review",
   login: "/freight/login",
   register: "/freight/register",
 } as const;
@@ -41,8 +50,11 @@ type NotificationItem = {
   title: string;
   body: string;
   type: string;
-  route?: FreightRoute;
+  route: FreightRoute;
   read?: boolean;
+  is_read?: boolean;
+  load_id?: string | null;
+  freight_user_id?: string | null;
   created_at?: string;
 };
 
@@ -52,6 +64,7 @@ const COLORS = {
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
+  redSoft: "#FFF1F2",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
@@ -59,6 +72,7 @@ const COLORS = {
   amber: "#D97706",
   blue: "#2563EB",
   purple: "#7C3AED",
+  slate: "#64748B",
 };
 
 function normalize(value: any) {
@@ -86,6 +100,11 @@ export default function FreightNotificationsScreen() {
     useCallback(() => {
       loadNotifications();
     }, [])
+  );
+
+  const unreadCount = useMemo(
+    () => notifications.filter((item) => !item.read && !item.is_read).length,
+    [notifications]
   );
 
   async function getStoredCarrier() {
@@ -123,6 +142,10 @@ export default function FreightNotificationsScreen() {
         nextCarrier.business_name ||
         nextCarrier.company_name ||
         "Freight Connect Carrier",
+      stripeAccountId:
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -143,10 +166,11 @@ export default function FreightNotificationsScreen() {
       {
         id: "freight-welcome",
         title: "Welcome to Freight Connect",
-        body: `${nextCarrier?.companyName || "Your freight account"} is ready to manage loads, payouts, routes, and support.`,
+        body: `${nextCarrier?.companyName || "Your freight account"} is ready to manage loads, payouts, routes, documents, and support.`,
         type: "account",
         route: FREIGHT_ROUTES.dashboard,
         read: false,
+        is_read: false,
         created_at: now,
       },
       {
@@ -156,15 +180,17 @@ export default function FreightNotificationsScreen() {
         type: "payout",
         route: FREIGHT_ROUTES.connectBank,
         read: false,
+        is_read: false,
         created_at: now,
       },
       {
         id: "freight-board",
         title: "Check Load Board",
-        body: "Open freight board to review available farm, refrigerated, livestock, and bulk loads.",
+        body: "Open the freight board to review available farm, refrigerated, livestock, and bulk loads.",
         type: "load",
         route: FREIGHT_ROUTES.board,
         read: true,
+        is_read: true,
         created_at: now,
       },
     ];
@@ -202,7 +228,7 @@ export default function FreightNotificationsScreen() {
         return;
       }
 
-      const mergedCarrier = {
+      const mergedCarrier = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
         id: dbCarrier.id,
@@ -221,14 +247,14 @@ export default function FreightNotificationsScreen() {
           stored?.businessName ||
           stored?.companyName ||
           "Freight Connect Carrier",
-      };
-
-      await persistCarrier(mergedCarrier);
+      });
 
       const { data, error } = await supabase
-        .from("notifications")
+        .from("freight_notifications")
         .select("*")
-        .or(`user_id.eq.${mergedCarrier.id},freight_id.eq.${mergedCarrier.id},role.eq.freight`)
+        .or(
+          `freight_user_id.eq.${mergedCarrier.id},freight_id.eq.${mergedCarrier.id},user_id.eq.${mergedCarrier.id}`
+        )
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -237,7 +263,7 @@ export default function FreightNotificationsScreen() {
         return;
       }
 
-      const mapped = Array.isArray(data)
+      const mapped: NotificationItem[] = Array.isArray(data)
         ? data.map((item: any) => ({
             id: String(item.id),
             title: item.title || "Freight Notification",
@@ -245,11 +271,17 @@ export default function FreightNotificationsScreen() {
             type: item.type || item.category || "account",
             route: mapNotificationRoute(item.type || item.category),
             read: Boolean(item.read || item.is_read),
+            is_read: Boolean(item.read || item.is_read),
+            load_id: item.load_id || null,
+            freight_user_id:
+              item.freight_user_id || item.freight_id || item.user_id || null,
             created_at: item.created_at,
           }))
         : [];
 
-      setNotifications(mapped.length > 0 ? mapped : fallbackNotifications(mergedCarrier));
+      setNotifications(
+        mapped.length > 0 ? mapped : fallbackNotifications(mergedCarrier)
+      );
     } catch (error) {
       console.log("Freight notifications error:", error);
       Alert.alert("Notifications Error", "Unable to load freight notifications.");
@@ -268,10 +300,16 @@ export default function FreightNotificationsScreen() {
     const value = normalize(type);
 
     if (value.includes("payout") || value.includes("bank")) return FREIGHT_ROUTES.connectBank;
-    if (value.includes("earning") || value.includes("settlement")) return FREIGHT_ROUTES.earnings;
+    if (value.includes("settlement")) return FREIGHT_ROUTES.settlements;
+    if (value.includes("earning")) return FREIGHT_ROUTES.earnings;
+    if (value.includes("issue")) return FREIGHT_ROUTES.loadIssues;
+    if (value.includes("exception")) return FREIGHT_ROUTES.routeExceptions;
+    if (value.includes("route")) return FREIGHT_ROUTES.liveRoute;
     if (value.includes("load")) return FREIGHT_ROUTES.board;
-    if (value.includes("route")) return FREIGHT_ROUTES.liveLoads;
     if (value.includes("support")) return FREIGHT_ROUTES.support;
+    if (value.includes("safety")) return FREIGHT_ROUTES.safety;
+    if (value.includes("insurance")) return FREIGHT_ROUTES.insurance;
+    if (value.includes("review")) return FREIGHT_ROUTES.adminReview;
     if (value.includes("setting")) return FREIGHT_ROUTES.settings;
     if (value.includes("profile")) return FREIGHT_ROUTES.profile;
 
@@ -282,11 +320,15 @@ export default function FreightNotificationsScreen() {
     const value = normalize(type);
 
     if (value.includes("payout") || value.includes("bank")) return "cash-outline";
-    if (value.includes("earning")) return "wallet-outline";
+    if (value.includes("settlement") || value.includes("earning")) return "wallet-outline";
     if (value.includes("load")) return "cube-outline";
     if (value.includes("route")) return "navigate-outline";
+    if (value.includes("issue") || value.includes("exception")) return "warning-outline";
     if (value.includes("support")) return "headset-outline";
+    if (value.includes("safety")) return "shield-checkmark-outline";
+    if (value.includes("insurance")) return "document-lock-outline";
     if (value.includes("profile")) return "business-outline";
+    if (value.includes("review")) return "clipboard-outline";
 
     return "notifications-outline";
   }
@@ -294,24 +336,42 @@ export default function FreightNotificationsScreen() {
   function colorForType(type: string) {
     const value = normalize(type);
 
-    if (value.includes("payout") || value.includes("earning")) return COLORS.green;
+    if (
+      value.includes("payout") ||
+      value.includes("earning") ||
+      value.includes("settlement")
+    ) {
+      return COLORS.green;
+    }
+
+    if (
+      value.includes("issue") ||
+      value.includes("exception") ||
+      value.includes("safety")
+    ) {
+      return COLORS.amber;
+    }
+
     if (value.includes("load")) return COLORS.red;
     if (value.includes("route")) return COLORS.purple;
     if (value.includes("support")) return COLORS.blue;
+    if (value.includes("insurance") || value.includes("review")) return COLORS.slate;
 
     return COLORS.amber;
   }
 
   async function markAllRead() {
     try {
-      const unread = notifications.filter((item) => !item.read);
+      const unread = notifications.filter((item) => !item.read && !item.is_read);
 
       if (unread.length === 0) {
         Alert.alert("All Read", "No unread freight notifications.");
         return;
       }
 
-      setNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
+      setNotifications((prev) =>
+        prev.map((item) => ({ ...item, read: true, is_read: true }))
+      );
 
       const ids = unread
         .filter((item) => !item.id.startsWith("freight-"))
@@ -319,8 +379,12 @@ export default function FreightNotificationsScreen() {
 
       if (ids.length > 0) {
         await supabase
-          .from("notifications")
-          .update({ read: true, is_read: true, updated_at: new Date().toISOString() })
+          .from("freight_notifications")
+          .update({
+            read: true,
+            is_read: true,
+            updated_at: new Date().toISOString(),
+          })
           .in("id", ids);
       }
     } catch (error) {
@@ -328,18 +392,54 @@ export default function FreightNotificationsScreen() {
     }
   }
 
-  function openNotification(item: NotificationItem) {
-    setNotifications((prev) =>
-      prev.map((next) => (next.id === item.id ? { ...next, read: true } : next))
-    );
+  async function markOneRead(item: NotificationItem) {
+    try {
+      setNotifications((prev) =>
+        prev.map((next) =>
+          next.id === item.id ? { ...next, read: true, is_read: true } : next
+        )
+      );
 
-    goTo(item.route || mapNotificationRoute(item.type));
+      if (!item.id.startsWith("freight-")) {
+        await supabase
+          .from("freight_notifications")
+          .update({
+            read: true,
+            is_read: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", item.id);
+      }
+    } catch (error) {
+      console.log("Mark one read skipped:", error);
+    }
   }
 
-  const unreadCount = useMemo(
-    () => notifications.filter((item) => !item.read).length,
-    [notifications]
-  );
+  async function openNotification(item: NotificationItem) {
+    await markOneRead(item);
+
+    const route: FreightRoute = item.route ?? mapNotificationRoute(item.type);
+
+    const loadRoutes: FreightRoute[] = [
+      FREIGHT_ROUTES.liveRoute,
+      FREIGHT_ROUTES.routeDetails,
+      FREIGHT_ROUTES.loadIssues,
+      FREIGHT_ROUTES.routeExceptions,
+    ];
+
+    if (item.load_id && loadRoutes.includes(route)) {
+      router.push({
+        pathname: route as any,
+        params: {
+          loadId: item.load_id,
+        },
+      });
+
+      return;
+    }
+
+    goTo(route);
+  }
 
   if (loading) {
     return (
@@ -360,22 +460,29 @@ export default function FreightNotificationsScreen() {
           <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
           <Text style={styles.title}>Notifications</Text>
           <Text style={styles.subtitle}>
-            Load updates, payout alerts, route messages, support updates, and account reminders.
+            Load updates, payout alerts, route messages, support updates,
+            compliance reminders, and account notices.
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+        <TouchableOpacity
+          style={styles.heroIcon}
+          onPress={() => goTo(FREIGHT_ROUTES.dashboard)}
+          activeOpacity={0.85}
+        >
           <Ionicons name="notifications-outline" size={34} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
       <View style={styles.summaryCard}>
-        <View>
-          <Text style={styles.summaryTitle}>{carrier?.companyName || "Freight Carrier"}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.summaryTitle}>
+            {carrier?.companyName || carrier?.businessName || "Freight Carrier"}
+          </Text>
           <Text style={styles.summaryText}>{unreadCount} unread notifications</Text>
         </View>
 
-        <TouchableOpacity style={styles.readButton} onPress={markAllRead}>
+        <TouchableOpacity style={styles.readButton} onPress={markAllRead} activeOpacity={0.85}>
           <Text style={styles.readButtonText}>Mark all read</Text>
         </TouchableOpacity>
       </View>
@@ -383,7 +490,7 @@ export default function FreightNotificationsScreen() {
       <View style={styles.quickGrid}>
         <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
         <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
-        <QuickLink icon="cash-outline" label="Earnings" route={FREIGHT_ROUTES.earnings} />
+        <QuickLink icon="cash-outline" label="Payouts" route={FREIGHT_ROUTES.payoutCenter} />
         <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
       </View>
 
@@ -392,37 +499,43 @@ export default function FreightNotificationsScreen() {
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={styles.emptyCard}>
             <Ionicons name="notifications-off-outline" size={38} color={COLORS.red} />
             <Text style={styles.emptyTitle}>No freight notifications.</Text>
             <Text style={styles.emptyText}>
-              Updates about loads, payouts, and support will appear here.
+              Updates about loads, payouts, compliance, route issues, and support will appear here.
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={[styles.notificationCard, !item.read && styles.unreadCard]}
-            onPress={() => openNotification(item)}
-          >
-            <View style={[styles.iconWrap, { backgroundColor: colorForType(item.type) }]}>
-              <Ionicons name={iconForType(item.type)} size={22} color="#FFFFFF" />
-            </View>
+        renderItem={({ item }) => {
+          const unread = !item.read && !item.is_read;
 
-            <View style={{ flex: 1 }}>
-              <View style={styles.notificationHeader}>
-                <Text style={styles.notificationTitle}>{item.title}</Text>
-                {!item.read && <View style={styles.unreadDot} />}
+          return (
+            <TouchableOpacity
+              style={[styles.notificationCard, unread && styles.unreadCard]}
+              onPress={() => openNotification(item)}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.iconWrap, { backgroundColor: colorForType(item.type) }]}>
+                <Ionicons name={iconForType(item.type)} size={22} color="#FFFFFF" />
               </View>
 
-              <Text style={styles.notificationBody}>{item.body}</Text>
-              <Text style={styles.notificationDate}>{formatDate(item.created_at)}</Text>
-            </View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.notificationHeader}>
+                  <Text style={styles.notificationTitle}>{item.title}</Text>
+                  {unread && <View style={styles.unreadDot} />}
+                </View>
 
-            <Ionicons name="chevron-forward-outline" size={20} color={COLORS.muted} />
-          </TouchableOpacity>
-        )}
+                <Text style={styles.notificationBody}>{item.body}</Text>
+                <Text style={styles.notificationDate}>{formatDate(item.created_at)}</Text>
+              </View>
+
+              <Ionicons name="chevron-forward-outline" size={20} color={COLORS.muted} />
+            </TouchableOpacity>
+          );
+        }}
       />
     </SafeAreaView>
   );
@@ -438,7 +551,7 @@ function QuickLink({
   route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)} activeOpacity={0.85}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickText}>{label}</Text>
     </TouchableOpacity>
@@ -446,7 +559,10 @@ function QuickLink({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -454,7 +570,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
+  centerText: {
+    color: COLORS.muted,
+    marginTop: 12,
+    fontWeight: "800",
+  },
   hero: {
     backgroundColor: COLORS.black,
     paddingTop: 30,
@@ -480,8 +600,17 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
-  subtitle: { color: "#D1D5DB", lineHeight: 22, fontWeight: "700" },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 32,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
+  subtitle: {
+    color: "#D1D5DB",
+    lineHeight: 22,
+    fontWeight: "700",
+  },
   summaryCard: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
@@ -496,15 +625,27 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
   },
-  summaryTitle: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
-  summaryText: { color: COLORS.muted, fontWeight: "800", marginTop: 4 },
+  summaryTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  summaryText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 4,
+  },
   readButton: {
     backgroundColor: COLORS.red,
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
-  readButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
+  readButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 12,
+  },
   quickGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -522,8 +663,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
-  listContent: { paddingHorizontal: 18, paddingBottom: 90 },
+  quickText: {
+    color: COLORS.text,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  listContent: {
+    paddingHorizontal: 18,
+    paddingBottom: 90,
+  },
   notificationCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -537,7 +685,7 @@ const styles = StyleSheet.create({
   },
   unreadCard: {
     borderColor: COLORS.red,
-    backgroundColor: "#FFF1F2",
+    backgroundColor: COLORS.redSoft,
   },
   iconWrap: {
     width: 46,

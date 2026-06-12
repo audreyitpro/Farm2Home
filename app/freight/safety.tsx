@@ -24,10 +24,15 @@ const FREIGHT_ROUTES = {
   dashboard: "/freight/dashboard",
   managementCenter: "/freight/freight-management-center",
   compliance: "/freight/compliance",
+  complianceVault: "/freight/compliance-vault",
+  reviewStatus: "/freight/review-status",
   legal: "/freight/legal",
   equipment: "/freight/equipment",
   insurance: "/freight/insurance",
+  businessDocuments: "/freight/business-documents",
   documents: "/freight/documents",
+  loadIssues: "/freight/load-issues",
+  routeExceptions: "/freight/route-exceptions",
   support: "/freight/support",
   help: "/freight/help",
   login: "/freight/login",
@@ -42,11 +47,14 @@ const COLORS = {
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
+  redSoft: "#FFF1F2",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
   green: "#16A34A",
+  greenSoft: "#DCFCE7",
   amber: "#D97706",
+  amberSoft: "#FEF3C7",
   blue: "#2563EB",
 };
 
@@ -72,6 +80,8 @@ export default function FreightSafetyScreen() {
   const [routeSafetyConfirmed, setRouteSafetyConfirmed] = useState(false);
   const [incidentReportingConfirmed, setIncidentReportingConfirmed] = useState(false);
   const [foodHandlingConfirmed, setFoodHandlingConfirmed] = useState(false);
+  const [insuranceAwareConfirmed, setInsuranceAwareConfirmed] = useState(false);
+  const [dotAwareConfirmed, setDotAwareConfirmed] = useState(false);
   const [safetyTermsConfirmed, setSafetyTermsConfirmed] = useState(false);
 
   useFocusEffect(
@@ -89,6 +99,8 @@ export default function FreightSafetyScreen() {
       routeSafetyConfirmed &&
       incidentReportingConfirmed &&
       foodHandlingConfirmed &&
+      insuranceAwareConfirmed &&
+      dotAwareConfirmed &&
       safetyTermsConfirmed
     );
   }, [
@@ -99,6 +111,34 @@ export default function FreightSafetyScreen() {
     routeSafetyConfirmed,
     incidentReportingConfirmed,
     foodHandlingConfirmed,
+    insuranceAwareConfirmed,
+    dotAwareConfirmed,
+    safetyTermsConfirmed,
+  ]);
+
+  const completedCount = useMemo(() => {
+    return [
+      vehicleConditionConfirmed,
+      loadSecurementConfirmed,
+      coldChainConfirmed,
+      livestockSafetyConfirmed,
+      routeSafetyConfirmed,
+      incidentReportingConfirmed,
+      foodHandlingConfirmed,
+      insuranceAwareConfirmed,
+      dotAwareConfirmed,
+      safetyTermsConfirmed,
+    ].filter(Boolean).length;
+  }, [
+    vehicleConditionConfirmed,
+    loadSecurementConfirmed,
+    coldChainConfirmed,
+    livestockSafetyConfirmed,
+    routeSafetyConfirmed,
+    incidentReportingConfirmed,
+    foodHandlingConfirmed,
+    insuranceAwareConfirmed,
+    dotAwareConfirmed,
     safetyTermsConfirmed,
   ]);
 
@@ -137,6 +177,10 @@ export default function FreightSafetyScreen() {
         nextCarrier.business_name ||
         nextCarrier.company_name ||
         "Freight Connect Carrier",
+      stripeAccountId:
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -169,7 +213,9 @@ export default function FreightSafetyScreen() {
         .eq("email", email)
         .maybeSingle();
 
-      if (error) console.log("Freight safety profile error:", error.message);
+      if (error) {
+        console.log("Freight safety profile error:", error.message);
+      }
 
       if (!dbCarrier) {
         Alert.alert(
@@ -210,6 +256,8 @@ export default function FreightSafetyScreen() {
       setRouteSafetyConfirmed(Boolean(dbCarrier.route_safety_confirmed));
       setIncidentReportingConfirmed(Boolean(dbCarrier.incident_reporting_confirmed));
       setFoodHandlingConfirmed(Boolean(dbCarrier.food_handling_confirmed));
+      setInsuranceAwareConfirmed(Boolean(dbCarrier.insurance_safety_confirmed));
+      setDotAwareConfirmed(Boolean(dbCarrier.dot_safety_confirmed));
       setSafetyTermsConfirmed(Boolean(dbCarrier.safety_confirmed));
     } catch (error: any) {
       Alert.alert("Safety Error", error?.message || "Unable to load freight safety.");
@@ -252,6 +300,8 @@ export default function FreightSafetyScreen() {
         route_safety_confirmed: routeSafetyConfirmed,
         incident_reporting_confirmed: incidentReportingConfirmed,
         food_handling_confirmed: foodHandlingConfirmed,
+        insurance_safety_confirmed: insuranceAwareConfirmed,
+        dot_safety_confirmed: dotAwareConfirmed,
         safety_confirmed: safetyTermsConfirmed,
         safety_status: "complete",
         safety_confirmed_at: now,
@@ -265,6 +315,15 @@ export default function FreightSafetyScreen() {
 
       if (error) throw error;
 
+      await supabase.from("freight_notifications").insert({
+        freight_user_id: carrier.id,
+        title: "Safety Confirmation Complete",
+        message: "Your Freight Connect safety confirmation has been saved.",
+        type: "safety",
+        is_read: false,
+        created_at: now,
+      });
+
       await persistCarrier({
         ...carrier,
         ...payload,
@@ -272,8 +331,12 @@ export default function FreightSafetyScreen() {
 
       Alert.alert("Saved", "Freight safety requirements have been saved.", [
         {
-          text: "Compliance",
-          onPress: () => router.replace(FREIGHT_ROUTES.compliance as any),
+          text: "Review Status",
+          onPress: () => router.replace(FREIGHT_ROUTES.reviewStatus as any),
+        },
+        {
+          text: "Stay Here",
+          style: "cancel",
         },
       ]);
     } catch (error: any) {
@@ -308,11 +371,15 @@ export default function FreightSafetyScreen() {
             <Text style={styles.title}>Safety</Text>
             <Text style={styles.subtitle}>
               Confirm route safety, vehicle readiness, cold-chain handling, livestock safety,
-              food handling, and incident reporting responsibilities.
+              food handling, insurance awareness, and incident reporting responsibilities.
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.compliance)}>
+          <TouchableOpacity
+            style={styles.heroIcon}
+            onPress={() => goTo(FREIGHT_ROUTES.complianceVault)}
+            activeOpacity={0.85}
+          >
             <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
@@ -323,21 +390,43 @@ export default function FreightSafetyScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
+            <Text style={styles.carrierName}>
+              {carrier?.companyName || carrier?.businessName || "Freight Connect Carrier"}
+            </Text>
             <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
 
-            <View style={[styles.statusPill, { backgroundColor: complete ? COLORS.green : COLORS.amber }]}>
+            <View
+              style={[
+                styles.statusPill,
+                { backgroundColor: complete ? COLORS.green : COLORS.amber },
+              ]}
+            >
               <Text style={styles.statusPillText}>
-                {complete ? "Safety Complete" : "Action Required"}
+                {complete ? "Safety Complete" : `${completedCount}/10 Complete`}
               </Text>
             </View>
           </View>
         </View>
 
+        <View style={styles.progressCard}>
+          <View style={styles.progressHeader}>
+            <Text style={styles.progressTitle}>Safety Progress</Text>
+            <Text style={styles.progressValue}>{completedCount}/10</Text>
+          </View>
+
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${completedCount * 10}%` }]} />
+          </View>
+
+          <Text style={styles.progressText}>
+            All safety confirmations must be completed before the carrier file can be marked ready.
+          </Text>
+        </View>
+
         <View style={styles.quickGrid}>
-          <QuickLink icon="shield-checkmark-outline" label="Compliance" route={FREIGHT_ROUTES.compliance} />
-          <QuickLink icon="document-text-outline" label="Legal" route={FREIGHT_ROUTES.legal} />
-          <QuickLink icon="car-outline" label="Equipment" route={FREIGHT_ROUTES.equipment} />
+          <QuickLink icon="shield-checkmark-outline" label="Compliance" route={FREIGHT_ROUTES.complianceVault} />
+          <QuickLink icon="document-text-outline" label="Documents" route={FREIGHT_ROUTES.businessDocuments} />
+          <QuickLink icon="umbrella-outline" label="Insurance" route={FREIGHT_ROUTES.insurance} />
           <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
         </View>
 
@@ -347,13 +436,13 @@ export default function FreightSafetyScreen() {
           subtitle="Confirm safe vehicle condition and load securement."
         >
           <SwitchRow
-            label="Vehicle is clean, roadworthy, maintained, and safe for freight movement."
+            label="Vehicle is clean, roadworthy, maintained, inspected, and safe for freight movement."
             value={vehicleConditionConfirmed}
             onChange={setVehicleConditionConfirmed}
           />
 
           <SwitchRow
-            label="I understand load securement, weight limits, and safe loading requirements."
+            label="I understand load securement, weight limits, equipment fit, and safe loading requirements."
             value={loadSecurementConfirmed}
             onChange={setLoadSecurementConfirmed}
           />
@@ -362,7 +451,7 @@ export default function FreightSafetyScreen() {
         <SafetySection
           icon="snow-outline"
           title="Cold-Chain & Fresh Food Safety"
-          subtitle="Confirm safe handling for produce, refrigerated, and fresh food freight."
+          subtitle="Confirm safe handling for produce, refrigerated, frozen, and fresh food freight."
         >
           <SwitchRow
             label="I understand cold-chain loads must remain within the required temperature range."
@@ -380,10 +469,10 @@ export default function FreightSafetyScreen() {
         <SafetySection
           icon="paw-outline"
           title="Livestock & Farm Bulk Safety"
-          subtitle="Confirm livestock and bulk farm load requirements."
+          subtitle="Confirm livestock, hay, feed, and farm bulk load requirements."
         >
           <SwitchRow
-            label="I will only accept livestock or farm bulk loads when properly equipped and legally able."
+            label="I will only accept livestock, hay, feed, or farm bulk loads when properly equipped and legally able."
             value={livestockSafetyConfirmed}
             onChange={setLivestockSafetyConfirmed}
           />
@@ -391,26 +480,48 @@ export default function FreightSafetyScreen() {
 
         <SafetySection
           icon="navigate-outline"
-          title="Route Safety"
-          subtitle="Confirm route planning, delays, and incident handling."
+          title="Route Safety & Incident Reporting"
+          subtitle="Confirm route planning, delivery delays, and incident handling."
         >
           <SwitchRow
-            label="I will follow safe routes, communicate delays, and avoid unsafe delivery conditions."
+            label="I will follow safe routes, communicate delays, and avoid unsafe delivery or pickup conditions."
             value={routeSafetyConfirmed}
             onChange={setRouteSafetyConfirmed}
           />
 
           <SwitchRow
-            label="I will report accidents, damaged goods, rejected loads, shortages, or safety issues immediately."
+            label="I will report accidents, damaged goods, rejected loads, shortages, route exceptions, or safety issues immediately."
             value={incidentReportingConfirmed}
             onChange={setIncidentReportingConfirmed}
           />
         </SafetySection>
 
+        <SafetySection
+          icon="document-lock-outline"
+          title="Insurance & Regulatory Awareness"
+          subtitle="Confirm carrier responsibility for insurance, licenses, and required compliance."
+        >
+          <SwitchRow
+            label="I understand insurance coverage must remain active for freight operations."
+            value={insuranceAwareConfirmed}
+            onChange={setInsuranceAwareConfirmed}
+          />
+
+          <SwitchRow
+            label="I understand I am responsible for required carrier permits, safety rules, and DOT/FMCSA requirements when applicable."
+            value={dotAwareConfirmed}
+            onChange={setDotAwareConfirmed}
+          />
+        </SafetySection>
+
         <View style={styles.acceptCard}>
-          <Text style={styles.acceptTitle}>Final Safety Confirmation</Text>
+          <View style={styles.acceptHeader}>
+            <Ionicons name="shield-checkmark-outline" size={24} color="#FFFFFF" />
+            <Text style={styles.acceptTitle}>Final Safety Confirmation</Text>
+          </View>
+
           <Text style={styles.acceptText}>
-            Confirm you understand and accept Farm2Home freight safety responsibilities.
+            Confirm you understand and accept Farm2Home Freight Connect safety responsibilities.
           </Text>
 
           <SwitchRow
@@ -424,6 +535,7 @@ export default function FreightSafetyScreen() {
             style={[styles.primaryButton, (!complete || saving) && styles.disabledButton]}
             onPress={saveSafety}
             disabled={!complete || saving}
+            activeOpacity={0.85}
           >
             {saving ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -436,9 +548,13 @@ export default function FreightSafetyScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.compliance)}>
+        <TouchableOpacity
+          style={styles.darkButton}
+          onPress={() => goTo(FREIGHT_ROUTES.complianceVault)}
+          activeOpacity={0.85}
+        >
           <Ionicons name="shield-checkmark-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Back to Compliance</Text>
+          <Text style={styles.primaryText}>Back to Compliance Vault</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -508,7 +624,7 @@ function QuickLink({
   route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)} activeOpacity={0.85}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickText}>{label}</Text>
     </TouchableOpacity>
@@ -551,8 +667,17 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
-  subtitle: { color: "#D1D5DB", lineHeight: 22, fontWeight: "700" },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 32,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
+  subtitle: {
+    color: "#D1D5DB",
+    lineHeight: 22,
+    fontWeight: "700",
+  },
   carrierCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -574,8 +699,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  carrierName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
-  carrierEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  carrierName: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  carrierEmail: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 4,
+  },
   statusPill: {
     alignSelf: "flex-start",
     borderRadius: 999,
@@ -583,7 +716,51 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     marginTop: 9,
   },
-  statusPillText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
+  statusPillText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  progressCard: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  progressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  progressTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  progressValue: {
+    color: COLORS.red,
+    fontWeight: "900",
+  },
+  progressTrack: {
+    height: 10,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 10,
+    backgroundColor: COLORS.red,
+    borderRadius: 999,
+  },
+  progressText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 10,
+  },
   quickGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -601,7 +778,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
+  quickText: {
+    color: COLORS.text,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   card: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -625,7 +806,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: "900",
+  },
   sectionSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -647,8 +832,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#111827",
     borderColor: "#374151",
   },
-  switchText: { color: COLORS.text, fontWeight: "900", flex: 1, lineHeight: 20 },
-  switchTextDark: { color: "#FFFFFF" },
+  switchText: {
+    color: COLORS.text,
+    fontWeight: "900",
+    flex: 1,
+    lineHeight: 20,
+  },
+  switchTextDark: {
+    color: "#FFFFFF",
+  },
   acceptCard: {
     backgroundColor: COLORS.black,
     borderRadius: 22,
@@ -656,8 +848,24 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginBottom: 16,
   },
-  acceptTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "900", marginBottom: 8 },
-  acceptText: { color: "#D1D5DB", fontWeight: "700", lineHeight: 22, marginBottom: 12 },
+  acceptHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 8,
+  },
+  acceptTitle: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "900",
+    flex: 1,
+  },
+  acceptText: {
+    color: "#D1D5DB",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginBottom: 12,
+  },
   primaryButton: {
     backgroundColor: COLORS.red,
     borderRadius: 16,
@@ -668,8 +876,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: { opacity: 0.6 },
-  primaryText: { color: "#FFFFFF", fontWeight: "900" },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  primaryText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   darkButton: {
     backgroundColor: COLORS.black,
     borderRadius: 16,

@@ -1,5 +1,5 @@
-// app/freight/payout-center.tsx
-// Payout center for Stripe Connect readiness + completed/pending freight payouts.
+// app/freight/operations-calendar.tsx
+// Freight operations calendar for pickups, deliveries, active routes, late/missed loads.
 
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -24,11 +24,12 @@ import { supabase } from "../data/supabaseClient";
 const FREIGHT_ROUTES = {
   dashboard: "/freight/dashboard",
   managementCenter: "/freight/freight-management-center",
-  connectBank: "/freight/connect-bank",
-  earnings: "/freight/earnings",
-  analytics: "/freight/analytics",
-  deliveryHistory: "/freight/delivery-history",
-  settlements: "/freight/settlements",
+  dispatchCenter: "/freight/dispatch-center",
+  myLoads: "/freight/my-loads",
+  liveLoads: "/freight/live-loads",
+  liveRoute: "/freight/live-route",
+  routeDetails: "/freight/route-details",
+  routeExceptions: "/freight/route-exceptions",
   support: "/freight/support",
   login: "/freight/login",
   register: "/freight/register",
@@ -48,6 +49,7 @@ const COLORS = {
   green: "#16A34A",
   amber: "#D97706",
   blue: "#2563EB",
+  purple: "#7C3AED",
 };
 
 function normalize(value: any) {
@@ -58,62 +60,96 @@ function goTo(route: FreightRoute) {
   router.push(route as any);
 }
 
-function money(value: number) {
-  return `$${Number(value || 0).toFixed(2)}`;
+function dateValue(load: any) {
+  return (
+    load.pickup_date ||
+    load.pickup_at ||
+    load.scheduled_pickup_at ||
+    load.delivery_date ||
+    load.dropoff_date ||
+    load.created_at
+  );
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "Not recorded";
+  if (!value) return "Not scheduled";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Not recorded";
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString();
 }
 
-export default function FreightPayoutCenterScreen() {
+function formatTime(value?: string | null) {
+  if (!value) return "Time TBD";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function isLate(load: any) {
+  const status = normalize(load.status);
+  if (["delivered", "completed", "cancelled"].includes(status)) return false;
+
+  const value = load.pickup_at || load.scheduled_pickup_at || load.pickup_date;
+  if (!value) return false;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+
+  return date.getTime() < new Date().getTime();
+}
+
+export default function FreightOperationsCalendarScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
   const [carrier, setCarrier] = useState<any>(null);
   const [loads, setLoads] = useState<any[]>([]);
 
   useFocusEffect(
     useCallback(() => {
-      loadPayoutCenter();
+      loadCalendar();
     }, [])
   );
 
   const stats = useMemo(() => {
-    const completed = loads.filter((x) =>
-      ["delivered", "completed"].includes(normalize(x.status))
+    const active = loads.filter((item) =>
+      ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
+        normalize(item.status)
+      )
     );
 
-    const paid = completed.filter((x) =>
-      ["paid", "settled"].includes(normalize(x.payout_status || x.settlement_status))
+    const pickups = loads.filter((item) =>
+      ["available", "accepted", "arrived_pickup"].includes(normalize(item.status))
     );
 
-    const pending = completed.filter(
-      (x) =>
-        !["paid", "settled"].includes(
-          normalize(x.payout_status || x.settlement_status)
-        )
+    const deliveries = loads.filter((item) =>
+      ["picked_up", "in_transit", "arrived_dropoff"].includes(normalize(item.status))
     );
+
+    const late = loads.filter(isLate);
 
     return {
-      completedCount: completed.length,
-      paidCount: paid.length,
-      pendingCount: pending.length,
-      paidValue: paid.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
-      pendingValue: pending.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
-      totalValue: completed.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
+      total: loads.length,
+      active: active.length,
+      pickups: pickups.length,
+      deliveries: deliveries.length,
+      late: late.length,
     };
+  }, [loads]);
+
+  const groupedLoads = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+
+    loads.forEach((load) => {
+      const key = formatDate(dateValue(load));
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(load);
+    });
+
+    return Object.keys(groups).map((date) => ({
+      date,
+      loads: groups[date],
+    }));
   }, [loads]);
 
   async function getStoredCarrier() {
@@ -151,12 +187,6 @@ export default function FreightPayoutCenterScreen() {
         nextCarrier.business_name ||
         nextCarrier.company_name ||
         "Freight Connect Carrier",
-      stripeAccountId: nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
-      stripe_account_id: nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
-      payoutsEnabled: nextCarrier.payoutsEnabled ?? nextCarrier.payouts_enabled ?? false,
-      chargesEnabled: nextCarrier.chargesEnabled ?? nextCarrier.charges_enabled ?? false,
-      onboardingComplete:
-        nextCarrier.onboardingComplete ?? nextCarrier.stripe_onboarding_complete ?? false,
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -170,7 +200,7 @@ export default function FreightPayoutCenterScreen() {
     return normalizedCarrier;
   }
 
-  async function loadPayoutCenter() {
+  async function loadCalendar() {
     try {
       setLoading(true);
 
@@ -189,9 +219,7 @@ export default function FreightPayoutCenterScreen() {
         .eq("email", email)
         .maybeSingle();
 
-      if (carrierError) {
-        console.log("Payout center carrier error:", carrierError.message);
-      }
+      if (carrierError) console.log("Operations calendar carrier error:", carrierError.message);
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
@@ -204,55 +232,32 @@ export default function FreightPayoutCenterScreen() {
         ...(dbCarrier || {}),
         id: dbCarrier.id,
         freightId: dbCarrier.id,
-        email: normalize(dbCarrier.email || email),
         role: "freight",
+        email: normalize(dbCarrier.email || email),
         companyName:
           dbCarrier.company_name ||
           dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
           "Freight Connect Carrier",
-        businessName:
-          dbCarrier.business_name ||
-          dbCarrier.company_name ||
-          stored?.businessName ||
-          stored?.companyName ||
-          "Freight Connect Carrier",
-        stripeAccountId:
-          dbCarrier.stripe_account_id || stored?.stripeAccountId || stored?.stripe_account_id || "",
-        stripe_account_id:
-          dbCarrier.stripe_account_id || stored?.stripe_account_id || stored?.stripeAccountId || "",
-        payoutsEnabled:
-          dbCarrier.payouts_enabled ??
-          dbCarrier.stripe_payouts_enabled ??
-          stored?.payoutsEnabled ??
-          false,
-        chargesEnabled:
-          dbCarrier.charges_enabled ??
-          dbCarrier.stripe_charges_enabled ??
-          stored?.chargesEnabled ??
-          false,
-        onboardingComplete:
-          dbCarrier.stripe_onboarding_complete ?? stored?.onboardingComplete ?? false,
       });
 
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
         .or(
-          `carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
+          `status.eq.available,carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
         )
-        .in("status", ["delivered", "completed"])
-        .order("delivered_at", { ascending: false });
+        .order("pickup_date", { ascending: true });
 
       if (error) {
-        console.log("Payout center loads error:", error.message);
+        console.log("Operations calendar loads error:", error.message);
         setLoads([]);
       } else {
         setLoads(Array.isArray(data) ? data : []);
       }
     } catch (error: any) {
-      Alert.alert("Payout Error", error?.message || "Unable to load payout center.");
+      Alert.alert("Calendar Error", error?.message || "Unable to load operations calendar.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -261,73 +266,68 @@ export default function FreightPayoutCenterScreen() {
 
   async function onRefresh() {
     setRefreshing(true);
-    await loadPayoutCenter();
+    await loadCalendar();
   }
 
-  function stripeReady() {
-    return Boolean(
-      (carrier?.stripeAccountId || carrier?.stripe_account_id) &&
-        (carrier?.payoutsEnabled || carrier?.payouts_enabled) &&
-        (carrier?.chargesEnabled || carrier?.charges_enabled) &&
-        (carrier?.onboardingComplete || carrier?.stripe_onboarding_complete)
-    );
+  function openWithLoad(route: FreightRoute, loadId: string) {
+    router.push({
+      pathname: route as any,
+      params: { loadId },
+    });
   }
 
-  function stripeStatusText() {
-    if (stripeReady()) return "Payout Ready";
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) return "Onboarding Incomplete";
-    return "Bank Not Connected";
-  }
-
-  function stripeStatusColor() {
-    if (stripeReady()) return COLORS.green;
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) return COLORS.amber;
-    return COLORS.red;
-  }
-
-  function payoutStatus(load: any) {
-    return load.payout_status || load.settlement_status || "pending";
-  }
-
-  function renderLoad({ item }: { item: any }) {
-    const amount = Number(item.rate || item.freight_total || item.total_due || item.payout_amount || 0);
-    const paid = ["paid", "settled"].includes(normalize(payoutStatus(item)));
+  function renderLoad(load: any) {
+    const late = isLate(load);
 
     return (
-      <View style={styles.loadCard}>
+      <View key={String(load.id)} style={styles.loadCard}>
         <View style={styles.loadTop}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.loadTitle}>
-              {item.title || item.commodity || "Completed Freight Load"}
-            </Text>
-            <Text style={styles.loadSub}>
-              {item.pickup_location || "Pickup"} → {item.dropoff_location || "Dropoff"}
+            <Text style={styles.loadTitle}>{load.title || load.commodity || "Freight Load"}</Text>
+            <Text style={styles.loadRoute}>
+              {load.pickup_location || "Pickup"} → {load.dropoff_location || "Dropoff"}
             </Text>
           </View>
 
-          <View style={[styles.badge, { backgroundColor: paid ? COLORS.green : COLORS.amber }]}>
-            <Text style={styles.badgeText}>{String(payoutStatus(item)).replace(/_/g, " ")}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: late ? COLORS.red : COLORS.blue }]}>
+            <Text style={styles.statusText}>{late ? "Late" : String(load.status || "scheduled")}</Text>
           </View>
         </View>
 
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Payout Amount</Text>
-          <Text style={styles.infoValue}>{money(amount)}</Text>
+        <View style={styles.infoGrid}>
+          <InfoBox label="Pickup" value={formatDate(load.pickup_date || load.pickup_at)} />
+          <InfoBox label="Pickup Time" value={load.pickup_time || formatTime(load.pickup_at)} />
+          <InfoBox label="Delivery" value={formatDate(load.dropoff_date || load.delivery_date)} />
+          <InfoBox label="Delivery Time" value={load.dropoff_time || formatTime(load.delivery_at)} />
         </View>
 
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Delivered</Text>
-          <Text style={styles.infoValue}>
-            {formatDate(item.delivered_at || item.updated_at)}
-          </Text>
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={styles.primarySmall}
+            onPress={() => openWithLoad(FREIGHT_ROUTES.liveRoute, load.id)}
+          >
+            <Ionicons name="map-outline" size={17} color="#FFFFFF" />
+            <Text style={styles.primarySmallText}>Live Route</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.outlineSmall}
+            onPress={() => openWithLoad(FREIGHT_ROUTES.routeDetails, load.id)}
+          >
+            <Ionicons name="trail-sign-outline" size={17} color={COLORS.red} />
+            <Text style={styles.outlineSmallText}>Details</Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Payout Reference</Text>
-          <Text style={styles.infoValue}>
-            {item.stripe_payout_id || item.payout_id || "Pending"}
-          </Text>
-        </View>
+        {late && (
+          <TouchableOpacity
+            style={styles.exceptionButton}
+            onPress={() => goTo(FREIGHT_ROUTES.routeExceptions)}
+          >
+            <Ionicons name="warning-outline" size={18} color={COLORS.red} />
+            <Text style={styles.exceptionText}>Report Route Exception</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
@@ -337,7 +337,7 @@ export default function FreightPayoutCenterScreen() {
       <SafeAreaView style={styles.center}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
         <ActivityIndicator size="large" color={COLORS.red} />
-        <Text style={styles.centerText}>Loading payout center...</Text>
+        <Text style={styles.centerText}>Loading operations calendar...</Text>
       </SafeAreaView>
     );
   }
@@ -354,14 +354,15 @@ export default function FreightPayoutCenterScreen() {
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-            <Text style={styles.title}>Payout Center</Text>
+            <Text style={styles.title}>Operations Calendar</Text>
             <Text style={styles.subtitle}>
-              Review Stripe Connect readiness, completed load payouts, pending settlements, and payout history.
+              Track pickup dates, delivery dates, active route schedule, missed loads, late loads,
+              and route exception actions.
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
-            <Ionicons name="wallet-outline" size={34} color="#FFFFFF" />
+          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dispatchCenter)}>
+            <Ionicons name="calendar-outline" size={34} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
@@ -371,68 +372,73 @@ export default function FreightPayoutCenterScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>
-              {carrier?.companyName || carrier?.businessName || "Freight Connect Carrier"}
-            </Text>
+            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
             <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
-
-            <View style={[styles.stripePill, { backgroundColor: stripeStatusColor() }]}>
-              <Text style={styles.stripePillText}>Stripe Connect: {stripeStatusText()}</Text>
-            </View>
           </View>
         </View>
 
         <View style={styles.statsGrid}>
-          <StatCard label="Total Earned" value={money(stats.totalValue)} icon="cash-outline" />
-          <StatCard label="Paid" value={money(stats.paidValue)} icon="checkmark-circle-outline" />
-          <StatCard label="Pending" value={money(stats.pendingValue)} icon="time-outline" />
-          <StatCard label="Completed Loads" value={String(stats.completedCount)} icon="cube-outline" />
+          <StatCard label="Total Loads" value={String(stats.total)} icon="cube-outline" />
+          <StatCard label="Active" value={String(stats.active)} icon="navigate-outline" />
+          <StatCard label="Pickups" value={String(stats.pickups)} icon="location-outline" />
+          <StatCard label="Deliveries" value={String(stats.deliveries)} icon="flag-outline" />
+          <StatCard label="Late / Missed" value={String(stats.late)} icon="warning-outline" />
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-          <QuickLink icon="cash-outline" label="Earnings" route={FREIGHT_ROUTES.earnings} />
-          <QuickLink icon="receipt-outline" label="Settlements" route={FREIGHT_ROUTES.settlements} />
-          <QuickLink icon="time-outline" label="History" route={FREIGHT_ROUTES.deliveryHistory} />
+          <QuickLink icon="navigate-circle-outline" label="Dispatch" route={FREIGHT_ROUTES.dispatchCenter} />
+          <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
+          <QuickLink icon="map-outline" label="Live Route" route={FREIGHT_ROUTES.liveRoute} />
+          <QuickLink icon="warning-outline" label="Exceptions" route={FREIGHT_ROUTES.routeExceptions} />
         </View>
 
         <View style={styles.notice}>
-          <Text style={styles.noticeTitle}>Payout Requirements</Text>
+          <Text style={styles.noticeTitle}>Calendar Reminder</Text>
           <Text style={styles.noticeText}>
-            Payouts require completed Stripe Connect onboarding, completed proof of delivery,
-            no unresolved disputes, and successful payment settlement.
+            Loads marked late may require a route exception. Keep pickup, delivery, and route
+            updates current to avoid missed communication.
           </Text>
         </View>
 
-        <Text style={styles.sectionTitle}>Completed Load Payouts</Text>
+        <Text style={styles.sectionTitle}>Scheduled Operations</Text>
 
-        <FlatList
-          data={loads}
-          keyExtractor={(item, index) => String(item.id || index)}
-          scrollEnabled={false}
-          renderItem={renderLoad}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="wallet-outline" size={38} color={COLORS.red} />
-              <Text style={styles.emptyTitle}>No completed payouts yet.</Text>
-              <Text style={styles.emptyText}>
-                Delivered freight loads will appear here once completed.
-              </Text>
+        {groupedLoads.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Ionicons name="calendar-clear-outline" size={38} color={COLORS.red} />
+            <Text style={styles.emptyTitle}>No scheduled operations.</Text>
+            <Text style={styles.emptyText}>
+              Accepted, available, and scheduled freight loads will appear here.
+            </Text>
+          </View>
+        ) : (
+          groupedLoads.map((group) => (
+            <View key={group.date} style={styles.dayGroup}>
+              <Text style={styles.dayTitle}>{group.date}</Text>
+              {group.loads.map(renderLoad)}
             </View>
-          }
-        />
+          ))
+        )}
 
-        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
-          <Ionicons name="business-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Open Connect Bank</Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.dispatchCenter)}>
+          <Ionicons name="navigate-circle-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.primaryText}>Open Dispatch Center</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}>
           <Ionicons name="apps-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Back to Management Center</Text>
+          <Text style={styles.primaryText}>Management Center</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function InfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoBox}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -532,14 +538,6 @@ const styles = StyleSheet.create({
   },
   carrierName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
   carrierEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  stripePill: {
-    alignSelf: "flex-start",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginTop: 9,
-  },
-  stripePillText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -591,6 +589,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     marginBottom: 12,
   },
+  dayGroup: { marginBottom: 10 },
+  dayTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+    paddingHorizontal: 18,
+    marginBottom: 10,
+  },
   loadCard: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
@@ -600,23 +606,75 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  loadTop: { flexDirection: "row", gap: 12, alignItems: "flex-start", marginBottom: 12 },
+  loadTop: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
   loadTitle: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
-  loadSub: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
-  badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900", textTransform: "capitalize" },
-  infoRow: {
+  loadRoute: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  statusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    maxWidth: 120,
+  },
+  statusText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900", textTransform: "capitalize" },
+  infoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  infoBox: {
+    width: "48%",
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 14,
-    padding: 13,
-    marginTop: 8,
-    flexDirection: "row",
-    gap: 10,
+    padding: 12,
   },
-  infoLabel: { flex: 1, color: COLORS.muted, fontWeight: "900" },
-  infoValue: { color: COLORS.red, fontWeight: "900", flex: 1, textAlign: "right" },
+  infoLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  infoValue: { color: COLORS.text, fontWeight: "900", marginTop: 4 },
+  actionRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+  primarySmall: {
+    flex: 1,
+    backgroundColor: COLORS.red,
+    borderRadius: 14,
+    padding: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  primarySmallText: { color: "#FFFFFF", fontWeight: "900" },
+  outlineSmall: {
+    flex: 1,
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    borderRadius: 14,
+    padding: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  outlineSmallText: { color: COLORS.red, fontWeight: "900" },
+  exceptionButton: {
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    borderRadius: 14,
+    padding: 13,
+    marginTop: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  exceptionText: { color: COLORS.red, fontWeight: "900" },
   emptyCard: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,

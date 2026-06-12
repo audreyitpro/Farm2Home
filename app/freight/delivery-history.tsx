@@ -25,9 +25,12 @@ const FREIGHT_ROUTES = {
   myLoads: "/freight/my-loads",
   liveLoads: "/freight/live-loads",
   liveRoute: "/freight/live-route",
+  routeDetails: "/freight/route-details",
   earnings: "/freight/earnings",
   analytics: "/freight/analytics",
   connectBank: "/freight/connect-bank",
+  settlements: "/freight/settlements",
+  payoutCenter: "/freight/payout-center",
   support: "/freight/support",
   profile: "/freight/profile",
   settings: "/freight/settings",
@@ -52,6 +55,7 @@ type FreightLoad = {
   rate?: number;
   freight_total?: number;
   total_due?: number;
+  payout_amount?: number;
   distance_miles?: number;
   miles?: number;
   status?: string;
@@ -102,7 +106,7 @@ function money(value: number) {
 }
 
 function amount(load: FreightLoad) {
-  return Number(load.rate || load.freight_total || load.total_due || 0);
+  return Number(load.rate || load.freight_total || load.total_due || load.payout_amount || 0);
 }
 
 function miles(load: FreightLoad) {
@@ -137,7 +141,7 @@ function payoutColor(load: FreightLoad) {
 
   if (status === "paid" || status === "settled") return COLORS.green;
   if (status === "processing") return COLORS.blue;
-  if (status === "failed" || status === "disputed") return COLORS.red;
+  if (status === "failed" || status === "disputed" || status === "hold") return COLORS.red;
 
   return COLORS.amber;
 }
@@ -310,9 +314,9 @@ export default function FreightDeliveryHistoryScreen() {
     await loadHistory();
   }
 
-  function openLiveRoute(load: FreightLoad) {
+  function openRouteDetails(load: FreightLoad) {
     router.push({
-      pathname: FREIGHT_ROUTES.liveRoute as any,
+      pathname: FREIGHT_ROUTES.routeDetails as any,
       params: { loadId: load.id },
     });
   }
@@ -322,7 +326,9 @@ export default function FreightDeliveryHistoryScreen() {
       <View style={styles.loadCard}>
         <View style={styles.loadHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.loadTitle}>{item.title || item.commodity || "Completed Freight Load"}</Text>
+            <Text style={styles.loadTitle}>
+              {item.title || item.commodity || "Completed Freight Load"}
+            </Text>
             <Text style={styles.loadSub}>
               Delivered {formatDate(item.delivered_at || item.updated_at)}
             </Text>
@@ -373,8 +379,8 @@ export default function FreightDeliveryHistoryScreen() {
           )}
         </View>
 
-        <TouchableOpacity style={styles.routeButton} onPress={() => openLiveRoute(item)}>
-          <Ionicons name="map-outline" size={18} color={COLORS.red} />
+        <TouchableOpacity style={styles.routeButton} onPress={() => openRouteDetails(item)}>
+          <Ionicons name="trail-sign-outline" size={18} color={COLORS.red} />
           <Text style={styles.routeButtonText}>View Route Details</Text>
         </TouchableOpacity>
       </View>
@@ -427,7 +433,7 @@ export default function FreightDeliveryHistoryScreen() {
         <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
         <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
         <QuickLink icon="cash-outline" label="Earnings" route={FREIGHT_ROUTES.earnings} />
-        <QuickLink icon="analytics-outline" label="Analytics" route={FREIGHT_ROUTES.analytics} />
+        <QuickLink icon="receipt-outline" label="Settlements" route={FREIGHT_ROUTES.settlements} />
       </View>
 
       <FlatList

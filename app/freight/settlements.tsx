@@ -82,6 +82,7 @@ function statusColor(status: string) {
   if (value === "paid" || value === "settled") return COLORS.green;
   if (value === "processing") return COLORS.blue;
   if (value === "disputed" || value === "failed" || value === "rejected") return COLORS.red;
+
   return COLORS.amber;
 }
 
@@ -104,7 +105,9 @@ export default function FreightSettlementsScreen() {
     );
 
     const pending = loads.filter((item) =>
-      ["pending", "pending_review", "processing", ""].includes(normalize(settlementStatus(item)))
+      ["pending", "pending_review", "processing", ""].includes(
+        normalize(settlementStatus(item))
+      )
     );
 
     const disputed = loads.filter((item) =>
@@ -196,7 +199,9 @@ export default function FreightSettlementsScreen() {
         .eq("email", email)
         .maybeSingle();
 
-      if (carrierError) console.log("Freight settlements carrier error:", carrierError.message);
+      if (carrierError) {
+        console.log("Freight settlements carrier error:", carrierError.message);
+      }
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
@@ -218,13 +223,25 @@ export default function FreightSettlementsScreen() {
           stored?.businessName ||
           "Freight Connect Carrier",
         stripeAccountId:
-          dbCarrier.stripe_account_id || stored?.stripeAccountId || stored?.stripe_account_id || "",
+          dbCarrier.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
         stripe_account_id:
-          dbCarrier.stripe_account_id || stored?.stripe_account_id || stored?.stripeAccountId || "",
+          dbCarrier.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
         payoutsEnabled:
-          dbCarrier.payouts_enabled ?? dbCarrier.stripe_payouts_enabled ?? stored?.payoutsEnabled ?? false,
+          dbCarrier.payouts_enabled ??
+          dbCarrier.stripe_payouts_enabled ??
+          stored?.payoutsEnabled ??
+          false,
         chargesEnabled:
-          dbCarrier.charges_enabled ?? dbCarrier.stripe_charges_enabled ?? stored?.chargesEnabled ?? false,
+          dbCarrier.charges_enabled ??
+          dbCarrier.stripe_charges_enabled ??
+          stored?.chargesEnabled ??
+          false,
         onboardingComplete:
           dbCarrier.stripe_onboarding_complete ?? stored?.onboardingComplete ?? false,
       });
@@ -232,7 +249,9 @@ export default function FreightSettlementsScreen() {
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
-        .or(`carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`)
+        .or(
+          `carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
+        )
         .in("status", ["delivered", "completed"])
         .order("delivered_at", { ascending: false });
 
@@ -279,13 +298,17 @@ export default function FreightSettlementsScreen() {
   function renderSettlement({ item }: { item: any }) {
     const status = settlementStatus(item);
     const amount = settlementAmount(item);
-    const dispute = Boolean(item.dispute_status || item.dispute_reason || normalize(status) === "disputed");
+    const dispute = Boolean(
+      item.dispute_status || item.dispute_reason || normalize(status) === "disputed"
+    );
 
     return (
       <View style={styles.settlementCard}>
         <View style={styles.settlementTop}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.loadTitle}>{item.title || item.commodity || "Freight Settlement"}</Text>
+            <Text style={styles.loadTitle}>
+              {item.title || item.commodity || "Freight Settlement"}
+            </Text>
             <Text style={styles.loadRoute}>
               {item.pickup_location || "Pickup"} → {item.dropoff_location || "Dropoff"}
             </Text>
@@ -364,7 +387,9 @@ export default function FreightSettlementsScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
+            <Text style={styles.carrierName}>
+              {carrier?.companyName || "Freight Connect Carrier"}
+            </Text>
             <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
 
             <View style={[styles.stripePill, { backgroundColor: stripeStatusColor() }]}>
@@ -420,7 +445,10 @@ export default function FreightSettlementsScreen() {
           <Text style={styles.primaryText}>Back to Payout Center</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}>
+        <TouchableOpacity
+          style={styles.darkButton}
+          onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}
+        >
           <Ionicons name="apps-outline" size={18} color="#FFFFFF" />
           <Text style={styles.primaryText}>Management Center</Text>
         </TouchableOpacity>

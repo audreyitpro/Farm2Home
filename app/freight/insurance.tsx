@@ -26,7 +26,11 @@ const FREIGHT_ROUTES = {
   dashboard: "/freight/dashboard",
   managementCenter: "/freight/freight-management-center",
   compliance: "/freight/compliance",
+  complianceVault: "/freight/compliance-vault",
+  reviewStatus: "/freight/review-status",
+  businessDocuments: "/freight/business-documents",
   documents: "/freight/documents",
+  safety: "/freight/safety",
   adminReview: "/freight/admin-review",
   support: "/freight/support",
   login: "/freight/login",
@@ -99,12 +103,12 @@ export default function FreightInsuranceScreen() {
     const commercialDays = daysUntil(commercialExpiry);
     const cargoDays = daysUntil(cargoExpiry);
 
-    const commercialUploaded = documents.some((doc) =>
-      normalize(doc.document_type).includes("commercial_auto_insurance")
+    const commercialUploaded = documents.some(
+      (doc) => normalize(doc.document_type) === "commercial_auto_insurance"
     );
 
-    const cargoUploaded = documents.some((doc) =>
-      normalize(doc.document_type).includes("cargo_insurance")
+    const cargoUploaded = documents.some(
+      (doc) => normalize(doc.document_type) === "cargo_insurance"
     );
 
     const expired =
@@ -183,6 +187,10 @@ export default function FreightInsuranceScreen() {
         nextCarrier.business_name ||
         nextCarrier.company_name ||
         "Freight Connect Carrier",
+      stripeAccountId:
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -226,7 +234,7 @@ export default function FreightInsuranceScreen() {
         return;
       }
 
-      const mergedCarrier = {
+      const mergedCarrier = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
         id: dbCarrier.id,
@@ -245,9 +253,7 @@ export default function FreightInsuranceScreen() {
           stored?.businessName ||
           stored?.companyName ||
           "Freight Connect Carrier",
-      };
-
-      await persistCarrier(mergedCarrier);
+      });
 
       setCommercialCarrier(dbCarrier.commercial_insurance_carrier || "");
       setCommercialPolicyNumber(dbCarrier.commercial_policy_number || "");
@@ -260,7 +266,7 @@ export default function FreightInsuranceScreen() {
       const { data: docData, error: docError } = await supabase
         .from("freight_documents")
         .select("*")
-        .eq("freight_id", dbCarrier.id)
+        .eq("freight_id", mergedCarrier.id)
         .in("document_type", ["commercial_auto_insurance", "cargo_insurance"])
         .order("created_at", { ascending: false });
 
@@ -283,7 +289,9 @@ export default function FreightInsuranceScreen() {
     await loadInsurance();
   }
 
-  async function uploadInsuranceDocument(documentType: "commercial_auto_insurance" | "cargo_insurance") {
+  async function uploadInsuranceDocument(
+    documentType: "commercial_auto_insurance" | "cargo_insurance"
+  ) {
     if (!carrier?.id) {
       Alert.alert("Profile Missing", "Please log in again.");
       return;
@@ -333,15 +341,22 @@ export default function FreightInsuranceScreen() {
 
         if (error) throw error;
       } else {
-        const { error } = await supabase
-          .from("freight_documents")
-          .insert({
-            ...payload,
-            created_at: now,
-          });
+        const { error } = await supabase.from("freight_documents").insert({
+          ...payload,
+          created_at: now,
+        });
 
         if (error) throw error;
       }
+
+      await supabase.from("freight_notifications").insert({
+        freight_user_id: carrier.id,
+        title: `${title} Uploaded`,
+        message: `${title} was uploaded and is pending review.`,
+        type: "insurance",
+        is_read: false,
+        created_at: now,
+      });
 
       Alert.alert("Uploaded", `${title} was uploaded for review.`);
       await loadInsurance();
@@ -359,12 +374,18 @@ export default function FreightInsuranceScreen() {
     }
 
     if (!commercialCarrier.trim() || !commercialPolicyNumber.trim() || !commercialExpiry.trim()) {
-      Alert.alert("Commercial Insurance Required", "Enter commercial auto carrier, policy number, and expiry date.");
+      Alert.alert(
+        "Commercial Insurance Required",
+        "Enter commercial auto carrier, policy number, and expiry date."
+      );
       return;
     }
 
     if (!cargoCarrier.trim() || !cargoPolicyNumber.trim() || !cargoExpiry.trim()) {
-      Alert.alert("Cargo Insurance Required", "Enter cargo carrier, policy number, and expiry date.");
+      Alert.alert(
+        "Cargo Insurance Required",
+        "Enter cargo carrier, policy number, and expiry date."
+      );
       return;
     }
 
@@ -402,12 +423,33 @@ export default function FreightInsuranceScreen() {
 
       if (error) throw error;
 
+      await supabase.from("freight_notifications").insert({
+        freight_user_id: carrier.id,
+        title: "Insurance Saved",
+        message:
+          payload.insurance_status === "complete"
+            ? "Your insurance profile is complete."
+            : "Your insurance information was saved. Upload all required documents to complete review.",
+        type: "insurance",
+        is_read: false,
+        created_at: now,
+      });
+
       await persistCarrier({
         ...carrier,
         ...payload,
       });
 
-      Alert.alert("Saved", "Freight insurance information has been saved.");
+      Alert.alert("Saved", "Freight insurance information has been saved.", [
+        {
+          text: "Review Status",
+          onPress: () => router.replace(FREIGHT_ROUTES.reviewStatus as any),
+        },
+        {
+          text: "Stay Here",
+          style: "cancel",
+        },
+      ]);
     } catch (error: any) {
       Alert.alert("Save Error", error?.message || "Unable to save insurance information.");
     } finally {
@@ -458,7 +500,11 @@ export default function FreightInsuranceScreen() {
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.compliance)}>
+          <TouchableOpacity
+            style={styles.heroIcon}
+            onPress={() => goTo(FREIGHT_ROUTES.complianceVault)}
+            activeOpacity={0.85}
+          >
             <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
@@ -469,7 +515,9 @@ export default function FreightInsuranceScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
+            <Text style={styles.carrierName}>
+              {carrier?.companyName || carrier?.businessName || "Freight Connect Carrier"}
+            </Text>
             <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
 
             <View style={[styles.statusPill, { backgroundColor: statusColorValue() }]}>
@@ -479,8 +527,8 @@ export default function FreightInsuranceScreen() {
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="shield-checkmark-outline" label="Compliance" route={FREIGHT_ROUTES.compliance} />
-          <QuickLink icon="document-attach-outline" label="Documents" route={FREIGHT_ROUTES.documents} />
+          <QuickLink icon="shield-checkmark-outline" label="Compliance" route={FREIGHT_ROUTES.complianceVault} />
+          <QuickLink icon="document-attach-outline" label="Documents" route={FREIGHT_ROUTES.businessDocuments} />
           <QuickLink icon="clipboard-outline" label="Admin Review" route={FREIGHT_ROUTES.adminReview} />
           <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
         </View>
@@ -526,9 +574,13 @@ export default function FreightInsuranceScreen() {
           />
 
           <TouchableOpacity
-            style={[styles.uploadButton, uploading === "commercial_auto_insurance" && styles.disabledButton]}
+            style={[
+              styles.uploadButton,
+              uploading === "commercial_auto_insurance" && styles.disabledButton,
+            ]}
             onPress={() => uploadInsuranceDocument("commercial_auto_insurance")}
             disabled={uploading === "commercial_auto_insurance"}
+            activeOpacity={0.85}
           >
             {uploading === "commercial_auto_insurance" ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -585,6 +637,7 @@ export default function FreightInsuranceScreen() {
             style={[styles.uploadButton, uploading === "cargo_insurance" && styles.disabledButton]}
             onPress={() => uploadInsuranceDocument("cargo_insurance")}
             disabled={uploading === "cargo_insurance"}
+            activeOpacity={0.85}
           >
             {uploading === "cargo_insurance" ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -620,6 +673,7 @@ export default function FreightInsuranceScreen() {
             style={[styles.primaryButton, saving && styles.disabledButton]}
             onPress={saveInsurance}
             disabled={saving}
+            activeOpacity={0.85}
           >
             {saving ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -632,9 +686,13 @@ export default function FreightInsuranceScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.compliance)}>
+        <TouchableOpacity
+          style={styles.darkButton}
+          onPress={() => goTo(FREIGHT_ROUTES.complianceVault)}
+          activeOpacity={0.85}
+        >
           <Ionicons name="shield-checkmark-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Back to Compliance</Text>
+          <Text style={styles.primaryText}>Back to Compliance Vault</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -719,7 +777,7 @@ function QuickLink({
   route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)} activeOpacity={0.85}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickText}>{label}</Text>
     </TouchableOpacity>

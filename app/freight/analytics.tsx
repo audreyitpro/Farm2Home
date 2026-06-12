@@ -29,28 +29,15 @@ const FREIGHT_ROUTES = {
   connectBank: "/freight/connect-bank",
   subscription: "/freight/subscription",
   support: "/freight/support",
+  earnings: "/freight/earnings",
+  payoutCenter: "/freight/payout-center",
+  settlements: "/freight/settlements",
+  deliveryHistory: "/freight/delivery-history",
   login: "/freight/login",
   register: "/freight/register",
 } as const;
 
 type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
-
-const COLORS = {
-  bg: "#F4F5F7",
-  card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  amber: "#D97706",
-  purple: "#7C3AED",
-  blue: "#2563EB",
-  slate: "#64748B",
-};
 
 type FreightLoad = {
   id: string;
@@ -58,6 +45,7 @@ type FreightLoad = {
   rate?: number;
   total_due?: number;
   freight_total?: number;
+  payout_amount?: number;
   distance_miles?: number;
   miles?: number;
   commodity?: string;
@@ -72,6 +60,21 @@ type FreightLoad = {
   delivered_at?: string;
 };
 
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  amber: "#D97706",
+  purple: "#7C3AED",
+  blue: "#2563EB",
+};
+
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
@@ -84,7 +87,7 @@ function money(value: number) {
 }
 
 function amount(load: FreightLoad) {
-  return Number(load.rate || load.freight_total || load.total_due || 0);
+  return Number(load.rate || load.freight_total || load.total_due || load.payout_amount || 0);
 }
 
 function miles(load: FreightLoad) {
@@ -165,9 +168,7 @@ export default function FreightAnalyticsScreen() {
 
       const stored = await getStoredCarrier();
       const { data: authData } = await supabase.auth.getUser();
-      const authUser = authData?.user;
-
-      const email = normalize(stored?.email || authUser?.email || "");
+      const email = normalize(stored?.email || authData?.user?.email || "");
 
       if (!email) {
         router.replace(FREIGHT_ROUTES.login as any);
@@ -227,12 +228,12 @@ export default function FreightAnalyticsScreen() {
 
       await persistCarrier(mergedCarrier);
 
-      const carrierId = mergedCarrier.id;
-
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
-        .or(`carrier_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`)
+        .or(
+          `carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
+        )
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -417,10 +418,10 @@ export default function FreightAnalyticsScreen() {
           <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
           <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
           <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
-          <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-          <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
-          <QuickLink icon="card-outline" label="Subscription" route={FREIGHT_ROUTES.subscription} />
-          <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+          <QuickLink icon="cash-outline" label="Earnings" route={FREIGHT_ROUTES.earnings} />
+          <QuickLink icon="wallet-outline" label="Payouts" route={FREIGHT_ROUTES.payoutCenter} />
+          <QuickLink icon="receipt-outline" label="Settlements" route={FREIGHT_ROUTES.settlements} />
+          <QuickLink icon="time-outline" label="History" route={FREIGHT_ROUTES.deliveryHistory} />
         </View>
       </ScrollView>
     </SafeAreaView>

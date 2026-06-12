@@ -1,11 +1,9 @@
-// app/freight/payout-center.tsx
-// Payout center for Stripe Connect readiness + completed/pending freight payouts.
+// app/freight/performance-scorecard.tsx
 
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -24,11 +22,14 @@ import { supabase } from "../data/supabaseClient";
 const FREIGHT_ROUTES = {
   dashboard: "/freight/dashboard",
   managementCenter: "/freight/freight-management-center",
-  connectBank: "/freight/connect-bank",
-  earnings: "/freight/earnings",
-  analytics: "/freight/analytics",
-  deliveryHistory: "/freight/delivery-history",
+  dispatchCenter: "/freight/dispatch-center",
+  operationsCalendar: "/freight/operations-calendar",
   settlements: "/freight/settlements",
+  disputes: "/freight/disputes",
+  compliance: "/freight/compliance",
+  safety: "/freight/safety",
+  connectBank: "/freight/connect-bank",
+  analytics: "/freight/analytics",
   support: "/freight/support",
   login: "/freight/login",
   register: "/freight/register",
@@ -48,6 +49,7 @@ const COLORS = {
   green: "#16A34A",
   amber: "#D97706",
   blue: "#2563EB",
+  purple: "#7C3AED",
 };
 
 function normalize(value: any) {
@@ -58,63 +60,102 @@ function goTo(route: FreightRoute) {
   router.push(route as any);
 }
 
-function money(value: number) {
+function pct(value: number) {
+  return `${Math.round(value)}%`;
+}
+
+function money(value: any) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "Not recorded";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Not recorded";
-  return date.toLocaleDateString();
+function isDelivered(load: any) {
+  return ["delivered", "completed"].includes(normalize(load.status));
 }
 
-export default function FreightPayoutCenterScreen() {
+function isActive(load: any) {
+  return ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
+    normalize(load.status)
+  );
+}
+
+function hasException(load: any) {
+  return Boolean(load.route_exception_status || load.route_exception_type);
+}
+
+function hasDispute(load: any) {
+  return Boolean(load.dispute_status || load.dispute_reason);
+}
+
+export default function FreightPerformanceScorecardScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
   const [carrier, setCarrier] = useState<any>(null);
   const [loads, setLoads] = useState<any[]>([]);
 
   useFocusEffect(
     useCallback(() => {
-      loadPayoutCenter();
+      loadScorecard();
     }, [])
   );
 
-  const stats = useMemo(() => {
-    const completed = loads.filter((x) =>
-      ["delivered", "completed"].includes(normalize(x.status))
+  const scorecard = useMemo(() => {
+    const completed = loads.filter(isDelivered);
+    const active = loads.filter(isActive);
+    const exceptions = loads.filter(hasException);
+    const disputes = loads.filter(hasDispute);
+
+    const onTimeCompleted = completed.filter((load) => {
+      if (load.delivered_late === true) return false;
+      if (load.route_exception_status || load.route_exception_type) return false;
+      return true;
+    });
+
+    const payoutReady = Boolean(
+      (carrier?.stripeAccountId || carrier?.stripe_account_id) &&
+        (carrier?.payoutsEnabled || carrier?.payouts_enabled) &&
+        (carrier?.chargesEnabled || carrier?.charges_enabled) &&
+        (carrier?.onboardingComplete || carrier?.stripe_onboarding_complete)
     );
 
-    const paid = completed.filter((x) =>
-      ["paid", "settled"].includes(normalize(x.payout_status || x.settlement_status))
+    const complianceReady = Boolean(
+      carrier?.legalAccepted ||
+        carrier?.legal_accepted ||
+        carrier?.freightTermsAccepted ||
+        carrier?.freight_terms_accepted
     );
 
-    const pending = completed.filter(
-      (x) =>
-        !["paid", "settled"].includes(
-          normalize(x.payout_status || x.settlement_status)
-        )
-    );
+    const safetyReady = Boolean(carrier?.safety_confirmed || carrier?.safetyConfirmed);
+
+    const onTimeRate = completed.length ? (onTimeCompleted.length / completed.length) * 100 : 100;
+    const disputeRate = completed.length ? (disputes.length / completed.length) * 100 : 0;
+    const exceptionRate = loads.length ? (exceptions.length / loads.length) * 100 : 0;
+
+    let score = 100;
+    score -= Math.min(30, exceptionRate * 0.5);
+    score -= Math.min(30, disputeRate * 1.5);
+    if (!payoutReady) score -= 10;
+    if (!complianceReady) score -= 10;
+    if (!safetyReady) score -= 10;
 
     return {
-      completedCount: completed.length,
-      paidCount: paid.length,
-      pendingCount: pending.length,
-      paidValue: paid.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
+      completed: completed.length,
+      active: active.length,
+      exceptions: exceptions.length,
+      disputes: disputes.length,
+      onTimeRate,
+      exceptionRate,
+      disputeRate,
+      payoutReady,
+      complianceReady,
+      safetyReady,
+      earnings: completed.reduce(
+        (sum, load) => sum + Number(load.rate || load.freight_total || load.total_due || 0),
         0
       ),
-      pendingValue: pending.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
-      totalValue: completed.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
+      score: Math.max(0, Math.round(score)),
     };
-  }, [loads]);
+  }, [loads, carrier]);
 
   async function getStoredCarrier() {
     const raw =
@@ -145,12 +186,6 @@ export default function FreightPayoutCenterScreen() {
         nextCarrier.company_name ||
         nextCarrier.business_name ||
         "Freight Connect Carrier",
-      businessName:
-        nextCarrier.businessName ||
-        nextCarrier.companyName ||
-        nextCarrier.business_name ||
-        nextCarrier.company_name ||
-        "Freight Connect Carrier",
       stripeAccountId: nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
       stripe_account_id: nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
       payoutsEnabled: nextCarrier.payoutsEnabled ?? nextCarrier.payouts_enabled ?? false,
@@ -170,7 +205,7 @@ export default function FreightPayoutCenterScreen() {
     return normalizedCarrier;
   }
 
-  async function loadPayoutCenter() {
+  async function loadScorecard() {
     try {
       setLoading(true);
 
@@ -189,9 +224,7 @@ export default function FreightPayoutCenterScreen() {
         .eq("email", email)
         .maybeSingle();
 
-      if (carrierError) {
-        console.log("Payout center carrier error:", carrierError.message);
-      }
+      if (carrierError) console.log("Scorecard carrier error:", carrierError.message);
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
@@ -204,36 +237,14 @@ export default function FreightPayoutCenterScreen() {
         ...(dbCarrier || {}),
         id: dbCarrier.id,
         freightId: dbCarrier.id,
-        email: normalize(dbCarrier.email || email),
         role: "freight",
+        email: normalize(dbCarrier.email || email),
         companyName:
           dbCarrier.company_name ||
           dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
           "Freight Connect Carrier",
-        businessName:
-          dbCarrier.business_name ||
-          dbCarrier.company_name ||
-          stored?.businessName ||
-          stored?.companyName ||
-          "Freight Connect Carrier",
-        stripeAccountId:
-          dbCarrier.stripe_account_id || stored?.stripeAccountId || stored?.stripe_account_id || "",
-        stripe_account_id:
-          dbCarrier.stripe_account_id || stored?.stripe_account_id || stored?.stripeAccountId || "",
-        payoutsEnabled:
-          dbCarrier.payouts_enabled ??
-          dbCarrier.stripe_payouts_enabled ??
-          stored?.payoutsEnabled ??
-          false,
-        chargesEnabled:
-          dbCarrier.charges_enabled ??
-          dbCarrier.stripe_charges_enabled ??
-          stored?.chargesEnabled ??
-          false,
-        onboardingComplete:
-          dbCarrier.stripe_onboarding_complete ?? stored?.onboardingComplete ?? false,
       });
 
       const { data, error } = await supabase
@@ -242,17 +253,16 @@ export default function FreightPayoutCenterScreen() {
         .or(
           `carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
         )
-        .in("status", ["delivered", "completed"])
-        .order("delivered_at", { ascending: false });
+        .order("updated_at", { ascending: false });
 
       if (error) {
-        console.log("Payout center loads error:", error.message);
+        console.log("Scorecard loads error:", error.message);
         setLoads([]);
       } else {
         setLoads(Array.isArray(data) ? data : []);
       }
     } catch (error: any) {
-      Alert.alert("Payout Error", error?.message || "Unable to load payout center.");
+      Alert.alert("Scorecard Error", error?.message || "Unable to load performance scorecard.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -261,75 +271,13 @@ export default function FreightPayoutCenterScreen() {
 
   async function onRefresh() {
     setRefreshing(true);
-    await loadPayoutCenter();
+    await loadScorecard();
   }
 
-  function stripeReady() {
-    return Boolean(
-      (carrier?.stripeAccountId || carrier?.stripe_account_id) &&
-        (carrier?.payoutsEnabled || carrier?.payouts_enabled) &&
-        (carrier?.chargesEnabled || carrier?.charges_enabled) &&
-        (carrier?.onboardingComplete || carrier?.stripe_onboarding_complete)
-    );
-  }
-
-  function stripeStatusText() {
-    if (stripeReady()) return "Payout Ready";
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) return "Onboarding Incomplete";
-    return "Bank Not Connected";
-  }
-
-  function stripeStatusColor() {
-    if (stripeReady()) return COLORS.green;
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) return COLORS.amber;
+  function scoreColor() {
+    if (scorecard.score >= 85) return COLORS.green;
+    if (scorecard.score >= 70) return COLORS.amber;
     return COLORS.red;
-  }
-
-  function payoutStatus(load: any) {
-    return load.payout_status || load.settlement_status || "pending";
-  }
-
-  function renderLoad({ item }: { item: any }) {
-    const amount = Number(item.rate || item.freight_total || item.total_due || item.payout_amount || 0);
-    const paid = ["paid", "settled"].includes(normalize(payoutStatus(item)));
-
-    return (
-      <View style={styles.loadCard}>
-        <View style={styles.loadTop}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.loadTitle}>
-              {item.title || item.commodity || "Completed Freight Load"}
-            </Text>
-            <Text style={styles.loadSub}>
-              {item.pickup_location || "Pickup"} → {item.dropoff_location || "Dropoff"}
-            </Text>
-          </View>
-
-          <View style={[styles.badge, { backgroundColor: paid ? COLORS.green : COLORS.amber }]}>
-            <Text style={styles.badgeText}>{String(payoutStatus(item)).replace(/_/g, " ")}</Text>
-          </View>
-        </View>
-
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Payout Amount</Text>
-          <Text style={styles.infoValue}>{money(amount)}</Text>
-        </View>
-
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Delivered</Text>
-          <Text style={styles.infoValue}>
-            {formatDate(item.delivered_at || item.updated_at)}
-          </Text>
-        </View>
-
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Payout Reference</Text>
-          <Text style={styles.infoValue}>
-            {item.stripe_payout_id || item.payout_id || "Pending"}
-          </Text>
-        </View>
-      </View>
-    );
   }
 
   if (loading) {
@@ -337,7 +285,7 @@ export default function FreightPayoutCenterScreen() {
       <SafeAreaView style={styles.center}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
         <ActivityIndicator size="large" color={COLORS.red} />
-        <Text style={styles.centerText}>Loading payout center...</Text>
+        <Text style={styles.centerText}>Loading performance scorecard...</Text>
       </SafeAreaView>
     );
   }
@@ -354,85 +302,149 @@ export default function FreightPayoutCenterScreen() {
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-            <Text style={styles.title}>Payout Center</Text>
+            <Text style={styles.title}>Performance Scorecard</Text>
             <Text style={styles.subtitle}>
-              Review Stripe Connect readiness, completed load payouts, pending settlements, and payout history.
+              Track completed loads, on-time rate, route exceptions, disputes, payout readiness,
+              safety, compliance, and carrier performance.
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
-            <Ionicons name="wallet-outline" size={34} color="#FFFFFF" />
+          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.analytics)}>
+            <Ionicons name="speedometer-outline" size={34} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.carrierCard}>
-          <View style={styles.avatar}>
-            <Ionicons name="business-outline" size={28} color="#FFFFFF" />
+        <View style={styles.scoreCard}>
+          <View style={[styles.scoreCircle, { backgroundColor: scoreColor() }]}>
+            <Text style={styles.scoreValue}>{scorecard.score}</Text>
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>
-              {carrier?.companyName || carrier?.businessName || "Freight Connect Carrier"}
-            </Text>
+            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
             <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
-
-            <View style={[styles.stripePill, { backgroundColor: stripeStatusColor() }]}>
-              <Text style={styles.stripePillText}>Stripe Connect: {stripeStatusText()}</Text>
-            </View>
+            <Text style={styles.scoreText}>
+              {scorecard.score >= 85
+                ? "Strong carrier performance"
+                : scorecard.score >= 70
+                ? "Good performance with improvement areas"
+                : "Action required to improve score"}
+            </Text>
           </View>
         </View>
 
         <View style={styles.statsGrid}>
-          <StatCard label="Total Earned" value={money(stats.totalValue)} icon="cash-outline" />
-          <StatCard label="Paid" value={money(stats.paidValue)} icon="checkmark-circle-outline" />
-          <StatCard label="Pending" value={money(stats.pendingValue)} icon="time-outline" />
-          <StatCard label="Completed Loads" value={String(stats.completedCount)} icon="cube-outline" />
+          <StatCard label="Completed" value={String(scorecard.completed)} icon="checkmark-done-outline" />
+          <StatCard label="Active" value={String(scorecard.active)} icon="navigate-outline" />
+          <StatCard label="On-Time Rate" value={pct(scorecard.onTimeRate)} icon="time-outline" />
+          <StatCard label="Exceptions" value={String(scorecard.exceptions)} icon="warning-outline" />
+          <StatCard label="Disputes" value={String(scorecard.disputes)} icon="alert-circle-outline" />
+          <StatCard label="Earnings" value={money(scorecard.earnings)} icon="cash-outline" />
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-          <QuickLink icon="cash-outline" label="Earnings" route={FREIGHT_ROUTES.earnings} />
+          <QuickLink icon="navigate-circle-outline" label="Dispatch" route={FREIGHT_ROUTES.dispatchCenter} />
+          <QuickLink icon="calendar-outline" label="Calendar" route={FREIGHT_ROUTES.operationsCalendar} />
           <QuickLink icon="receipt-outline" label="Settlements" route={FREIGHT_ROUTES.settlements} />
-          <QuickLink icon="time-outline" label="History" route={FREIGHT_ROUTES.deliveryHistory} />
+          <QuickLink icon="shield-checkmark-outline" label="Compliance" route={FREIGHT_ROUTES.compliance} />
         </View>
 
-        <View style={styles.notice}>
-          <Text style={styles.noticeTitle}>Payout Requirements</Text>
-          <Text style={styles.noticeText}>
-            Payouts require completed Stripe Connect onboarding, completed proof of delivery,
-            no unresolved disputes, and successful payment settlement.
-          </Text>
+        <View style={styles.card}>
+          <SectionHeader icon="shield-checkmark-outline" title="Readiness Checklist" />
+
+          <ReadinessRow
+            label="Stripe payout ready"
+            complete={scorecard.payoutReady}
+            route={FREIGHT_ROUTES.connectBank}
+          />
+          <ReadinessRow
+            label="Compliance / legal accepted"
+            complete={scorecard.complianceReady}
+            route={FREIGHT_ROUTES.compliance}
+          />
+          <ReadinessRow
+            label="Safety confirmed"
+            complete={scorecard.safetyReady}
+            route={FREIGHT_ROUTES.safety}
+          />
         </View>
 
-        <Text style={styles.sectionTitle}>Completed Load Payouts</Text>
+        <View style={styles.card}>
+          <SectionHeader icon="analytics-outline" title="Performance Insights" />
 
-        <FlatList
-          data={loads}
-          keyExtractor={(item, index) => String(item.id || index)}
-          scrollEnabled={false}
-          renderItem={renderLoad}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="wallet-outline" size={38} color={COLORS.red} />
-              <Text style={styles.emptyTitle}>No completed payouts yet.</Text>
-              <Text style={styles.emptyText}>
-                Delivered freight loads will appear here once completed.
-              </Text>
-            </View>
-          }
-        />
+          <Insight
+            label="On-time rate"
+            value={pct(scorecard.onTimeRate)}
+            good={scorecard.onTimeRate >= 85}
+          />
+          <Insight
+            label="Exception rate"
+            value={pct(scorecard.exceptionRate)}
+            good={scorecard.exceptionRate <= 10}
+          />
+          <Insight
+            label="Dispute rate"
+            value={pct(scorecard.disputeRate)}
+            good={scorecard.disputeRate <= 5}
+          />
+        </View>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
-          <Ionicons name="business-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Open Connect Bank</Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.dispatchCenter)}>
+          <Ionicons name="navigate-circle-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.primaryText}>Open Dispatch Center</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}>
           <Ionicons name="apps-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Back to Management Center</Text>
+          <Text style={styles.primaryText}>Management Center</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function SectionHeader({ icon, title }: { icon: keyof typeof Ionicons.glyphMap; title: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons name={icon} size={20} color="#FFFFFF" />
+      </View>
+      <Text style={styles.sectionTitle}>{title}</Text>
+    </View>
+  );
+}
+
+function ReadinessRow({
+  label,
+  complete,
+  route,
+}: {
+  label: string;
+  complete: boolean;
+  route: FreightRoute;
+}) {
+  return (
+    <TouchableOpacity style={styles.readinessRow} onPress={() => goTo(route)}>
+      <Ionicons
+        name={complete ? "checkmark-circle" : "alert-circle-outline"}
+        size={20}
+        color={complete ? COLORS.green : COLORS.amber}
+      />
+      <Text style={styles.readinessText}>{label}</Text>
+      <Text style={[styles.readinessStatus, { color: complete ? COLORS.green : COLORS.amber }]}>
+        {complete ? "Complete" : "Needed"}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function Insight({ label, value, good }: { label: string; value: string; good: boolean }) {
+  return (
+    <View style={styles.insightRow}>
+      <Text style={styles.insightLabel}>{label}</Text>
+      <Text style={[styles.insightValue, { color: good ? COLORS.green : COLORS.amber }]}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
@@ -509,10 +521,10 @@ const styles = StyleSheet.create({
   },
   title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
   subtitle: { color: "#D1D5DB", lineHeight: 22, fontWeight: "700" },
-  carrierCard: {
+  scoreCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
-    padding: 16,
+    padding: 18,
     marginHorizontal: 18,
     marginTop: 16,
     marginBottom: 14,
@@ -522,24 +534,17 @@ const styles = StyleSheet.create({
     gap: 14,
     alignItems: "center",
   },
-  avatar: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
-    backgroundColor: COLORS.red,
+  scoreCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
   },
+  scoreValue: { color: "#FFFFFF", fontSize: 28, fontWeight: "900" },
   carrierName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
   carrierEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  stripePill: {
-    alignSelf: "flex-start",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginTop: 9,
-  },
-  stripePillText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
+  scoreText: { color: COLORS.red, fontWeight: "900", marginTop: 6 },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -575,71 +580,61 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
-  notice: {
-    backgroundColor: COLORS.black,
+  card: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 18,
     marginHorizontal: 18,
     marginBottom: 16,
-    borderRadius: 22,
-    padding: 18,
-  },
-  noticeTitle: { color: "#FFFFFF", fontSize: 21, fontWeight: "900", marginBottom: 7 },
-  noticeText: { color: "#D1D5DB", fontWeight: "700", lineHeight: 22 },
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 23,
-    fontWeight: "900",
-    paddingHorizontal: 18,
-    marginBottom: 12,
-  },
-  loadCard: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 18,
-    marginBottom: 14,
-    borderRadius: 22,
-    padding: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  loadTop: { flexDirection: "row", gap: 12, alignItems: "flex-start", marginBottom: 12 },
-  loadTitle: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
-  loadSub: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
-  badgeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900", textTransform: "capitalize" },
-  infoRow: {
+  sectionHeader: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 16,
+    backgroundColor: COLORS.black,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  readinessRow: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 14,
     padding: 13,
-    marginTop: 8,
+    marginBottom: 10,
     flexDirection: "row",
+    alignItems: "center",
     gap: 10,
   },
-  infoLabel: { flex: 1, color: COLORS.muted, fontWeight: "900" },
-  infoValue: { color: COLORS.red, fontWeight: "900", flex: 1, textAlign: "right" },
-  emptyCard: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 18,
-    borderRadius: 22,
-    padding: 24,
-    alignItems: "center",
+  readinessText: { color: COLORS.text, fontWeight: "900", flex: 1 },
+  readinessStatus: { fontWeight: "900" },
+  insightRow: {
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
+    borderRadius: 14,
+    padding: 13,
+    marginBottom: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
-  emptyTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginTop: 10 },
-  emptyText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    textAlign: "center",
-    marginTop: 8,
-    lineHeight: 22,
-  },
+  insightLabel: { color: COLORS.text, fontWeight: "900" },
+  insightValue: { fontWeight: "900" },
   primaryButton: {
     backgroundColor: COLORS.red,
     borderRadius: 16,
     padding: 16,
     marginHorizontal: 18,
-    marginTop: 10,
+    marginTop: 4,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
