@@ -1,15 +1,29 @@
+// app/freight/carrier-booking.tsx
+
 import React, { useMemo, useState } from "react";
 import {
   Alert,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
-import farmTheme from "../styles/farmTheme";
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  myLoads: "/freight/my-loads",
+  liveLoads: "/freight/live-loads",
+  proofOfPickup: "/freight/proof-of-pickup",
+  support: "/freight/support",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
 
 type LoadOption = {
   id: string;
@@ -21,6 +35,17 @@ type LoadOption = {
   rate: number;
   miles: number;
   broker: string;
+};
+
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
 };
 
 const loads: LoadOption[] = [
@@ -59,6 +84,10 @@ const loads: LoadOption[] = [
   },
 ];
 
+function goTo(route: FreightRoute) {
+  router.push(route as any);
+}
+
 export default function CarrierBooking() {
   const [selectedLoadId, setSelectedLoadId] = useState("load-1001");
 
@@ -73,10 +102,18 @@ export default function CarrierBooking() {
       "Load Booked",
       `${selectedLoad.origin} → ${selectedLoad.destination}\nRate: $${selectedLoad.rate.toFixed(
         2
-      )}\n\nNext step: proof of pickup.`
+      )}\n\nNext step: proof of pickup.`,
+      [
+        {
+          text: "Continue",
+          onPress: () =>
+            router.push({
+              pathname: FREIGHT_ROUTES.proofOfPickup as any,
+              params: { loadId: selectedLoad.id },
+            }),
+        },
+      ]
     );
-
-    router.push("/freight/proof-of-pickup");
   }
 
   function callBroker() {
@@ -87,122 +124,209 @@ export default function CarrierBooking() {
   }
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.hero}>
-        <Text style={styles.eyebrow}>Farm2Home Freight</Text>
-        <Text style={styles.title}>Carrier Booking</Text>
-        <Text style={styles.subtitle}>
-          Review available loads, compare rates, and book carrier freight.
-        </Text>
-      </View>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <View style={styles.selectedCard}>
-        <Text style={styles.badge}>Selected Load</Text>
-        <Text style={styles.routeText}>
-          {selectedLoad.origin} → {selectedLoad.destination}
-        </Text>
-        <Text style={styles.metaText}>
-          {selectedLoad.equipment} · {selectedLoad.miles} miles
-        </Text>
-
-        <View style={styles.rateBox}>
-          <View>
-            <Text style={styles.rateLabel}>Carrier Rate</Text>
-            <Text style={styles.rateValue}>${selectedLoad.rate.toFixed(2)}</Text>
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        <View style={styles.hero}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
+            <Text style={styles.title}>Carrier Booking</Text>
+            <Text style={styles.subtitle}>
+              Review available loads, compare rates, and book carrier freight.
+            </Text>
           </View>
 
-          <View>
-            <Text style={styles.rateLabel}>Rate / Mile</Text>
-            <Text style={styles.rateValue}>${ratePerMile.toFixed(2)}</Text>
-          </View>
+          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+            <Ionicons name="calendar-outline" size={34} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
-        <Text style={styles.windowText}>Pickup: {selectedLoad.pickupWindow}</Text>
-        <Text style={styles.windowText}>Delivery: {selectedLoad.deliveryWindow}</Text>
-        <Text style={styles.windowText}>Broker: {selectedLoad.broker}</Text>
+        <View style={styles.quickGrid}>
+          <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
+          <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
+          <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
+          <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+        </View>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={bookLoad}>
-          <Text style={styles.primaryText}>Book This Load</Text>
-        </TouchableOpacity>
+        <View style={styles.selectedCard}>
+          <Text style={styles.badge}>Selected Load</Text>
 
-        <TouchableOpacity style={styles.outlineButton} onPress={callBroker}>
-          <Text style={styles.outlineText}>Contact Broker</Text>
-        </TouchableOpacity>
-      </View>
+          <Text style={styles.routeText}>
+            {selectedLoad.origin} → {selectedLoad.destination}
+          </Text>
 
-      <Text style={styles.sectionTitle}>Available Loads</Text>
+          <Text style={styles.metaText}>
+            {selectedLoad.equipment} · {selectedLoad.miles} miles
+          </Text>
 
-      {loads.map((load) => {
-        const active = selectedLoad.id === load.id;
-
-        return (
-          <TouchableOpacity
-            key={load.id}
-            style={[styles.loadCard, active && styles.loadCardActive]}
-            onPress={() => setSelectedLoadId(load.id)}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.loadRoute}>
-                {load.origin} → {load.destination}
-              </Text>
-              <Text style={styles.loadMeta}>
-                {load.equipment} · {load.miles} miles · {load.broker}
-              </Text>
-              <Text style={styles.loadWindow}>Pickup: {load.pickupWindow}</Text>
+          <View style={styles.rateBox}>
+            <View>
+              <Text style={styles.rateLabel}>Carrier Rate</Text>
+              <Text style={styles.rateValue}>${selectedLoad.rate.toFixed(2)}</Text>
             </View>
 
-            <View style={styles.priceBlock}>
-              <Text style={styles.loadRate}>${load.rate}</Text>
-              <Text style={styles.loadRateSub}>
-                ${(load.rate / load.miles).toFixed(2)}/mi
-              </Text>
+            <View>
+              <Text style={styles.rateLabel}>Rate / Mile</Text>
+              <Text style={styles.rateValue}>${ratePerMile.toFixed(2)}</Text>
             </View>
+          </View>
+
+          <InfoLine icon="time-outline" text={`Pickup: ${selectedLoad.pickupWindow}`} />
+          <InfoLine icon="flag-outline" text={`Delivery: ${selectedLoad.deliveryWindow}`} />
+          <InfoLine icon="business-outline" text={`Broker: ${selectedLoad.broker}`} />
+
+          <TouchableOpacity style={styles.primaryButton} onPress={bookLoad}>
+            <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.primaryText}>Book This Load</Text>
           </TouchableOpacity>
-        );
-      })}
 
-      <View style={styles.aiCard}>
-        <Text style={styles.aiTitle}>AI Booking Intelligence</Text>
-        <Text style={styles.aiText}>
-          Later this can recommend loads based on lane history, driver location,
-          equipment, rate per mile, weather, and delivery risk.
-        </Text>
-      </View>
+          <TouchableOpacity style={styles.outlineButton} onPress={callBroker}>
+            <Ionicons name="call-outline" size={18} color={COLORS.red} />
+            <Text style={styles.outlineText}>Contact Broker</Text>
+          </TouchableOpacity>
+        </View>
 
-      <View style={{ height: 90 }} />
-    </ScrollView>
+        <Text style={styles.sectionTitle}>Available Loads</Text>
+
+        {loads.map((load) => {
+          const active = selectedLoad.id === load.id;
+
+          return (
+            <TouchableOpacity
+              key={load.id}
+              style={[styles.loadCard, active && styles.loadCardActive]}
+              onPress={() => setSelectedLoadId(load.id)}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.loadRoute}>
+                  {load.origin} → {load.destination}
+                </Text>
+
+                <Text style={styles.loadMeta}>
+                  {load.equipment} · {load.miles} miles · {load.broker}
+                </Text>
+
+                <Text style={styles.loadWindow}>Pickup: {load.pickupWindow}</Text>
+              </View>
+
+              <View style={styles.priceBlock}>
+                <Text style={styles.loadRate}>${load.rate}</Text>
+                <Text style={styles.loadRateSub}>
+                  ${(load.rate / load.miles).toFixed(2)}/mi
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+
+        <View style={styles.aiCard}>
+          <Text style={styles.aiTitle}>AI Booking Intelligence</Text>
+          <Text style={styles.aiText}>
+            Later this can recommend loads based on lane history, driver location,
+            equipment, rate per mile, weather, and delivery risk.
+          </Text>
+
+          <TouchableOpacity style={styles.aiButton} onPress={() => goTo(FREIGHT_ROUTES.support)}>
+            <Ionicons name="headset-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.aiButtonText}>Need Booking Help?</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ height: 90 }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function QuickLink({
+  icon,
+  label,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  route: FreightRoute;
+}) {
+  return (
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
+      <Ionicons name={icon} size={22} color={COLORS.red} />
+      <Text style={styles.quickText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function InfoLine({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; text: string }) {
+  return (
+    <View style={styles.infoLine}>
+      <Ionicons name={icon} size={17} color={COLORS.red} />
+      <Text style={styles.windowText}>{text}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F3F4F6" },
-
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   hero: {
-    backgroundColor: "#111827",
-    paddingTop: 64,
+    backgroundColor: COLORS.black,
+    paddingTop: 30,
     paddingHorizontal: 20,
     paddingBottom: 30,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
   },
-
-  eyebrow: { color: "#93C5FD", fontWeight: "900", marginBottom: 8 },
-
-  title: { color: "#FFFFFF", fontSize: 36, fontWeight: "900", marginBottom: 10 },
-
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  eyebrow: {
+    color: "#FCA5A5",
+    fontWeight: "900",
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    fontSize: 12,
+  },
+  title: { color: "#FFFFFF", fontSize: 34, fontWeight: "900", marginBottom: 10 },
   subtitle: { color: "#D1D5DB", fontWeight: "700", lineHeight: 23 },
-
+  quickGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 14,
+  },
+  quickLink: {
+    width: "48%",
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    gap: 8,
+  },
+  quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
   selectedCard: {
-    backgroundColor: "#FFFFFF",
-    margin: 18,
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginBottom: 18,
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: COLORS.border,
   },
-
   badge: {
     alignSelf: "flex-start",
-    backgroundColor: "#DBEAFE",
-    color: "#1D4ED8",
+    backgroundColor: "#FFF1F2",
+    color: COLORS.red,
     fontWeight: "900",
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -210,13 +334,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 10,
   },
-
-  routeText: { color: "#111827", fontSize: 24, fontWeight: "900" },
-
-  metaText: { color: "#6B7280", fontWeight: "800", marginTop: 6 },
-
+  routeText: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
+  metaText: { color: COLORS.muted, fontWeight: "800", marginTop: 6 },
   rateBox: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#FFF1F2",
     borderRadius: 18,
     padding: 15,
     marginTop: 14,
@@ -224,82 +345,81 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
   },
-
-  rateLabel: { color: "#374151", fontWeight: "900" },
-
-  rateValue: { color: "#2563EB", fontSize: 24, fontWeight: "900", marginTop: 4 },
-
-  windowText: { color: "#374151", fontWeight: "800", lineHeight: 24 },
-
+  rateLabel: { color: COLORS.text, fontWeight: "900" },
+  rateValue: { color: COLORS.red, fontSize: 24, fontWeight: "900", marginTop: 4 },
+  infoLine: { flexDirection: "row", gap: 8, alignItems: "center", marginBottom: 6 },
+  windowText: { color: COLORS.text, fontWeight: "800", lineHeight: 24, flex: 1 },
   primaryButton: {
-    backgroundColor: "#2563EB",
+    backgroundColor: COLORS.red,
     padding: 15,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 16,
     marginBottom: 10,
+    flexDirection: "row",
+    gap: 8,
   },
-
   primaryText: { color: "#FFFFFF", fontWeight: "900" },
-
   outlineButton: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: "#2563EB",
+    borderColor: COLORS.red,
     padding: 15,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
-
-  outlineText: { color: "#2563EB", fontWeight: "900" },
-
+  outlineText: { color: COLORS.red, fontWeight: "900" },
   sectionTitle: {
-    color: "#111827",
+    color: COLORS.text,
     fontSize: 23,
     fontWeight: "900",
     paddingHorizontal: 18,
     marginBottom: 12,
   },
-
   loadCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 12,
     borderRadius: 18,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: COLORS.border,
     flexDirection: "row",
     gap: 12,
   },
-
   loadCardActive: {
-    borderColor: "#2563EB",
+    borderColor: COLORS.red,
     borderWidth: 2,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#FFF1F2",
   },
-
-  loadRoute: { color: "#111827", fontSize: 18, fontWeight: "900" },
-
-  loadMeta: { color: "#6B7280", fontWeight: "700", marginTop: 5 },
-
-  loadWindow: { color: "#374151", fontWeight: "800", marginTop: 6 },
-
+  loadRoute: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
+  loadMeta: { color: COLORS.muted, fontWeight: "700", marginTop: 5 },
+  loadWindow: { color: COLORS.text, fontWeight: "800", marginTop: 6 },
   priceBlock: { alignItems: "flex-end", justifyContent: "center" },
-
-  loadRate: { color: "#2563EB", fontSize: 20, fontWeight: "900" },
-
-  loadRateSub: { color: "#6B7280", fontWeight: "800", marginTop: 4 },
-
+  loadRate: { color: COLORS.red, fontSize: 20, fontWeight: "900" },
+  loadRateSub: { color: COLORS.muted, fontWeight: "800", marginTop: 4 },
   aiCard: {
-    backgroundColor: "#111827",
+    backgroundColor: COLORS.black,
     marginHorizontal: 18,
     marginTop: 8,
     borderRadius: 22,
     padding: 18,
   },
-
   aiTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "900", marginBottom: 8 },
-
-  aiText: { color: "#BFDBFE", fontWeight: "700", lineHeight: 22 },
+  aiText: { color: "#D1D5DB", fontWeight: "700", lineHeight: 22 },
+  aiButton: {
+    backgroundColor: COLORS.red,
+    padding: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+    flexDirection: "row",
+    gap: 8,
+  },
+  aiButtonText: { color: "#FFFFFF", fontWeight: "900" },
 });

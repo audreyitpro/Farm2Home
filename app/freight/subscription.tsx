@@ -24,6 +24,24 @@ import { PAYMENT_LINKS } from "../config/paymentLinks";
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  liveLoads: "/freight/live-loads",
+  myLoads: "/freight/my-loads",
+  connectBank: "/freight/connect-bank",
+  subscription: "/freight/subscription",
+  profile: "/freight/profile",
+  settings: "/freight/settings",
+  support: "/freight/support",
+  help: "/freight/help",
+  login: "/freight/login",
+  register: "/freight/register",
+  success: "/freight/subscription-success",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+
 const COLORS = {
   bg: "#F4F5F7",
   card: "#FFFFFF",
@@ -41,6 +59,10 @@ const COLORS = {
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
+}
+
+function goTo(route: FreightRoute) {
+  router.push(route as any);
 }
 
 export default function FreightSubscriptionScreen() {
@@ -73,114 +95,35 @@ export default function FreightSubscriptionScreen() {
     }
   }
 
-  async function loadFreightUser() {
-    try {
-      const stored = await getStoredFreightUser();
-      const { data: authData } = await supabase.auth.getUser();
-      const authUser = authData?.user;
-
-      const freightId = stored?.id || stored?.freightId || authUser?.id || "";
-      const savedEmail = normalize(stored?.email || authUser?.email || "");
-
-      let dbFreight: any = null;
-
-      if (freightId) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", freightId)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbFreight = result.data;
-      }
-
-      if (!dbFreight && savedEmail) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", savedEmail)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbFreight = result.data;
-      }
-
-      const merged = {
-        ...(stored || {}),
-        ...(dbFreight || {}),
-        id: dbFreight?.id || stored?.id || stored?.freightId || authUser?.id || "",
-        freightId: dbFreight?.id || stored?.freightId || stored?.id || authUser?.id || "",
-        email: normalize(dbFreight?.email || stored?.email || savedEmail),
-        companyName:
-          dbFreight?.company_name ||
-          dbFreight?.business_name ||
-          stored?.companyName ||
-          stored?.businessName ||
-          "",
-        businessName:
-          dbFreight?.business_name ||
-          dbFreight?.company_name ||
-          stored?.businessName ||
-          stored?.companyName ||
-          "",
-        role: "freight",
-        membershipStatus:
-          dbFreight?.membership_status || stored?.membershipStatus || "not_started",
-        subscriptionStatus:
-          dbFreight?.subscription_status || stored?.subscriptionStatus || "not_started",
-        membershipType: stored?.membershipType || "freight_membership",
-        planType: stored?.planType || "freight",
-        freightBoardAccess:
-          dbFreight?.subscription_status === "active" ||
-          stored?.freightBoardAccess ||
-          false,
-        accountActive: dbFreight?.account_active ?? stored?.accountActive ?? false,
-        hasActiveSubscription:
-          dbFreight?.subscription_status === "active" ||
-          stored?.hasActiveSubscription ||
-          false,
-        stripeCustomerId:
-          dbFreight?.stripe_customer_id ||
-          stored?.stripeCustomerId ||
-          stored?.customerId ||
-          "",
-        stripeSubscriptionId:
-          dbFreight?.stripe_subscription_id ||
-          stored?.stripeSubscriptionId ||
-          stored?.subscriptionId ||
-          "",
-      };
-
-      if (merged.email) setEmail(merged.email);
-      if (merged.companyName) setCompanyName(merged.companyName);
-
-      if (merged.id || merged.email) {
-        setFreightUser(merged);
-        await persistFreightUser(merged, false);
-      }
-    } catch (error) {
-      console.log("LOAD_FREIGHT_SUBSCRIPTION_ERROR:", error);
-    }
-  }
-
   async function persistFreightUser(user: any, saveToSupabase = true) {
     const now = new Date().toISOString();
+    const realId = user.id || user.freightId;
+
+    if (!realId) {
+      throw new Error("Missing Supabase freight profile ID.");
+    }
 
     const normalizedUser = {
       ...user,
-      id: user.id || user.freightId || `freight_${Date.now()}`,
-      freightId: user.freightId || user.id || `freight_${Date.now()}`,
+      id: realId,
+      freightId: realId,
       email: normalize(user.email),
-      companyName: user.companyName || user.businessName || user.name,
-      businessName: user.businessName || user.companyName || user.name,
-      name: user.name || user.companyName || user.businessName,
+      companyName: user.companyName || user.businessName || user.name || "",
+      businessName: user.businessName || user.companyName || user.name || "",
+      name: user.name || user.companyName || user.businessName || "",
       role: "freight",
       updatedAt: now,
+      stripeCustomerId: user.stripeCustomerId || user.stripe_customer_id || user.customerId || "",
+      stripeSubscriptionId:
+        user.stripeSubscriptionId || user.stripe_subscription_id || user.subscriptionId || "",
+      stripeAccountId: user.stripeAccountId || user.stripe_account_id || "",
+      stripe_account_id: user.stripe_account_id || user.stripeAccountId || "",
     };
 
-    if (saveToSupabase && normalizedUser.id) {
-      const { error } = await supabase.from("freight_users").upsert(
-        {
-          id: normalizedUser.id,
+    if (saveToSupabase) {
+      const { error } = await supabase
+        .from("freight_users")
+        .update({
           email: normalizedUser.email,
           company_name: normalizedUser.companyName,
           business_name: normalizedUser.businessName,
@@ -191,12 +134,15 @@ export default function FreightSubscriptionScreen() {
           account_active: normalizedUser.accountActive,
           stripe_customer_id: normalizedUser.stripeCustomerId || null,
           stripe_subscription_id: normalizedUser.stripeSubscriptionId || null,
+          stripe_account_id: normalizedUser.stripeAccountId || normalizedUser.stripe_account_id || null,
           updated_at: now,
-        },
-        { onConflict: "id" }
-      );
+        })
+        .eq("id", normalizedUser.id);
 
-      if (error) console.log("Freight subscription Supabase sync skipped:", error.message);
+      if (error) {
+        console.log("Freight subscription Supabase sync error:", error.message);
+        throw error;
+      }
     }
 
     await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedUser));
@@ -208,6 +154,95 @@ export default function FreightSubscriptionScreen() {
 
     setFreightUser(normalizedUser);
     return normalizedUser;
+  }
+
+  async function loadFreightUser() {
+    try {
+      const stored = await getStoredFreightUser();
+      const { data: authData } = await supabase.auth.getUser();
+      const authUser = authData?.user;
+
+      const savedEmail = normalize(stored?.email || authUser?.email || "");
+
+      if (!savedEmail) {
+        router.replace(FREIGHT_ROUTES.login as any);
+        return;
+      }
+
+      const { data: dbFreight, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", savedEmail)
+        .maybeSingle();
+
+      if (error) {
+        console.log("LOAD_FREIGHT_SUBSCRIPTION_SUPABASE_ERROR:", error.message);
+      }
+
+      if (!dbFreight) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "No freight profile was found for this email. Please complete freight registration again."
+        );
+        router.replace(FREIGHT_ROUTES.register as any);
+        return;
+      }
+
+      const merged = {
+        ...(stored || {}),
+        ...(dbFreight || {}),
+        id: dbFreight.id,
+        freightId: dbFreight.id,
+        email: normalize(dbFreight.email || savedEmail),
+        companyName:
+          dbFreight.company_name ||
+          dbFreight.business_name ||
+          stored?.companyName ||
+          stored?.businessName ||
+          "",
+        businessName:
+          dbFreight.business_name ||
+          dbFreight.company_name ||
+          stored?.businessName ||
+          stored?.companyName ||
+          "",
+        role: "freight",
+        membershipStatus:
+          dbFreight.membership_status || stored?.membershipStatus || "not_started",
+        subscriptionStatus:
+          dbFreight.subscription_status || stored?.subscriptionStatus || "not_started",
+        membershipType: stored?.membershipType || "freight_membership",
+        planType: stored?.planType || "freight",
+        freightBoardAccess:
+          dbFreight.subscription_status === "active" || stored?.freightBoardAccess || false,
+        accountActive: dbFreight.account_active ?? stored?.accountActive ?? false,
+        hasActiveSubscription:
+          dbFreight.subscription_status === "active" || stored?.hasActiveSubscription || false,
+        stripeCustomerId:
+          dbFreight.stripe_customer_id || stored?.stripeCustomerId || stored?.customerId || "",
+        stripeSubscriptionId:
+          dbFreight.stripe_subscription_id ||
+          stored?.stripeSubscriptionId ||
+          stored?.subscriptionId ||
+          "",
+        stripeAccountId:
+          dbFreight.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
+        stripe_account_id:
+          dbFreight.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
+      };
+
+      setEmail(merged.email || "");
+      setCompanyName(merged.companyName || "");
+      await persistFreightUser(merged, false);
+    } catch (error) {
+      console.log("LOAD_FREIGHT_SUBSCRIPTION_ERROR:", error);
+    }
   }
 
   async function openUrl(url: string) {
@@ -230,6 +265,11 @@ export default function FreightSubscriptionScreen() {
     const cleanEmail = email.trim().toLowerCase();
     const cleanCompany = companyName.trim();
 
+    if (!freightUser?.id && !freightUser?.freightId) {
+      Alert.alert("Profile Missing", "Please complete freight registration before subscribing.");
+      return;
+    }
+
     if (!cleanCompany) {
       Alert.alert("Missing Company Name", "Please enter your company name.");
       return;
@@ -243,8 +283,7 @@ export default function FreightSubscriptionScreen() {
     try {
       setLoading(true);
 
-      const freightId =
-        freightUser?.id || freightUser?.freightId || `freight_${Date.now()}`;
+      const freightId = freightUser.id || freightUser.freightId;
 
       const pendingFreight = {
         ...freightUser,
@@ -262,15 +301,11 @@ export default function FreightSubscriptionScreen() {
         freightBoardAccess: false,
         accountActive: false,
         hasActiveSubscription: false,
-        createdAt: freightUser?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
       await persistFreightUser(pendingFreight, true);
-      await AsyncStorage.setItem(
-        "pendingFreightSubscription",
-        JSON.stringify(pendingFreight)
-      );
+      await AsyncStorage.setItem("pendingFreightSubscription", JSON.stringify(pendingFreight));
 
       const stripeUrl = PAYMENT_LINKS.freightMembership;
 
@@ -286,10 +321,7 @@ export default function FreightSubscriptionScreen() {
       );
     } catch (error: any) {
       console.log("FREIGHT_SUBSCRIPTION_ERROR:", error);
-      Alert.alert(
-        "Subscription Error",
-        error?.message || "Unable to start freight membership."
-      );
+      Alert.alert("Subscription Error", error?.message || "Unable to start freight membership.");
     } finally {
       setLoading(false);
     }
@@ -300,10 +332,7 @@ export default function FreightSubscriptionScreen() {
       const pending = await AsyncStorage.getItem("pendingFreightSubscription");
 
       if (!pending) {
-        Alert.alert(
-          "No Pending Membership",
-          "Please complete freight membership payment first."
-        );
+        Alert.alert("No Pending Membership", "Please complete freight membership payment first.");
         return;
       }
 
@@ -324,49 +353,35 @@ export default function FreightSubscriptionScreen() {
       await AsyncStorage.setItem("freightSubscriptionStatus", "active");
       await AsyncStorage.removeItem("pendingFreightSubscription");
 
-      router.replace("/freight/subscription-success" as any);
+      router.replace(FREIGHT_ROUTES.success as any);
     } catch (error: any) {
       console.log("FREIGHT_CONTINUE_AFTER_PAYMENT_ERROR:", error);
-      Alert.alert(
-        "Activation Error",
-        error?.message || "Unable to activate freight membership."
-      );
+      Alert.alert("Activation Error", error?.message || "Unable to activate freight membership.");
     }
   }
 
   async function manageBillingPortal() {
     const stripeCustomerId =
-      freightUser?.stripeCustomerId ||
-      freightUser?.stripe_customer_id ||
-      freightUser?.customerId;
+      freightUser?.stripeCustomerId || freightUser?.stripe_customer_id || freightUser?.customerId;
 
     if (!stripeCustomerId) {
-      Alert.alert(
-        "Missing Stripe Customer",
-        "No Stripe customer ID was found for this freight account."
-      );
+      Alert.alert("Missing Stripe Customer", "No Stripe customer ID was found for this freight account.");
       return;
     }
 
     try {
       setPortalLoading(true);
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-customer-portal-session`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            customerId: stripeCustomerId,
-            role: "freight",
-            carrierId: freightUser?.id || freightUser?.freightId,
-            returnUrl:
-              Platform.OS === "web"
-                ? window.location.href
-                : "farm2home://freight/subscription",
-          }),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/payments/create-customer-portal-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerId: stripeCustomerId,
+          role: "freight",
+          carrierId: freightUser?.id || freightUser?.freightId,
+          returnUrl: Platform.OS === "web" ? window.location.href : "farm2home://freight/subscription",
+        }),
+      });
 
       const data = await response.json();
 
@@ -437,10 +452,7 @@ export default function FreightSubscriptionScreen() {
 
               Alert.alert("Canceled", "Freight subscription was canceled.");
             } catch (error: any) {
-              Alert.alert(
-                "Cancel Error",
-                error?.message || "Unable to cancel subscription."
-              );
+              Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
             } finally {
               setCancelLoading(false);
             }
@@ -482,14 +494,14 @@ export default function FreightSubscriptionScreen() {
               <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
               <Text style={styles.title}>Freight Membership</Text>
               <Text style={styles.subtitle}>
-                Subscribe to access freight posting, live load board tools,
-                route management, carrier dispatch, and logistics support.
+                Subscribe to access freight posting, live load board tools, route management,
+                carrier dispatch, and logistics support.
               </Text>
             </View>
 
-            <View style={styles.heroIcon}>
+            <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
               <Ionicons name="card-outline" size={34} color="#FFFFFF" />
-            </View>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.priceCard}>
@@ -567,18 +579,12 @@ export default function FreightSubscriptionScreen() {
               ) : (
                 <>
                   <Ionicons name="card-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.primaryButtonText}>
-                    Pay Membership with Stripe
-                  </Text>
+                  <Text style={styles.primaryButtonText}>Pay Membership with Stripe</Text>
                 </>
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.completedButton}
-              onPress={continueAfterPayment}
-              activeOpacity={0.85}
-            >
+            <TouchableOpacity style={styles.completedButton} onPress={continueAfterPayment} activeOpacity={0.85}>
               <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
               <Text style={styles.completedButtonText}>I Completed Payment</Text>
             </TouchableOpacity>
@@ -615,16 +621,18 @@ export default function FreightSubscriptionScreen() {
           </View>
 
           <View style={styles.quickGrid}>
-            <QuickLink icon="grid-outline" label="Dashboard" route="/freight/dashboard" />
-            <QuickLink icon="list-outline" label="Load Board" route="/freight/board" />
-            <QuickLink icon="business-outline" label="Profile" route="/freight/profile" />
-            <QuickLink icon="settings-outline" label="Settings" route="/freight/settings" />
+            <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
+            <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
+            <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
+            <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+            <QuickLink icon="business-outline" label="Profile" route={FREIGHT_ROUTES.profile} />
+            <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
+            <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
+            <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+            <QuickLink icon="help-circle-outline" label="Help" route={FREIGHT_ROUTES.help} />
           </View>
 
-          <TouchableOpacity
-            style={styles.darkButton}
-            onPress={() => router.replace("/freight/login" as any)}
-          >
+          <TouchableOpacity style={styles.darkButton} onPress={() => router.replace(FREIGHT_ROUTES.login as any)}>
             <Text style={styles.darkButtonText}>Back to Freight Login</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -633,7 +641,15 @@ export default function FreightSubscriptionScreen() {
   );
 }
 
-function SectionHeader({ icon, title, subtitle }: any) {
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+}) {
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionIcon}>
@@ -648,9 +664,17 @@ function SectionHeader({ icon, title, subtitle }: any) {
   );
 }
 
-function QuickLink({ icon, label, route }: any) {
+function QuickLink({
+  icon,
+  label,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  route: FreightRoute;
+}) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => router.push(route as any)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickLinkText}>{label}</Text>
     </TouchableOpacity>
@@ -658,17 +682,9 @@ function QuickLink({ icon, label, route }: any) {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  page: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  container: {
-    paddingBottom: 90,
-  },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  page: { flex: 1, backgroundColor: COLORS.bg },
+  container: { paddingBottom: 90 },
   hero: {
     backgroundColor: COLORS.black,
     paddingTop: 28,
@@ -694,18 +710,8 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 32,
-    fontWeight: "900",
-    marginBottom: 10,
-  },
-  subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 22,
-    fontSize: 14,
-    fontWeight: "700",
-  },
+  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
+  subtitle: { color: "#D1D5DB", lineHeight: 22, fontSize: 14, fontWeight: "700" },
   priceCard: {
     backgroundColor: COLORS.red,
     borderRadius: 22,
@@ -714,24 +720,9 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 14,
   },
-  priceLabel: {
-    color: "#FFE4E6",
-    fontWeight: "900",
-    textTransform: "uppercase",
-    fontSize: 12,
-  },
-  price: {
-    color: "#FFFFFF",
-    fontSize: 28,
-    fontWeight: "900",
-    marginTop: 5,
-  },
-  priceSub: {
-    color: "#FFE4E6",
-    marginTop: 6,
-    fontWeight: "800",
-    lineHeight: 20,
-  },
+  priceLabel: { color: "#FFE4E6", fontWeight: "900", textTransform: "uppercase", fontSize: 12 },
+  price: { color: "#FFFFFF", fontSize: 28, fontWeight: "900", marginTop: 5 },
+  priceSub: { color: "#FFE4E6", marginTop: 6, fontWeight: "800", lineHeight: 20 },
   statusPill: {
     alignSelf: "flex-start",
     borderRadius: 999,
@@ -739,11 +730,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginTop: 14,
   },
-  statusPillText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    textTransform: "capitalize",
-  },
+  statusPillText: { color: "#FFFFFF", fontWeight: "900", textTransform: "capitalize" },
   featureBox: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -753,12 +740,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginBottom: 16,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 14,
-  },
+  sectionHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 14 },
   sectionIcon: {
     width: 40,
     height: 40,
@@ -767,17 +749,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  sectionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 3,
-  },
+  sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
   featureItem: {
     backgroundColor: COLORS.surface,
     borderRadius: 14,
@@ -789,12 +762,7 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 10,
   },
-  featureText: {
-    color: COLORS.text,
-    fontWeight: "800",
-    flex: 1,
-    lineHeight: 20,
-  },
+  featureText: { color: COLORS.text, fontWeight: "800", flex: 1, lineHeight: 20 },
   card: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -804,11 +772,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  inputLabel: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginBottom: 7,
-  },
+  inputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 7 },
   input: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -831,14 +795,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 15,
-  },
+  disabledButton: { opacity: 0.6 },
+  primaryButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 15 },
   completedButton: {
     backgroundColor: COLORS.black,
     paddingVertical: 16,
@@ -849,10 +807,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  completedButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  completedButtonText: { color: "#FFFFFF", fontWeight: "900" },
   secondaryButton: {
     backgroundColor: "#FFF1F2",
     borderWidth: 1,
@@ -865,10 +820,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  secondaryButtonText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
+  secondaryButtonText: { color: COLORS.red, fontWeight: "900" },
   cancelButton: {
     backgroundColor: COLORS.redDark,
     paddingVertical: 15,
@@ -879,10 +831,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  cancelButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  cancelButtonText: { color: "#FFFFFF", fontWeight: "900" },
   quickGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -900,10 +849,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickLinkText: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
+  quickLinkText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
   darkButton: {
     backgroundColor: COLORS.black,
     padding: 15,
@@ -912,8 +858,5 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginBottom: 40,
   },
-  darkButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  darkButtonText: { color: "#FFFFFF", fontWeight: "900" },
 });

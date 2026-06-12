@@ -21,6 +21,21 @@ import { Ionicons } from "@expo/vector-icons";
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  liveLoads: "/freight/live-loads",
+  myLoads: "/freight/my-loads",
+  connectBank: "/freight/connect-bank",
+  subscription: "/freight/subscription",
+  profile: "/freight/profile",
+  settings: "/freight/settings",
+  support: "/freight/support",
+  help: "/freight/help",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+
 const COLORS = {
   bg: "#F4F5F7",
   card: "#FFFFFF",
@@ -36,6 +51,10 @@ const COLORS = {
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
+}
+
+function goTo(route: FreightRoute) {
+  router.push(route as any);
 }
 
 export default function FreightConnectBankScreen() {
@@ -67,10 +86,12 @@ export default function FreightConnectBankScreen() {
   }
 
   async function persistCarrier(nextCarrier: any) {
+    const realId = nextCarrier.id || nextCarrier.freightId;
+
     const normalized = {
       ...nextCarrier,
-      id: nextCarrier.id || nextCarrier.freightId,
-      freightId: nextCarrier.freightId || nextCarrier.id,
+      id: realId,
+      freightId: realId,
       role: "freight",
       email: normalize(nextCarrier.email),
       companyName:
@@ -85,6 +106,16 @@ export default function FreightConnectBankScreen() {
         nextCarrier.business_name ||
         nextCarrier.company_name ||
         "Farm2Home Freight Carrier",
+      stripeAccountId:
+        nextCarrier.stripeAccountId ||
+        nextCarrier.stripe_account_id ||
+        nextCarrier.accountId ||
+        "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id ||
+        nextCarrier.stripeAccountId ||
+        nextCarrier.accountId ||
+        "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalized));
@@ -98,38 +129,152 @@ export default function FreightConnectBankScreen() {
     return normalized;
   }
 
+  async function loadCarrier() {
+    try {
+      setLoading(true);
+
+      const stored = await getStoredCarrier();
+      const { data: authData } = await supabase.auth.getUser();
+      const authUser = authData?.user;
+
+      const email = normalize(stored?.email || authUser?.email || "");
+
+      if (!email) {
+        router.replace("/freight/login" as any);
+        return;
+      }
+
+      const { data: dbCarrier, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (error) {
+        console.log("Freight connect bank profile load error:", error.message);
+      }
+
+      if (!dbCarrier) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "No freight profile was found for this email. Please complete freight registration again."
+        );
+        router.replace("/freight/register" as any);
+        return;
+      }
+
+      const merged = {
+        ...(stored || {}),
+        ...(dbCarrier || {}),
+        id: dbCarrier.id,
+        freightId: dbCarrier.id,
+        role: "freight",
+        email: normalize(dbCarrier.email || email),
+        companyName:
+          dbCarrier.company_name ||
+          dbCarrier.business_name ||
+          stored?.companyName ||
+          stored?.businessName ||
+          "Farm2Home Freight Carrier",
+        businessName:
+          dbCarrier.business_name ||
+          dbCarrier.company_name ||
+          stored?.businessName ||
+          stored?.companyName ||
+          "Farm2Home Freight Carrier",
+        stripeAccountId:
+          dbCarrier.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
+        stripe_account_id:
+          dbCarrier.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
+        stripeConnectStatus:
+          dbCarrier.stripe_connect_status ||
+          stored?.stripeConnectStatus ||
+          stored?.stripe_connect_status ||
+          "not_started",
+        stripe_connect_status:
+          dbCarrier.stripe_connect_status ||
+          stored?.stripe_connect_status ||
+          stored?.stripeConnectStatus ||
+          "not_started",
+        payoutsEnabled:
+          dbCarrier.payouts_enabled ??
+          dbCarrier.stripe_payouts_enabled ??
+          stored?.payoutsEnabled ??
+          stored?.payouts_enabled ??
+          false,
+        payouts_enabled:
+          dbCarrier.payouts_enabled ??
+          stored?.payouts_enabled ??
+          stored?.payoutsEnabled ??
+          false,
+        chargesEnabled:
+          dbCarrier.charges_enabled ??
+          dbCarrier.stripe_charges_enabled ??
+          stored?.chargesEnabled ??
+          stored?.charges_enabled ??
+          false,
+        charges_enabled:
+          dbCarrier.charges_enabled ??
+          stored?.charges_enabled ??
+          stored?.chargesEnabled ??
+          false,
+        onboardingComplete:
+          dbCarrier.stripe_onboarding_complete ??
+          stored?.onboardingComplete ??
+          stored?.stripe_onboarding_complete ??
+          false,
+        stripe_onboarding_complete:
+          dbCarrier.stripe_onboarding_complete ??
+          stored?.stripe_onboarding_complete ??
+          stored?.onboardingComplete ??
+          false,
+      };
+
+      await persistCarrier(merged);
+    } catch (error) {
+      console.log("Freight connect bank load error:", error);
+      Alert.alert("Connect Bank Error", "Unable to load freight payout setup.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function saveStripeAccountToSupabase(accountId: string, status = "created") {
     const freightId = carrier?.id || carrier?.freightId;
     const email = normalize(carrier?.email);
 
+    if (!accountId) throw new Error("Missing Stripe account ID.");
+    if (!freightId && !email) throw new Error("Missing freight profile identity.");
+
     const payload = {
       stripe_account_id: accountId,
       stripe_connect_status: status,
+      payouts_enabled: carrier?.payoutsEnabled ?? carrier?.payouts_enabled ?? false,
+      charges_enabled: carrier?.chargesEnabled ?? carrier?.charges_enabled ?? false,
+      stripe_onboarding_complete:
+        carrier?.onboardingComplete ?? carrier?.stripe_onboarding_complete ?? false,
       updated_at: new Date().toISOString(),
     };
 
-    let saved = false;
+    let query = supabase.from("freight_users").update(payload);
 
     if (freightId) {
-      const { error } = await supabase
-        .from("freight_users")
-        .update(payload)
-        .eq("id", freightId);
-
-      if (!error) saved = true;
-      else console.log("Save stripe account by id failed:", error.message);
+      query = query.eq("id", freightId);
+    } else {
+      query = query.eq("email", email);
     }
 
-    if (!saved && email) {
-      const { error } = await supabase
-        .from("freight_users")
-        .update(payload)
-        .eq("email", email);
+    const { error } = await query;
 
-      if (error) {
-        console.log("Save stripe account by email failed:", error.message);
-        throw error;
-      }
+    if (error) {
+      console.log("Save stripe account failed:", error.message);
+      throw error;
     }
   }
 
@@ -147,6 +292,9 @@ export default function FreightConnectBankScreen() {
     const freightId = carrier?.id || carrier?.freightId;
     const email = normalize(carrier?.email);
 
+    if (!accountId) throw new Error("Missing Stripe account ID.");
+    if (!freightId && !email) throw new Error("Missing freight profile identity.");
+
     const payload = {
       stripe_account_id: accountId,
       stripe_connect_status: onboardingComplete ? "complete" : "created",
@@ -158,148 +306,19 @@ export default function FreightConnectBankScreen() {
       updated_at: new Date().toISOString(),
     };
 
-    let saved = false;
+    let query = supabase.from("freight_users").update(payload);
 
     if (freightId) {
-      const { error } = await supabase
-        .from("freight_users")
-        .update(payload)
-        .eq("id", freightId);
-
-      if (!error) saved = true;
-      else console.log("Save stripe status by id failed:", error.message);
+      query = query.eq("id", freightId);
+    } else {
+      query = query.eq("email", email);
     }
 
-    if (!saved && email) {
-      const { error } = await supabase
-        .from("freight_users")
-        .update(payload)
-        .eq("email", email);
+    const { error } = await query;
 
-      if (error) {
-        console.log("Save stripe status by email failed:", error.message);
-        throw error;
-      }
-    }
-  }
-
-  async function loadCarrier() {
-    try {
-      setLoading(true);
-
-      const stored = await getStoredCarrier();
-      const { data: authData } = await supabase.auth.getUser();
-      const authUser = authData?.user;
-
-      const freightId = stored?.id || stored?.freightId || authUser?.id || "";
-      const email = normalize(stored?.email || authUser?.email || "");
-
-      if (!freightId && !email) {
-        router.replace("/freight/login" as any);
-        return;
-      }
-
-      let dbCarrier: any = null;
-
-      if (freightId) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", freightId)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
-      }
-
-      if (!dbCarrier && email) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", email)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
-      }
-
-      const merged = {
-        ...(stored || {}),
-        ...(dbCarrier || {}),
-        id: dbCarrier?.id || stored?.id || stored?.freightId || authUser?.id || "",
-        freightId: dbCarrier?.id || stored?.freightId || stored?.id || authUser?.id || "",
-        role: "freight",
-        email: normalize(dbCarrier?.email || stored?.email || email),
-        companyName:
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
-          stored?.companyName ||
-          stored?.businessName ||
-          "Farm2Home Freight Carrier",
-        businessName:
-          dbCarrier?.business_name ||
-          dbCarrier?.company_name ||
-          stored?.businessName ||
-          stored?.companyName ||
-          "Farm2Home Freight Carrier",
-        stripeAccountId:
-          dbCarrier?.stripe_account_id ||
-          stored?.stripeAccountId ||
-          stored?.stripe_account_id ||
-          "",
-        stripe_account_id:
-          dbCarrier?.stripe_account_id ||
-          stored?.stripe_account_id ||
-          stored?.stripeAccountId ||
-          "",
-        stripeConnectStatus:
-          dbCarrier?.stripe_connect_status ||
-          stored?.stripeConnectStatus ||
-          stored?.stripe_connect_status ||
-          "not_started",
-        stripe_connect_status:
-          dbCarrier?.stripe_connect_status ||
-          stored?.stripe_connect_status ||
-          stored?.stripeConnectStatus ||
-          "not_started",
-        payoutsEnabled:
-          dbCarrier?.payouts_enabled ??
-          dbCarrier?.stripe_payouts_enabled ??
-          stored?.payoutsEnabled ??
-          stored?.payouts_enabled ??
-          false,
-        payouts_enabled:
-          dbCarrier?.payouts_enabled ??
-          stored?.payouts_enabled ??
-          stored?.payoutsEnabled ??
-          false,
-        chargesEnabled:
-          dbCarrier?.charges_enabled ??
-          dbCarrier?.stripe_charges_enabled ??
-          stored?.chargesEnabled ??
-          stored?.charges_enabled ??
-          false,
-        charges_enabled:
-          dbCarrier?.charges_enabled ??
-          stored?.charges_enabled ??
-          stored?.chargesEnabled ??
-          false,
-        onboardingComplete:
-          dbCarrier?.stripe_onboarding_complete ??
-          stored?.onboardingComplete ??
-          stored?.stripe_onboarding_complete ??
-          false,
-        stripe_onboarding_complete:
-          dbCarrier?.stripe_onboarding_complete ??
-          stored?.stripe_onboarding_complete ??
-          stored?.onboardingComplete ??
-          false,
-      };
-
-      await persistCarrier(merged);
-    } catch (error) {
-      console.log("Freight connect bank load error:", error);
-      Alert.alert("Connect Bank Error", "Unable to load freight payout setup.");
-    } finally {
-      setLoading(false);
+    if (error) {
+      console.log("Save stripe status failed:", error.message);
+      throw error;
     }
   }
 
@@ -328,18 +347,21 @@ export default function FreightConnectBankScreen() {
 
       const freightId = carrier.id || carrier.freightId;
       const existingAccountId =
-        carrier.stripeAccountId ||
-        carrier.stripe_account_id ||
-        carrier.accountId ||
-        "";
+        carrier.stripeAccountId || carrier.stripe_account_id || carrier.accountId || "";
+
+      if (!freightId || String(freightId).startsWith("freight_") || String(freightId).startsWith("driver_")) {
+        Alert.alert(
+          "Profile ID Error",
+          "The freight profile ID is not the Supabase UUID. Please log out and log back in."
+        );
+        return;
+      }
 
       const response = await fetch(`${API_BASE_URL}/payments/create-freight-connect-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           freightId,
-          profileId: freightId,
-          userId: freightId,
           email: carrier.email,
           companyName: carrier.companyName || carrier.businessName,
           businessName: carrier.businessName || carrier.companyName,
@@ -363,7 +385,8 @@ export default function FreightConnectBankScreen() {
         return;
       }
 
-      const accountId = data.accountId || data.stripeAccountId || existingAccountId;
+      const accountId = data.accountId || data.stripeAccountId || data.stripe_account_id || existingAccountId;
+      const onboardingUrl = data.onboardingUrl || data.url;
 
       if (!accountId) {
         Alert.alert("Stripe Error", "Stripe did not return an account ID.");
@@ -372,18 +395,18 @@ export default function FreightConnectBankScreen() {
 
       await saveStripeAccountToSupabase(accountId, "created");
 
-      const updated = {
+      const updated = await persistCarrier({
         ...carrier,
         stripeAccountId: accountId,
         stripe_account_id: accountId,
         accountId,
         stripeConnectStatus: "created",
         stripe_connect_status: "created",
-      };
+      });
 
-      await persistCarrier(updated);
+      setCarrier(updated);
 
-      await openUrl(data.onboardingUrl || data.url);
+      await openUrl(onboardingUrl);
     } catch (error: any) {
       console.log("Connect bank error:", error);
       Alert.alert("Connect Bank Error", error?.message || "Unable to start payout setup.");
@@ -395,11 +418,7 @@ export default function FreightConnectBankScreen() {
   async function checkConnectStatus() {
     if (!carrier) return;
 
-    const accountId =
-      carrier.stripeAccountId ||
-      carrier.stripe_account_id ||
-      carrier.accountId ||
-      "";
+    const accountId = carrier.stripeAccountId || carrier.stripe_account_id || carrier.accountId || "";
 
     if (!accountId) {
       Alert.alert("No Stripe Account", "Start payout setup first.");
@@ -414,8 +433,6 @@ export default function FreightConnectBankScreen() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           freightId: carrier.id || carrier.freightId,
-          profileId: carrier.id || carrier.freightId,
-          userId: carrier.id || carrier.freightId,
           email: carrier.email,
           stripeAccountId: accountId,
           accountId,
@@ -437,7 +454,6 @@ export default function FreightConnectBankScreen() {
       }
 
       const finalAccountId = data.accountId || data.stripeAccountId || accountId;
-
       const payoutsEnabled = Boolean(data.payoutsEnabled);
       const chargesEnabled = Boolean(data.chargesEnabled);
       const onboardingComplete = Boolean(data.onboardingComplete);
@@ -449,7 +465,7 @@ export default function FreightConnectBankScreen() {
         onboardingComplete,
       });
 
-      const updated = {
+      const updated = await persistCarrier({
         ...carrier,
         stripeAccountId: finalAccountId,
         stripe_account_id: finalAccountId,
@@ -462,9 +478,9 @@ export default function FreightConnectBankScreen() {
         stripe_onboarding_complete: onboardingComplete,
         stripeConnectStatus: onboardingComplete ? "complete" : "created",
         stripe_connect_status: onboardingComplete ? "complete" : "created",
-      };
+      });
 
-      await persistCarrier(updated);
+      setCarrier(updated);
 
       if (payoutsEnabled && chargesEnabled && onboardingComplete) {
         Alert.alert("Payout Setup Complete", "Your freight payout account is ready.");
@@ -524,12 +540,20 @@ export default function FreightConnectBankScreen() {
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-          <Text style={styles.title}>Connect Bank</Text>
-          <Text style={styles.subtitle}>
-            Complete Stripe Express onboarding. Farm2Home will permanently reuse your
-            saved Stripe Connect account.
-          </Text>
+          <View style={styles.heroTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
+              <Text style={styles.title}>Connect Bank</Text>
+              <Text style={styles.subtitle}>
+                Complete Stripe Express onboarding. Farm2Home will permanently reuse your saved
+                Stripe Connect account.
+              </Text>
+            </View>
+
+            <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+              <Ionicons name="grid-outline" size={30} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.profileCard}>
@@ -629,10 +653,15 @@ export default function FreightConnectBankScreen() {
         </TouchableOpacity>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="grid-outline" label="Dashboard" route="/freight/dashboard" />
-          <QuickLink icon="list-outline" label="Load Board" route="/freight/board" />
-          <QuickLink icon="business-outline" label="Profile" route="/freight/profile" />
-          <QuickLink icon="settings-outline" label="Settings" route="/freight/settings" />
+          <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
+          <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
+          <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
+          <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+          <QuickLink icon="card-outline" label="Subscription" route={FREIGHT_ROUTES.subscription} />
+          <QuickLink icon="business-outline" label="Profile" route={FREIGHT_ROUTES.profile} />
+          <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
+          <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+          <QuickLink icon="help-circle-outline" label="Help" route={FREIGHT_ROUTES.help} />
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -664,9 +693,17 @@ function InfoRow({ label, value, good }: any) {
   );
 }
 
-function QuickLink({ icon, label, route }: any) {
+function QuickLink({
+  icon,
+  label,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  route: FreightRoute;
+}) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => router.push(route as any)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickLinkText}>{label}</Text>
     </TouchableOpacity>
@@ -689,6 +726,15 @@ const styles = StyleSheet.create({
     paddingTop: 30,
     paddingHorizontal: 20,
     paddingBottom: 30,
+  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
+  heroIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 20,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
   },
   eyebrow: {
     color: "#FCA5A5",
@@ -852,5 +898,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickLinkText: { color: COLORS.text, fontWeight: "900" },
+  quickLinkText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
 });

@@ -20,6 +20,23 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  myLoads: "/freight/my-loads",
+  liveLoads: "/freight/live-loads",
+  liveRoute: "/freight/live-route",
+  profile: "/freight/profile",
+  subscription: "/freight/subscription",
+  settings: "/freight/settings",
+  connectBank: "/freight/connect-bank",
+  help: "/freight/help",
+  login: "/freight/login",
+  register: "/freight/register",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+
 const COLORS = {
   bg: "#F4F5F7",
   card: "#FFFFFF",
@@ -37,6 +54,10 @@ const COLORS = {
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
+}
+
+function goTo(route: FreightRoute) {
+  router.push(route as any);
 }
 
 export default function FreightSupportScreen() {
@@ -70,6 +91,47 @@ export default function FreightSupportScreen() {
     }
   }
 
+  async function persistCarrier(nextCarrier: any) {
+    const normalizedCarrier = {
+      ...nextCarrier,
+      id: nextCarrier.id || nextCarrier.freightId,
+      freightId: nextCarrier.freightId || nextCarrier.id,
+      role: "freight",
+      email: normalize(nextCarrier.email),
+      companyName:
+        nextCarrier.companyName ||
+        nextCarrier.businessName ||
+        nextCarrier.company_name ||
+        nextCarrier.business_name ||
+        "Freight Connect Carrier",
+      businessName:
+        nextCarrier.businessName ||
+        nextCarrier.companyName ||
+        nextCarrier.business_name ||
+        nextCarrier.company_name ||
+        "Freight Connect Carrier",
+      contactName:
+        nextCarrier.contactName ||
+        nextCarrier.contact_name ||
+        nextCarrier.name ||
+        "",
+      stripeAccountId:
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
+    };
+
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
+
+    setCarrier(normalizedCarrier);
+    return normalizedCarrier;
+  }
+
   async function loadCarrier() {
     try {
       setLoading(true);
@@ -78,66 +140,85 @@ export default function FreightSupportScreen() {
       const { data: authData } = await supabase.auth.getUser();
       const authUser = authData?.user;
 
-      const carrierId = stored?.id || stored?.freightId || authUser?.id || "";
       const email = normalize(stored?.email || authUser?.email || "");
 
-      let dbCarrier: any = null;
-
-      if (carrierId) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", carrierId)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
+      if (!email) {
+        router.replace(FREIGHT_ROUTES.login as any);
+        return;
       }
 
-      if (!dbCarrier && email) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", email)
-          .maybeSingle();
+      const { data: dbCarrier, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
 
-        if (!result.error && result.data) dbCarrier = result.data;
+      if (error) {
+        console.log("Load freight support profile error:", error.message);
+      }
+
+      if (!dbCarrier) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "No freight profile was found. Please complete freight registration first."
+        );
+        router.replace(FREIGHT_ROUTES.register as any);
+        return;
       }
 
       const merged = {
         ...(stored || {}),
         ...(dbCarrier || {}),
-        id: dbCarrier?.id || stored?.id || stored?.freightId || authUser?.id || "",
-        freightId: dbCarrier?.id || stored?.freightId || stored?.id || authUser?.id || "",
+        id: dbCarrier.id,
+        freightId: dbCarrier.id,
         role: "freight",
-        email: normalize(dbCarrier?.email || stored?.email || email),
+        email: normalize(dbCarrier.email || email),
         companyName:
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
+          dbCarrier.company_name ||
+          dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
           "Freight Connect Carrier",
+        businessName:
+          dbCarrier.business_name ||
+          dbCarrier.company_name ||
+          stored?.businessName ||
+          stored?.companyName ||
+          "Freight Connect Carrier",
         contactName:
-          dbCarrier?.contact_name ||
-          dbCarrier?.name ||
+          dbCarrier.contact_name ||
+          dbCarrier.name ||
           stored?.contactName ||
           stored?.name ||
           "",
+        stripeAccountId:
+          dbCarrier.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
+        stripe_account_id:
+          dbCarrier.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
       };
 
-      if (!merged.id && !merged.email) {
-        router.replace("/freight/login" as any);
-        return;
-      }
-
-      setCarrier(merged);
+      await persistCarrier(merged);
     } catch (error) {
       console.log("Load freight support error:", error);
+      Alert.alert("Support Error", "Unable to load freight support.");
     } finally {
       setLoading(false);
     }
   }
 
   async function submitSupportRequest() {
+    if (!carrier?.id) {
+      Alert.alert("Profile Missing", "Please log in again.");
+      router.replace(FREIGHT_ROUTES.login as any);
+      return;
+    }
+
     if (!subject.trim()) {
       Alert.alert("Subject Required", "Please enter a support subject.");
       return;
@@ -151,28 +232,38 @@ export default function FreightSupportScreen() {
     try {
       setSubmitting(true);
 
+      const now = new Date().toISOString();
+
       const payload = {
-        user_id: carrier?.id || carrier?.freightId || null,
-        freight_id: carrier?.id || carrier?.freightId || null,
+        user_id: carrier.id,
+        freight_id: carrier.id,
         role: "freight",
         category,
         subject: subject.trim(),
         message: message.trim(),
         status: "open",
         priority: category === "emergency" ? "high" : "normal",
-        email: carrier?.email || null,
-        name: carrier?.companyName || carrier?.businessName || carrier?.contactName || null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        email: carrier.email || null,
+        name:
+          carrier.companyName ||
+          carrier.businessName ||
+          carrier.contactName ||
+          "Freight Carrier",
+        created_at: now,
+        updated_at: now,
       };
 
       const { error } = await supabase.from("support_tickets").insert(payload);
+
       if (error) throw error;
 
       setSubject("");
       setMessage("");
 
-      Alert.alert("Support Request Sent", "Farm2Home freight support received your request.");
+      Alert.alert(
+        "Support Request Sent",
+        "Farm2Home freight support received your request."
+      );
     } catch (error: any) {
       Alert.alert("Support Error", error?.message || "Unable to send support request.");
     } finally {
@@ -181,15 +272,23 @@ export default function FreightSupportScreen() {
   }
 
   async function callSupport() {
-    await Linking.openURL("tel:+18005550199");
+    try {
+      await Linking.openURL("tel:+18005550199");
+    } catch {
+      Alert.alert("Call Error", "Unable to open phone dialer.");
+    }
   }
 
   async function emailSupport() {
-    const mailUrl = `mailto:support@farm2home.app?subject=Farm2Home Freight Support&body=Carrier: ${encodeURIComponent(
-      carrier?.companyName || carrier?.businessName || "Freight Carrier"
-    )}%0AEmail: ${encodeURIComponent(carrier?.email || "")}%0A%0AMessage:%0A`;
+    try {
+      const mailUrl = `mailto:support@farm2home.app?subject=Farm2Home Freight Support&body=Carrier: ${encodeURIComponent(
+        carrier?.companyName || carrier?.businessName || "Freight Carrier"
+      )}%0AEmail: ${encodeURIComponent(carrier?.email || "")}%0A%0AMessage:%0A`;
 
-    await Linking.openURL(mailUrl);
+      await Linking.openURL(mailUrl);
+    } catch {
+      Alert.alert("Email Error", "Unable to open email app.");
+    }
   }
 
   if (loading) {
@@ -215,12 +314,18 @@ export default function FreightSupportScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-          <Text style={styles.title}>Freight Support</Text>
-          <Text style={styles.subtitle}>
-            Get help with freight loads, posting, carrier verification, billing,
-            routing, tracking, payouts, and live logistics operations.
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
+            <Text style={styles.title}>Freight Support</Text>
+            <Text style={styles.subtitle}>
+              Get help with freight loads, carrier verification, billing, routing,
+              tracking, payouts, and live logistics operations.
+            </Text>
+          </View>
+
+          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+            <Ionicons name="headset-outline" size={34} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.carrierCard}>
@@ -239,16 +344,12 @@ export default function FreightSupportScreen() {
         <View style={styles.quickGrid}>
           <QuickAction icon="call-outline" label="Call Support" onPress={callSupport} />
           <QuickAction icon="mail-outline" label="Email Support" onPress={emailSupport} />
-          <QuickAction
-            icon="list-outline"
-            label="Load Board"
-            onPress={() => router.push("/freight/board" as any)}
-          />
-          <QuickAction
-            icon="grid-outline"
-            label="Dashboard"
-            onPress={() => router.push("/freight/dashboard" as any)}
-          />
+          <QuickAction icon="chatbubble-ellipses-outline" label="Live Chat" onPress={() => goTo(FREIGHT_ROUTES.help)} />
+          <QuickAction icon="help-circle-outline" label="Help Center" onPress={() => goTo(FREIGHT_ROUTES.help)} />
+          <QuickAction icon="list-outline" label="Load Board" onPress={() => goTo(FREIGHT_ROUTES.board)} />
+          <QuickAction icon="grid-outline" label="Dashboard" onPress={() => goTo(FREIGHT_ROUTES.dashboard)} />
+          <QuickAction icon="briefcase-outline" label="My Loads" onPress={() => goTo(FREIGHT_ROUTES.myLoads)} />
+          <QuickAction icon="pulse-outline" label="Live Loads" onPress={() => goTo(FREIGHT_ROUTES.liveLoads)} />
         </View>
 
         <View style={styles.card}>
@@ -314,17 +415,16 @@ export default function FreightSupportScreen() {
             subtitle="Fast shortcuts for carrier operations."
           />
 
-          <RouteButton title="I cannot accept a freight load" onPress={() => router.push("/freight/board" as any)} />
-          <RouteButton title="I need help with my carrier profile" onPress={() => router.push("/freight/profile" as any)} />
-          <RouteButton title="Membership or billing issue" onPress={() => router.push("/freight/subscription" as any)} />
-          <RouteButton title="Live route or tracking issue" onPress={() => router.push("/freight/live-route" as any)} />
-          <RouteButton title="Freight settings" onPress={() => router.push("/freight/settings" as any)} />
+          <RouteButton title="I cannot accept a freight load" route={FREIGHT_ROUTES.board} />
+          <RouteButton title="I need help with my carrier profile" route={FREIGHT_ROUTES.profile} />
+          <RouteButton title="Membership or billing issue" route={FREIGHT_ROUTES.subscription} />
+          <RouteButton title="Connect Bank or payout issue" route={FREIGHT_ROUTES.connectBank} />
+          <RouteButton title="Live route or tracking issue" route={FREIGHT_ROUTES.liveRoute} />
+          <RouteButton title="Freight settings" route={FREIGHT_ROUTES.settings} />
         </View>
 
-        <TouchableOpacity
-          style={styles.darkButton}
-          onPress={() => router.replace("/freight/dashboard" as any)}
-        >
+        <TouchableOpacity style={styles.darkButton} onPress={() => router.replace(FREIGHT_ROUTES.dashboard as any)}>
+          <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
           <Text style={styles.darkButtonText}>Back to Freight Dashboard</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -332,7 +432,15 @@ export default function FreightSupportScreen() {
   );
 }
 
-function SectionHeader({ icon, title, subtitle }: any) {
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+}) {
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionIcon}>
@@ -347,7 +455,15 @@ function SectionHeader({ icon, title, subtitle }: any) {
   );
 }
 
-function QuickAction({ icon, label, onPress }: any) {
+function QuickAction({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
   return (
     <TouchableOpacity style={styles.quickAction} onPress={onPress}>
       <Ionicons name={icon} size={24} color={COLORS.red} />
@@ -356,7 +472,15 @@ function QuickAction({ icon, label, onPress }: any) {
   );
 }
 
-function OptionButton({ title, active, onPress }: any) {
+function OptionButton({
+  title,
+  active,
+  onPress,
+}: {
+  title: string;
+  active: boolean;
+  onPress: () => void;
+}) {
   return (
     <TouchableOpacity
       style={[styles.optionButton, active && styles.optionButtonActive]}
@@ -369,9 +493,9 @@ function OptionButton({ title, active, onPress }: any) {
   );
 }
 
-function RouteButton({ title, onPress }: any) {
+function RouteButton({ title, route }: { title: string; route: FreightRoute }) {
   return (
-    <TouchableOpacity style={styles.routeButton} onPress={onPress}>
+    <TouchableOpacity style={styles.routeButton} onPress={() => goTo(route)}>
       <Text style={styles.routeButtonText}>{title}</Text>
       <Text style={styles.routeArrow}>›</Text>
     </TouchableOpacity>
@@ -399,6 +523,17 @@ const styles = StyleSheet.create({
     paddingTop: 30,
     paddingHorizontal: 20,
     paddingBottom: 30,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
   },
   eyebrow: {
     color: "#FCA5A5",
@@ -598,8 +733,11 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
     marginHorizontal: 18,
     marginBottom: 40,
+    flexDirection: "row",
+    gap: 8,
   },
   darkButtonText: {
     color: "#FFFFFF",

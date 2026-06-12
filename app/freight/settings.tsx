@@ -19,6 +19,21 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  liveLoads: "/freight/live-loads",
+  myLoads: "/freight/my-loads",
+  connectBank: "/freight/connect-bank",
+  subscription: "/freight/subscription",
+  profile: "/freight/profile",
+  settings: "/freight/settings",
+  support: "/freight/support",
+  help: "/freight/help",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+
 type FreightSettings = {
   pushNotifications: boolean;
   newLoadAlerts: boolean;
@@ -70,6 +85,10 @@ function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
+function goTo(route: FreightRoute) {
+  router.push(route as any);
+}
+
 export default function FreightSettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [savingSync, setSavingSync] = useState(false);
@@ -98,6 +117,46 @@ export default function FreightSettingsScreen() {
     }
   }
 
+  async function persistCarrier(nextCarrier: any) {
+    const normalizedCarrier = {
+      ...nextCarrier,
+      id: nextCarrier.id || nextCarrier.freightId,
+      freightId: nextCarrier.freightId || nextCarrier.id,
+      role: "freight",
+      email: normalize(nextCarrier.email),
+      companyName:
+        nextCarrier.companyName ||
+        nextCarrier.businessName ||
+        nextCarrier.company_name ||
+        nextCarrier.business_name ||
+        "Freight Connect Carrier",
+      businessName:
+        nextCarrier.businessName ||
+        nextCarrier.companyName ||
+        nextCarrier.business_name ||
+        nextCarrier.company_name ||
+        "Freight Connect Carrier",
+      stripeAccountId:
+        nextCarrier.stripeAccountId ||
+        nextCarrier.stripe_account_id ||
+        "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id ||
+        nextCarrier.stripeAccountId ||
+        "",
+    };
+
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
+
+    setCarrier(normalizedCarrier);
+    return normalizedCarrier;
+  }
+
   async function loadSettings() {
     try {
       setLoading(true);
@@ -106,89 +165,125 @@ export default function FreightSettingsScreen() {
       const { data: authData } = await supabase.auth.getUser();
       const authUser = authData?.user;
 
-      const carrierId = stored?.id || stored?.freightId || authUser?.id || "";
       const email = normalize(stored?.email || authUser?.email || "");
 
-      if (!carrierId && !email) {
+      if (!email) {
         router.replace("/freight/login" as any);
         return;
       }
 
-      let dbCarrier: any = null;
+      const { data: dbCarrier, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
 
-      if (carrierId) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", carrierId)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
+      if (error) {
+        console.log("Freight settings profile load error:", error.message);
       }
 
-      if (!dbCarrier && email) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", email)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
+      if (!dbCarrier) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "No freight profile was found for this email. Please complete freight registration again."
+        );
+        router.replace("/freight/register" as any);
+        return;
       }
 
       const mergedCarrier = {
         ...(stored || {}),
         ...(dbCarrier || {}),
-        id: dbCarrier?.id || stored?.id || stored?.freightId || authUser?.id || "",
-        freightId: dbCarrier?.id || stored?.freightId || stored?.id || authUser?.id || "",
+        id: dbCarrier.id,
+        freightId: dbCarrier.id,
         role: "freight",
-        email: normalize(dbCarrier?.email || stored?.email || email),
+        email: normalize(dbCarrier.email || email),
         companyName:
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
+          dbCarrier.company_name ||
+          dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
           stored?.contactName ||
           stored?.username ||
           "Freight Connect Carrier",
         businessName:
-          dbCarrier?.business_name ||
-          dbCarrier?.company_name ||
+          dbCarrier.business_name ||
+          dbCarrier.company_name ||
           stored?.businessName ||
           stored?.companyName ||
           "Freight Connect Carrier",
         contactName:
-          dbCarrier?.contact_name ||
-          dbCarrier?.name ||
+          dbCarrier.contact_name ||
+          dbCarrier.name ||
           stored?.contactName ||
           stored?.name ||
           "",
         membershipStatus:
-          dbCarrier?.membership_status || stored?.membershipStatus || "Active",
+          dbCarrier.membership_status || stored?.membershipStatus || "Active",
         subscriptionStatus:
-          dbCarrier?.subscription_status || stored?.subscriptionStatus || "active",
-        accountActive: dbCarrier?.account_active ?? stored?.accountActive ?? true,
+          dbCarrier.subscription_status || stored?.subscriptionStatus || "active",
+        accountActive: dbCarrier.account_active ?? stored?.accountActive ?? true,
+        stripeAccountId:
+          dbCarrier.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
+        stripe_account_id:
+          dbCarrier.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
+        payoutsEnabled:
+          dbCarrier.payouts_enabled ??
+          dbCarrier.stripe_payouts_enabled ??
+          stored?.payoutsEnabled ??
+          false,
+        chargesEnabled:
+          dbCarrier.charges_enabled ??
+          dbCarrier.stripe_charges_enabled ??
+          stored?.chargesEnabled ??
+          false,
+        onboardingComplete:
+          dbCarrier.stripe_onboarding_complete ??
+          stored?.onboardingComplete ??
+          false,
       };
 
-      setCarrier(mergedCarrier);
+      await persistCarrier(mergedCarrier);
 
-      await AsyncStorage.setItem("currentFreight", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("currentFreightUser", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(mergedCarrier));
-      await AsyncStorage.setItem("userRole", "freight");
-      await AsyncStorage.setItem("currentUserRole", "freight");
+      const dbSettings: FreightSettings = {
+        pushNotifications: dbCarrier.push_notifications ?? DEFAULT_SETTINGS.pushNotifications,
+        newLoadAlerts: dbCarrier.new_load_alerts ?? DEFAULT_SETTINGS.newLoadAlerts,
+        routeStatusAlerts: dbCarrier.route_status_alerts ?? DEFAULT_SETTINGS.routeStatusAlerts,
+        payoutAlerts: dbCarrier.payout_alerts ?? DEFAULT_SETTINGS.payoutAlerts,
+        billingAlerts: dbCarrier.billing_alerts ?? DEFAULT_SETTINGS.billingAlerts,
+        gpsTracking: dbCarrier.gps_tracking ?? DEFAULT_SETTINGS.gpsTracking,
+        backgroundRouteUpdates:
+          dbCarrier.background_route_updates ?? DEFAULT_SETTINGS.backgroundRouteUpdates,
+        showOnlyNearbyLoads:
+          dbCarrier.show_only_nearby_loads ?? DEFAULT_SETTINGS.showOnlyNearbyLoads,
+        showRefrigeratedLoads:
+          dbCarrier.show_refrigerated_loads ?? DEFAULT_SETTINGS.showRefrigeratedLoads,
+        showLivestockLoads:
+          dbCarrier.show_livestock_loads ?? DEFAULT_SETTINGS.showLivestockLoads,
+        darkMode: dbCarrier.dark_mode ?? DEFAULT_SETTINGS.darkMode,
+        privacyMode: dbCarrier.privacy_mode ?? DEFAULT_SETTINGS.privacyMode,
+      };
 
       const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
 
       if (rawSettings) {
-        setSettings({
+        const localSettings = JSON.parse(rawSettings);
+        const mergedSettings = {
           ...DEFAULT_SETTINGS,
-          ...JSON.parse(rawSettings),
-        });
+          ...dbSettings,
+          ...localSettings,
+        };
+        setSettings(mergedSettings);
+        await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(mergedSettings));
       } else {
-        await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
-        setSettings(DEFAULT_SETTINGS);
+        setSettings(dbSettings);
+        await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(dbSettings));
       }
     } catch (error) {
       console.log("Freight settings load error:", error);
@@ -199,28 +294,43 @@ export default function FreightSettingsScreen() {
   }
 
   async function syncCarrierSettings(nextSettings: FreightSettings) {
-    if (!carrier?.id && !carrier?.freightId) return;
+    const freightId = carrier?.id || carrier?.freightId;
+    const email = normalize(carrier?.email);
+
+    if (!freightId && !email) return;
 
     try {
       setSavingSync(true);
 
-      await supabase
-        .from("freight_users")
-        .update({
-          push_notifications: nextSettings.pushNotifications,
-          new_load_alerts: nextSettings.newLoadAlerts,
-          route_status_alerts: nextSettings.routeStatusAlerts,
-          payout_alerts: nextSettings.payoutAlerts,
-          billing_alerts: nextSettings.billingAlerts,
-          gps_tracking: nextSettings.gpsTracking,
-          background_route_updates: nextSettings.backgroundRouteUpdates,
-          show_only_nearby_loads: nextSettings.showOnlyNearbyLoads,
-          show_refrigerated_loads: nextSettings.showRefrigeratedLoads,
-          show_livestock_loads: nextSettings.showLivestockLoads,
-          privacy_mode: nextSettings.privacyMode,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", carrier.id || carrier.freightId);
+      const payload = {
+        push_notifications: nextSettings.pushNotifications,
+        new_load_alerts: nextSettings.newLoadAlerts,
+        route_status_alerts: nextSettings.routeStatusAlerts,
+        payout_alerts: nextSettings.payoutAlerts,
+        billing_alerts: nextSettings.billingAlerts,
+        gps_tracking: nextSettings.gpsTracking,
+        background_route_updates: nextSettings.backgroundRouteUpdates,
+        show_only_nearby_loads: nextSettings.showOnlyNearbyLoads,
+        show_refrigerated_loads: nextSettings.showRefrigeratedLoads,
+        show_livestock_loads: nextSettings.showLivestockLoads,
+        dark_mode: nextSettings.darkMode,
+        privacy_mode: nextSettings.privacyMode,
+        updated_at: new Date().toISOString(),
+      };
+
+      let query = supabase.from("freight_users").update(payload);
+
+      if (freightId) {
+        query = query.eq("id", freightId);
+      } else {
+        query = query.eq("email", email);
+      }
+
+      const { error } = await query;
+
+      if (error) {
+        console.log("Freight settings sync error:", error.message);
+      }
     } catch (error) {
       console.log("Freight settings sync skipped:", error);
     } finally {
@@ -299,6 +409,30 @@ export default function FreightSettingsScreen() {
     return COLORS.green;
   }
 
+  function stripeStatusText() {
+    if (carrier?.payoutsEnabled && carrier?.chargesEnabled && carrier?.onboardingComplete) {
+      return "Payout Ready";
+    }
+
+    if (carrier?.stripeAccountId || carrier?.stripe_account_id) {
+      return "Setup Incomplete";
+    }
+
+    return "Not Connected";
+  }
+
+  function stripeStatusColor() {
+    if (carrier?.payoutsEnabled && carrier?.chargesEnabled && carrier?.onboardingComplete) {
+      return COLORS.green;
+    }
+
+    if (carrier?.stripeAccountId || carrier?.stripe_account_id) {
+      return COLORS.amber;
+    }
+
+    return COLORS.red;
+  }
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -322,14 +456,13 @@ export default function FreightSettingsScreen() {
               <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
               <Text style={styles.title}>Freight Settings</Text>
               <Text style={styles.subtitle}>
-                Manage carrier alerts, load board preferences, route tracking,
-                privacy, and account actions.
+                Manage carrier alerts, load board preferences, route tracking, privacy, and account actions.
               </Text>
             </View>
 
-            <View style={styles.heroIcon}>
+            <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
               <Ionicons name="settings-outline" size={34} color="#FFFFFF" />
-            </View>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -351,6 +484,22 @@ export default function FreightSettingsScreen() {
           </View>
         </View>
 
+        <View style={styles.stripeCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.stripeTitle}>Stripe Connect</Text>
+            <Text style={styles.stripeMeta}>
+              {carrier?.stripeAccountId || carrier?.stripe_account_id || "No account connected"}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.stripePill, { backgroundColor: stripeStatusColor() }]}
+            onPress={() => goTo(FREIGHT_ROUTES.connectBank)}
+          >
+            <Text style={styles.accountPillText}>{stripeStatusText()}</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.syncCard}>
           <Ionicons name="cloud-done-outline" size={20} color={COLORS.red} />
           <Text style={styles.syncText}>
@@ -359,10 +508,14 @@ export default function FreightSettingsScreen() {
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="grid-outline" label="Dashboard" route="/freight/dashboard" />
-          <QuickLink icon="list-outline" label="Load Board" route="/freight/board" />
-          <QuickLink icon="briefcase-outline" label="My Loads" route="/freight/my-loads" />
-          <QuickLink icon="business-outline" label="Profile" route="/freight/profile" />
+          <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
+          <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
+          <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
+          <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+          <QuickLink icon="business-outline" label="Profile" route={FREIGHT_ROUTES.profile} />
+          <QuickLink icon="card-outline" label="Subscription" route={FREIGHT_ROUTES.subscription} />
+          <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+          <QuickLink icon="help-circle-outline" label="Help" route={FREIGHT_ROUTES.help} />
         </View>
 
         <View style={styles.card}>
@@ -500,28 +653,29 @@ export default function FreightSettingsScreen() {
             subtitle="Manage profile, billing, preferences, or sign out."
           />
 
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => router.push("/freight/profile" as any)}
-          >
+          <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.profile)}>
             <Ionicons name="business-outline" size={18} color="#FFFFFF" />
             <Text style={styles.buttonText}>Open Freight Profile</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => router.push("/freight/subscription" as any)}
-          >
+          <TouchableOpacity style={styles.secondaryButton} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
+            <Ionicons name="business-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryButtonText}>Open Connect Bank</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.secondaryButton} onPress={() => goTo(FREIGHT_ROUTES.subscription)}>
             <Ionicons name="card-outline" size={18} color={COLORS.red} />
             <Text style={styles.secondaryButtonText}>Open Subscription</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => router.push("/freight/support" as any)}
-          >
+          <TouchableOpacity style={styles.secondaryButton} onPress={() => goTo(FREIGHT_ROUTES.support)}>
             <Ionicons name="help-buoy-outline" size={18} color={COLORS.red} />
             <Text style={styles.secondaryButtonText}>Open Support</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.secondaryButton} onPress={() => goTo(FREIGHT_ROUTES.help)}>
+            <Ionicons name="help-circle-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryButtonText}>Open Help</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.secondaryButton} onPress={resetSettings}>
@@ -580,10 +734,10 @@ function QuickLink({
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
-  route: string;
+  route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => router.push(route as any)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickLinkText}>{label}</Text>
     </TouchableOpacity>
@@ -614,10 +768,7 @@ function SectionHeader({
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -625,25 +776,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  centerText: {
-    color: COLORS.muted,
-    marginTop: 12,
-    fontWeight: "800",
-  },
-  content: {
-    paddingBottom: 90,
-  },
+  centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
+  content: { paddingBottom: 90 },
   hero: {
     backgroundColor: COLORS.black,
     paddingTop: 28,
     paddingHorizontal: 20,
     paddingBottom: 30,
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   heroIcon: {
     width: 58,
     height: 58,
@@ -660,18 +801,8 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 32,
-    fontWeight: "900",
-    marginBottom: 10,
-  },
-  subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 22,
-    fontSize: 14,
-    fontWeight: "700",
-  },
+  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
+  subtitle: { color: "#D1D5DB", lineHeight: 22, fontSize: 14, fontWeight: "700" },
   accountCard: {
     backgroundColor: COLORS.red,
     borderRadius: 22,
@@ -683,21 +814,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  accountLabel: {
-    color: "#FFE4E6",
-    fontWeight: "900",
-  },
-  accountName: {
-    color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-  accountMeta: {
-    color: "#FFE4E6",
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  accountLabel: { color: "#FFE4E6", fontWeight: "900" },
+  accountName: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 4 },
+  accountMeta: { color: "#FFE4E6", fontWeight: "700", marginTop: 4 },
   accountPill: {
     alignSelf: "flex-start",
     marginTop: 10,
@@ -705,11 +824,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
   },
-  accountPillText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  accountPillText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
   accountBadge: {
     width: 52,
     height: 52,
@@ -717,6 +832,23 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
+  },
+  stripeCard: {
+    backgroundColor: COLORS.black,
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  stripeTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
+  stripeMeta: { color: "#D1D5DB", fontWeight: "700", marginTop: 4 },
+  stripePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
   },
   syncCard: {
     backgroundColor: COLORS.card,
@@ -730,12 +862,7 @@ const styles = StyleSheet.create({
     gap: 10,
     alignItems: "center",
   },
-  syncText: {
-    color: COLORS.text,
-    fontWeight: "800",
-    flex: 1,
-    lineHeight: 20,
-  },
+  syncText: { color: COLORS.text, fontWeight: "800", flex: 1, lineHeight: 20 },
   quickGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -753,10 +880,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickLinkText: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
+  quickLinkText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
   card: {
     backgroundColor: COLORS.card,
     padding: 18,
@@ -766,12 +890,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 14,
-  },
+  sectionHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 14 },
   sectionIcon: {
     width: 40,
     height: 40,
@@ -780,17 +899,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  sectionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 3,
-  },
+  sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
   settingRow: {
     backgroundColor: COLORS.surface,
     borderRadius: 16,
@@ -810,16 +920,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  settingLabel: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginBottom: 3,
-  },
-  settingDescription: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 19,
-  },
+  settingLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 3 },
+  settingDescription: { color: COLORS.muted, fontWeight: "700", lineHeight: 19 },
   primaryButton: {
     backgroundColor: COLORS.red,
     padding: 16,
@@ -842,10 +944,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  secondaryButtonText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
+  secondaryButtonText: { color: COLORS.red, fontWeight: "900" },
   logoutButton: {
     backgroundColor: COLORS.redDark,
     padding: 16,
@@ -856,8 +955,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  buttonText: { color: "#FFFFFF", fontWeight: "900" },
 });

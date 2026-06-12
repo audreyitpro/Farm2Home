@@ -19,23 +19,40 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  myLoads: "/freight/my-loads",
+  liveLoads: "/freight/live-loads",
+  liveRoute: "/freight/live-route",
+  profile: "/freight/profile",
+  subscription: "/freight/subscription",
+  settings: "/freight/settings",
+  support: "/freight/support",
+  connectBank: "/freight/connect-bank",
+  login: "/freight/login",
+  register: "/freight/register",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+
 const COLORS = {
   bg: "#F4F5F7",
   card: "#FFFFFF",
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
-  redDark: "#9F1117",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
-  green: "#16A34A",
-  amber: "#D97706",
-  slate: "#64748B",
 };
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
+}
+
+function goTo(route: FreightRoute) {
+  router.push(route as any);
 }
 
 export default function FreightHelpScreen() {
@@ -64,6 +81,47 @@ export default function FreightHelpScreen() {
     }
   }
 
+  async function persistCarrier(nextCarrier: any) {
+    const normalizedCarrier = {
+      ...nextCarrier,
+      id: nextCarrier.id || nextCarrier.freightId,
+      freightId: nextCarrier.freightId || nextCarrier.id,
+      role: "freight",
+      email: normalize(nextCarrier.email),
+      companyName:
+        nextCarrier.companyName ||
+        nextCarrier.businessName ||
+        nextCarrier.company_name ||
+        nextCarrier.business_name ||
+        "Freight Connect Carrier",
+      businessName:
+        nextCarrier.businessName ||
+        nextCarrier.companyName ||
+        nextCarrier.business_name ||
+        nextCarrier.company_name ||
+        "Freight Connect Carrier",
+      contactName:
+        nextCarrier.contactName ||
+        nextCarrier.contact_name ||
+        nextCarrier.name ||
+        "",
+      stripeAccountId:
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
+    };
+
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
+
+    setCarrier(normalizedCarrier);
+    return normalizedCarrier;
+  }
+
   async function loadCarrier() {
     try {
       setLoading(true);
@@ -72,70 +130,96 @@ export default function FreightHelpScreen() {
       const { data: authData } = await supabase.auth.getUser();
       const authUser = authData?.user;
 
-      const carrierId = stored?.id || stored?.freightId || authUser?.id || "";
       const email = normalize(stored?.email || authUser?.email || "");
 
-      let dbCarrier: any = null;
-
-      if (carrierId) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", carrierId)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
+      if (!email) {
+        router.replace(FREIGHT_ROUTES.login as any);
+        return;
       }
 
-      if (!dbCarrier && email) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", email)
-          .maybeSingle();
+      const { data: dbCarrier, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
 
-        if (!result.error && result.data) dbCarrier = result.data;
+      if (error) {
+        console.log("Load freight help profile error:", error.message);
+      }
+
+      if (!dbCarrier) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "No freight profile was found. Please complete freight registration first."
+        );
+        router.replace(FREIGHT_ROUTES.register as any);
+        return;
       }
 
       const merged = {
         ...(stored || {}),
         ...(dbCarrier || {}),
-        id: dbCarrier?.id || stored?.id || stored?.freightId || authUser?.id || "",
-        freightId: dbCarrier?.id || stored?.freightId || stored?.id || authUser?.id || "",
+        id: dbCarrier.id,
+        freightId: dbCarrier.id,
         role: "freight",
-        email: normalize(dbCarrier?.email || stored?.email || email),
+        email: normalize(dbCarrier.email || email),
         companyName:
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
+          dbCarrier.company_name ||
+          dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
           "Freight Connect Carrier",
+        businessName:
+          dbCarrier.business_name ||
+          dbCarrier.company_name ||
+          stored?.businessName ||
+          stored?.companyName ||
+          "Freight Connect Carrier",
         contactName:
-          dbCarrier?.contact_name ||
-          dbCarrier?.name ||
+          dbCarrier.contact_name ||
+          dbCarrier.name ||
           stored?.contactName ||
           stored?.name ||
           "",
+        stripeAccountId:
+          dbCarrier.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
+        stripe_account_id:
+          dbCarrier.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
       };
 
-      setCarrier(merged);
+      await persistCarrier(merged);
     } catch (error) {
       console.log("Load freight help error:", error);
+      Alert.alert("Help Error", "Unable to load freight help.");
     } finally {
       setLoading(false);
     }
   }
 
   async function callSupport() {
-    await Linking.openURL("tel:+18005550199");
+    try {
+      await Linking.openURL("tel:+18005550199");
+    } catch {
+      Alert.alert("Call Error", "Unable to open phone dialer.");
+    }
   }
 
   async function emailSupport() {
-    const mailUrl = `mailto:support@farm2home.app?subject=Farm2Home Freight Help&body=Carrier: ${encodeURIComponent(
-      carrier?.companyName || carrier?.businessName || "Freight Carrier"
-    )}%0AEmail: ${encodeURIComponent(carrier?.email || "")}%0A%0AMessage:%0A`;
+    try {
+      const mailUrl = `mailto:support@farm2home.app?subject=Farm2Home Freight Help&body=Carrier: ${encodeURIComponent(
+        carrier?.companyName || carrier?.businessName || "Freight Carrier"
+      )}%0AEmail: ${encodeURIComponent(carrier?.email || "")}%0A%0AMessage:%0A`;
 
-    await Linking.openURL(mailUrl);
+      await Linking.openURL(mailUrl);
+    } catch {
+      Alert.alert("Email Error", "Unable to open email app.");
+    }
   }
 
   function showEmergencyNotice() {
@@ -167,12 +251,18 @@ export default function FreightHelpScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Farm2Home Freight Knowledge Center</Text>
-          <Text style={styles.title}>Freight Help</Text>
-          <Text style={styles.subtitle}>
-            Learn how to use freight board tools, accept loads, manage carrier
-            routes, complete proof workflows, and handle billing or dispatch issues.
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farm2Home Freight Knowledge Center</Text>
+            <Text style={styles.title}>Freight Help</Text>
+            <Text style={styles.subtitle}>
+              Learn how to use freight board tools, accept loads, manage carrier routes,
+              complete proof workflows, and handle billing or dispatch issues.
+            </Text>
+          </View>
+
+          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+            <Ionicons name="help-circle-outline" size={34} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.carrierCard}>
@@ -191,16 +281,10 @@ export default function FreightHelpScreen() {
         <View style={styles.quickGrid}>
           <QuickAction icon="call-outline" label="Call Support" onPress={callSupport} />
           <QuickAction icon="mail-outline" label="Email Support" onPress={emailSupport} />
-          <QuickAction
-            icon="help-buoy-outline"
-            label="Support"
-            onPress={() => router.push("/freight/support" as any)}
-          />
-          <QuickAction
-            icon="alert-circle-outline"
-            label="Emergency"
-            onPress={showEmergencyNotice}
-          />
+          <QuickAction icon="help-buoy-outline" label="Support" onPress={() => goTo(FREIGHT_ROUTES.support)} />
+          <QuickAction icon="alert-circle-outline" label="Emergency" onPress={showEmergencyNotice} />
+          <QuickAction icon="grid-outline" label="Dashboard" onPress={() => goTo(FREIGHT_ROUTES.dashboard)} />
+          <QuickAction icon="list-outline" label="Load Board" onPress={() => goTo(FREIGHT_ROUTES.board)} />
         </View>
 
         <HelpSection
@@ -267,7 +351,7 @@ export default function FreightHelpScreen() {
             "Freight membership unlocks freight board access and carrier tools.",
             "Use Subscription to start, manage, or cancel your freight membership.",
             "Use Profile to manage company and carrier details.",
-            "If Stripe customer details are missing, complete payment first, then return and sync your account.",
+            "Use Connect Bank to manage Stripe payout setup.",
           ]}
         />
 
@@ -289,20 +373,22 @@ export default function FreightHelpScreen() {
             subtitle="Jump directly to the freight tool you need."
           />
 
-          <RouteButton title="Freight Dashboard" onPress={() => router.push("/freight/dashboard" as any)} />
-          <RouteButton title="Live Freight Board" onPress={() => router.push("/freight/board" as any)} />
-          <RouteButton title="My Loads" onPress={() => router.push("/freight/my-loads" as any)} />
-          <RouteButton title="Live Loads" onPress={() => router.push("/freight/live-loads" as any)} />
-          <RouteButton title="Carrier Profile" onPress={() => router.push("/freight/profile" as any)} />
-          <RouteButton title="Freight Settings" onPress={() => router.push("/freight/settings" as any)} />
-          <RouteButton title="Freight Subscription" onPress={() => router.push("/freight/subscription" as any)} />
-          <RouteButton title="Support" onPress={() => router.push("/freight/support" as any)} />
+          <RouteButton title="Freight Dashboard" route={FREIGHT_ROUTES.dashboard} />
+          <RouteButton title="Live Freight Board" route={FREIGHT_ROUTES.board} />
+          <RouteButton title="My Loads" route={FREIGHT_ROUTES.myLoads} />
+          <RouteButton title="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+          <RouteButton title="Carrier Profile" route={FREIGHT_ROUTES.profile} />
+          <RouteButton title="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
+          <RouteButton title="Freight Settings" route={FREIGHT_ROUTES.settings} />
+          <RouteButton title="Freight Subscription" route={FREIGHT_ROUTES.subscription} />
+          <RouteButton title="Support" route={FREIGHT_ROUTES.support} />
         </View>
 
         <TouchableOpacity
           style={styles.darkButton}
-          onPress={() => router.replace("/freight/dashboard" as any)}
+          onPress={() => router.replace(FREIGHT_ROUTES.dashboard as any)}
         >
+          <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
           <Text style={styles.darkButtonText}>Back to Freight Dashboard</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -310,7 +396,15 @@ export default function FreightHelpScreen() {
   );
 }
 
-function SectionHeader({ icon, title, subtitle }: any) {
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle?: string;
+}) {
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionIcon}>
@@ -336,7 +430,7 @@ function HelpSection({
 }) {
   return (
     <View style={styles.card}>
-      <SectionHeader icon={icon} title={title} subtitle="" />
+      <SectionHeader icon={icon} title={title} />
 
       {items.map((item, index) => (
         <View key={`${title}-${index}`} style={styles.helpItem}>
@@ -350,7 +444,15 @@ function HelpSection({
   );
 }
 
-function QuickAction({ icon, label, onPress }: any) {
+function QuickAction({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
   return (
     <TouchableOpacity style={styles.quickAction} onPress={onPress}>
       <Ionicons name={icon} size={24} color={COLORS.red} />
@@ -359,9 +461,9 @@ function QuickAction({ icon, label, onPress }: any) {
   );
 }
 
-function RouteButton({ title, onPress }: any) {
+function RouteButton({ title, route }: { title: string; route: FreightRoute }) {
   return (
-    <TouchableOpacity style={styles.routeButton} onPress={onPress}>
+    <TouchableOpacity style={styles.routeButton} onPress={() => goTo(route)}>
       <Text style={styles.routeButtonText}>{title}</Text>
       <Text style={styles.routeArrow}>›</Text>
     </TouchableOpacity>
@@ -389,6 +491,17 @@ const styles = StyleSheet.create({
     paddingTop: 30,
     paddingHorizontal: 20,
     paddingBottom: 30,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
   },
   eyebrow: {
     color: "#FCA5A5",
@@ -551,8 +664,11 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 16,
     alignItems: "center",
+    justifyContent: "center",
     marginHorizontal: 18,
     marginBottom: 40,
+    flexDirection: "row",
+    gap: 8,
   },
   darkButtonText: {
     color: "#FFFFFF",

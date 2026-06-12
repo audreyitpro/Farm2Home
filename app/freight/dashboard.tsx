@@ -19,7 +19,63 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
-import freightTheme from "../styles/freightTheme";
+
+type FreightRoute =
+  | "/freight/dashboard"
+  | "/freight/board"
+  | "/freight/live-loads"
+  | "/freight/my-loads"
+  | "/freight/create-load"
+  | "/freight/post-load"
+  | "/freight/carrier-booking"
+  | "/freight/load-history"
+  | "/freight/load-payment-tracking"
+  | "/freight/analytics"
+  | "/freight/carrier-performance"
+  | "/freight/tracking"
+  | "/freight/live-route"
+  | "/freight/documents"
+  | "/freight/proof-of-pickup"
+  | "/freight/proof-of-delivery"
+  | "/freight/connect-bank"
+  | "/freight/subscription"
+  | "/freight/profile"
+  | "/freight/settings"
+  | "/freight/support"
+  | "/freight/help"
+  | "/freight/ai-brokerage-center"
+  | "/freight/navigation-assistant"
+  | "/freight/route-status-updates"
+  | "/freight/earnings";
+
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  liveLoads: "/freight/live-loads",
+  myLoads: "/freight/my-loads",
+  createLoad: "/freight/create-load",
+  postLoad: "/freight/post-load",
+  carrierBooking: "/freight/carrier-booking",
+  loadHistory: "/freight/load-history",
+  payments: "/freight/load-payment-tracking",
+  analytics: "/freight/analytics",
+  performance: "/freight/carrier-performance",
+  tracking: "/freight/tracking",
+  liveRoute: "/freight/live-route",
+  documents: "/freight/documents",
+  proofOfPickup: "/freight/proof-of-pickup",
+  proofOfDelivery: "/freight/proof-of-delivery",
+  connectBank: "/freight/connect-bank",
+  subscription: "/freight/subscription",
+  profile: "/freight/profile",
+  settings: "/freight/settings",
+  support: "/freight/support",
+  help: "/freight/help",
+  aiBrokerage: "/freight/ai-brokerage-center",
+  navigationAssistant: "/freight/navigation-assistant",
+  routeUpdates: "/freight/route-status-updates",
+  earnings: "/freight/earnings",
+} as const;
 
 type FreightStatus =
   | "OPEN"
@@ -34,6 +90,7 @@ type FreightStatus =
   | "in_transit"
   | "arrived_dropoff"
   | "delivered"
+  | "completed"
   | "cancelled";
 
 type FreightLoad = {
@@ -51,7 +108,6 @@ type FreightLoad = {
   status: FreightStatus;
   equipment?: string;
   pickupDate?: string;
-
   pickup_location?: string;
   dropoff_location?: string;
   farmer_name?: string;
@@ -119,22 +175,6 @@ const MOCK_LOADS: FreightLoad[] = [
     equipment: "Sprinter Van",
     pickupDate: "Tomorrow · 7:00 AM",
   },
-  {
-    id: "load_3",
-    title: "Cold Chain Food Transport",
-    commodity: "Fresh Fish",
-    pickupCity: "Toledo",
-    pickupState: "OH",
-    deliveryCity: "Detroit",
-    deliveryState: "MI",
-    rate: 790,
-    miles: 118,
-    weight: "3,100 lbs",
-    farmerName: "Blue Water Fishery",
-    status: "IN_TRANSIT",
-    equipment: "Refrigerated Van",
-    pickupDate: "In Progress",
-  },
 ];
 
 function normalize(value: any) {
@@ -201,8 +241,6 @@ function mapDbLoad(row: any): FreightLoad {
     pickupState: pickup.state,
     deliveryCity: dropoff.city,
     deliveryState: dropoff.state,
-    pickup_location: row.pickup_location,
-    dropoff_location: row.dropoff_location,
     rate: Number(row.rate || row.freight_total || row.total_due || row.payout || 0),
     miles: Number(row.distance_miles || row.miles || 0),
     weight: row.weight_lbs ? `${Number(row.weight_lbs).toLocaleString()} lbs` : row.weight || "TBD",
@@ -216,10 +254,13 @@ function mapDbLoad(row: any): FreightLoad {
   };
 }
 
+function goTo(route: FreightRoute) {
+  router.push(route as any);
+}
+
 export default function FreightDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [carrierName, setCarrierName] = useState("Carrier");
   const [carrier, setCarrier] = useState<any>(null);
   const [loads, setLoads] = useState<FreightLoad[]>([]);
@@ -254,22 +295,10 @@ export default function FreightDashboard() {
       const { data: authData } = await supabase.auth.getUser();
       const authUser = authData?.user;
 
-      const carrierId = stored?.id || stored?.freightId || authUser?.id || "";
       const email = normalize(stored?.email || authUser?.email || "");
-
       let dbCarrier: any = null;
 
-      if (carrierId) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", carrierId)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
-      }
-
-      if (!dbCarrier && email) {
+      if (email) {
         const result = await supabase
           .from("freight_users")
           .select("*")
@@ -291,8 +320,6 @@ export default function FreightDashboard() {
           dbCarrier?.business_name ||
           stored?.companyName ||
           stored?.businessName ||
-          stored?.ownerName ||
-          stored?.fullName ||
           "Freight Connect Carrier",
         businessName:
           dbCarrier?.business_name ||
@@ -311,6 +338,11 @@ export default function FreightDashboard() {
           dbCarrier?.membership_status || stored?.membershipStatus || "Active",
         subscriptionStatus:
           dbCarrier?.subscription_status || stored?.subscriptionStatus || "active",
+        stripeAccountId: dbCarrier?.stripe_account_id || stored?.stripeAccountId || null,
+        payoutsEnabled: dbCarrier?.payouts_enabled ?? stored?.payoutsEnabled ?? false,
+        chargesEnabled: dbCarrier?.charges_enabled ?? stored?.chargesEnabled ?? false,
+        stripeOnboardingComplete:
+          dbCarrier?.stripe_onboarding_complete ?? stored?.stripeOnboardingComplete ?? false,
         accountActive: dbCarrier?.account_active ?? stored?.accountActive ?? true,
       };
 
@@ -356,8 +388,7 @@ export default function FreightDashboard() {
         return;
       }
 
-      const mapped = Array.isArray(data) && data.length > 0 ? data.map(mapDbLoad) : MOCK_LOADS;
-      setLoads(mapped);
+      setLoads(Array.isArray(data) && data.length > 0 ? data.map(mapDbLoad) : MOCK_LOADS);
     } catch (error) {
       console.log("Freight load sync skipped:", error);
       setLoads(MOCK_LOADS);
@@ -423,32 +454,18 @@ export default function FreightDashboard() {
         updatePayload.accepted_at = now;
       }
 
-      if (nextStatus === "PICKED_UP") {
-        updatePayload.picked_up_at = now;
-      }
+      if (nextStatus === "PICKED_UP") updatePayload.picked_up_at = now;
+      if (nextStatus === "DELIVERED") updatePayload.delivered_at = now;
 
-      if (nextStatus === "DELIVERED") {
-        updatePayload.delivered_at = now;
-      }
+      const { error } = await supabase.from("freight_loads").update(updatePayload).eq("id", load.id);
 
-      const { error } = await supabase
-        .from("freight_loads")
-        .update(updatePayload)
-        .eq("id", load.id);
-
-      if (error) {
-        Alert.alert("Update Warning", error.message);
-      }
+      if (error) Alert.alert("Update Warning", error.message);
     }
   }
 
   async function acceptLoad(load: FreightLoad) {
     await updateLoadStatus(load, "BOOKED");
-
-    Alert.alert(
-      "Load Accepted",
-      `${load.title} has been assigned to your carrier account.`
-    );
+    Alert.alert("Load Accepted", `${load.title} has been assigned to your carrier account.`);
   }
 
   async function moveToPickedUp(load: FreightLoad) {
@@ -468,16 +485,12 @@ export default function FreightDashboard() {
 
   function openLiveTracking(load: FreightLoad) {
     router.push({
-      pathname: "/freight/live-route" as any,
+      pathname: FREIGHT_ROUTES.liveRoute as any,
       params: {
         loadId: load.id,
         title: load.title,
       },
     });
-  }
-
-  function openBoard() {
-    router.push("/freight/board" as any);
   }
 
   const activeLoads = useMemo(
@@ -488,11 +501,7 @@ export default function FreightDashboard() {
     [loads]
   );
 
-  const openLoads = useMemo(
-    () => loads.filter((item) => mapDbStatus(item.status) === "OPEN"),
-    [loads]
-  );
-
+  const openLoads = useMemo(() => loads.filter((item) => mapDbStatus(item.status) === "OPEN"), [loads]);
   const completedLoads = useMemo(
     () => loads.filter((item) => mapDbStatus(item.status) === "DELIVERED"),
     [loads]
@@ -606,8 +615,17 @@ export default function FreightDashboard() {
           <Text style={styles.workflowText}>{renderWorkflowText(status)}</Text>
         </View>
 
-        <Text style={styles.loadTitle}>{item.title}</Text>
-        <Text style={styles.commodity}>{item.commodity}</Text>
+        <TouchableOpacity
+          onPress={() =>
+            router.push({
+              pathname: "/freight/load-detail" as any,
+              params: { loadId: item.id },
+            })
+          }
+        >
+          <Text style={styles.loadTitle}>{item.title}</Text>
+          <Text style={styles.commodity}>{item.commodity}</Text>
+        </TouchableOpacity>
 
         <View style={styles.detailGrid}>
           <DetailBox icon="calendar-outline" label="Pickup" value={item.pickupDate || "TBD"} />
@@ -627,6 +645,19 @@ export default function FreightDashboard() {
 
           <View style={styles.actionStack}>
             {renderAction(item)}
+
+            <TouchableOpacity
+              style={styles.trackAction}
+              onPress={() =>
+                router.push({
+                  pathname: "/freight/load-details" as any,
+                  params: { loadId: item.id },
+                })
+              }
+            >
+              <Ionicons name="document-text-outline" size={18} color={COLORS.red} />
+              <Text style={styles.trackActionText}>Details</Text>
+            </TouchableOpacity>
 
             {status !== "OPEN" && (
               <TouchableOpacity style={styles.trackAction} onPress={() => openLiveTracking(item)}>
@@ -669,9 +700,9 @@ export default function FreightDashboard() {
               </Text>
             </View>
 
-            <View style={styles.heroIcon}>
+            <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.navigationAssistant)}>
               <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
-            </View>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.carrierRibbon}>
@@ -685,24 +716,21 @@ export default function FreightDashboard() {
         </View>
 
         <View style={styles.navRow}>
-          <TouchableOpacity style={styles.navButton} onPress={openBoard}>
+          <TouchableOpacity style={styles.navButton} onPress={() => goTo(FREIGHT_ROUTES.board)}>
             <Ionicons name="list-outline" size={18} color="#FFFFFF" />
             <Text style={styles.navText}>Load Board</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.navButtonOutline}
-            onPress={() => router.push("/freight/profile" as any)}
-          >
+          <TouchableOpacity style={styles.navButtonOutline} onPress={() => goTo(FREIGHT_ROUTES.profile)}>
             <Ionicons name="business-outline" size={18} color={COLORS.red} />
             <Text style={styles.navTextOutline}>Profile</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.metricsRow}>
-          <MetricCard icon="cube-outline" label="Open Loads" value={openLoads.length} />
-          <MetricCard icon="navigate-outline" label="Active Routes" value={activeLoads.length} />
-          <MetricCard icon="checkmark-done-outline" label="Completed" value={completedLoads.length} />
+          <MetricCard icon="cube-outline" label="Open Loads" value={openLoads.length} route={FREIGHT_ROUTES.liveLoads} />
+          <MetricCard icon="navigate-outline" label="Active Routes" value={activeLoads.length} route={FREIGHT_ROUTES.tracking} />
+          <MetricCard icon="checkmark-done-outline" label="Completed" value={completedLoads.length} route={FREIGHT_ROUTES.loadHistory} />
         </View>
 
         <View style={styles.revenueCard}>
@@ -712,17 +740,31 @@ export default function FreightDashboard() {
             <Text style={styles.revenueSub}>Active value: {money(activeRevenue)}</Text>
           </View>
 
-          <TouchableOpacity style={styles.boardButton} onPress={openBoard}>
+          <TouchableOpacity style={styles.boardButton} onPress={() => goTo(FREIGHT_ROUTES.board)}>
             <Ionicons name="open-outline" size={18} color="#FFFFFF" />
             <Text style={styles.boardButtonText}>Open Board</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickAction title="My Loads" icon="briefcase-outline" route="/freight/my-loads" />
-          <QuickAction title="Live Loads" icon="pulse-outline" route="/freight/live-loads" />
-          <QuickAction title="Settings" icon="settings-outline" route="/freight/settings" />
-          <QuickAction title="Subscription" icon="card-outline" route="/freight/subscription" />
+          <QuickAction title="My Loads" icon="briefcase-outline" route={FREIGHT_ROUTES.myLoads} />
+          <QuickAction title="Live Loads" icon="pulse-outline" route={FREIGHT_ROUTES.liveLoads} />
+          <QuickAction title="Create Load" icon="add-circle-outline" route={FREIGHT_ROUTES.createLoad} />
+          <QuickAction title="Post Load" icon="megaphone-outline" route={FREIGHT_ROUTES.postLoad} />
+          <QuickAction title="Carrier Booking" icon="calendar-outline" route={FREIGHT_ROUTES.carrierBooking} />
+          <QuickAction title="Payments" icon="wallet-outline" route={FREIGHT_ROUTES.payments} />
+          <QuickAction title="Connect Bank" icon="business-outline" route={FREIGHT_ROUTES.connectBank} />
+          <QuickAction title="Earnings" icon="cash-outline" route={FREIGHT_ROUTES.earnings} />
+          <QuickAction title="Analytics" icon="bar-chart-outline" route={FREIGHT_ROUTES.analytics} />
+          <QuickAction title="Performance" icon="speedometer-outline" route={FREIGHT_ROUTES.performance} />
+          <QuickAction title="Documents" icon="folder-open-outline" route={FREIGHT_ROUTES.documents} />
+          <QuickAction title="Subscription" icon="card-outline" route={FREIGHT_ROUTES.subscription} />
+          <QuickAction title="AI Brokerage" icon="sparkles-outline" route={FREIGHT_ROUTES.aiBrokerage} />
+          <QuickAction title="Navigation" icon="navigate-circle-outline" route={FREIGHT_ROUTES.navigationAssistant} />
+          <QuickAction title="Route Updates" icon="git-branch-outline" route={FREIGHT_ROUTES.routeUpdates} />
+          <QuickAction title="Settings" icon="settings-outline" route={FREIGHT_ROUTES.settings} />
+          <QuickAction title="Support" icon="headset-outline" route={FREIGHT_ROUTES.support} />
+          <QuickAction title="Help" icon="help-circle-outline" route={FREIGHT_ROUTES.help} />
         </View>
 
         <View style={styles.sectionHeader}>
@@ -755,13 +797,13 @@ export default function FreightDashboard() {
   );
 }
 
-function MetricCard({ icon, label, value }: any) {
+function MetricCard({ icon, label, value, route }: any) {
   return (
-    <View style={styles.statCard}>
+    <TouchableOpacity style={styles.statCard} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -775,9 +817,9 @@ function DetailBox({ icon, label, value }: any) {
   );
 }
 
-function QuickAction({ title, icon, route }: any) {
+function QuickAction({ title, icon, route }: { title: string; icon: keyof typeof Ionicons.glyphMap; route: FreightRoute }) {
   return (
-    <TouchableOpacity style={styles.quickCard} onPress={() => router.push(route as any)}>
+    <TouchableOpacity style={styles.quickCard} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={23} color={COLORS.red} />
       <Text style={styles.quickCardText}>{title}</Text>
     </TouchableOpacity>
@@ -785,10 +827,7 @@ function QuickAction({ title, icon, route }: any) {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -796,22 +835,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  centerText: {
-    color: COLORS.muted,
-    marginTop: 12,
-    fontWeight: "800",
-  },
+  centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
   hero: {
     backgroundColor: COLORS.black,
     paddingTop: 28,
     paddingBottom: 30,
     paddingHorizontal: 20,
   },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
+  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
   heroIcon: {
     width: 58,
     height: 58,
@@ -828,18 +859,8 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
   },
-  heroTitle: {
-    color: "#FFFFFF",
-    fontSize: 32,
-    fontWeight: "900",
-    marginBottom: 10,
-  },
-  heroSubtitle: {
-    color: "#D1D5DB",
-    lineHeight: 23,
-    fontSize: 15,
-    fontWeight: "700",
-  },
+  heroTitle: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
+  heroSubtitle: { color: "#D1D5DB", lineHeight: 23, fontSize: 15, fontWeight: "700" },
   carrierRibbon: {
     backgroundColor: "#111827",
     borderWidth: 1,
@@ -848,28 +869,10 @@ const styles = StyleSheet.create({
     padding: 14,
     marginTop: 18,
   },
-  carrierLabel: {
-    color: "#FCA5A5",
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  carrierName: {
-    color: "#FFFFFF",
-    fontSize: 19,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-  carrierSub: {
-    color: "#D1D5DB",
-    fontWeight: "700",
-    marginTop: 4,
-  },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
+  carrierLabel: { color: "#FCA5A5", fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
+  carrierName: { color: "#FFFFFF", fontSize: 19, fontWeight: "900", marginTop: 4 },
+  carrierSub: { color: "#D1D5DB", fontWeight: "700", marginTop: 4 },
+  navRow: { flexDirection: "row", gap: 10, padding: 18 },
   navButton: {
     flex: 1,
     backgroundColor: COLORS.red,
@@ -892,20 +895,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
-  metricsRow: {
-    flexDirection: "row",
-    gap: 10,
-    paddingHorizontal: 18,
-    marginBottom: 14,
-  },
+  navText: { color: "#FFFFFF", fontWeight: "900" },
+  navTextOutline: { color: COLORS.red, fontWeight: "900" },
+  metricsRow: { flexDirection: "row", gap: 10, paddingHorizontal: 18, marginBottom: 14 },
   statCard: {
     flex: 1,
     backgroundColor: COLORS.card,
@@ -915,12 +907,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  statValue: {
-    fontSize: 28,
-    fontWeight: "900",
-    color: COLORS.black,
-    marginTop: 8,
-  },
+  statValue: { fontSize: 28, fontWeight: "900", color: COLORS.black, marginTop: 8 },
   statLabel: {
     color: COLORS.muted,
     fontWeight: "800",
@@ -939,23 +926,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  revenueLabel: {
-    color: "#FFE4E6",
-    fontWeight: "900",
-    fontSize: 12,
-    textTransform: "uppercase",
-  },
-  revenueValue: {
-    color: "#FFFFFF",
-    fontSize: 31,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-  revenueSub: {
-    color: "#FFE4E6",
-    fontWeight: "800",
-    marginTop: 4,
-  },
+  revenueLabel: { color: "#FFE4E6", fontWeight: "900", fontSize: 12, textTransform: "uppercase" },
+  revenueValue: { color: "#FFFFFF", fontSize: 31, fontWeight: "900", marginTop: 4 },
+  revenueSub: { color: "#FFE4E6", fontWeight: "800", marginTop: 4 },
   boardButton: {
     backgroundColor: COLORS.black,
     paddingHorizontal: 14,
@@ -965,10 +938,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7,
   },
-  boardButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  boardButtonText: { color: "#FFFFFF", fontWeight: "900" },
   quickGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -986,10 +956,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     gap: 8,
   },
-  quickCardText: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
+  quickCardText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -997,11 +964,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     marginBottom: 12,
   },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
+  sectionTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text },
   refreshButton: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1013,13 +976,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  refreshText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
-  listContent: {
-    paddingBottom: 80,
-  },
+  refreshText: { color: COLORS.red, fontWeight: "900" },
+  listContent: { paddingBottom: 80 },
   loadCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -1031,32 +989,11 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: COLORS.red,
   },
-  cardTopRow: {
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "space-between",
-    marginBottom: 14,
-  },
-  routeColumn: {
-    flex: 1,
-  },
-  routeText: {
-    color: COLORS.text,
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  routeMiddle: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginVertical: 4,
-  },
-  routeLine: {
-    width: 2,
-    height: 10,
-    backgroundColor: COLORS.border,
-    marginLeft: 8,
-  },
+  cardTopRow: { flexDirection: "row", gap: 12, justifyContent: "space-between", marginBottom: 14 },
+  routeColumn: { flex: 1 },
+  routeText: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  routeMiddle: { flexDirection: "row", alignItems: "center", gap: 6, marginVertical: 4 },
+  routeLine: { width: 2, height: 10, backgroundColor: COLORS.border, marginLeft: 8 },
   statusBadge: {
     paddingHorizontal: 11,
     paddingVertical: 8,
@@ -1081,35 +1018,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  workflowLabel: {
-    color: COLORS.red,
-    fontWeight: "900",
-    fontSize: 12,
-    textTransform: "uppercase",
-  },
-  workflowText: {
-    color: COLORS.text,
-    marginTop: 5,
-    fontWeight: "700",
-    lineHeight: 20,
-  },
-  loadTitle: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: "900",
-    marginBottom: 4,
-  },
-  commodity: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    marginBottom: 12,
-  },
-  detailGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginTop: 4,
-  },
+  workflowLabel: { color: COLORS.red, fontWeight: "900", fontSize: 12, textTransform: "uppercase" },
+  workflowText: { color: COLORS.text, marginTop: 5, fontWeight: "700", lineHeight: 20 },
+  loadTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginBottom: 4 },
+  commodity: { color: COLORS.muted, fontWeight: "800", marginBottom: 12 },
+  detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 4 },
   detailBox: {
     width: "48%",
     backgroundColor: COLORS.surface,
@@ -1126,11 +1039,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     textTransform: "uppercase",
   },
-  detailValue: {
-    color: COLORS.text,
-    fontWeight: "800",
-    lineHeight: 20,
-  },
+  detailValue: { color: COLORS.text, fontWeight: "800", lineHeight: 20 },
   payoutRow: {
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
@@ -1141,27 +1050,10 @@ const styles = StyleSheet.create({
     gap: 12,
     alignItems: "center",
   },
-  payoutLabel: {
-    color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  payoutAmount: {
-    color: COLORS.red,
-    fontSize: 30,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-  mileText: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    marginTop: 2,
-  },
-  actionStack: {
-    gap: 8,
-    minWidth: 145,
-  },
+  payoutLabel: { color: COLORS.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
+  payoutAmount: { color: COLORS.red, fontSize: 30, fontWeight: "900", marginTop: 4 },
+  mileText: { color: COLORS.muted, fontWeight: "800", marginTop: 2 },
+  actionStack: { gap: 8, minWidth: 145 },
   primaryAction: {
     backgroundColor: COLORS.red,
     paddingHorizontal: 14,
@@ -1202,10 +1094,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  primaryActionText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  primaryActionText: { color: "#FFFFFF", fontWeight: "900" },
   trackAction: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -1218,10 +1107,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  trackActionText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
+  trackActionText: { color: COLORS.red, fontWeight: "900" },
   completedBadge: {
     backgroundColor: COLORS.green,
     paddingHorizontal: 14,
@@ -1232,10 +1118,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  completedText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  completedText: { color: "#FFFFFF", fontWeight: "900" },
   emptyCard: {
     marginHorizontal: 18,
     backgroundColor: COLORS.card,
@@ -1245,12 +1128,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  emptyTitle: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: "900",
-    marginTop: 10,
-  },
+  emptyTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginTop: 10 },
   emptyText: {
     color: COLORS.muted,
     fontWeight: "700",

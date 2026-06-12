@@ -19,6 +19,22 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  myLoads: "/freight/my-loads",
+  liveLoads: "/freight/live-loads",
+  profile: "/freight/profile",
+  settings: "/freight/settings",
+  connectBank: "/freight/connect-bank",
+  subscription: "/freight/subscription",
+  support: "/freight/support",
+  login: "/freight/login",
+  register: "/freight/register",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+
 const COLORS = {
   bg: "#F4F5F7",
   card: "#FFFFFF",
@@ -75,6 +91,10 @@ function miles(load: FreightLoad) {
   return Number(load.distance_miles || load.miles || 0);
 }
 
+function goTo(route: FreightRoute) {
+  router.push(route as any);
+}
+
 export default function FreightAnalyticsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -103,6 +123,42 @@ export default function FreightAnalyticsScreen() {
     }
   }
 
+  async function persistCarrier(nextCarrier: any) {
+    const normalizedCarrier = {
+      ...nextCarrier,
+      id: nextCarrier.id || nextCarrier.freightId,
+      freightId: nextCarrier.freightId || nextCarrier.id,
+      role: "freight",
+      email: normalize(nextCarrier.email),
+      companyName:
+        nextCarrier.companyName ||
+        nextCarrier.businessName ||
+        nextCarrier.company_name ||
+        nextCarrier.business_name ||
+        "Freight Connect Carrier",
+      businessName:
+        nextCarrier.businessName ||
+        nextCarrier.companyName ||
+        nextCarrier.business_name ||
+        nextCarrier.company_name ||
+        "Freight Connect Carrier",
+      stripeAccountId:
+        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
+    };
+
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
+
+    setCarrier(normalizedCarrier);
+    return normalizedCarrier;
+  }
+
   async function loadAnalytics() {
     try {
       setLoading(true);
@@ -111,35 +167,72 @@ export default function FreightAnalyticsScreen() {
       const { data: authData } = await supabase.auth.getUser();
       const authUser = authData?.user;
 
-      const carrierId = stored?.id || stored?.freightId || authUser?.id || "";
       const email = normalize(stored?.email || authUser?.email || "");
 
-      if (!carrierId && !email) {
-        router.replace("/freight/login" as any);
+      if (!email) {
+        router.replace(FREIGHT_ROUTES.login as any);
+        return;
+      }
+
+      const { data: dbCarrier, error: carrierError } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (carrierError) {
+        console.log("Freight analytics profile error:", carrierError.message);
+      }
+
+      if (!dbCarrier) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "No freight profile was found. Please complete freight registration first."
+        );
+        router.replace(FREIGHT_ROUTES.register as any);
         return;
       }
 
       const mergedCarrier = {
         ...(stored || {}),
-        id: stored?.id || stored?.freightId || authUser?.id || "",
-        freightId: stored?.freightId || stored?.id || authUser?.id || "",
-        email,
+        ...(dbCarrier || {}),
+        id: dbCarrier.id,
+        freightId: dbCarrier.id,
+        email: normalize(dbCarrier.email || email),
         role: "freight",
         companyName:
+          dbCarrier.company_name ||
+          dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
           stored?.contactName ||
           "Freight Connect Carrier",
+        businessName:
+          dbCarrier.business_name ||
+          dbCarrier.company_name ||
+          stored?.businessName ||
+          stored?.companyName ||
+          "Freight Connect Carrier",
+        stripeAccountId:
+          dbCarrier.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
+        stripe_account_id:
+          dbCarrier.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
       };
 
-      setCarrier(mergedCarrier);
+      await persistCarrier(mergedCarrier);
 
-      const id = mergedCarrier.id || mergedCarrier.freightId;
+      const carrierId = mergedCarrier.id;
 
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
-        .or(`carrier_id.eq.${id},driver_id.eq.${id},accepted_by.eq.${id}`)
+        .or(`carrier_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`)
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -240,17 +333,24 @@ export default function FreightAnalyticsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-          <Text style={styles.title}>Freight Analytics</Text>
-          <Text style={styles.subtitle}>
-            Track carrier performance, completed value, live load value, mileage, and freight mix.
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
+            <Text style={styles.title}>Freight Analytics</Text>
+            <Text style={styles.subtitle}>
+              Track carrier performance, completed value, live load value, mileage, and freight mix.
+            </Text>
+          </View>
+
+          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+            <Ionicons name="analytics-outline" size={34} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.carrierCard}>
           <View style={styles.avatar}>
             <Ionicons name="analytics-outline" size={28} color="#FFFFFF" />
           </View>
+
           <View style={{ flex: 1 }}>
             <Text style={styles.carrierName}>
               {carrier?.companyName || "Freight Connect Carrier"}
@@ -279,8 +379,14 @@ export default function FreightAnalyticsScreen() {
             subtitle="Operational health for your freight carrier account."
           />
 
-          <InfoRow label="Completion Rate" value={`${analytics.total ? Math.round((analytics.completed / analytics.total) * 100) : 0}%`} />
-          <InfoRow label="Active Load Share" value={`${analytics.total ? Math.round((analytics.active / analytics.total) * 100) : 0}%`} />
+          <InfoRow
+            label="Completion Rate"
+            value={`${analytics.total ? Math.round((analytics.completed / analytics.total) * 100) : 0}%`}
+          />
+          <InfoRow
+            label="Active Load Share"
+            value={`${analytics.total ? Math.round((analytics.active / analytics.total) * 100) : 0}%`}
+          />
           <InfoRow label="Refrigerated Loads" value={String(analytics.refrigerated)} />
           <InfoRow label="Livestock Loads" value={String(analytics.livestock)} />
         </View>
@@ -307,17 +413,29 @@ export default function FreightAnalyticsScreen() {
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="grid-outline" label="Dashboard" route="/freight/dashboard" />
-          <QuickLink icon="list-outline" label="Load Board" route="/freight/board" />
-          <QuickLink icon="briefcase-outline" label="My Loads" route="/freight/my-loads" />
-          <QuickLink icon="pulse-outline" label="Live Loads" route="/freight/live-loads" />
+          <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
+          <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
+          <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
+          <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+          <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
+          <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
+          <QuickLink icon="card-outline" label="Subscription" route={FREIGHT_ROUTES.subscription} />
+          <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function SectionHeader({ icon, title, subtitle }: any) {
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+}) {
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionIcon}>
@@ -350,9 +468,17 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function QuickLink({ icon, label, route }: any) {
+function QuickLink({
+  icon,
+  label,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  route: FreightRoute;
+}) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => router.push(route as any)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickLinkText}>{label}</Text>
     </TouchableOpacity>
@@ -375,6 +501,17 @@ const styles = StyleSheet.create({
     paddingTop: 30,
     paddingHorizontal: 20,
     paddingBottom: 30,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
   },
   eyebrow: {
     color: "#FCA5A5",
@@ -514,5 +651,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickLinkText: { color: COLORS.text, fontWeight: "900" },
+  quickLinkText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
 });

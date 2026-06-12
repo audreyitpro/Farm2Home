@@ -10,6 +10,7 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -22,6 +23,22 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
+
+const FREIGHT_ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  liveLoads: "/freight/live-loads",
+  myLoads: "/freight/my-loads",
+  connectBank: "/freight/connect-bank",
+  subscription: "/freight/subscription",
+  profile: "/freight/profile",
+  settings: "/freight/settings",
+  support: "/freight/support",
+  help: "/freight/help",
+  liveRoute: "/freight/live-route",
+} as const;
+
+type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
 
 const COLORS = {
   bg: "#F4F5F7",
@@ -41,6 +58,10 @@ const COLORS = {
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
+}
+
+function goTo(route: FreightRoute) {
+  router.push(route as any);
 }
 
 export default function FreightProfile() {
@@ -63,6 +84,9 @@ export default function FreightProfile() {
   const [mcNumber, setMcNumber] = useState("");
   const [insuranceProvider, setInsuranceProvider] = useState("");
   const [insurancePolicyNumber, setInsurancePolicyNumber] = useState("");
+
+  const [licensedLivestock, setLicensedLivestock] = useState(false);
+  const [licensedRefrigeratedFood, setLicensedRefrigeratedFood] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -96,39 +120,35 @@ export default function FreightProfile() {
 
       const stored = await getStoredCarrier();
       const savedCarriers = await AsyncStorage.getItem("farm2homeFreightCarriers");
-      const carriers = savedCarriers ? JSON.parse(savedCarriers) : [];
-      const safeCarriers = Array.isArray(carriers) ? carriers : [];
+      const parsedCarriers = savedCarriers ? JSON.parse(savedCarriers) : [];
+      const safeCarriers = Array.isArray(parsedCarriers) ? parsedCarriers : [];
 
       const { data: authData } = await supabase.auth.getUser();
       const authUser = authData?.user;
 
-      const carrierId = stored?.id || stored?.freightId || authUser?.id || "";
       const carrierEmail = normalize(stored?.email || authUser?.email || "");
 
-      let dbCarrier: any = null;
-
-      if (carrierId) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("id", carrierId)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
-      }
-
-      if (!dbCarrier && carrierEmail) {
-        const result = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", carrierEmail)
-          .maybeSingle();
-
-        if (!result.error && result.data) dbCarrier = result.data;
-      }
-
-      if (!stored && !dbCarrier && safeCarriers.length === 0) {
+      if (!carrierEmail) {
         router.replace("/freight/login" as any);
+        return;
+      }
+
+      const { data: dbCarrier, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", carrierEmail)
+        .maybeSingle();
+
+      if (error) {
+        console.log("Load freight profile Supabase error:", error.message);
+      }
+
+      if (!dbCarrier) {
+        Alert.alert(
+          "Freight Profile Missing",
+          "No freight profile was found for this email. Please complete freight registration again."
+        );
+        router.replace("/freight/register" as any);
         return;
       }
 
@@ -136,66 +156,100 @@ export default function FreightProfile() {
 
       const mergedCarrier = {
         ...localCurrent,
-        ...(dbCarrier || {}),
-        id: dbCarrier?.id || localCurrent?.id || localCurrent?.freightId || authUser?.id || "",
-        freightId:
-          dbCarrier?.id || localCurrent?.freightId || localCurrent?.id || authUser?.id || "",
+        ...dbCarrier,
+        id: dbCarrier.id,
+        freightId: dbCarrier.id,
         role: "freight",
+
         companyName:
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
-          localCurrent?.companyName ||
-          localCurrent?.businessName ||
+          dbCarrier.company_name ||
+          dbCarrier.business_name ||
+          localCurrent.companyName ||
+          localCurrent.businessName ||
           "Freight Connect Carrier",
         businessName:
-          dbCarrier?.business_name ||
-          dbCarrier?.company_name ||
-          localCurrent?.businessName ||
-          localCurrent?.companyName ||
+          dbCarrier.business_name ||
+          dbCarrier.company_name ||
+          localCurrent.businessName ||
+          localCurrent.companyName ||
           "Freight Connect Carrier",
         contactName:
-          dbCarrier?.contact_name ||
-          dbCarrier?.name ||
-          localCurrent?.contactName ||
-          localCurrent?.ownerName ||
-          localCurrent?.fullName ||
+          dbCarrier.contact_name ||
+          dbCarrier.name ||
+          localCurrent.contactName ||
+          localCurrent.ownerName ||
+          localCurrent.fullName ||
           "",
-        username: dbCarrier?.username || localCurrent?.username || "",
-        email: normalize(dbCarrier?.email || localCurrent?.email || carrierEmail),
-        phone: dbCarrier?.phone || localCurrent?.phone || "",
-        mdotNumber: dbCarrier?.mdot_number || localCurrent?.mdotNumber || "",
-        mcNumber: dbCarrier?.mc_number || localCurrent?.mcNumber || "",
-        insuranceProvider:
-          dbCarrier?.insurance_provider || localCurrent?.insuranceProvider || "",
+        username: dbCarrier.username || localCurrent.username || "",
+        email: normalize(dbCarrier.email || carrierEmail),
+        phone: dbCarrier.phone || localCurrent.phone || "",
+
+        mdotNumber: dbCarrier.mdot_number || localCurrent.mdotNumber || "",
+        mcNumber: dbCarrier.mc_number || localCurrent.mcNumber || "",
+        insuranceProvider: dbCarrier.insurance_provider || localCurrent.insuranceProvider || "",
         insurancePolicyNumber:
-          dbCarrier?.insurance_policy_number ||
-          localCurrent?.insurancePolicyNumber ||
-          "",
-        licensedLivestock:
-          dbCarrier?.licensed_livestock ?? localCurrent?.licensedLivestock ?? false,
+          dbCarrier.insurance_policy_number || localCurrent.insurancePolicyNumber || "",
+
+        licensedLivestock: dbCarrier.licensed_livestock ?? localCurrent.licensedLivestock ?? false,
         licensedRefrigeratedFood:
-          dbCarrier?.licensed_refrigerated_food ??
-          localCurrent?.licensedRefrigeratedFood ??
+          dbCarrier.licensed_refrigerated_food ??
+          localCurrent.licensedRefrigeratedFood ??
           false,
-        membershipStatus:
-          dbCarrier?.membership_status || localCurrent?.membershipStatus || "Active",
+
+        membershipStatus: dbCarrier.membership_status || localCurrent.membershipStatus || "Active",
         subscriptionStatus:
-          dbCarrier?.subscription_status || localCurrent?.subscriptionStatus || "active",
+          dbCarrier.subscription_status || localCurrent.subscriptionStatus || "active",
+
         stripeCustomerId:
-          dbCarrier?.stripe_customer_id ||
-          localCurrent?.stripeCustomerId ||
-          localCurrent?.customerId ||
-          localCurrent?.freightStripeCustomerId ||
+          dbCarrier.stripe_customer_id ||
+          localCurrent.stripeCustomerId ||
+          localCurrent.customerId ||
           "",
         stripeSubscriptionId:
-          dbCarrier?.stripe_subscription_id ||
-          localCurrent?.stripeSubscriptionId ||
-          localCurrent?.subscriptionId ||
-          localCurrent?.freightSubscriptionId ||
+          dbCarrier.stripe_subscription_id ||
+          localCurrent.stripeSubscriptionId ||
+          localCurrent.subscriptionId ||
           "",
-        accountActive:
-          dbCarrier?.account_active ?? localCurrent?.accountActive ?? true,
-        password: localCurrent?.password || "",
+        stripeAccountId:
+          dbCarrier.stripe_account_id ||
+          localCurrent.stripeAccountId ||
+          localCurrent.stripe_account_id ||
+          "",
+        stripe_account_id:
+          dbCarrier.stripe_account_id ||
+          localCurrent.stripe_account_id ||
+          localCurrent.stripeAccountId ||
+          "",
+        stripeConnectStatus:
+          dbCarrier.stripe_connect_status ||
+          localCurrent.stripeConnectStatus ||
+          localCurrent.stripe_connect_status ||
+          "not_started",
+        stripe_connect_status:
+          dbCarrier.stripe_connect_status ||
+          localCurrent.stripe_connect_status ||
+          localCurrent.stripeConnectStatus ||
+          "not_started",
+        payoutsEnabled:
+          dbCarrier.payouts_enabled ??
+          dbCarrier.stripe_payouts_enabled ??
+          localCurrent.payoutsEnabled ??
+          localCurrent.payouts_enabled ??
+          false,
+        chargesEnabled:
+          dbCarrier.charges_enabled ??
+          dbCarrier.stripe_charges_enabled ??
+          localCurrent.chargesEnabled ??
+          localCurrent.charges_enabled ??
+          false,
+        onboardingComplete:
+          dbCarrier.stripe_onboarding_complete ??
+          localCurrent.onboardingComplete ??
+          localCurrent.stripe_onboarding_complete ??
+          false,
+
+        accountActive: dbCarrier.account_active ?? localCurrent.accountActive ?? true,
+        password: localCurrent.password || "",
       };
 
       setAllCarriers(safeCarriers);
@@ -210,6 +264,8 @@ export default function FreightProfile() {
       setMcNumber(mergedCarrier.mcNumber || "");
       setInsuranceProvider(mergedCarrier.insuranceProvider || "");
       setInsurancePolicyNumber(mergedCarrier.insurancePolicyNumber || "");
+      setLicensedLivestock(Boolean(mergedCarrier.licensedLivestock));
+      setLicensedRefrigeratedFood(Boolean(mergedCarrier.licensedRefrigeratedFood));
 
       await persistCarrier(mergedCarrier, false);
     } catch (error) {
@@ -222,15 +278,28 @@ export default function FreightProfile() {
 
   async function persistCarrier(updatedCarrier: any, saveToSupabase = true) {
     const now = new Date().toISOString();
+    const realId = updatedCarrier.id || updatedCarrier.freightId;
+
+    if (!realId) throw new Error("Missing freight profile ID.");
 
     const normalizedCarrier = {
       ...updatedCarrier,
-      id: updatedCarrier.id || updatedCarrier.freightId,
-      freightId: updatedCarrier.freightId || updatedCarrier.id,
+      id: realId,
+      freightId: realId,
       role: "freight",
       companyName: updatedCarrier.companyName || updatedCarrier.businessName,
       businessName: updatedCarrier.businessName || updatedCarrier.companyName,
       email: normalize(updatedCarrier.email),
+      stripeAccountId:
+        updatedCarrier.stripeAccountId ||
+        updatedCarrier.stripe_account_id ||
+        updatedCarrier.accountId ||
+        "",
+      stripe_account_id:
+        updatedCarrier.stripe_account_id ||
+        updatedCarrier.stripeAccountId ||
+        updatedCarrier.accountId ||
+        "",
       updatedAt: now,
     };
 
@@ -238,12 +307,10 @@ export default function FreightProfile() {
     const exists = existing.some((item) => item.id === normalizedCarrier.id);
 
     const updatedCarriers = exists
-      ? existing.map((item) =>
-          item.id === normalizedCarrier.id ? normalizedCarrier : item
-        )
+      ? existing.map((item) => (item.id === normalizedCarrier.id ? normalizedCarrier : item))
       : [...existing, normalizedCarrier];
 
-    if (saveToSupabase && normalizedCarrier.id) {
+    if (saveToSupabase) {
       const { error } = await supabase
         .from("freight_users")
         .update({
@@ -258,8 +325,15 @@ export default function FreightProfile() {
           mc_number: normalizedCarrier.mcNumber,
           insurance_provider: normalizedCarrier.insuranceProvider,
           insurance_policy_number: normalizedCarrier.insurancePolicyNumber,
+          licensed_livestock: Boolean(normalizedCarrier.licensedLivestock),
+          licensed_refrigerated_food: Boolean(normalizedCarrier.licensedRefrigeratedFood),
           membership_status: normalizedCarrier.membershipStatus,
           subscription_status: normalizedCarrier.subscriptionStatus,
+          stripe_account_id: normalizedCarrier.stripeAccountId || null,
+          stripe_connect_status: normalizedCarrier.stripeConnectStatus || "not_started",
+          payouts_enabled: Boolean(normalizedCarrier.payoutsEnabled),
+          charges_enabled: Boolean(normalizedCarrier.chargesEnabled),
+          stripe_onboarding_complete: Boolean(normalizedCarrier.onboardingComplete),
           account_active: normalizedCarrier.accountActive !== false,
           updated_at: now,
         })
@@ -268,19 +342,10 @@ export default function FreightProfile() {
       if (error) throw error;
     }
 
-    await AsyncStorage.setItem(
-      "farm2homeFreightCarriers",
-      JSON.stringify(updatedCarriers)
-    );
+    await AsyncStorage.setItem("farm2homeFreightCarriers", JSON.stringify(updatedCarriers));
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem(
-      "currentFreightCarrier",
-      JSON.stringify(normalizedCarrier)
-    );
-    await AsyncStorage.setItem(
-      "currentFreightUser",
-      JSON.stringify(normalizedCarrier)
-    );
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
     await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
     await AsyncStorage.setItem("userRole", "freight");
     await AsyncStorage.setItem("currentUserRole", "freight");
@@ -320,6 +385,8 @@ export default function FreightProfile() {
         mcNumber: mcNumber.trim(),
         insuranceProvider: insuranceProvider.trim(),
         insurancePolicyNumber: insurancePolicyNumber.trim(),
+        licensedLivestock,
+        licensedRefrigeratedFood,
         updatedAt: new Date().toISOString(),
       };
 
@@ -333,8 +400,6 @@ export default function FreightProfile() {
   }
 
   async function changePassword() {
-    if (!carrier) return;
-
     if (!newPassword.trim()) {
       Alert.alert("New Password Required", "Enter your new password.");
       return;
@@ -357,20 +422,7 @@ export default function FreightProfile() {
         password: newPassword,
       });
 
-      if (error && !carrier?.password) throw error;
-
-      if (carrier?.password && currentPassword && currentPassword !== carrier.password) {
-        Alert.alert("Incorrect Password", "Your current password is incorrect.");
-        return;
-      }
-
-      const updatedCarrier = {
-        ...carrier,
-        password: newPassword,
-        updatedAt: new Date().toISOString(),
-      };
-
-      await persistCarrier(updatedCarrier, false);
+      if (error) throw error;
 
       setCurrentPassword("");
       setNewPassword("");
@@ -403,51 +455,36 @@ export default function FreightProfile() {
       carrier?.freightStripeCustomerId;
 
     if (!stripeCustomerId) {
-      Alert.alert(
-        "Missing Stripe Customer",
-        "No Stripe customer ID was found for this freight account."
-      );
+      goTo(FREIGHT_ROUTES.subscription);
       return;
     }
 
     try {
       setBillingLoading(true);
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-customer-portal-session`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            customerId: stripeCustomerId,
-            role: "freight",
-            carrierId: carrier?.id || carrier?.freightId,
-            returnUrl:
-              Platform.OS === "web"
-                ? window.location.href
-                : "farm2home://freight/profile",
-          }),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/payments/create-customer-portal-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          customerId: stripeCustomerId,
+          role: "freight",
+          carrierId: carrier?.id || carrier?.freightId,
+          returnUrl: Platform.OS === "web" ? window.location.href : "farm2home://freight/profile",
+        }),
+      });
 
       const data = await response.json();
 
       if (!response.ok || data.error || !data.url) {
-        Alert.alert(
-          "Billing Error",
-          data.error || "Unable to open subscription portal."
-        );
+        Alert.alert("Billing Error", data.error || "Unable to open subscription portal.");
         return;
       }
 
       await openUrl(data.url);
     } catch (error: any) {
-      Alert.alert(
-        "Billing Error",
-        error?.message || "Unable to open subscription portal."
-      );
+      Alert.alert("Billing Error", error?.message || "Unable to open subscription portal.");
     } finally {
       setBillingLoading(false);
     }
@@ -461,10 +498,7 @@ export default function FreightProfile() {
       carrier?.freightSubscriptionId;
 
     if (!subscriptionId) {
-      Alert.alert(
-        "No Subscription",
-        "No active freight subscription ID was found."
-      );
+      Alert.alert("No Subscription", "No active freight subscription ID was found.");
       return;
     }
 
@@ -480,20 +514,17 @@ export default function FreightProfile() {
             try {
               setCancelLoading(true);
 
-              const response = await fetch(
-                `${API_BASE_URL}/payments/cancel-subscription`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify({
-                    subscriptionId,
-                    carrierId: carrier?.id || carrier?.freightId,
-                    role: "freight",
-                  }),
-                }
-              );
+              const response = await fetch(`${API_BASE_URL}/payments/cancel-subscription`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  subscriptionId,
+                  carrierId: carrier?.id || carrier?.freightId,
+                  role: "freight",
+                }),
+              });
 
               const data = await response.json();
 
@@ -511,13 +542,9 @@ export default function FreightProfile() {
               };
 
               await persistCarrier(updatedCarrier, true);
-
               Alert.alert("Canceled", "Freight subscription was canceled.");
             } catch (error: any) {
-              Alert.alert(
-                "Cancel Error",
-                error?.message || "Unable to cancel subscription."
-              );
+              Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
             } finally {
               setCancelLoading(false);
             }
@@ -556,6 +583,30 @@ export default function FreightProfile() {
     return COLORS.green;
   }
 
+  function stripeStatusText() {
+    if (carrier?.payoutsEnabled && carrier?.chargesEnabled && carrier?.onboardingComplete) {
+      return "Payout Ready";
+    }
+
+    if (carrier?.stripeAccountId || carrier?.stripe_account_id) {
+      return "Setup Incomplete";
+    }
+
+    return "Not Connected";
+  }
+
+  function stripeStatusColor() {
+    if (carrier?.payoutsEnabled && carrier?.chargesEnabled && carrier?.onboardingComplete) {
+      return COLORS.green;
+    }
+
+    if (carrier?.stripeAccountId || carrier?.stripe_account_id) {
+      return COLORS.amber;
+    }
+
+    return COLORS.red;
+  }
+
   function carrierInitials() {
     const value = companyName || contactName || "Freight Carrier";
     const parts = value.split(" ").filter(Boolean);
@@ -567,8 +618,8 @@ export default function FreightProfile() {
   function authorizedServices() {
     const services = [];
 
-    if (carrier?.licensedLivestock) services.push("Livestock Transport");
-    if (carrier?.licensedRefrigeratedFood) services.push("Refrigerated Fresh Food");
+    if (licensedLivestock) services.push("Livestock Transport");
+    if (licensedRefrigeratedFood) services.push("Refrigerated Fresh Food");
 
     return services.length > 0 ? services.join("\n") : "No services selected";
   }
@@ -596,10 +647,7 @@ export default function FreightProfile() {
             <Text style={styles.subtitle}>No freight carrier profile found.</Text>
           </View>
 
-          <TouchableOpacity
-            style={styles.redButton}
-            onPress={() => router.replace("/freight/login" as any)}
-          >
+          <TouchableOpacity style={styles.redButton} onPress={() => router.replace("/freight/login" as any)}>
             <Text style={styles.buttonText}>Go to Freight Login</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -611,10 +659,7 @@ export default function FreightProfile() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <KeyboardAvoidingView
-        style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView
           style={styles.container}
           contentContainerStyle={styles.content}
@@ -631,8 +676,7 @@ export default function FreightProfile() {
                 <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
                 <Text style={styles.title}>Freight Carrier Profile</Text>
                 <Text style={styles.subtitle}>
-                  Manage company details, carrier credentials, subscription,
-                  and freight access.
+                  Manage company details, carrier credentials, subscription, payout setup, and freight access.
                 </Text>
               </View>
             </View>
@@ -642,12 +686,7 @@ export default function FreightProfile() {
             <View style={styles.statusTop}>
               <View>
                 <Text style={styles.statusTitle}>Membership Status</Text>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: membershipColor() },
-                  ]}
-                >
+                <View style={[styles.statusBadge, { backgroundColor: membershipColor() }]}>
                   <Text style={styles.statusBadgeText}>{membershipStatus()}</Text>
                 </View>
               </View>
@@ -656,32 +695,42 @@ export default function FreightProfile() {
             </View>
 
             <Text style={styles.statusSmall}>
-              Freight subscription gives access to the freight board, available
-              loads, carrier tools, and billing features.
+              Freight subscription gives access to the freight board, available loads, carrier tools,
+              and billing features.
             </Text>
           </View>
 
+          <View style={styles.stripeCard}>
+            <View style={styles.statusTop}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.statusTitle}>Stripe Connect</Text>
+                <View style={[styles.statusBadge, { backgroundColor: stripeStatusColor() }]}>
+                  <Text style={styles.statusBadgeText}>{stripeStatusText()}</Text>
+                </View>
+              </View>
+
+              <Ionicons name="card-outline" size={34} color="#FFFFFF" />
+            </View>
+
+            <Text style={styles.statusSmall}>
+              Account ID: {carrier?.stripeAccountId || carrier?.stripe_account_id || "Not connected"}
+            </Text>
+
+            <TouchableOpacity style={styles.whiteButton} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
+              <Ionicons name="business-outline" size={18} color={COLORS.red} />
+              <Text style={styles.whiteButtonText}>Open Connect Bank</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.quickGrid}>
-            <QuickNav
-              icon="grid-outline"
-              label="Dashboard"
-              onPress={() => router.push("/freight/dashboard" as any)}
-            />
-            <QuickNav
-              icon="list-outline"
-              label="Board"
-              onPress={() => router.push("/freight/board" as any)}
-            />
-            <QuickNav
-              icon="map-outline"
-              label="Tracking"
-              onPress={() => router.push("/freight/live-route" as any)}
-            />
-            <QuickNav
-              icon="cash-outline"
-              label="Billing"
-              onPress={manageSubscription}
-            />
+            <QuickNav icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
+            <QuickNav icon="list-outline" label="Board" route={FREIGHT_ROUTES.board} />
+            <QuickNav icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
+            <QuickNav icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
+            <QuickNav icon="card-outline" label="Subscription" route={FREIGHT_ROUTES.subscription} />
+            <QuickNav icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
+            <QuickNav icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+            <QuickNav icon="help-circle-outline" label="Help" route={FREIGHT_ROUTES.help} />
           </View>
 
           <View style={styles.card}>
@@ -740,11 +789,7 @@ export default function FreightProfile() {
               keyboardType="phone-pad"
             />
 
-            <TouchableOpacity
-              style={[styles.redButtonInner, saving && styles.disabledButton]}
-              onPress={saveProfile}
-              disabled={saving}
-            >
+            <TouchableOpacity style={[styles.redButtonInner, saving && styles.disabledButton]} onPress={saveProfile} disabled={saving}>
               {saving ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
@@ -799,6 +844,18 @@ export default function FreightProfile() {
               placeholderTextColor="#94A3B8"
             />
 
+            <SwitchRow
+              label="Licensed Livestock Transport"
+              value={licensedLivestock}
+              onValueChange={setLicensedLivestock}
+            />
+
+            <SwitchRow
+              label="Licensed Refrigerated Fresh Food"
+              value={licensedRefrigeratedFood}
+              onValueChange={setLicensedRefrigeratedFood}
+            />
+
             <View style={styles.valueBox}>
               <Ionicons name="checkmark-circle-outline" size={20} color={COLORS.red} />
               <View style={{ flex: 1 }}>
@@ -807,11 +864,7 @@ export default function FreightProfile() {
               </View>
             </View>
 
-            <TouchableOpacity
-              style={[styles.redButtonInner, saving && styles.disabledButton]}
-              onPress={saveProfile}
-              disabled={saving}
-            >
+            <TouchableOpacity style={[styles.redButtonInner, saving && styles.disabledButton]} onPress={saveProfile} disabled={saving}>
               {saving ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
@@ -824,11 +877,7 @@ export default function FreightProfile() {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader
-              icon="key-outline"
-              title="Change Password"
-              subtitle="Update your freight account password."
-            />
+            <SectionHeader icon="key-outline" title="Change Password" subtitle="Update your freight account password." />
 
             <TextInput
               style={styles.input}
@@ -874,15 +923,10 @@ export default function FreightProfile() {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader
-              icon="card-outline"
-              title="Manage Subscription"
-              subtitle="Manage billing, payment method, or cancellation."
-            />
+            <SectionHeader icon="card-outline" title="Manage Subscription" subtitle="Manage billing, payment method, or cancellation." />
 
             <Text style={styles.helpText}>
-              Manage your freight membership, update your card, review billing,
-              or cancel your subscription.
+              Manage your freight membership, update your card, review billing, or cancel your subscription.
             </Text>
 
             <TouchableOpacity
@@ -916,18 +960,12 @@ export default function FreightProfile() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
-            style={styles.redButton}
-            onPress={() => router.push("/freight/board" as any)}
-          >
+          <TouchableOpacity style={styles.redButton} onPress={() => goTo(FREIGHT_ROUTES.board)}>
             <Ionicons name="list-outline" size={18} color="#FFFFFF" />
             <Text style={styles.buttonText}>Back to Freight Board</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.darkButton}
-            onPress={() => router.push("/freight/dashboard" as any)}
-          >
+          <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
             <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
             <Text style={styles.buttonText}>Freight Dashboard</Text>
           </TouchableOpacity>
@@ -972,36 +1010,47 @@ function SectionHeader({
 function QuickNav({
   icon,
   label,
-  onPress,
+  route,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
-  onPress: () => void;
+  route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.quickCard} onPress={onPress}>
+    <TouchableOpacity style={styles.quickCard} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickText}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
+function SwitchRow({
+  label,
+  value,
+  onValueChange,
+}: {
+  label: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+}) {
+  return (
+    <View style={styles.switchRow}>
+      <Text style={styles.switchLabel}>{label}</Text>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ false: "#CBD5E1", true: "#FCA5A5" }}
+        thumbColor={value ? COLORS.red : "#FFFFFF"}
+      />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  keyboard: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  content: {
-    paddingBottom: 90,
-  },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flex: 1, backgroundColor: COLORS.bg },
+  content: { paddingBottom: 90 },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -1009,22 +1058,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  centerText: {
-    color: COLORS.muted,
-    marginTop: 12,
-    fontWeight: "800",
-  },
+  centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
   hero: {
     backgroundColor: COLORS.black,
     paddingTop: 28,
     paddingHorizontal: 20,
     paddingBottom: 30,
   },
-  heroTop: {
-    flexDirection: "row",
-    gap: 14,
-    alignItems: "center",
-  },
+  heroTop: { flexDirection: "row", gap: 14, alignItems: "center" },
   avatar: {
     width: 66,
     height: 66,
@@ -1033,11 +1074,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: {
-    color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "900",
-  },
+  avatarText: { color: "#FFFFFF", fontSize: 22, fontWeight: "900" },
   kicker: {
     color: "#FCA5A5",
     fontSize: 12,
@@ -1045,18 +1082,8 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    marginTop: 6,
-  },
-  subtitle: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    lineHeight: 22,
-    marginTop: 8,
-  },
+  title: { fontSize: 32, fontWeight: "900", color: "#FFFFFF", marginTop: 6 },
+  subtitle: { color: "#CBD5E1", fontWeight: "700", lineHeight: 22, marginTop: 8 },
   statusCard: {
     backgroundColor: COLORS.red,
     borderRadius: 22,
@@ -1065,36 +1092,34 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 14,
   },
+  stripeCard: {
+    backgroundColor: COLORS.black,
+    borderRadius: 22,
+    padding: 18,
+    marginHorizontal: 18,
+    marginBottom: 14,
+  },
   statusTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 12,
     alignItems: "center",
   },
-  statusTitle: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    marginBottom: 8,
+  statusTitle: { fontSize: 20, fontWeight: "900", color: "#FFFFFF", marginBottom: 8 },
+  statusBadge: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  statusBadgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12, textTransform: "capitalize" },
+  statusSmall: { marginTop: 12, color: "#FFE4E6", fontWeight: "700", lineHeight: 20 },
+  whiteButton: {
+    backgroundColor: "#FFFFFF",
+    padding: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+    flexDirection: "row",
+    gap: 8,
   },
-  statusBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
-  statusBadgeText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 12,
-    textTransform: "capitalize",
-  },
-  statusSmall: {
-    marginTop: 12,
-    color: "#FFE4E6",
-    fontWeight: "700",
-    lineHeight: 20,
-  },
+  whiteButtonText: { color: COLORS.red, fontWeight: "900" },
   quickGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1112,10 +1137,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  quickText: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
+  quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
   card: {
     backgroundColor: COLORS.card,
     padding: 18,
@@ -1125,12 +1147,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 14,
-  },
+  sectionHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 14 },
   sectionIcon: {
     width: 40,
     height: 40,
@@ -1139,23 +1156,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sectionTitle: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  sectionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 3,
-  },
-  label: {
-    color: COLORS.text,
-    marginTop: 8,
-    marginBottom: 6,
-    fontWeight: "900",
-  },
+  sectionTitle: { fontSize: 21, fontWeight: "900", color: COLORS.text },
+  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
+  label: { color: COLORS.text, marginTop: 8, marginBottom: 6, fontWeight: "900" },
   input: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -1166,6 +1169,18 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     color: COLORS.text,
   },
+  switchRow: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    padding: 13,
+    marginTop: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  switchLabel: { color: COLORS.text, fontWeight: "900", flex: 1 },
   valueBox: {
     backgroundColor: COLORS.surface,
     borderRadius: 14,
@@ -1176,25 +1191,9 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 10,
   },
-  valueLabel: {
-    color: COLORS.red,
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  value: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: COLORS.text,
-    lineHeight: 22,
-    marginTop: 3,
-  },
-  helpText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 21,
-    marginBottom: 12,
-  },
+  valueLabel: { color: COLORS.red, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
+  value: { fontSize: 15, fontWeight: "800", color: COLORS.text, lineHeight: 22, marginTop: 3 },
+  helpText: { color: COLORS.muted, fontWeight: "700", lineHeight: 21, marginBottom: 12 },
   redButtonInner: {
     backgroundColor: COLORS.red,
     padding: 16,
@@ -1259,12 +1258,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: {
-    opacity: 0.65,
-  },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    textAlign: "center",
-  },
+  disabledButton: { opacity: 0.65 },
+  buttonText: { color: "#FFFFFF", fontWeight: "900", textAlign: "center" },
 });
