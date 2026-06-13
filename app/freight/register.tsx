@@ -30,13 +30,10 @@ const COLORS = {
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
-  redDark: "#9F1117",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
-  green: "#16A34A",
   amber: "#D97706",
-  slate: "#64748B",
 };
 
 const SECURITY_QUESTIONS = [
@@ -58,6 +55,16 @@ function normalize(value: string) {
 
 function normalizeAnswer(value: string) {
   return String(value || "").trim().toLowerCase();
+}
+
+async function saveFreightSession(carrier: any) {
+  await AsyncStorage.setItem("pendingFreightCarrier", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentFreight", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentFreightUser", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentUser", JSON.stringify(carrier));
+  await AsyncStorage.setItem("userRole", "freight");
+  await AsyncStorage.setItem("currentUserRole", "freight");
 }
 
 export default function FreightRegister() {
@@ -87,7 +94,6 @@ export default function FreightRegister() {
 
   const [mdotNumber, setMdotNumber] = useState("");
   const [mcNumber, setMcNumber] = useState("");
-
   const [insuranceProvider, setInsuranceProvider] = useState("");
   const [insurancePolicyNumber, setInsurancePolicyNumber] = useState("");
 
@@ -125,158 +131,65 @@ export default function FreightRegister() {
       .from("freight_users")
       .select("id,email,username")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-      .maybeSingle();
+      .limit(1);
 
     if (error) {
-      console.log("Freight duplicate check error:", error.message);
+      console.log("Freight duplicate check skipped:", error.message);
       return false;
     }
 
-    if (data) {
-      Alert.alert(
-        "Account Exists",
-        "A freight account already exists with this email or username."
-      );
+    if (Array.isArray(data) && data.length > 0) {
+      Alert.alert("Account Exists", "A freight account already exists. Please login instead.");
       return true;
     }
 
     return false;
   }
 
-  async function saveFreightSession(carrier: any) {
-    await AsyncStorage.setItem("pendingFreightCarrier", JSON.stringify(carrier));
-    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
-    await AsyncStorage.setItem("currentFreight", JSON.stringify(carrier));
-    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(carrier));
-    await AsyncStorage.setItem("farm2homeCurrentFreight", JSON.stringify(carrier));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(carrier));
-    await AsyncStorage.setItem("userRole", "freight");
-    await AsyncStorage.setItem("currentUserRole", "freight");
-  }
+  async function createStripeCheckout(payload: any) {
+    const endpoints = [
+      `${API_BASE_URL}/payments/create-freight-subscription-checkout`,
+      `${API_BASE_URL}/payments/create-subscription-checkout`,
+      `${API_BASE_URL}/api/payments/create-subscription-checkout`,
+    ];
 
-  async function upsertProfile(payload: any) {
-    const { data: existingProfile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", payload.id)
-      .maybeSingle();
+    let lastError = "";
 
-    if (existingProfile?.id) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({
-          auth_user_id: payload.id,
-          role: "freight",
-          full_name: payload.contact_name,
-          name: payload.contact_name,
-          email: payload.email,
-          phone: payload.phone,
-          company_name: payload.company_name,
-          account_active: true,
-          updated_at: payload.updated_at,
-        })
-        .eq("id", payload.id)
-        .select("*")
-        .single();
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
-      if (error) throw error;
-      return data;
+        const text = await response.text();
+
+        let data: any = {};
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          data = {};
+        }
+
+        const checkoutUrl =
+          data.url ||
+          data.checkoutUrl ||
+          data.checkout_url ||
+          data.sessionUrl ||
+          data.session_url;
+
+        if (response.ok && checkoutUrl) {
+          return { ...data, url: checkoutUrl };
+        }
+
+        lastError = data.error || data.message || `Checkout failed at ${endpoint}`;
+      } catch (error: any) {
+        lastError = error?.message || `Checkout failed at ${endpoint}`;
+      }
     }
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .insert({
-        id: payload.id,
-        auth_user_id: payload.id,
-        role: "freight",
-        full_name: payload.contact_name,
-        name: payload.contact_name,
-        email: payload.email,
-        phone: payload.phone,
-        company_name: payload.company_name,
-        account_active: true,
-        created_at: payload.created_at,
-        updated_at: payload.updated_at,
-      })
-      .select("*")
-      .single();
-
-    if (error) throw error;
-    return data;
-  }
-
-  async function createAdminVerificationRecord(carrier: any) {
-    const adminRecord = {
-      id: carrier.id,
-      carrier_id: carrier.id,
-      freight_id: carrier.id,
-      profile_id: carrier.profile_id,
-      account_type: "FREIGHT_CARRIER",
-
-      company_name: carrier.company_name,
-      business_name: carrier.business_name,
-      contact_name: carrier.contact_name,
-      owner_name: carrier.owner_name,
-      email: carrier.email,
-      phone: carrier.phone,
-      username: carrier.username,
-
-      business_address: carrier.business_address,
-      city: carrier.city,
-      state: carrier.state,
-      zip_code: carrier.zip_code,
-
-      mdot_number: carrier.mdot_number,
-      mc_number: carrier.mc_number,
-      dot_number: carrier.dot_number,
-
-      insurance_provider: carrier.insurance_provider,
-      insurance_policy_number: carrier.insurance_policy_number,
-      authority_active: carrier.authority_active,
-      insurance_active: carrier.insurance_active,
-      licensed_livestock: carrier.licensed_livestock,
-      licensed_refrigerated_food: carrier.licensed_refrigerated_food,
-
-      documents: [],
-      status: "PENDING_VERIFICATION",
-      compliance_status: "PENDING_VERIFICATION",
-      admin_review_status: "pending",
-      review_decision: "pending",
-
-      approved: false,
-      rejected: false,
-      reviewed: false,
-      needs_more_info: false,
-      account_active: true,
-      store_unlocked: false,
-
-      membership_status: "not_started",
-      subscription_status: "not_started",
-      freight_membership_paid: false,
-
-      created_at: carrier.created_at,
-      updated_at: carrier.updated_at,
-    };
-
-    const { error } = await supabase
-      .from("admin_verifications")
-      .upsert(adminRecord, { onConflict: "id" });
-
-    if (error) {
-      console.log("Freight admin verification insert error:", error.message);
-    }
-  }
-
-  async function notifyAdminFreightVerification(carrier: any) {
-    try {
-      await fetch(`${API_BASE_URL}/notify/freight-verification`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(carrier),
-      });
-    } catch (error) {
-      console.log("Freight admin email error:", error);
-    }
+    throw new Error(lastError || "Unable to start Stripe checkout.");
   }
 
   async function openCheckoutUrl(url: string) {
@@ -362,18 +275,12 @@ export default function FreightRegister() {
     }
 
     if (!authorityActive || !insuranceActive) {
-      Alert.alert(
-        "Verification Required",
-        "Please confirm active operating authority and active insurance."
-      );
+      Alert.alert("Verification Required", "Confirm active authority and insurance.");
       return;
     }
 
     if (!licensedLivestock && !licensedRefrigeratedFood) {
-      Alert.alert(
-        "License Required",
-        "Select livestock transport, refrigerated fresh food transport, or both."
-      );
+      Alert.alert("License Required", "Select livestock, refrigerated food, or both.");
       return;
     }
 
@@ -405,7 +312,7 @@ export default function FreightRegister() {
       const carrierId = authData?.user?.id;
 
       if (!carrierId) {
-        Alert.alert("Signup Error", "Unable to create freight account. Please try again.");
+        Alert.alert("Signup Error", "Unable to create freight account.");
         return;
       }
 
@@ -432,6 +339,7 @@ export default function FreightRegister() {
         stripe_account_id: null,
         stripe_customer_id: null,
         stripe_subscription_id: null,
+        stripe_checkout_session_id: null,
         stripe_connect_status: "not_started",
         payouts_enabled: false,
         charges_enabled: false,
@@ -466,8 +374,9 @@ export default function FreightRegister() {
         approved: false,
         verification_status: "PENDING_VERIFICATION",
         compliance_status: "PENDING_VERIFICATION",
-        membership_status: "not_started",
-        subscription_status: "not_started",
+        admin_review_status: "pending",
+        membership_status: "pending_payment",
+        subscription_status: "pending_payment",
         freight_membership_paid: false,
 
         push_notifications: true,
@@ -481,7 +390,6 @@ export default function FreightRegister() {
         show_refrigerated_loads: true,
         show_livestock_loads: true,
         privacy_mode: false,
-
         notifications_enabled: true,
         expo_push_token: "",
 
@@ -489,7 +397,22 @@ export default function FreightRegister() {
         updated_at: now,
       };
 
-      await upsertProfile(freightPayload);
+      await supabase.from("profiles").upsert(
+        {
+          id: carrierId,
+          auth_user_id: carrierId,
+          role: "freight",
+          full_name: cleanContactName,
+          name: cleanContactName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          company_name: cleanCompanyName,
+          account_active: true,
+          created_at: now,
+          updated_at: now,
+        },
+        { onConflict: "id" }
+      );
 
       const { data: freightUser, error: freightUserError } = await supabase
         .from("freight_users")
@@ -502,13 +425,57 @@ export default function FreightRegister() {
         return;
       }
 
+      await supabase.from("admin_verifications").upsert(
+        {
+          id: carrierId,
+          carrier_id: carrierId,
+          freight_id: carrierId,
+          profile_id: carrierId,
+          account_type: "FREIGHT_CARRIER",
+          company_name: cleanCompanyName,
+          business_name: cleanCompanyName,
+          contact_name: cleanContactName,
+          owner_name: cleanContactName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          username: cleanUsername,
+          business_address: cleanBusinessAddress,
+          city: cleanCity,
+          state: cleanState,
+          zip_code: cleanZipCode,
+          mdot_number: cleanMdotNumber,
+          dot_number: cleanMdotNumber,
+          mc_number: cleanMcNumber,
+          insurance_provider: cleanInsuranceProvider,
+          insurance_policy_number: cleanInsurancePolicyNumber,
+          authority_active: authorityActive,
+          insurance_active: insuranceActive,
+          licensed_livestock: licensedLivestock,
+          licensed_refrigerated_food: licensedRefrigeratedFood,
+          status: "PENDING_VERIFICATION",
+          compliance_status: "PENDING_VERIFICATION",
+          admin_review_status: "pending",
+          review_decision: "pending",
+          approved: false,
+          rejected: false,
+          reviewed: false,
+          needs_more_info: false,
+          account_active: true,
+          membership_status: "pending_payment",
+          subscription_status: "pending_payment",
+          freight_membership_paid: false,
+          created_at: now,
+          updated_at: now,
+        },
+        { onConflict: "id" }
+      );
+
       const localCarrier = {
         id: carrierId,
         freightId: carrierId,
         profileId: carrierId,
         authUserId: carrierId,
-        role: "freight" as const,
-
+        role: "freight",
         companyName: cleanCompanyName,
         businessName: cleanCompanyName,
         contactName: cleanContactName,
@@ -517,120 +484,93 @@ export default function FreightRegister() {
         email: cleanEmail,
         phone: cleanPhone,
         username: cleanUsername,
-
         accountActive: true,
-
         stripeAccountId: "",
         stripeCustomerId: "",
         stripeSubscriptionId: "",
+        stripeCheckoutSessionId: "",
         stripeConnectStatus: "not_started",
         payoutsEnabled: false,
         chargesEnabled: false,
         onboardingComplete: false,
-
-        securityQuestion1,
-        securityAnswer1: normalizeAnswer(securityAnswer1),
-        securityQuestion2,
-        securityAnswer2: normalizeAnswer(securityAnswer2),
-        securityQuestion3,
-        securityAnswer3: normalizeAnswer(securityAnswer3),
-
-        serviceArea: cleanServiceArea,
-        businessAddress: cleanBusinessAddress,
-        city: cleanCity,
-        state: cleanState,
-        zipCode: cleanZipCode,
-
-        mdotNumber: cleanMdotNumber,
-        dotNumber: cleanMdotNumber,
-        mcNumber: cleanMcNumber,
-        insuranceProvider: cleanInsuranceProvider,
-        insurancePolicyNumber: cleanInsurancePolicyNumber,
-
-        authorityActive,
-        insuranceActive,
-        licensedLivestock,
-        licensedRefrigeratedFood,
-
-        approved: false,
         verificationStatus: "PENDING_VERIFICATION",
         complianceStatus: "PENDING_VERIFICATION",
-        membershipStatus: "not_started",
-        subscriptionStatus: "not_started",
+        membershipStatus: "pending_payment",
+        subscriptionStatus: "pending_payment",
         freightMembershipPaid: false,
-
         createdAt: now,
         updatedAt: now,
       };
 
       await saveFreightSession(localCarrier);
-      await createAdminVerificationRecord(freightUser);
-      await notifyAdminFreightVerification(localCarrier);
 
-      const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customerEmail: cleanEmail,
-          email: cleanEmail,
-          name: cleanContactName,
-          username: cleanUsername,
-          userId: carrierId,
-          freightId: carrierId,
-          companyName: cleanCompanyName,
-          businessName: cleanCompanyName,
-          planType: "freight",
-        }),
+      const checkoutData = await createStripeCheckout({
+        customerEmail: cleanEmail,
+        email: cleanEmail,
+        name: cleanContactName,
+        username: cleanUsername,
+        userId: carrierId,
+        freightId: carrierId,
+        profileId: carrierId,
+        companyName: cleanCompanyName,
+        businessName: cleanCompanyName,
+        role: "freight",
+        planType: "freight",
+        successUrl: `${APP_URL}/freight/subscription-success?freightId=${carrierId}`,
+        cancelUrl: `${APP_URL}/freight/register`,
       });
 
-      const text = await response.text();
+      const stripeCustomerId =
+        checkoutData.stripeCustomerId ??
+        checkoutData.customer_id ??
+        checkoutData.customer ??
+        checkoutData.customerId ??
+        null;
 
-      let data: any = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = {};
-      }
+      const stripeSessionId =
+        checkoutData.sessionId ??
+        checkoutData.session_id ??
+        checkoutData.id ??
+        null;
 
-      if (!response.ok || !data.url) {
-        Alert.alert(
-          "Account Saved",
-          data.error ||
-            data.message ||
-            "Your freight account was saved, but Stripe checkout did not open."
-        );
-        router.replace("/freight/login" as any);
-        return;
-      }
-
-      const checkoutCarrier = {
-        ...localCarrier,
-        stripeCustomerId: data.stripeCustomerId || data.customerId || "",
-        stripeCheckoutSessionId: data.id || data.sessionId || null,
-        membershipStatus: "pending_payment",
-        subscriptionStatus: "pending_payment",
-        updatedAt: new Date().toISOString(),
-      };
-
-      await saveFreightSession(checkoutCarrier);
+      const stripeCheckoutUrl =
+        checkoutData.url ??
+        checkoutData.checkoutUrl ??
+        checkoutData.checkout_url ??
+        checkoutData.sessionUrl ??
+        checkoutData.session_url ??
+        null;
 
       await supabase
         .from("freight_users")
         .update({
-          stripe_customer_id: data.stripeCustomerId || data.customerId || null,
+          stripe_customer_id: stripeCustomerId,
+          stripe_checkout_session_id: stripeSessionId,
           membership_status: "pending_payment",
           subscription_status: "pending_payment",
+          freight_membership_paid: false,
           updated_at: new Date().toISOString(),
         })
         .eq("id", carrierId);
 
-      await openCheckoutUrl(data.url);
+      await saveFreightSession({
+        ...localCarrier,
+        stripeCustomerId,
+        stripeCheckoutSessionId: stripeSessionId,
+        membershipStatus: "pending_payment",
+        subscriptionStatus: "pending_payment",
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (!stripeCheckoutUrl) {
+        Alert.alert("Stripe Error", "The backend did not return a Checkout URL.");
+        return;
+      }
+
+      await openCheckoutUrl(stripeCheckoutUrl);
     } catch (error: any) {
       console.log("FREIGHT REGISTER ERROR:", error);
-      Alert.alert(
-        "Registration Error",
-        error?.message || "Unable to complete freight registration."
-      );
+      Alert.alert("Registration Error", error?.message || "Unable to complete freight registration.");
     } finally {
       setLoading(false);
     }
@@ -658,12 +598,7 @@ export default function FreightRegister() {
                 onPress={() => setSelectedQuestion(question)}
                 activeOpacity={0.85}
               >
-                <Text
-                  style={[
-                    styles.questionChipText,
-                    active && styles.questionChipTextActive,
-                  ]}
-                >
+                <Text style={[styles.questionChipText, active && styles.questionChipTextActive]}>
                   {question}
                 </Text>
               </TouchableOpacity>
@@ -741,8 +676,7 @@ export default function FreightRegister() {
             </View>
 
             <Text style={styles.noticeText}>
-              Your account will be saved to Supabase immediately. Stripe customer,
-              subscription, and payout IDs will be permanently saved as each Stripe step is completed.
+              Your account is saved first, then Stripe checkout opens for the freight subscription.
             </Text>
           </View>
 
@@ -772,11 +706,7 @@ export default function FreightRegister() {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader
-              icon="lock-closed-outline"
-              title="Create Freight Login"
-              subtitle="Create credentials for the Freight Connect portal."
-            />
+            <SectionHeader icon="lock-closed-outline" title="Create Freight Login" />
 
             <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
             <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
@@ -784,11 +714,7 @@ export default function FreightRegister() {
           </View>
 
           <View style={styles.securityCard}>
-            <SectionHeader
-              icon="key-outline"
-              title="Security Questions"
-              subtitle="Choose 3 different questions for account verification."
-            />
+            <SectionHeader icon="key-outline" title="Security Questions" />
 
             {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
             {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
@@ -796,7 +722,7 @@ export default function FreightRegister() {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader icon="location-outline" title="Business Address" subtitle="Carrier business location for verification." />
+            <SectionHeader icon="location-outline" title="Business Address" />
 
             <TextInput style={styles.input} placeholder="Business Address" placeholderTextColor="#94A3B8" value={businessAddress} onChangeText={setBusinessAddress} />
             <TextInput style={styles.input} placeholder="City" placeholderTextColor="#94A3B8" value={city} onChangeText={setCity} />
@@ -805,7 +731,7 @@ export default function FreightRegister() {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader icon="shield-checkmark-outline" title="Authority & Insurance" subtitle="Operating authority and policy verification." />
+            <SectionHeader icon="shield-checkmark-outline" title="Authority & Insurance" />
 
             <TextInput style={styles.input} placeholder="MDOT Number" placeholderTextColor="#94A3B8" value={mdotNumber} onChangeText={setMdotNumber} />
             <TextInput style={styles.input} placeholder="MC Number" placeholderTextColor="#94A3B8" value={mcNumber} onChangeText={setMcNumber} />
@@ -824,7 +750,7 @@ export default function FreightRegister() {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader icon="cube-outline" title="Transport Authorization" subtitle="Select the freight services your carrier can provide." />
+            <SectionHeader icon="cube-outline" title="Transport Authorization" />
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Licensed to Move Livestock</Text>
