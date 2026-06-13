@@ -1,6 +1,6 @@
 // app/freight/register.tsx
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,12 +17,14 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL, APP_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
+
+const STRIPE_BUY_BUTTON_ID = "buy_btn_1Thv9XCfiUZdoSmRqMvxAPee";
+const STRIPE_PUBLISHABLE_KEY =
+  "pk_live_51TTl33CfiUZdoSmRb0FzebTFOelowqxf1RikjB8mH7hBCMASmORBT9F8hud7VFL7suy59d8XIOBRGHUGMiXYkjCb00RAs1GpA9";
 
 const COLORS = {
   bg: "#F4F5F7",
@@ -69,8 +71,11 @@ async function saveFreightSession(carrier: any) {
 
 export default function FreightRegister() {
   const [saving, setSaving] = useState(false);
-  const [subscribing, setSubscribing] = useState(false);
   const [savedCarrierId, setSavedCarrierId] = useState("");
+
+  const [freightId, setFreightId] = useState("");
+  const [stripeId, setStripeId] = useState("");
+  const [subscriptionId, setSubscriptionId] = useState("");
 
   const [companyName, setCompanyName] = useState("");
   const [contactName, setContactName] = useState("");
@@ -108,6 +113,21 @@ export default function FreightRegister() {
     () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+
+    const existing = document.querySelector(
+      'script[src="https://js.stripe.com/v3/buy-button.js"]'
+    );
+
+    if (existing) return;
+
+    const script = document.createElement("script");
+    script.src = "https://js.stripe.com/v3/buy-button.js";
+    script.async = true;
+    document.body.appendChild(script);
+  }, []);
 
   function validateForm() {
     if (!companyName.trim() || !contactName.trim() || !normalize(email) || !phone.trim()) {
@@ -181,7 +201,7 @@ export default function FreightRegister() {
   async function checkDuplicateFreight(cleanEmail: string, cleanUsername: string) {
     const { data, error } = await supabase
       .from("freight_users")
-      .select("id,email,username")
+      .select("id,freight_id,email,username,stripe_id,stripe_customer_id,stripe_subscription_id")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
       .limit(1);
 
@@ -193,7 +213,7 @@ export default function FreightRegister() {
     return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
 
-  async function buildAndSaveFreightPayload(carrierId: string) {
+  async function saveFreightUserRow(carrierId: string) {
     const now = new Date().toISOString();
 
     const cleanCompanyName = companyName.trim();
@@ -204,6 +224,7 @@ export default function FreightRegister() {
 
     const freightPayload = {
       id: carrierId,
+      freight_id: carrierId,
       profile_id: carrierId,
       auth_user_id: carrierId,
       role: "freight",
@@ -220,10 +241,10 @@ export default function FreightRegister() {
 
       account_active: true,
 
-      stripe_id: null,
+      stripe_id: stripeId || null,
       stripe_account_id: null,
-      stripe_customer_id: null,
-      stripe_subscription_id: null,
+      stripe_customer_id: stripeId || null,
+      stripe_subscription_id: subscriptionId || null,
       stripe_checkout_session_id: null,
       stripe_connect_status: "not_started",
       payouts_enabled: false,
@@ -261,9 +282,9 @@ export default function FreightRegister() {
       compliance_status: "PENDING_VERIFICATION",
       admin_review_status: "pending",
 
-      membership_status: "registration_saved",
-      subscription_status: "not_started",
-      freight_membership_paid: false,
+      membership_status: subscriptionId ? "active" : "registration_saved",
+      subscription_status: subscriptionId ? "active" : "not_started",
+      freight_membership_paid: Boolean(subscriptionId),
 
       push_notifications: true,
       new_load_alerts: true,
@@ -304,16 +325,52 @@ export default function FreightRegister() {
       console.log("PROFILE SAVE ERROR:", profileError.message);
     }
 
-    const { data, error } = await supabase
+    const { data: existingFreightUser, error: existingError } = await supabase
       .from("freight_users")
-      .upsert(freightPayload, { onConflict: "id" })
-      .select("*")
-      .single();
+      .select("id")
+      .eq("id", carrierId)
+      .maybeSingle();
 
-    if (error) {
-      console.log("FREIGHT USERS UPSERT ERROR:", error.message);
-      Alert.alert("Freight Save Error", error.message);
-      throw error;
+    if (existingError) {
+      console.log("FREIGHT LOOKUP ERROR:", existingError.message);
+      Alert.alert("Lookup Error", existingError.message);
+      throw existingError;
+    }
+
+    let savedFreightUser: any = null;
+    let saveError: any = null;
+
+    if (existingFreightUser?.id) {
+      const result = await supabase
+        .from("freight_users")
+        .update(freightPayload)
+        .eq("id", carrierId)
+        .select()
+        .single();
+
+      savedFreightUser = result.data;
+      saveError = result.error;
+    } else {
+      const result = await supabase
+        .from("freight_users")
+        .insert([freightPayload])
+        .select()
+        .single();
+
+      savedFreightUser = result.data;
+      saveError = result.error;
+    }
+
+    if (saveError) {
+      console.log("FREIGHT USERS SAVE ERROR:", saveError.message);
+      Alert.alert("Freight Save Error", saveError.message);
+      throw saveError;
+    }
+
+    console.log("FREIGHT SAVE VERIFIED:", savedFreightUser);
+
+    if (!savedFreightUser?.id) {
+      throw new Error("Freight registration did not save to freight_users.");
     }
 
     const verify = await supabase
@@ -328,10 +385,8 @@ export default function FreightRegister() {
       throw verify.error;
     }
 
-    console.log("FREIGHT SAVE VERIFIED:", verify.data);
-
     if (!verify.data?.id) {
-      throw new Error("Freight registration did not save to freight_users.");
+      throw new Error("Freight registration could not be verified in freight_users.");
     }
 
     await supabase.from("admin_verifications").upsert(
@@ -370,9 +425,9 @@ export default function FreightRegister() {
         reviewed: false,
         needs_more_info: false,
         account_active: true,
-        membership_status: "registration_saved",
-        subscription_status: "not_started",
-        freight_membership_paid: false,
+        membership_status: subscriptionId ? "active" : "registration_saved",
+        subscription_status: subscriptionId ? "active" : "not_started",
+        freight_membership_paid: Boolean(subscriptionId),
         created_at: now,
         updated_at: now,
       },
@@ -392,21 +447,26 @@ export default function FreightRegister() {
       phone: cleanPhone,
       username: cleanUsername,
       accountActive: true,
-      membershipStatus: "registration_saved",
-      subscriptionStatus: "not_started",
-      freightMembershipPaid: false,
+      stripeId: stripeId || "",
+      stripeCustomerId: stripeId || "",
+      stripeSubscriptionId: subscriptionId || "",
+      membershipStatus: subscriptionId ? "active" : "registration_saved",
+      subscriptionStatus: subscriptionId ? "active" : "not_started",
+      freightMembershipPaid: Boolean(subscriptionId),
       createdAt: now,
       updatedAt: now,
     };
 
     await saveFreightSession(localCarrier);
+
+    setFreightId(carrierId);
     setSavedCarrierId(carrierId);
 
-    return data;
+    return verify.data;
   }
 
   async function saveRegistration() {
-    if (saving || subscribing) return;
+    if (saving) return;
     if (!validateForm()) return;
 
     try {
@@ -418,9 +478,14 @@ export default function FreightRegister() {
       const duplicate = await checkDuplicateFreight(cleanEmail, cleanUsername);
 
       if (duplicate?.id) {
+        setFreightId(duplicate.freight_id || duplicate.id);
         setSavedCarrierId(duplicate.id);
-        await buildAndSaveFreightPayload(duplicate.id);
-        Alert.alert("Updated", "Existing freight registration was updated in Supabase.");
+        setStripeId(duplicate.stripe_id || duplicate.stripe_customer_id || "");
+        setSubscriptionId(duplicate.stripe_subscription_id || "");
+
+        await saveFreightUserRow(duplicate.id);
+
+        Alert.alert("Updated", "Existing freight registration was updated in freight_users.");
         return;
       }
 
@@ -450,187 +515,17 @@ export default function FreightRegister() {
         return;
       }
 
-      await buildAndSaveFreightPayload(carrierId);
+      setFreightId(carrierId);
+      setSavedCarrierId(carrierId);
 
-      Alert.alert(
-        "Registration Saved",
-        "Your freight registration was verified and saved to freight_users."
-      );
+      await saveFreightUserRow(carrierId);
+
+      Alert.alert("Registration Saved", "Your freight registration was saved to freight_users.");
     } catch (error: any) {
       console.log("SAVE FREIGHT REGISTER ERROR:", error);
       Alert.alert("Save Error", error?.message || "Unable to save freight registration.");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function createStripeCheckout(payload: any) {
-    const endpoints = [
-      `${API_BASE_URL}/payments/create-freight-subscription-checkout`,
-      `${API_BASE_URL}/payments/create-subscription-checkout`,
-      `${API_BASE_URL}/api/payments/create-subscription-checkout`,
-    ];
-
-    let lastError = "";
-
-    for (const endpoint of endpoints) {
-      try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const text = await response.text();
-
-        let data: any = {};
-        try {
-          data = text ? JSON.parse(text) : {};
-        } catch {
-          data = {};
-        }
-
-        const checkoutUrl =
-          data.url ||
-          data.checkoutUrl ||
-          data.checkout_url ||
-          data.sessionUrl ||
-          data.session_url;
-
-        if (response.ok && checkoutUrl) {
-          return { ...data, url: checkoutUrl };
-        }
-
-        lastError = data.error || data.message || `Checkout failed at ${endpoint}`;
-      } catch (error: any) {
-        lastError = error?.message || `Checkout failed at ${endpoint}`;
-      }
-    }
-
-    throw new Error(lastError || "Unable to start Stripe checkout.");
-  }
-
-  async function openCheckoutUrl(url: string) {
-    if (!url || !url.startsWith("http")) {
-      Alert.alert("Stripe Error", "No valid Stripe checkout URL returned.");
-      return;
-    }
-
-    if (Platform.OS === "web") {
-      window.location.href = url;
-      return;
-    }
-
-    await WebBrowser.openBrowserAsync(url);
-  }
-
-  async function startSubscription() {
-    if (saving || subscribing) return;
-
-    try {
-      setSubscribing(true);
-
-      let carrierId = savedCarrierId;
-
-      if (!carrierId) {
-        const raw =
-          (await AsyncStorage.getItem("currentFreightCarrier")) ||
-          (await AsyncStorage.getItem("currentFreight")) ||
-          (await AsyncStorage.getItem("currentFreightUser"));
-
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          carrierId = parsed.id || parsed.freightId || "";
-        }
-      }
-
-      if (!carrierId) {
-        Alert.alert("Save Required", "Please save the freight registration first.");
-        return;
-      }
-
-      const cleanEmail = normalize(email);
-      const cleanContactName = contactName.trim();
-      const cleanCompanyName = companyName.trim();
-
-      const checkoutData = await createStripeCheckout({
-        customerEmail: cleanEmail,
-        email: cleanEmail,
-        name: cleanContactName,
-        username: normalize(username),
-        userId: carrierId,
-        freightId: carrierId,
-        profileId: carrierId,
-        companyName: cleanCompanyName,
-        businessName: cleanCompanyName,
-        role: "freight",
-        planType: "freight",
-        successUrl: `${APP_URL}/freight/subscription-success?freightId=${carrierId}`,
-        cancelUrl: `${APP_URL}/freight/register`,
-      });
-
-      const stripeCustomerId =
-        checkoutData.stripeCustomerId ??
-        checkoutData.customer_id ??
-        checkoutData.customer ??
-        checkoutData.customerId ??
-        null;
-
-      const stripeSessionId =
-        checkoutData.sessionId ??
-        checkoutData.session_id ??
-        checkoutData.id ??
-        null;
-
-      const stripeCheckoutUrl =
-        checkoutData.url ??
-        checkoutData.checkoutUrl ??
-        checkoutData.checkout_url ??
-        checkoutData.sessionUrl ??
-        checkoutData.session_url ??
-        null;
-
-      await supabase
-        .from("freight_users")
-        .update({
-          stripe_id: stripeCustomerId,
-          stripe_customer_id: stripeCustomerId,
-          stripe_checkout_session_id: stripeSessionId,
-          membership_status: "pending_payment",
-          subscription_status: "pending_payment",
-          freight_membership_paid: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", carrierId);
-
-      await saveFreightSession({
-        id: carrierId,
-        freightId: carrierId,
-        role: "freight",
-        companyName: cleanCompanyName,
-        businessName: cleanCompanyName,
-        contactName: cleanContactName,
-        email: cleanEmail,
-        username: normalize(username),
-        stripeId: stripeCustomerId,
-        stripeCustomerId,
-        stripeCheckoutSessionId: stripeSessionId,
-        membershipStatus: "pending_payment",
-        subscriptionStatus: "pending_payment",
-        freightMembershipPaid: false,
-      });
-
-      if (!stripeCheckoutUrl) {
-        Alert.alert("Stripe Error", "The backend did not return a Checkout URL.");
-        return;
-      }
-
-      await openCheckoutUrl(stripeCheckoutUrl);
-    } catch (error: any) {
-      console.log("START FREIGHT SUBSCRIPTION ERROR:", error);
-      Alert.alert("Subscription Error", error?.message || "Unable to start subscription.");
-    } finally {
-      setSubscribing(false);
     }
   }
 
@@ -687,6 +582,24 @@ export default function FreightRegister() {
     );
   }
 
+  function WebStripeBuyButton() {
+    if (Platform.OS !== "web") {
+      return (
+        <View style={styles.nativeStripeNotice}>
+          <Text style={styles.nativeStripeText}>
+            Stripe Buy Button is available on web. For mobile, use the backend Checkout flow or open
+            this registration page in the browser.
+          </Text>
+        </View>
+      );
+    }
+
+    return React.createElement("stripe-buy-button" as any, {
+      "buy-button-id": STRIPE_BUY_BUTTON_ID,
+      "publishable-key": STRIPE_PUBLISHABLE_KEY,
+    });
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
@@ -708,28 +621,57 @@ export default function FreightRegister() {
             <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
             <Text style={styles.title}>Carrier Registration</Text>
             <Text style={styles.subtitle}>
-              Save freight carrier details to Supabase first, then start the Stripe subscription.
+              Save your freight carrier registration to Supabase, then complete your freight
+              subscription using Stripe.
             </Text>
           </View>
 
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
               <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
-              <Text style={styles.noticeTitle}>Two-Step Registration</Text>
+              <Text style={styles.noticeTitle}>Save Before Subscription</Text>
             </View>
             <Text style={styles.noticeText}>
-              Save Registration verifies the row exists in freight_users before Stripe opens.
+              Press Save Freight Registration first. This creates the freight_id and uploads all
+              fields into freight_users.
             </Text>
           </View>
 
           <View style={styles.priceBox}>
             <View>
               <Text style={styles.price}>$9.99 / month</Text>
-              <Text style={styles.priceSub}>Access the Farm2Home Freight Board</Text>
+              <Text style={styles.priceSub}>Farm2Home Freight Membership</Text>
             </View>
             <View style={styles.priceIcon}>
               <Ionicons name="flash-outline" size={22} color="#FFFFFF" />
             </View>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader icon="key-outline" title="Account IDs" />
+            <TextInput
+              style={styles.input}
+              placeholder="Freight ID"
+              placeholderTextColor="#94A3B8"
+              value={freightId}
+              editable={false}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Stripe Customer ID / Stripe ID"
+              placeholderTextColor="#94A3B8"
+              value={stripeId}
+              onChangeText={setStripeId}
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Stripe Subscription ID"
+              placeholderTextColor="#94A3B8"
+              value={subscriptionId}
+              onChangeText={setSubscriptionId}
+              autoCapitalize="none"
+            />
           </View>
 
           <View style={styles.card}>
@@ -796,7 +738,7 @@ export default function FreightRegister() {
           <TouchableOpacity
             style={[styles.button, saving && styles.disabledButton]}
             onPress={saveRegistration}
-            disabled={saving || subscribing}
+            disabled={saving}
           >
             {saving ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -808,20 +750,17 @@ export default function FreightRegister() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.secondaryButton, subscribing && styles.disabledButton]}
-            onPress={startSubscription}
-            disabled={saving || subscribing}
-          >
-            {subscribing ? (
-              <ActivityIndicator color={COLORS.red} />
-            ) : (
-              <>
-                <Ionicons name="card-outline" size={18} color={COLORS.red} />
-                <Text style={styles.secondaryButtonText}>Start Subscription</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          <View style={styles.stripeCard}>
+            <SectionHeader icon="card-outline" title="Start Subscription" />
+            <Text style={styles.stripeText}>
+              After saving registration, complete payment below. If Stripe gives you a customer ID or
+              subscription ID, paste it into the Account IDs fields and press Save again.
+            </Text>
+
+            <View style={styles.buyButtonBox}>
+              <WebStripeBuyButton />
+            </View>
+          </View>
 
           <TouchableOpacity onPress={() => router.push("/freight/login" as any)}>
             <Text style={styles.link}>Already registered? Login</Text>
@@ -918,6 +857,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  stripeCard: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginTop: 12,
+    marginBottom: 16,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  stripeText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 21,
+    marginBottom: 14,
+  },
+  buyButtonBox: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 12,
+    minHeight: 90,
+    justifyContent: "center",
+  },
+  nativeStripeNotice: {
+    backgroundColor: "#FFF1F2",
+    borderColor: COLORS.red,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+  },
+  nativeStripeText: {
+    color: COLORS.red,
+    fontWeight: "800",
+    lineHeight: 20,
+  },
   sectionHeader: { flexDirection: "row", gap: 10, alignItems: "center", marginBottom: 16 },
   sectionIcon: {
     width: 40,
@@ -982,25 +958,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
-  },
-  secondaryButton: {
-    backgroundColor: "#FFF1F2",
-    borderWidth: 1,
-    borderColor: COLORS.red,
-    padding: 16,
-    borderRadius: 16,
-    marginHorizontal: 18,
-    marginTop: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  secondaryButtonText: {
-    color: COLORS.red,
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 16,
   },
   disabledButton: { opacity: 0.6 },
   buttonText: {
