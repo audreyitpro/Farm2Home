@@ -74,6 +74,7 @@ export default function FreightRegister() {
   const [savedCarrierId, setSavedCarrierId] = useState("");
 
   const [freightId, setFreightId] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [stripeId, setStripeId] = useState("");
   const [subscriptionId, setSubscriptionId] = useState("");
 
@@ -198,10 +199,30 @@ export default function FreightRegister() {
     return true;
   }
 
+  async function generateFreightAccountId() {
+    const { data, error } = await supabase.rpc("next_account_id", {
+      p_role: "freight",
+      p_prefix: "Freight",
+    });
+
+    if (error) {
+      console.log("Freight account_id RPC error:", error.message);
+      throw error;
+    }
+
+    if (!data) {
+      throw new Error("Unable to generate freight account ID.");
+    }
+
+    return String(data);
+  }
+
   async function checkDuplicateFreight(cleanEmail: string, cleanUsername: string) {
     const { data, error } = await supabase
       .from("freight_users")
-      .select("id,freight_id,email,username,stripe_id,stripe_customer_id,stripe_subscription_id")
+      .select(
+        "id,account_id,freight_id,email,username,stripe_id,stripe_customer_id,stripe_subscription_id"
+      )
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
       .limit(1);
 
@@ -213,7 +234,7 @@ export default function FreightRegister() {
     return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
 
-  async function saveFreightUserRow(carrierId: string) {
+  async function saveFreightUserRow(carrierId: string, savedAccountId?: string) {
     const now = new Date().toISOString();
 
     const cleanCompanyName = companyName.trim();
@@ -221,9 +242,11 @@ export default function FreightRegister() {
     const cleanEmail = normalize(email);
     const cleanPhone = phone.trim();
     const cleanUsername = normalize(username);
+    const finalAccountId = savedAccountId || accountId || (await generateFreightAccountId());
 
     const freightPayload = {
       id: carrierId,
+      account_id: finalAccountId,
       freight_id: carrierId,
       profile_id: carrierId,
       auth_user_id: carrierId,
@@ -308,11 +331,13 @@ export default function FreightRegister() {
       {
         id: carrierId,
         auth_user_id: carrierId,
+        account_id: finalAccountId,
         role: "freight",
         full_name: cleanContactName,
         name: cleanContactName,
         email: cleanEmail,
         phone: cleanPhone,
+        username: cleanUsername,
         company_name: cleanCompanyName,
         account_active: true,
         created_at: now,
@@ -327,7 +352,7 @@ export default function FreightRegister() {
 
     const { data: existingFreightUser, error: existingError } = await supabase
       .from("freight_users")
-      .select("id")
+      .select("id,account_id")
       .eq("id", carrierId)
       .maybeSingle();
 
@@ -343,7 +368,11 @@ export default function FreightRegister() {
     if (existingFreightUser?.id) {
       const result = await supabase
         .from("freight_users")
-        .update(freightPayload)
+        .update({
+          ...freightPayload,
+          account_id: existingFreightUser.account_id || finalAccountId,
+          created_at: undefined,
+        })
         .eq("id", carrierId)
         .select()
         .single();
@@ -366,8 +395,6 @@ export default function FreightRegister() {
       Alert.alert("Freight Save Error", saveError.message);
       throw saveError;
     }
-
-    console.log("FREIGHT SAVE VERIFIED:", savedFreightUser);
 
     if (!savedFreightUser?.id) {
       throw new Error("Freight registration did not save to freight_users.");
@@ -392,10 +419,13 @@ export default function FreightRegister() {
     await supabase.from("admin_verifications").upsert(
       {
         id: carrierId,
+        account_id: verify.data.account_id || finalAccountId,
         carrier_id: carrierId,
         freight_id: carrierId,
         profile_id: carrierId,
         account_type: "FREIGHT_CARRIER",
+        role: "freight",
+        type: "FREIGHT_CARRIER",
         company_name: cleanCompanyName,
         business_name: cleanCompanyName,
         contact_name: cleanContactName,
@@ -428,6 +458,9 @@ export default function FreightRegister() {
         membership_status: subscriptionId ? "active" : "registration_saved",
         subscription_status: subscriptionId ? "active" : "not_started",
         freight_membership_paid: Boolean(subscriptionId),
+        stripe_id: stripeId || null,
+        stripe_customer_id: stripeId || null,
+        stripe_subscription_id: subscriptionId || null,
         created_at: now,
         updated_at: now,
       },
@@ -436,6 +469,8 @@ export default function FreightRegister() {
 
     const localCarrier = {
       id: carrierId,
+      accountId: verify.data.account_id || finalAccountId,
+      account_id: verify.data.account_id || finalAccountId,
       freightId: carrierId,
       profileId: carrierId,
       authUserId: carrierId,
@@ -460,6 +495,7 @@ export default function FreightRegister() {
     await saveFreightSession(localCarrier);
 
     setFreightId(carrierId);
+    setAccountId(verify.data.account_id || finalAccountId);
     setSavedCarrierId(carrierId);
 
     return verify.data;
@@ -480,10 +516,14 @@ export default function FreightRegister() {
       if (duplicate?.id) {
         setFreightId(duplicate.freight_id || duplicate.id);
         setSavedCarrierId(duplicate.id);
+        setAccountId(duplicate.account_id || "");
         setStripeId(duplicate.stripe_id || duplicate.stripe_customer_id || "");
         setSubscriptionId(duplicate.stripe_subscription_id || "");
 
-        await saveFreightUserRow(duplicate.id);
+        await saveFreightUserRow(
+          duplicate.id,
+          duplicate.account_id || accountId || undefined
+        );
 
         Alert.alert("Updated", "Existing freight registration was updated in freight_users.");
         return;
@@ -515,10 +555,13 @@ export default function FreightRegister() {
         return;
       }
 
+      const generatedAccountId = await generateFreightAccountId();
+
       setFreightId(carrierId);
       setSavedCarrierId(carrierId);
+      setAccountId(generatedAccountId);
 
-      await saveFreightUserRow(carrierId);
+      await saveFreightUserRow(carrierId, generatedAccountId);
 
       Alert.alert("Registration Saved", "Your freight registration was saved to freight_users.");
     } catch (error: any) {
@@ -632,8 +675,8 @@ export default function FreightRegister() {
               <Text style={styles.noticeTitle}>Save Before Subscription</Text>
             </View>
             <Text style={styles.noticeText}>
-              Press Save Freight Registration first. This creates the freight_id and uploads all
-              fields into freight_users.
+              Press Save Freight Registration first. This keeps your Supabase Auth UUID unchanged
+              and creates a separate permanent account ID like Freight_001.
             </Text>
           </View>
 
@@ -651,9 +694,16 @@ export default function FreightRegister() {
             <SectionHeader icon="key-outline" title="Account IDs" />
             <TextInput
               style={styles.input}
-              placeholder="Freight ID"
+              placeholder="Supabase UUID / Freight ID"
               placeholderTextColor="#94A3B8"
               value={freightId}
+              editable={false}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Static Account ID"
+              placeholderTextColor="#94A3B8"
+              value={accountId}
               editable={false}
             />
             <TextInput

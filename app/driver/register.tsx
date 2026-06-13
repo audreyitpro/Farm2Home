@@ -101,6 +101,24 @@ export default function DriverRegisterScreen() {
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
+  async function generateDriverAccountId() {
+    const { data, error } = await supabase.rpc("next_account_id", {
+      p_role: "driver",
+      p_prefix: "Driver",
+    });
+
+    if (error) {
+      console.log("Driver account_id RPC error:", error.message);
+      throw error;
+    }
+
+    if (!data) {
+      throw new Error("Unable to generate driver account ID.");
+    }
+
+    return String(data);
+  }
+
   async function upsertProfile(payload: any) {
     const { data: existingProfile } = await supabase
       .from("profiles")
@@ -113,6 +131,7 @@ export default function DriverRegisterScreen() {
         .from("profiles")
         .update({
           auth_user_id: payload.id,
+          account_id: payload.account_id,
           role: "driver",
           full_name: payload.full_name,
           name: payload.name,
@@ -135,6 +154,7 @@ export default function DriverRegisterScreen() {
       .insert({
         id: payload.id,
         auth_user_id: payload.id,
+        account_id: payload.account_id,
         role: "driver",
         full_name: payload.full_name,
         name: payload.name,
@@ -255,7 +275,7 @@ export default function DriverRegisterScreen() {
   async function checkDuplicateDriver(cleanEmail: string, cleanUsername: string) {
     const { data, error } = await supabase
       .from("drivers")
-      .select("id,email,username")
+      .select("id,account_id,email,username")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
       .maybeSingle();
 
@@ -347,11 +367,13 @@ export default function DriverRegisterScreen() {
     cleanFullName,
     cleanUsername,
     driverId,
+    accountId,
   }: {
     cleanEmail: string;
     cleanFullName: string;
     cleanUsername: string;
     driverId: string;
+    accountId: string;
   }) {
     const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
       method: "POST",
@@ -361,10 +383,18 @@ export default function DriverRegisterScreen() {
         email: cleanEmail,
         name: cleanFullName,
         username: cleanUsername,
+
         userId: driverId,
         driverId,
         profileId: driverId,
+        authUserId: driverId,
+
+        accountId,
+        account_id: accountId,
+
+        role: "driver",
         planType: "driver",
+
         successUrl: `${APP_URL}/driver/mobile-driver-app?driverId=${driverId}&stripeReturn=true&session_id={CHECKOUT_SESSION_ID}`,
         cancelUrl: `${APP_URL}/driver/register?driverId=${driverId}&stripeCancel=true`,
       }),
@@ -432,6 +462,7 @@ export default function DriverRegisterScreen() {
         return;
       }
 
+      const accountId = await generateDriverAccountId();
       const now = new Date().toISOString();
 
       const uploadedLicense = await uploadDriverDocument(
@@ -448,6 +479,7 @@ export default function DriverRegisterScreen() {
 
       const driverPayload = {
         id: driverId,
+        account_id: accountId,
         auth_user_id: driverId,
         profile_id: driverId,
         role: "driver",
@@ -488,6 +520,7 @@ export default function DriverRegisterScreen() {
         stripe_account_id: null,
         stripe_customer_id: null,
         stripe_subscription_id: null,
+        stripe_checkout_session_id: null,
         stripe_connect_status: "not_started",
         payouts_enabled: false,
         charges_enabled: false,
@@ -519,6 +552,8 @@ export default function DriverRegisterScreen() {
 
       const localDriver = {
         id: driverId,
+        accountId,
+        account_id: accountId,
         driverId,
         authUserId: driverId,
         profileId: driverId,
@@ -561,6 +596,7 @@ export default function DriverRegisterScreen() {
         stripeAccountId: "",
         stripeCustomerId: "",
         stripeSubscriptionId: "",
+        stripeCheckoutSessionId: "",
         stripeConnectStatus: "not_started",
         payoutsEnabled: false,
         chargesEnabled: false,
@@ -582,16 +618,34 @@ export default function DriverRegisterScreen() {
           cleanFullName,
           cleanUsername,
           driverId,
+          accountId,
         });
 
-        const stripeCustomerId = data.stripeCustomerId || data.customerId || "";
+        const stripeCustomerId =
+          data.stripeCustomerId ||
+          data.stripe_customer_id ||
+          data.customerId ||
+          data.customer_id ||
+          "";
+
+        const stripeCheckoutSessionId = data.id || data.sessionId || "";
 
         await supabase
           .from("drivers")
           .update({
             stripe_customer_id: stripeCustomerId || null,
+            stripe_checkout_session_id: stripeCheckoutSessionId || null,
             membership_status: "pending_payment",
             subscription_status: "pending_payment",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", driverId);
+
+        await supabase
+          .from("profiles")
+          .update({
+            stripe_customer_id: stripeCustomerId || null,
+            stripe_checkout_session_id: stripeCheckoutSessionId || null,
             updated_at: new Date().toISOString(),
           })
           .eq("id", driverId);
@@ -599,7 +653,7 @@ export default function DriverRegisterScreen() {
         const checkoutDriver = {
           ...localDriver,
           stripeCustomerId,
-          stripeCheckoutSessionId: data.id || data.sessionId || null,
+          stripeCheckoutSessionId,
           membershipStatus: "pending_payment",
           subscriptionStatus: "pending_payment",
           updatedAt: new Date().toISOString(),
@@ -726,8 +780,9 @@ export default function DriverRegisterScreen() {
           <View style={styles.noticeBox}>
             <Text style={styles.noticeTitle}>Permanent Profile Setup</Text>
             <Text style={styles.noticeText}>
-              Your driver profile is saved to Supabase immediately. Stripe customer,
-              subscription, and payout IDs are permanently saved as each Stripe step is completed.
+              Your driver profile is saved to Supabase immediately. Your static account ID
+              stays separate from the Supabase Auth UUID. Stripe customer, subscription,
+              and payout IDs are permanently saved as each Stripe step is completed.
             </Text>
           </View>
 
@@ -748,9 +803,32 @@ export default function DriverRegisterScreen() {
               subtitle="Basic contact details for your driver profile."
             />
 
-            <TextInput style={styles.input} placeholder="Full Name" placeholderTextColor="#94A3B8" value={fullName} onChangeText={setFullName} />
-            <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#94A3B8" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-            <TextInput style={styles.input} placeholder="Phone" placeholderTextColor="#94A3B8" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+            <TextInput
+              style={styles.input}
+              placeholder="Full Name"
+              placeholderTextColor="#94A3B8"
+              value={fullName}
+              onChangeText={setFullName}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#94A3B8"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Phone"
+              placeholderTextColor="#94A3B8"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+            />
           </View>
 
           <View style={styles.formCard}>
@@ -760,9 +838,35 @@ export default function DriverRegisterScreen() {
               subtitle="Create credentials for the Driver Portal."
             />
 
-            <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
-            <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
-            <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" />
+            <TextInput
+              style={styles.input}
+              placeholder="Create Username"
+              placeholderTextColor="#94A3B8"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Create Password"
+              placeholderTextColor="#94A3B8"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm Password"
+              placeholderTextColor="#94A3B8"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
           </View>
 
           <View style={styles.formCard}>
@@ -772,19 +876,47 @@ export default function DriverRegisterScreen() {
               subtitle="Vehicle, license, insurance, and service area."
             />
 
-            <TextInput style={styles.input} placeholder="Vehicle Type" placeholderTextColor="#94A3B8" value={vehicleType} onChangeText={setVehicleType} />
-            <TextInput style={styles.input} placeholder="Driver License Number" placeholderTextColor="#94A3B8" value={licenseNumber} onChangeText={setLicenseNumber} />
-            <TextInput style={styles.input} placeholder="Service Area" placeholderTextColor="#94A3B8" value={serviceArea} onChangeText={setServiceArea} />
+            <TextInput
+              style={styles.input}
+              placeholder="Vehicle Type"
+              placeholderTextColor="#94A3B8"
+              value={vehicleType}
+              onChangeText={setVehicleType}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Driver License Number"
+              placeholderTextColor="#94A3B8"
+              value={licenseNumber}
+              onChangeText={setLicenseNumber}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Service Area"
+              placeholderTextColor="#94A3B8"
+              value={serviceArea}
+              onChangeText={setServiceArea}
+            />
 
             <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("license")}>
-              <Ionicons name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={COLORS.red} />
+              <Ionicons
+                name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"}
+                size={20}
+                color={COLORS.red}
+              />
               <Text style={styles.uploadText}>
                 {licenseDocument ? `License: ${licenseDocument.name}` : "Upload Driver License"}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("insurance")}>
-              <Ionicons name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={COLORS.red} />
+              <Ionicons
+                name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"}
+                size={20}
+                color={COLORS.red}
+              />
               <Text style={styles.uploadText}>
                 {insuranceDocument ? `Insurance: ${insuranceDocument.name}` : "Upload Insurance"}
               </Text>
@@ -813,9 +945,29 @@ export default function DriverRegisterScreen() {
               subtitle="Choose 3 questions for account verification."
             />
 
-            {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
-            {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
-            {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
+            {renderQuestionPicker(
+              "Security Question 1",
+              securityQuestion1,
+              setSecurityQuestion1,
+              securityAnswer1,
+              setSecurityAnswer1
+            )}
+
+            {renderQuestionPicker(
+              "Security Question 2",
+              securityQuestion2,
+              setSecurityQuestion2,
+              securityAnswer2,
+              setSecurityAnswer2
+            )}
+
+            {renderQuestionPicker(
+              "Security Question 3",
+              securityQuestion3,
+              setSecurityQuestion3,
+              securityAnswer3,
+              setSecurityAnswer3
+            )}
           </View>
 
           <TouchableOpacity

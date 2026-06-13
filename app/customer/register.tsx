@@ -133,10 +133,28 @@ export default function CustomerRegister() {
     return true;
   }
 
+  async function generateCustomerAccountId() {
+    const { data, error } = await supabase.rpc("next_account_id", {
+      p_role: "customer",
+      p_prefix: "Customer",
+    });
+
+    if (error) {
+      console.log("Customer account_id RPC error:", error.message);
+      throw error;
+    }
+
+    if (!data) {
+      throw new Error("Unable to generate customer account ID.");
+    }
+
+    return String(data);
+  }
+
   async function checkDuplicateCustomer(cleanEmail: string, cleanUsername: string) {
     const { data, error } = await supabase
       .from("customers")
-      .select("id,email,username")
+      .select("id,account_id,email,username")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
       .maybeSingle();
 
@@ -168,6 +186,7 @@ export default function CustomerRegister() {
         .from("profiles")
         .update({
           auth_user_id: payload.id,
+          account_id: payload.account_id,
           role: "customer",
           full_name: payload.full_name,
           name: payload.name,
@@ -190,6 +209,7 @@ export default function CustomerRegister() {
       .insert({
         id: payload.id,
         auth_user_id: payload.id,
+        account_id: payload.account_id,
         role: "customer",
         full_name: payload.full_name,
         name: payload.name,
@@ -272,8 +292,11 @@ export default function CustomerRegister() {
         return;
       }
 
+      const accountId = await generateCustomerAccountId();
+
       const customerPayload = {
         id: customerId,
+        account_id: accountId,
         auth_user_id: customerId,
         profile_id: customerId,
 
@@ -291,6 +314,7 @@ export default function CustomerRegister() {
 
         stripe_customer_id: null,
         stripe_subscription_id: null,
+        stripe_checkout_session_id: null,
 
         security_question_1: securityQuestion1,
         security_answer_1: normalizeAnswer(securityAnswer1),
@@ -321,6 +345,8 @@ export default function CustomerRegister() {
 
       const localCustomer = {
         id: customerId,
+        accountId,
+        account_id: accountId,
         customerId,
         authUserId: customerId,
         profileId: customerId,
@@ -340,6 +366,7 @@ export default function CustomerRegister() {
 
         stripeCustomerId: "",
         stripeSubscriptionId: "",
+        stripeCheckoutSessionId: "",
 
         securityQuestion1,
         securityAnswer1: normalizeAnswer(securityAnswer1),
@@ -364,10 +391,17 @@ export default function CustomerRegister() {
           email: cleanEmail,
           name: cleanFullName,
           username: cleanUsername,
+
           userId: customerId,
           customerId,
           profileId: customerRow?.profile_id || customerId,
+          authUserId: customerId,
+          accountId,
+          account_id: accountId,
+
+          role: "customer",
           planType: "customer",
+
           successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
           cancelUrl: `${APP_URL}/customer/register`,
         }),
@@ -382,6 +416,8 @@ export default function CustomerRegister() {
         sessionId?: string;
         stripeCustomerId?: string;
         customerId?: string;
+        stripe_customer_id?: string;
+        customer_id?: string;
         error?: string;
         message?: string;
       } = {};
@@ -404,14 +440,31 @@ export default function CustomerRegister() {
         return;
       }
 
-      const stripeCustomerId = data.stripeCustomerId || data.customerId || "";
+      const stripeCustomerId =
+        data.stripeCustomerId ||
+        data.stripe_customer_id ||
+        data.customerId ||
+        data.customer_id ||
+        "";
+
+      const stripeCheckoutSessionId = data.id || data.sessionId || "";
 
       await supabase
         .from("customers")
         .update({
           stripe_customer_id: stripeCustomerId || null,
+          stripe_checkout_session_id: stripeCheckoutSessionId || null,
           membership_status: "pending_payment",
           subscription_status: "pending_payment",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", customerId);
+
+      await supabase
+        .from("profiles")
+        .update({
+          stripe_customer_id: stripeCustomerId || null,
+          stripe_checkout_session_id: stripeCheckoutSessionId || null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", customerId);
@@ -419,7 +472,7 @@ export default function CustomerRegister() {
       const checkoutCustomer = {
         ...localCustomer,
         stripeCustomerId,
-        stripeCheckoutSessionId: data.id || data.sessionId || null,
+        stripeCheckoutSessionId,
         membershipStatus: "pending_payment",
         subscriptionStatus: "pending_payment",
         updatedAt: new Date().toISOString(),
@@ -547,8 +600,9 @@ export default function CustomerRegister() {
             </View>
 
             <Text style={styles.noticeText}>
-              Your customer profile is saved to Supabase immediately. Stripe customer and
-              subscription IDs are permanently saved when checkout starts and payment completes.
+              Your customer profile is saved to Supabase immediately. Your permanent account ID
+              stays separate from the Supabase Auth UUID. Stripe customer and subscription IDs are
+              permanently saved when checkout starts and payment completes.
             </Text>
           </View>
 

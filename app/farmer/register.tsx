@@ -199,10 +199,28 @@ export default function FarmerRegister() {
     return true;
   }
 
+  async function generateFarmerAccountId() {
+    const { data, error } = await supabase.rpc("next_account_id", {
+      p_role: "farmer",
+      p_prefix: "Farmer",
+    });
+
+    if (error) {
+      console.log("Farmer account_id RPC error:", error.message);
+      throw error;
+    }
+
+    if (!data) {
+      throw new Error("Unable to generate farmer account ID.");
+    }
+
+    return String(data);
+  }
+
   async function checkDuplicateFarmer(cleanEmail: string, cleanUsername: string) {
     const { data, error } = await supabase
       .from("farmers")
-      .select("id,email,username")
+      .select("id,account_id,email,username")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
       .maybeSingle();
 
@@ -242,6 +260,7 @@ export default function FarmerRegister() {
         .from("profiles")
         .update({
           auth_user_id: payload.id,
+          account_id: payload.account_id,
           role: "farmer",
           full_name: payload.owner_name,
           name: payload.owner_name,
@@ -265,6 +284,7 @@ export default function FarmerRegister() {
       .insert({
         id: payload.id,
         auth_user_id: payload.id,
+        account_id: payload.account_id,
         role: "farmer",
         full_name: payload.owner_name,
         name: payload.owner_name,
@@ -286,6 +306,7 @@ export default function FarmerRegister() {
   async function createAdminVerificationRecord(farmerPayload: any) {
     const adminPayload = {
       id: farmerPayload.id,
+      account_id: farmerPayload.account_id,
       farmer_id: farmerPayload.id,
       profile_id: farmerPayload.profile_id,
       account_type: "FARMER",
@@ -328,8 +349,10 @@ export default function FarmerRegister() {
       monthly_membership_started: false,
 
       stripe_account_id: null,
+      farmer_stripe_account_id: null,
       stripe_customer_id: null,
       stripe_subscription_id: null,
+      stripe_checkout_session_id: null,
       stripe_connect_status: "not_started",
       payouts_enabled: false,
       charges_enabled: false,
@@ -368,12 +391,13 @@ export default function FarmerRegister() {
 
   function goToCompliance(
     farmerId: string,
+    accountId: string,
     cleanEmail: string,
     cleanBusinessName: string
   ) {
     const path = `/farmer/compliance-upload?farmerId=${encodeURIComponent(
       farmerId
-    )}&email=${encodeURIComponent(
+    )}&accountId=${encodeURIComponent(accountId)}&email=${encodeURIComponent(
       cleanEmail
     )}&businessName=${encodeURIComponent(cleanBusinessName)}`;
 
@@ -433,8 +457,11 @@ export default function FarmerRegister() {
         return;
       }
 
+      const accountId = await generateFarmerAccountId();
+
       const farmerPayload = {
         id: farmerId,
+        account_id: accountId,
         auth_user_id: farmerId,
         profile_id: farmerId,
         role: "farmer",
@@ -484,6 +511,7 @@ export default function FarmerRegister() {
         farmer_stripe_account_id: null,
         stripe_customer_id: null,
         stripe_subscription_id: null,
+        stripe_checkout_session_id: null,
         stripe_connect_status: "not_started",
         payouts_enabled: false,
         charges_enabled: false,
@@ -519,6 +547,8 @@ export default function FarmerRegister() {
 
       const localFarmer = {
         id: farmerId,
+        accountId,
+        account_id: accountId,
         farmerId,
         profileId: farmerId,
         authUserId: farmerId,
@@ -568,6 +598,7 @@ export default function FarmerRegister() {
         farmerStripeAccountId: "",
         stripeCustomerId: "",
         stripeSubscriptionId: "",
+        stripeCheckoutSessionId: "",
         stripeConnectStatus: "not_started",
         payoutsEnabled: false,
         chargesEnabled: false,
@@ -586,7 +617,7 @@ export default function FarmerRegister() {
       await saveLocalFarmerSession(localFarmer);
       await notifyAdminFarmer(localFarmer);
 
-      goToCompliance(farmerId, cleanEmail, cleanBusinessName);
+      goToCompliance(farmerId, accountId, cleanEmail, cleanBusinessName);
     } catch (error: any) {
       console.log("Farmer registration error:", error);
       Alert.alert(
@@ -616,8 +647,9 @@ export default function FarmerRegister() {
           <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
           <Text style={styles.heroTitle}>Create Your Farmer Account</Text>
           <Text style={styles.heroSub}>
-            Create your farm profile. Your farm record is saved directly to Supabase,
-            and Stripe IDs are permanently saved as payments and payout setup are completed.
+            Create your farm profile. Your permanent farmer account ID is saved separately
+            from your Supabase Auth UUID. Stripe IDs are permanently saved as payments and
+            payout setup are completed.
           </Text>
         </View>
 
@@ -634,11 +666,47 @@ export default function FarmerRegister() {
           subtitle="Basic farm and owner details."
           done={businessComplete}
         >
-          <TextInput style={styles.input} placeholder="Owner Name" value={ownerName} onChangeText={setOwnerName} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Farm Name" value={farmName} onChangeText={setFarmName} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Business Name" value={businessName} onChangeText={setBusinessName} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Email Address" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+          <TextInput
+            style={styles.input}
+            placeholder="Owner Name"
+            value={ownerName}
+            onChangeText={setOwnerName}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Farm Name"
+            value={farmName}
+            onChangeText={setFarmName}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Business Name"
+            value={businessName}
+            onChangeText={setBusinessName}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email Address"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Phone Number"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={setPhone}
+          />
         </SectionCard>
 
         <SectionCard
@@ -647,9 +715,32 @@ export default function FarmerRegister() {
           subtitle="Credentials used for future farmer login."
           done={loginComplete}
         >
-          <TextInput style={styles.input} placeholder="Create Username" autoCapitalize="none" value={username} onChangeText={setUsername} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Create Password" secureTextEntry value={password} onChangeText={setPassword} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} autoCorrect={false} />
+          <TextInput
+            style={styles.input}
+            placeholder="Create Username"
+            autoCapitalize="none"
+            value={username}
+            onChangeText={setUsername}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Create Password"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Confirm Password"
+            secureTextEntry
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            autoCorrect={false}
+          />
         </SectionCard>
 
         <SectionCard
@@ -658,10 +749,39 @@ export default function FarmerRegister() {
           subtitle="Used for local customer discovery."
           done={locationComplete}
         >
-          <TextInput style={styles.input} placeholder="Business Address" value={businessAddress} onChangeText={setBusinessAddress} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="City" value={city} onChangeText={setCity} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="State" value={stateValue} onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))} maxLength={2} autoCapitalize="characters" autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Zip Code" keyboardType="numeric" value={zipCode} onChangeText={setZipCode} />
+          <TextInput
+            style={styles.input}
+            placeholder="Business Address"
+            value={businessAddress}
+            onChangeText={setBusinessAddress}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="City"
+            value={city}
+            onChangeText={setCity}
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="State"
+            value={stateValue}
+            onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))}
+            maxLength={2}
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Zip Code"
+            keyboardType="numeric"
+            value={zipCode}
+            onChangeText={setZipCode}
+          />
         </SectionCard>
 
         <SectionCard
