@@ -68,7 +68,9 @@ async function saveFreightSession(carrier: any) {
 }
 
 export default function FreightRegister() {
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [subscribing, setSubscribing] = useState(false);
+  const [savedCarrierId, setSavedCarrierId] = useState("");
 
   const [companyName, setCompanyName] = useState("");
   const [contactName, setContactName] = useState("");
@@ -107,19 +109,77 @@ export default function FreightRegister() {
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
-  function validateSecurityQuestions() {
-    if (selectedQuestions.length !== 3) {
-      Alert.alert("Security Questions Required", "Please choose 3 security questions.");
+  function validateForm() {
+    const cleanCompanyName = companyName.trim();
+    const cleanContactName = contactName.trim();
+    const cleanEmail = normalize(email);
+    const cleanPhone = phone.trim();
+    const cleanUsername = normalize(username);
+    const cleanPassword = password.trim();
+    const cleanConfirmPassword = confirmPassword.trim();
+
+    if (!cleanCompanyName || !cleanContactName || !cleanEmail || !cleanPhone) {
+      Alert.alert("Missing Info", "Company, contact, email, and phone are required.");
       return false;
     }
 
-    if (new Set(selectedQuestions).size !== 3) {
-      Alert.alert("Duplicate Security Questions", "Please choose 3 different security questions.");
+    if (!cleanEmail.includes("@")) {
+      Alert.alert("Invalid Email", "Please enter a valid email address.");
+      return false;
+    }
+
+    if (!cleanUsername || !cleanPassword || !cleanConfirmPassword) {
+      Alert.alert("Login Required", "Please create a username and password.");
+      return false;
+    }
+
+    if (cleanUsername.length < 4) {
+      Alert.alert("Invalid Username", "Username must be at least 4 characters.");
+      return false;
+    }
+
+    if (cleanPassword.length < 6) {
+      Alert.alert("Weak Password", "Password must be at least 6 characters.");
+      return false;
+    }
+
+    if (cleanPassword !== cleanConfirmPassword) {
+      Alert.alert("Password Mismatch", "Passwords do not match.");
+      return false;
+    }
+
+    if (selectedQuestions.length !== 3 || new Set(selectedQuestions).size !== 3) {
+      Alert.alert("Security Questions Required", "Please choose 3 different security questions.");
       return false;
     }
 
     if (!securityAnswer1.trim() || !securityAnswer2.trim() || !securityAnswer3.trim()) {
       Alert.alert("Security Answers Required", "Please answer all 3 security questions.");
+      return false;
+    }
+
+    if (!businessAddress.trim() || !city.trim() || !stateValue.trim() || !zipCode.trim()) {
+      Alert.alert("Missing Address", "Business address, city, state, and zip code are required.");
+      return false;
+    }
+
+    if (!mdotNumber.trim() || !mcNumber.trim()) {
+      Alert.alert("Missing Authority", "MDOT number and MC number are required.");
+      return false;
+    }
+
+    if (!insuranceProvider.trim() || !insurancePolicyNumber.trim()) {
+      Alert.alert("Missing Insurance", "Insurance provider and policy number are required.");
+      return false;
+    }
+
+    if (!authorityActive || !insuranceActive) {
+      Alert.alert("Verification Required", "Confirm active authority and insurance.");
+      return false;
+    }
+
+    if (!licensedLivestock && !licensedRefrigeratedFood) {
+      Alert.alert("License Required", "Select livestock, refrigerated food, or both.");
       return false;
     }
 
@@ -135,15 +195,275 @@ export default function FreightRegister() {
 
     if (error) {
       console.log("Freight duplicate check skipped:", error.message);
-      return false;
+      return null;
     }
 
     if (Array.isArray(data) && data.length > 0) {
-      Alert.alert("Account Exists", "A freight account already exists. Please login instead.");
-      return true;
+      return data[0];
     }
 
-    return false;
+    return null;
+  }
+
+  async function buildAndSaveFreightPayload(carrierId: string) {
+    const now = new Date().toISOString();
+
+    const cleanCompanyName = companyName.trim();
+    const cleanContactName = contactName.trim();
+    const cleanEmail = normalize(email);
+    const cleanPhone = phone.trim();
+    const cleanUsername = normalize(username);
+
+    const freightPayload = {
+      id: carrierId,
+      profile_id: carrierId,
+      auth_user_id: carrierId,
+      role: "freight",
+
+      company_name: cleanCompanyName,
+      business_name: cleanCompanyName,
+      contact_name: cleanContactName,
+      full_name: cleanContactName,
+      name: cleanContactName,
+      owner_name: cleanContactName,
+      email: cleanEmail,
+      phone: cleanPhone,
+      username: cleanUsername,
+
+      account_active: true,
+
+      stripe_id: null,
+      stripe_account_id: null,
+      stripe_customer_id: null,
+      stripe_subscription_id: null,
+      stripe_checkout_session_id: null,
+      stripe_connect_status: "not_started",
+      payouts_enabled: false,
+      charges_enabled: false,
+      stripe_payouts_enabled: false,
+      stripe_charges_enabled: false,
+      stripe_onboarding_complete: false,
+
+      security_question_1: securityQuestion1,
+      security_answer_1: normalizeAnswer(securityAnswer1),
+      security_question_2: securityQuestion2,
+      security_answer_2: normalizeAnswer(securityAnswer2),
+      security_question_3: securityQuestion3,
+      security_answer_3: normalizeAnswer(securityAnswer3),
+
+      service_area: serviceArea.trim(),
+      business_address: businessAddress.trim(),
+      city: city.trim(),
+      state: stateValue.trim().toUpperCase(),
+      zip_code: zipCode.trim(),
+
+      mdot_number: mdotNumber.trim(),
+      dot_number: mdotNumber.trim(),
+      mc_number: mcNumber.trim(),
+      insurance_provider: insuranceProvider.trim(),
+      insurance_policy_number: insurancePolicyNumber.trim(),
+
+      authority_active: authorityActive,
+      insurance_active: insuranceActive,
+      licensed_livestock: licensedLivestock,
+      licensed_refrigerated_food: licensedRefrigeratedFood,
+
+      approved: false,
+      verification_status: "PENDING_VERIFICATION",
+      compliance_status: "PENDING_VERIFICATION",
+      admin_review_status: "pending",
+
+      membership_status: "registration_saved",
+      subscription_status: "not_started",
+      freight_membership_paid: false,
+
+      push_notifications: true,
+      new_load_alerts: true,
+      route_status_alerts: true,
+      payout_alerts: true,
+      billing_alerts: true,
+      gps_tracking: true,
+      background_route_updates: false,
+      show_only_nearby_loads: false,
+      show_refrigerated_loads: true,
+      show_livestock_loads: true,
+      privacy_mode: false,
+      notifications_enabled: true,
+      expo_push_token: "",
+
+      created_at: now,
+      updated_at: now,
+    };
+
+    await supabase.from("profiles").upsert(
+      {
+        id: carrierId,
+        auth_user_id: carrierId,
+        role: "freight",
+        full_name: cleanContactName,
+        name: cleanContactName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        company_name: cleanCompanyName,
+        account_active: true,
+        created_at: now,
+        updated_at: now,
+      },
+      { onConflict: "id" }
+    );
+
+    const { data, error } = await supabase
+      .from("freight_users")
+      .upsert(freightPayload, { onConflict: "id" })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+
+    await supabase.from("admin_verifications").upsert(
+      {
+        id: carrierId,
+        carrier_id: carrierId,
+        freight_id: carrierId,
+        profile_id: carrierId,
+        account_type: "FREIGHT_CARRIER",
+        company_name: cleanCompanyName,
+        business_name: cleanCompanyName,
+        contact_name: cleanContactName,
+        owner_name: cleanContactName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        username: cleanUsername,
+        business_address: businessAddress.trim(),
+        city: city.trim(),
+        state: stateValue.trim().toUpperCase(),
+        zip_code: zipCode.trim(),
+        mdot_number: mdotNumber.trim(),
+        dot_number: mdotNumber.trim(),
+        mc_number: mcNumber.trim(),
+        insurance_provider: insuranceProvider.trim(),
+        insurance_policy_number: insurancePolicyNumber.trim(),
+        authority_active: authorityActive,
+        insurance_active: insuranceActive,
+        licensed_livestock: licensedLivestock,
+        licensed_refrigerated_food: licensedRefrigeratedFood,
+        status: "PENDING_VERIFICATION",
+        compliance_status: "PENDING_VERIFICATION",
+        admin_review_status: "pending",
+        review_decision: "pending",
+        approved: false,
+        rejected: false,
+        reviewed: false,
+        needs_more_info: false,
+        account_active: true,
+        membership_status: "registration_saved",
+        subscription_status: "not_started",
+        freight_membership_paid: false,
+        created_at: now,
+        updated_at: now,
+      },
+      { onConflict: "id" }
+    );
+
+    const localCarrier = {
+      id: carrierId,
+      freightId: carrierId,
+      profileId: carrierId,
+      authUserId: carrierId,
+      role: "freight",
+      companyName: cleanCompanyName,
+      businessName: cleanCompanyName,
+      contactName: cleanContactName,
+      fullName: cleanContactName,
+      ownerName: cleanContactName,
+      email: cleanEmail,
+      phone: cleanPhone,
+      username: cleanUsername,
+      accountActive: true,
+      stripeId: "",
+      stripeAccountId: "",
+      stripeCustomerId: "",
+      stripeSubscriptionId: "",
+      stripeCheckoutSessionId: "",
+      stripeConnectStatus: "not_started",
+      payoutsEnabled: false,
+      chargesEnabled: false,
+      onboardingComplete: false,
+      verificationStatus: "PENDING_VERIFICATION",
+      complianceStatus: "PENDING_VERIFICATION",
+      membershipStatus: "registration_saved",
+      subscriptionStatus: "not_started",
+      freightMembershipPaid: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await saveFreightSession(localCarrier);
+    setSavedCarrierId(carrierId);
+
+    return data;
+  }
+
+  async function saveRegistration() {
+    if (saving || subscribing) return;
+    if (!validateForm()) return;
+
+    try {
+      setSaving(true);
+
+      const cleanEmail = normalize(email);
+      const cleanUsername = normalize(username);
+      const cleanPassword = password.trim();
+
+      const duplicate = await checkDuplicateFreight(cleanEmail, cleanUsername);
+
+      if (duplicate?.id) {
+        setSavedCarrierId(duplicate.id);
+        Alert.alert(
+          "Account Exists",
+          "This freight account already exists. You can now start the subscription."
+        );
+        return;
+      }
+
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: cleanPassword,
+        options: {
+          data: {
+            role: "freight",
+            username: cleanUsername,
+            company_name: companyName.trim(),
+            contact_name: contactName.trim(),
+            full_name: contactName.trim(),
+          },
+        },
+      });
+
+      if (authError) {
+        Alert.alert("Signup Error", authError.message);
+        return;
+      }
+
+      const carrierId = authData?.user?.id;
+
+      if (!carrierId) {
+        Alert.alert("Signup Error", "Unable to create freight auth account.");
+        return;
+      }
+
+      await buildAndSaveFreightPayload(carrierId);
+
+      Alert.alert(
+        "Registration Saved",
+        "Your freight registration was saved to Supabase. You can now start your subscription."
+      );
+    } catch (error: any) {
+      console.log("SAVE FREIGHT REGISTER ERROR:", error);
+      Alert.alert("Save Error", error?.message || "Unable to save freight registration.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function createStripeCheckout(payload: any) {
@@ -206,309 +526,40 @@ export default function FreightRegister() {
     await WebBrowser.openBrowserAsync(url);
   }
 
-  async function submit() {
-    if (loading) return;
-
-    const cleanCompanyName = companyName.trim();
-    const cleanContactName = contactName.trim();
-    const cleanEmail = normalize(email);
-    const cleanPhone = phone.trim();
-    const cleanServiceArea = serviceArea.trim();
-    const cleanUsername = normalize(username);
-    const cleanPassword = password.trim();
-    const cleanConfirmPassword = confirmPassword.trim();
-
-    const cleanBusinessAddress = businessAddress.trim();
-    const cleanCity = city.trim();
-    const cleanState = stateValue.trim().toUpperCase();
-    const cleanZipCode = zipCode.trim();
-    const cleanMdotNumber = mdotNumber.trim();
-    const cleanMcNumber = mcNumber.trim();
-    const cleanInsuranceProvider = insuranceProvider.trim();
-    const cleanInsurancePolicyNumber = insurancePolicyNumber.trim();
-
-    if (!cleanCompanyName || !cleanContactName || !cleanEmail || !cleanPhone) {
-      Alert.alert("Missing Info", "Company, contact, email, and phone are required.");
-      return;
-    }
-
-    if (!cleanEmail.includes("@")) {
-      Alert.alert("Invalid Email", "Please enter a valid email address.");
-      return;
-    }
-
-    if (!cleanUsername || !cleanPassword || !cleanConfirmPassword) {
-      Alert.alert("Login Required", "Please create a username and password.");
-      return;
-    }
-
-    if (cleanUsername.length < 4) {
-      Alert.alert("Invalid Username", "Username must be at least 4 characters.");
-      return;
-    }
-
-    if (cleanPassword.length < 6) {
-      Alert.alert("Weak Password", "Password must be at least 6 characters.");
-      return;
-    }
-
-    if (cleanPassword !== cleanConfirmPassword) {
-      Alert.alert("Password Mismatch", "Passwords do not match.");
-      return;
-    }
-
-    if (!validateSecurityQuestions()) return;
-
-    if (!cleanBusinessAddress || !cleanCity || !cleanState || !cleanZipCode) {
-      Alert.alert("Missing Address", "Business address, city, state, and zip code are required.");
-      return;
-    }
-
-    if (!cleanMdotNumber || !cleanMcNumber) {
-      Alert.alert("Missing Authority", "MDOT number and MC number are required.");
-      return;
-    }
-
-    if (!cleanInsuranceProvider || !cleanInsurancePolicyNumber) {
-      Alert.alert("Missing Insurance", "Insurance provider and policy number are required.");
-      return;
-    }
-
-    if (!authorityActive || !insuranceActive) {
-      Alert.alert("Verification Required", "Confirm active authority and insurance.");
-      return;
-    }
-
-    if (!licensedLivestock && !licensedRefrigeratedFood) {
-      Alert.alert("License Required", "Select livestock, refrigerated food, or both.");
-      return;
-    }
+  async function startSubscription() {
+    if (saving || subscribing) return;
 
     try {
-      setLoading(true);
+      setSubscribing(true);
 
-      const duplicate = await checkDuplicateFreight(cleanEmail, cleanUsername);
-      if (duplicate) return;
-
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: cleanPassword,
-        options: {
-          data: {
-            role: "freight",
-            username: cleanUsername,
-            company_name: cleanCompanyName,
-            contact_name: cleanContactName,
-            full_name: cleanContactName,
-          },
-        },
-      });
-
-      if (authError) {
-        Alert.alert("Signup Error", authError.message);
-        return;
-      }
-
-      const carrierId = authData?.user?.id;
+      let carrierId = savedCarrierId;
 
       if (!carrierId) {
-        Alert.alert("Signup Error", "Unable to create freight account.");
+        const raw =
+          (await AsyncStorage.getItem("currentFreightCarrier")) ||
+          (await AsyncStorage.getItem("currentFreight")) ||
+          (await AsyncStorage.getItem("currentFreightUser"));
+
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          carrierId = parsed.id || parsed.freightId || "";
+        }
+      }
+
+      if (!carrierId) {
+        Alert.alert("Save Required", "Please save the freight registration first.");
         return;
       }
 
-      const now = new Date().toISOString();
-
-      const freightPayload = {
-        id: carrierId,
-        profile_id: carrierId,
-        auth_user_id: carrierId,
-        role: "freight",
-
-        company_name: cleanCompanyName,
-        business_name: cleanCompanyName,
-        contact_name: cleanContactName,
-        full_name: cleanContactName,
-        name: cleanContactName,
-        owner_name: cleanContactName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-
-        account_active: true,
-
-        stripe_account_id: null,
-        stripe_customer_id: null,
-        stripe_subscription_id: null,
-        stripe_checkout_session_id: null,
-        stripe_connect_status: "not_started",
-        payouts_enabled: false,
-        charges_enabled: false,
-        stripe_payouts_enabled: false,
-        stripe_charges_enabled: false,
-        stripe_onboarding_complete: false,
-
-        security_question_1: securityQuestion1,
-        security_answer_1: normalizeAnswer(securityAnswer1),
-        security_question_2: securityQuestion2,
-        security_answer_2: normalizeAnswer(securityAnswer2),
-        security_question_3: securityQuestion3,
-        security_answer_3: normalizeAnswer(securityAnswer3),
-
-        service_area: cleanServiceArea,
-        business_address: cleanBusinessAddress,
-        city: cleanCity,
-        state: cleanState,
-        zip_code: cleanZipCode,
-
-        mdot_number: cleanMdotNumber,
-        dot_number: cleanMdotNumber,
-        mc_number: cleanMcNumber,
-        insurance_provider: cleanInsuranceProvider,
-        insurance_policy_number: cleanInsurancePolicyNumber,
-
-        authority_active: authorityActive,
-        insurance_active: insuranceActive,
-        licensed_livestock: licensedLivestock,
-        licensed_refrigerated_food: licensedRefrigeratedFood,
-
-        approved: false,
-        verification_status: "PENDING_VERIFICATION",
-        compliance_status: "PENDING_VERIFICATION",
-        admin_review_status: "pending",
-        membership_status: "pending_payment",
-        subscription_status: "pending_payment",
-        freight_membership_paid: false,
-
-        push_notifications: true,
-        new_load_alerts: true,
-        route_status_alerts: true,
-        payout_alerts: true,
-        billing_alerts: true,
-        gps_tracking: true,
-        background_route_updates: false,
-        show_only_nearby_loads: false,
-        show_refrigerated_loads: true,
-        show_livestock_loads: true,
-        privacy_mode: false,
-        notifications_enabled: true,
-        expo_push_token: "",
-
-        created_at: now,
-        updated_at: now,
-      };
-
-      await supabase.from("profiles").upsert(
-        {
-          id: carrierId,
-          auth_user_id: carrierId,
-          role: "freight",
-          full_name: cleanContactName,
-          name: cleanContactName,
-          email: cleanEmail,
-          phone: cleanPhone,
-          company_name: cleanCompanyName,
-          account_active: true,
-          created_at: now,
-          updated_at: now,
-        },
-        { onConflict: "id" }
-      );
-
-      const { data: freightUser, error: freightUserError } = await supabase
-        .from("freight_users")
-        .upsert(freightPayload, { onConflict: "id" })
-        .select("*")
-        .single();
-
-      if (freightUserError) {
-        Alert.alert("Freight User Error", freightUserError.message);
-        return;
-      }
-
-      await supabase.from("admin_verifications").upsert(
-        {
-          id: carrierId,
-          carrier_id: carrierId,
-          freight_id: carrierId,
-          profile_id: carrierId,
-          account_type: "FREIGHT_CARRIER",
-          company_name: cleanCompanyName,
-          business_name: cleanCompanyName,
-          contact_name: cleanContactName,
-          owner_name: cleanContactName,
-          email: cleanEmail,
-          phone: cleanPhone,
-          username: cleanUsername,
-          business_address: cleanBusinessAddress,
-          city: cleanCity,
-          state: cleanState,
-          zip_code: cleanZipCode,
-          mdot_number: cleanMdotNumber,
-          dot_number: cleanMdotNumber,
-          mc_number: cleanMcNumber,
-          insurance_provider: cleanInsuranceProvider,
-          insurance_policy_number: cleanInsurancePolicyNumber,
-          authority_active: authorityActive,
-          insurance_active: insuranceActive,
-          licensed_livestock: licensedLivestock,
-          licensed_refrigerated_food: licensedRefrigeratedFood,
-          status: "PENDING_VERIFICATION",
-          compliance_status: "PENDING_VERIFICATION",
-          admin_review_status: "pending",
-          review_decision: "pending",
-          approved: false,
-          rejected: false,
-          reviewed: false,
-          needs_more_info: false,
-          account_active: true,
-          membership_status: "pending_payment",
-          subscription_status: "pending_payment",
-          freight_membership_paid: false,
-          created_at: now,
-          updated_at: now,
-        },
-        { onConflict: "id" }
-      );
-
-      const localCarrier = {
-        id: carrierId,
-        freightId: carrierId,
-        profileId: carrierId,
-        authUserId: carrierId,
-        role: "freight",
-        companyName: cleanCompanyName,
-        businessName: cleanCompanyName,
-        contactName: cleanContactName,
-        fullName: cleanContactName,
-        ownerName: cleanContactName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-        accountActive: true,
-        stripeAccountId: "",
-        stripeCustomerId: "",
-        stripeSubscriptionId: "",
-        stripeCheckoutSessionId: "",
-        stripeConnectStatus: "not_started",
-        payoutsEnabled: false,
-        chargesEnabled: false,
-        onboardingComplete: false,
-        verificationStatus: "PENDING_VERIFICATION",
-        complianceStatus: "PENDING_VERIFICATION",
-        membershipStatus: "pending_payment",
-        subscriptionStatus: "pending_payment",
-        freightMembershipPaid: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await saveFreightSession(localCarrier);
+      const cleanEmail = normalize(email);
+      const cleanContactName = contactName.trim();
+      const cleanCompanyName = companyName.trim();
 
       const checkoutData = await createStripeCheckout({
         customerEmail: cleanEmail,
         email: cleanEmail,
         name: cleanContactName,
-        username: cleanUsername,
+        username: normalize(username),
         userId: carrierId,
         freightId: carrierId,
         profileId: carrierId,
@@ -544,6 +595,7 @@ export default function FreightRegister() {
       await supabase
         .from("freight_users")
         .update({
+          stripe_id: stripeCustomerId,
           stripe_customer_id: stripeCustomerId,
           stripe_checkout_session_id: stripeSessionId,
           membership_status: "pending_payment",
@@ -554,12 +606,20 @@ export default function FreightRegister() {
         .eq("id", carrierId);
 
       await saveFreightSession({
-        ...localCarrier,
+        id: carrierId,
+        freightId: carrierId,
+        role: "freight",
+        companyName: cleanCompanyName,
+        businessName: cleanCompanyName,
+        contactName: cleanContactName,
+        email: cleanEmail,
+        username: normalize(username),
+        stripeId: stripeCustomerId,
         stripeCustomerId,
         stripeCheckoutSessionId: stripeSessionId,
         membershipStatus: "pending_payment",
         subscriptionStatus: "pending_payment",
-        updatedAt: new Date().toISOString(),
+        freightMembershipPaid: false,
       });
 
       if (!stripeCheckoutUrl) {
@@ -569,10 +629,10 @@ export default function FreightRegister() {
 
       await openCheckoutUrl(stripeCheckoutUrl);
     } catch (error: any) {
-      console.log("FREIGHT REGISTER ERROR:", error);
-      Alert.alert("Registration Error", error?.message || "Unable to complete freight registration.");
+      console.log("START FREIGHT SUBSCRIPTION ERROR:", error);
+      Alert.alert("Subscription Error", error?.message || "Unable to start subscription.");
     } finally {
-      setLoading(false);
+      setSubscribing(false);
     }
   }
 
@@ -664,19 +724,19 @@ export default function FreightRegister() {
             <Text style={styles.title}>Carrier Registration</Text>
 
             <Text style={styles.subtitle}>
-              Professional freight verification for livestock, refrigerated food,
-              Farm2Home delivery loads, and Farm2Driver logistics operations.
+              Save your freight carrier registration first, then start Stripe subscription.
             </Text>
           </View>
 
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
               <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
-              <Text style={styles.noticeTitle}>Carrier Verification Required</Text>
+              <Text style={styles.noticeTitle}>Two-Step Registration</Text>
             </View>
 
             <Text style={styles.noticeText}>
-              Your account is saved first, then Stripe checkout opens for the freight subscription.
+              Step 1 saves every registration field to Supabase. Step 2 opens Stripe and saves the
+              Stripe customer/session IDs.
             </Text>
           </View>
 
@@ -692,12 +752,7 @@ export default function FreightRegister() {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader
-              icon="business-outline"
-              title="Company Information"
-              subtitle="Business and primary contact information."
-            />
-
+            <SectionHeader icon="business-outline" title="Company Information" />
             <TextInput style={styles.input} placeholder="Company Name" placeholderTextColor="#94A3B8" value={companyName} onChangeText={setCompanyName} />
             <TextInput style={styles.input} placeholder="Contact Name" placeholderTextColor="#94A3B8" value={contactName} onChangeText={setContactName} />
             <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#94A3B8" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
@@ -707,7 +762,6 @@ export default function FreightRegister() {
 
           <View style={styles.card}>
             <SectionHeader icon="lock-closed-outline" title="Create Freight Login" />
-
             <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
             <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
             <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" />
@@ -715,7 +769,6 @@ export default function FreightRegister() {
 
           <View style={styles.securityCard}>
             <SectionHeader icon="key-outline" title="Security Questions" />
-
             {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
             {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
             {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
@@ -723,7 +776,6 @@ export default function FreightRegister() {
 
           <View style={styles.card}>
             <SectionHeader icon="location-outline" title="Business Address" />
-
             <TextInput style={styles.input} placeholder="Business Address" placeholderTextColor="#94A3B8" value={businessAddress} onChangeText={setBusinessAddress} />
             <TextInput style={styles.input} placeholder="City" placeholderTextColor="#94A3B8" value={city} onChangeText={setCity} />
             <TextInput style={styles.input} placeholder="State" placeholderTextColor="#94A3B8" value={stateValue} onChangeText={setStateValue} />
@@ -732,7 +784,6 @@ export default function FreightRegister() {
 
           <View style={styles.card}>
             <SectionHeader icon="shield-checkmark-outline" title="Authority & Insurance" />
-
             <TextInput style={styles.input} placeholder="MDOT Number" placeholderTextColor="#94A3B8" value={mdotNumber} onChangeText={setMdotNumber} />
             <TextInput style={styles.input} placeholder="MC Number" placeholderTextColor="#94A3B8" value={mcNumber} onChangeText={setMcNumber} />
             <TextInput style={styles.input} placeholder="Insurance Provider" placeholderTextColor="#94A3B8" value={insuranceProvider} onChangeText={setInsuranceProvider} />
@@ -764,17 +815,33 @@ export default function FreightRegister() {
           </View>
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.disabledButton]}
-            onPress={submit}
-            disabled={loading}
+            style={[styles.button, saving && styles.disabledButton]}
+            onPress={saveRegistration}
+            disabled={saving || subscribing}
             activeOpacity={0.7}
           >
-            {loading ? (
+            {saving ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
               <>
-                <Ionicons name="card-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.buttonText}>Register + Subscribe + Start Verification</Text>
+                <Ionicons name="save-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.buttonText}>Save Freight Registration</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.secondaryButton, subscribing && styles.disabledButton]}
+            onPress={startSubscription}
+            disabled={saving || subscribing}
+            activeOpacity={0.7}
+          >
+            {subscribing ? (
+              <ActivityIndicator color={COLORS.red} />
+            ) : (
+              <>
+                <Ionicons name="card-outline" size={18} color={COLORS.red} />
+                <Text style={styles.secondaryButtonText}>Start Subscription</Text>
               </>
             )}
           </TouchableOpacity>
@@ -947,6 +1014,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
+  },
+  secondaryButton: {
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    padding: 16,
+    borderRadius: 16,
+    marginHorizontal: 18,
+    marginTop: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  secondaryButtonText: {
+    color: COLORS.red,
+    textAlign: "center",
+    fontWeight: "900",
+    fontSize: 16,
   },
   disabledButton: { opacity: 0.6 },
   buttonText: {
