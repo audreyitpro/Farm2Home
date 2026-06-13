@@ -116,6 +116,57 @@ export default function FreightRegister() {
   );
 
   useEffect(() => {
+    async function loadSavedFreight() {
+      try {
+        const saved =
+          (await AsyncStorage.getItem("currentFreightCarrier")) ||
+          (await AsyncStorage.getItem("currentFreight")) ||
+          (await AsyncStorage.getItem("currentFreightUser"));
+
+        if (!saved) return;
+
+        const carrier = JSON.parse(saved);
+
+        setFreightId(carrier.id || carrier.freightId || carrier.freight_id || "");
+        setSavedCarrierId(carrier.id || carrier.freightId || carrier.freight_id || "");
+        setAccountId(carrier.accountId || carrier.account_id || "");
+        setStripeId(carrier.stripeCustomerId || carrier.stripe_customer_id || carrier.stripeId || "");
+        setSubscriptionId(carrier.stripeSubscriptionId || carrier.stripe_subscription_id || "");
+
+        setCompanyName(carrier.companyName || carrier.company_name || "");
+        setContactName(carrier.contactName || carrier.contact_name || "");
+        setEmail(carrier.email || "");
+        setPhone(carrier.phone || "");
+        setUsername(carrier.username || "");
+        setServiceArea(carrier.serviceArea || carrier.service_area || "");
+
+        setBusinessAddress(carrier.businessAddress || carrier.business_address || "");
+        setCity(carrier.city || "");
+        setStateValue(carrier.state || "");
+        setZipCode(carrier.zipCode || carrier.zip_code || "");
+
+        setMdotNumber(carrier.mdotNumber || carrier.mdot_number || carrier.dot_number || "");
+        setMcNumber(carrier.mcNumber || carrier.mc_number || "");
+        setInsuranceProvider(carrier.insuranceProvider || carrier.insurance_provider || "");
+        setInsurancePolicyNumber(
+          carrier.insurancePolicyNumber || carrier.insurance_policy_number || ""
+        );
+
+        setAuthorityActive(Boolean(carrier.authorityActive || carrier.authority_active));
+        setInsuranceActive(Boolean(carrier.insuranceActive || carrier.insurance_active));
+        setLicensedLivestock(Boolean(carrier.licensedLivestock || carrier.licensed_livestock));
+        setLicensedRefrigeratedFood(
+          Boolean(carrier.licensedRefrigeratedFood || carrier.licensed_refrigerated_food)
+        );
+      } catch (error) {
+        console.log("LOAD FREIGHT SESSION ERROR:", error);
+      }
+    }
+
+    loadSavedFreight();
+  }, []);
+
+  useEffect(() => {
     if (Platform.OS !== "web") return;
 
     const existing = document.querySelector(
@@ -366,12 +417,14 @@ export default function FreightRegister() {
     let saveError: any = null;
 
     if (existingFreightUser?.id) {
+      const { created_at, ...updatePayload } = freightPayload as any;
+
       const result = await supabase
         .from("freight_users")
         .update({
-          ...freightPayload,
+          ...updatePayload,
           account_id: existingFreightUser.account_id || finalAccountId,
-          created_at: undefined,
+          updated_at: now,
         })
         .eq("id", carrierId)
         .select()
@@ -471,25 +524,78 @@ export default function FreightRegister() {
       id: carrierId,
       accountId: verify.data.account_id || finalAccountId,
       account_id: verify.data.account_id || finalAccountId,
+
       freightId: carrierId,
+      freight_id: carrierId,
       profileId: carrierId,
+      profile_id: carrierId,
       authUserId: carrierId,
+      auth_user_id: carrierId,
+
       role: "freight",
+
       companyName: cleanCompanyName,
+      company_name: cleanCompanyName,
       businessName: cleanCompanyName,
+      business_name: cleanCompanyName,
       contactName: cleanContactName,
+      contact_name: cleanContactName,
+
       email: cleanEmail,
       phone: cleanPhone,
       username: cleanUsername,
+
+      serviceArea: serviceArea.trim(),
+      service_area: serviceArea.trim(),
+
+      businessAddress: businessAddress.trim(),
+      business_address: businessAddress.trim(),
+      city: city.trim(),
+      state: stateValue.trim().toUpperCase(),
+      zipCode: zipCode.trim(),
+      zip_code: zipCode.trim(),
+
+      mdotNumber: mdotNumber.trim(),
+      mdot_number: mdotNumber.trim(),
+      dot_number: mdotNumber.trim(),
+      mcNumber: mcNumber.trim(),
+      mc_number: mcNumber.trim(),
+
+      insuranceProvider: insuranceProvider.trim(),
+      insurance_provider: insuranceProvider.trim(),
+      insurancePolicyNumber: insurancePolicyNumber.trim(),
+      insurance_policy_number: insurancePolicyNumber.trim(),
+
+      authorityActive,
+      authority_active: authorityActive,
+      insuranceActive,
+      insurance_active: insuranceActive,
+      licensedLivestock,
+      licensed_livestock: licensedLivestock,
+      licensedRefrigeratedFood,
+      licensed_refrigerated_food: licensedRefrigeratedFood,
+
       accountActive: true,
+      account_active: true,
+
       stripeId: stripeId || "",
+      stripe_customer_id: stripeId || "",
       stripeCustomerId: stripeId || "",
       stripeSubscriptionId: subscriptionId || "",
+      stripe_subscription_id: subscriptionId || "",
+
       membershipStatus: subscriptionId ? "active" : "registration_saved",
+      membership_status: subscriptionId ? "active" : "registration_saved",
       subscriptionStatus: subscriptionId ? "active" : "not_started",
+      subscription_status: subscriptionId ? "active" : "not_started",
+
       freightMembershipPaid: Boolean(subscriptionId),
+      freight_membership_paid: Boolean(subscriptionId),
+
       createdAt: now,
+      created_at: now,
       updatedAt: now,
+      updated_at: now,
     };
 
     await saveFreightSession(localCarrier);
@@ -497,6 +603,8 @@ export default function FreightRegister() {
     setFreightId(carrierId);
     setAccountId(verify.data.account_id || finalAccountId);
     setSavedCarrierId(carrierId);
+    setStripeId(verify.data.stripe_customer_id || verify.data.stripe_id || "");
+    setSubscriptionId(verify.data.stripe_subscription_id || "");
 
     return verify.data;
   }
@@ -520,10 +628,7 @@ export default function FreightRegister() {
         setStripeId(duplicate.stripe_id || duplicate.stripe_customer_id || "");
         setSubscriptionId(duplicate.stripe_subscription_id || "");
 
-        await saveFreightUserRow(
-          duplicate.id,
-          duplicate.account_id || accountId || undefined
-        );
+        await saveFreightUserRow(duplicate.id, duplicate.account_id || undefined);
 
         Alert.alert("Updated", "Existing freight registration was updated in freight_users.");
         return;
@@ -643,6 +748,25 @@ export default function FreightRegister() {
     });
   }
 
+  function ReadOnlyIdBox({
+    label,
+    value,
+    fallback,
+  }: {
+    label: string;
+    value: string;
+    fallback: string;
+  }) {
+    return (
+      <View style={styles.readOnlyBox}>
+        <Text style={styles.readOnlyLabel}>{label}</Text>
+        <Text style={[styles.readOnlyValue, !value && styles.readOnlyFallback]}>
+          {value || fallback}
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
@@ -672,11 +796,11 @@ export default function FreightRegister() {
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
               <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
-              <Text style={styles.noticeTitle}>Save Before Subscription</Text>
+              <Text style={styles.noticeTitle}>Automatic Account IDs</Text>
             </View>
             <Text style={styles.noticeText}>
-              Press Save Freight Registration first. This keeps your Supabase Auth UUID unchanged
-              and creates a separate permanent account ID like Freight_001.
+              Account IDs are assigned automatically. The Supabase UUID stays unchanged, and
+              Farm2Home creates a separate readable ID like Freight_001.
             </Text>
           </View>
 
@@ -692,35 +816,33 @@ export default function FreightRegister() {
 
           <View style={styles.card}>
             <SectionHeader icon="key-outline" title="Account IDs" />
-            <TextInput
-              style={styles.input}
-              placeholder="Supabase UUID / Freight ID"
-              placeholderTextColor="#94A3B8"
+
+            <Text style={styles.helperText}>
+              These values are assigned automatically. Do not enter account IDs manually.
+            </Text>
+
+            <ReadOnlyIdBox
+              label="Supabase UUID / Freight ID"
               value={freightId}
-              editable={false}
+              fallback="Assigned after save"
             />
-            <TextInput
-              style={styles.input}
-              placeholder="Static Account ID"
-              placeholderTextColor="#94A3B8"
+
+            <ReadOnlyIdBox
+              label="Static Account ID"
               value={accountId}
-              editable={false}
+              fallback="Assigned after save"
             />
-            <TextInput
-              style={styles.input}
-              placeholder="Stripe Customer ID / Stripe ID"
-              placeholderTextColor="#94A3B8"
+
+            <ReadOnlyIdBox
+              label="Stripe Customer ID"
               value={stripeId}
-              onChangeText={setStripeId}
-              autoCapitalize="none"
+              fallback="Assigned by Stripe checkout/webhook"
             />
-            <TextInput
-              style={styles.input}
-              placeholder="Stripe Subscription ID"
-              placeholderTextColor="#94A3B8"
+
+            <ReadOnlyIdBox
+              label="Stripe Subscription ID"
               value={subscriptionId}
-              onChangeText={setSubscriptionId}
-              autoCapitalize="none"
+              fallback="Assigned by Stripe checkout/webhook"
             />
           </View>
 
@@ -803,8 +925,8 @@ export default function FreightRegister() {
           <View style={styles.stripeCard}>
             <SectionHeader icon="card-outline" title="Start Subscription" />
             <Text style={styles.stripeText}>
-              After saving registration, complete payment below. If Stripe gives you a customer ID or
-              subscription ID, paste it into the Account IDs fields and press Save again.
+              After saving registration, complete payment below. Stripe customer and subscription
+              IDs must be saved by your backend Checkout/webhook.
             </Text>
 
             <View style={styles.buyButtonBox}>
@@ -964,6 +1086,36 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.text,
     fontWeight: "700",
+  },
+  helperText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 21,
+    marginBottom: 14,
+  },
+  readOnlyBox: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+  readOnlyLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  readOnlyValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  readOnlyFallback: {
+    color: "#94A3B8",
   },
   securityBox: { marginBottom: 12 },
   securityLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
