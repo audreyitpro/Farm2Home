@@ -110,40 +110,32 @@ export default function FreightRegister() {
   );
 
   function validateForm() {
-    const cleanCompanyName = companyName.trim();
-    const cleanContactName = contactName.trim();
-    const cleanEmail = normalize(email);
-    const cleanPhone = phone.trim();
-    const cleanUsername = normalize(username);
-    const cleanPassword = password.trim();
-    const cleanConfirmPassword = confirmPassword.trim();
-
-    if (!cleanCompanyName || !cleanContactName || !cleanEmail || !cleanPhone) {
+    if (!companyName.trim() || !contactName.trim() || !normalize(email) || !phone.trim()) {
       Alert.alert("Missing Info", "Company, contact, email, and phone are required.");
       return false;
     }
 
-    if (!cleanEmail.includes("@")) {
+    if (!normalize(email).includes("@")) {
       Alert.alert("Invalid Email", "Please enter a valid email address.");
       return false;
     }
 
-    if (!cleanUsername || !cleanPassword || !cleanConfirmPassword) {
+    if (!username.trim() || !password.trim() || !confirmPassword.trim()) {
       Alert.alert("Login Required", "Please create a username and password.");
       return false;
     }
 
-    if (cleanUsername.length < 4) {
+    if (normalize(username).length < 4) {
       Alert.alert("Invalid Username", "Username must be at least 4 characters.");
       return false;
     }
 
-    if (cleanPassword.length < 6) {
+    if (password.trim().length < 6) {
       Alert.alert("Weak Password", "Password must be at least 6 characters.");
       return false;
     }
 
-    if (cleanPassword !== cleanConfirmPassword) {
+    if (password.trim() !== confirmPassword.trim()) {
       Alert.alert("Password Mismatch", "Passwords do not match.");
       return false;
     }
@@ -198,11 +190,7 @@ export default function FreightRegister() {
       return null;
     }
 
-    if (Array.isArray(data) && data.length > 0) {
-      return data[0];
-    }
-
-    return null;
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
 
   async function buildAndSaveFreightPayload(carrierId: string) {
@@ -295,7 +283,7 @@ export default function FreightRegister() {
       updated_at: now,
     };
 
-    await supabase.from("profiles").upsert(
+    const { error: profileError } = await supabase.from("profiles").upsert(
       {
         id: carrierId,
         auth_user_id: carrierId,
@@ -312,13 +300,39 @@ export default function FreightRegister() {
       { onConflict: "id" }
     );
 
+    if (profileError) {
+      console.log("PROFILE SAVE ERROR:", profileError.message);
+    }
+
     const { data, error } = await supabase
       .from("freight_users")
       .upsert(freightPayload, { onConflict: "id" })
       .select("*")
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.log("FREIGHT USERS UPSERT ERROR:", error.message);
+      Alert.alert("Freight Save Error", error.message);
+      throw error;
+    }
+
+    const verify = await supabase
+      .from("freight_users")
+      .select("*")
+      .eq("id", carrierId)
+      .maybeSingle();
+
+    if (verify.error) {
+      console.log("VERIFY SAVE ERROR:", verify.error.message);
+      Alert.alert("Verify Error", verify.error.message);
+      throw verify.error;
+    }
+
+    console.log("FREIGHT SAVE VERIFIED:", verify.data);
+
+    if (!verify.data?.id) {
+      throw new Error("Freight registration did not save to freight_users.");
+    }
 
     await supabase.from("admin_verifications").upsert(
       {
@@ -374,23 +388,10 @@ export default function FreightRegister() {
       companyName: cleanCompanyName,
       businessName: cleanCompanyName,
       contactName: cleanContactName,
-      fullName: cleanContactName,
-      ownerName: cleanContactName,
       email: cleanEmail,
       phone: cleanPhone,
       username: cleanUsername,
       accountActive: true,
-      stripeId: "",
-      stripeAccountId: "",
-      stripeCustomerId: "",
-      stripeSubscriptionId: "",
-      stripeCheckoutSessionId: "",
-      stripeConnectStatus: "not_started",
-      payoutsEnabled: false,
-      chargesEnabled: false,
-      onboardingComplete: false,
-      verificationStatus: "PENDING_VERIFICATION",
-      complianceStatus: "PENDING_VERIFICATION",
       membershipStatus: "registration_saved",
       subscriptionStatus: "not_started",
       freightMembershipPaid: false,
@@ -413,22 +414,19 @@ export default function FreightRegister() {
 
       const cleanEmail = normalize(email);
       const cleanUsername = normalize(username);
-      const cleanPassword = password.trim();
 
       const duplicate = await checkDuplicateFreight(cleanEmail, cleanUsername);
 
       if (duplicate?.id) {
         setSavedCarrierId(duplicate.id);
-        Alert.alert(
-          "Account Exists",
-          "This freight account already exists. You can now start the subscription."
-        );
+        await buildAndSaveFreightPayload(duplicate.id);
+        Alert.alert("Updated", "Existing freight registration was updated in Supabase.");
         return;
       }
 
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: cleanEmail,
-        password: cleanPassword,
+        password: password.trim(),
         options: {
           data: {
             role: "freight",
@@ -456,7 +454,7 @@ export default function FreightRegister() {
 
       Alert.alert(
         "Registration Saved",
-        "Your freight registration was saved to Supabase. You can now start your subscription."
+        "Your freight registration was verified and saved to freight_users."
       );
     } catch (error: any) {
       console.log("SAVE FREIGHT REGISTER ERROR:", error);
@@ -678,25 +676,13 @@ export default function FreightRegister() {
     );
   }
 
-  function SectionHeader({
-    icon,
-    title,
-    subtitle,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    title: string;
-    subtitle?: string;
-  }) {
+  function SectionHeader({ icon, title }: { icon: keyof typeof Ionicons.glyphMap; title: string }) {
     return (
       <View style={styles.sectionHeader}>
         <View style={styles.sectionIcon}>
           <Ionicons name={icon} size={20} color="#FFFFFF" />
         </View>
-
-        <View style={{ flex: 1 }}>
-          <Text style={styles.section}>{title}</Text>
-          {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
-        </View>
+        <Text style={styles.section}>{title}</Text>
       </View>
     );
   }
@@ -719,12 +705,10 @@ export default function FreightRegister() {
             <View style={styles.heroIcon}>
               <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
             </View>
-
             <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
             <Text style={styles.title}>Carrier Registration</Text>
-
             <Text style={styles.subtitle}>
-              Save your freight carrier registration first, then start Stripe subscription.
+              Save freight carrier details to Supabase first, then start the Stripe subscription.
             </Text>
           </View>
 
@@ -733,10 +717,8 @@ export default function FreightRegister() {
               <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
               <Text style={styles.noticeTitle}>Two-Step Registration</Text>
             </View>
-
             <Text style={styles.noticeText}>
-              Step 1 saves every registration field to Supabase. Step 2 opens Stripe and saves the
-              Stripe customer/session IDs.
+              Save Registration verifies the row exists in freight_users before Stripe opens.
             </Text>
           </View>
 
@@ -745,7 +727,6 @@ export default function FreightRegister() {
               <Text style={styles.price}>$9.99 / month</Text>
               <Text style={styles.priceSub}>Access the Farm2Home Freight Board</Text>
             </View>
-
             <View style={styles.priceIcon}>
               <Ionicons name="flash-outline" size={22} color="#FFFFFF" />
             </View>
@@ -757,7 +738,7 @@ export default function FreightRegister() {
             <TextInput style={styles.input} placeholder="Contact Name" placeholderTextColor="#94A3B8" value={contactName} onChangeText={setContactName} />
             <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#94A3B8" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
             <TextInput style={styles.input} placeholder="Phone" placeholderTextColor="#94A3B8" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-            <TextInput style={styles.input} placeholder="Service Area (States / Cities)" placeholderTextColor="#94A3B8" value={serviceArea} onChangeText={setServiceArea} />
+            <TextInput style={styles.input} placeholder="Service Area" placeholderTextColor="#94A3B8" value={serviceArea} onChangeText={setServiceArea} />
           </View>
 
           <View style={styles.card}>
@@ -802,12 +783,10 @@ export default function FreightRegister() {
 
           <View style={styles.card}>
             <SectionHeader icon="cube-outline" title="Transport Authorization" />
-
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Licensed to Move Livestock</Text>
               <Switch value={licensedLivestock} onValueChange={setLicensedLivestock} />
             </View>
-
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>Licensed for Refrigerated Fresh Food</Text>
               <Switch value={licensedRefrigeratedFood} onValueChange={setLicensedRefrigeratedFood} />
@@ -818,7 +797,6 @@ export default function FreightRegister() {
             style={[styles.button, saving && styles.disabledButton]}
             onPress={saveRegistration}
             disabled={saving || subscribing}
-            activeOpacity={0.7}
           >
             {saving ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -834,7 +812,6 @@ export default function FreightRegister() {
             style={[styles.secondaryButton, subscribing && styles.disabledButton]}
             onPress={startSubscription}
             disabled={saving || subscribing}
-            activeOpacity={0.7}
           >
             {subscribing ? (
               <ActivityIndicator color={COLORS.red} />
@@ -846,7 +823,7 @@ export default function FreightRegister() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => router.push("/freight/login" as any)} activeOpacity={0.85}>
+          <TouchableOpacity onPress={() => router.push("/freight/login" as any)}>
             <Text style={styles.link}>Already registered? Login</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -941,7 +918,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  sectionHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 16 },
+  sectionHeader: { flexDirection: "row", gap: 10, alignItems: "center", marginBottom: 16 },
   sectionIcon: {
     width: 40,
     height: 40,
@@ -951,12 +928,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   section: { fontSize: 20, fontWeight: "900", color: COLORS.text },
-  sectionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 3,
-  },
   input: {
     backgroundColor: COLORS.surface,
     padding: 14,
@@ -981,10 +952,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     maxWidth: 280,
   },
-  questionChipActive: {
-    backgroundColor: COLORS.red,
-    borderColor: COLORS.red,
-  },
+  questionChipActive: { backgroundColor: COLORS.red, borderColor: COLORS.red },
   questionChipText: { color: COLORS.red, fontWeight: "900" },
   questionChipTextActive: { color: "#FFFFFF" },
   switchRow: {
