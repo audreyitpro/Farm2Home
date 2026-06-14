@@ -14,7 +14,7 @@ import {
   clearPendingOrder,
   getPendingOrder,
 } from "../data/orderStore";
-import { reduceProductInventory } from "../data/farmerStore";
+
 import farmTheme from "../styles/farmTheme";
 
 export default function CheckoutSuccess() {

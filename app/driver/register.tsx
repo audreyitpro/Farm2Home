@@ -363,63 +363,69 @@ export default function DriverRegisterScreen() {
   }
 
   async function createDriverStripeCheckout({
-    cleanEmail,
-    cleanFullName,
-    cleanUsername,
-    driverId,
-    accountId,
-  }: {
-    cleanEmail: string;
-    cleanFullName: string;
-    cleanUsername: string;
-    driverId: string;
-    accountId: string;
-  }) {
-    const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customerEmail: cleanEmail,
-        email: cleanEmail,
-        name: cleanFullName,
-        username: cleanUsername,
+  cleanEmail,
+  cleanFullName,
+  cleanUsername,
+  driverId,
+  accountId,
+}: {
+  cleanEmail: string;
+  cleanFullName: string;
+  cleanUsername: string;
+  driverId: string;
+  accountId: string;
+}) {
+  const response = await fetch(`${API_BASE_URL}/payments/create-driver-subscription-checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      role: "driver",
+      planType: "driver",
+      userId: driverId,
+      driverId,
+      driver_id: driverId,
+      accountId,
+      account_id: accountId,
+      email: cleanEmail,
+      customerEmail: cleanEmail,
+      companyName: cleanFullName,
+      businessName: cleanFullName,
+      name: cleanFullName,
+      username: cleanUsername,
+      successUrl: `${APP_URL}/driver/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${APP_URL}/driver/register`,
+    }),
+  });
 
-        userId: driverId,
-        driverId,
-        profileId: driverId,
-        authUserId: driverId,
+  const text = await response.text();
 
-        accountId,
-        account_id: accountId,
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
 
-        role: "driver",
-        planType: "driver",
+  if (!response.ok || !data.url) {
+    throw new Error(
+      data.error ||
+        data.message ||
+        data.raw ||
+        "Stripe checkout failed."
+    );
+  }
 
-        successUrl: `${APP_URL}/driver/mobile-driver-app?driverId=${driverId}&stripeReturn=true&session_id={CHECKOUT_SESSION_ID}`,
-        cancelUrl: `${APP_URL}/driver/register?driverId=${driverId}&stripeCancel=true`,
-      }),
-    });
-
-    const text = await response.text();
-
-    let data: any = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      data = { raw: text };
-    }
-
-    if (!response.ok || !data.url) {
-      throw new Error(
-        data.error ||
-          data.message ||
-          data.raw ||
-          "Stripe checkout URL was not returned."
-      );
-    }
-
+  if (data.alreadySubscribed) {
     return data;
   }
+
+  if (!data.url) {
+    throw new Error("Stripe checkout URL was not returned.");
+  }
+
+  return data;
+}
+  
 
   async function registerDriver() {
     if (loading) return;

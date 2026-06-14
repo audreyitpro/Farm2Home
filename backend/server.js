@@ -122,16 +122,32 @@ app.use(
 );
 
 /* =====================================================
-   STRIPE WEBHOOK ROUTES
-   THESE MUST STAY BEFORE express.json()
+   STRIPE RAW WEBHOOK
+   MUST STAY BEFORE express.json()
 ===================================================== */
 
 app.use("/stripe", stripeWebhookRoutes);
-app.use("/payments", paymentsRoutes);
 
 /* =====================================================
-   JSON MIDDLEWARE
-   DO NOT PLACE THIS BEFORE STRIPE WEBHOOK ROUTES
+   PAYMENTS ROUTES
+   IMPORTANT:
+   /payments normal routes need JSON body parsing.
+   /payments/webhook must stay raw if used.
+===================================================== */
+
+app.use("/payments", (req, res, next) => {
+  if (req.path === "/webhook") {
+    return paymentsRoutes(req, res, next);
+  }
+
+  return express.json({ limit: "10mb" })(req, res, (err) => {
+    if (err) return next(err);
+    return paymentsRoutes(req, res, next);
+  });
+});
+
+/* =====================================================
+   JSON MIDDLEWARE FOR ALL OTHER ROUTES
 ===================================================== */
 
 app.use(express.json({ limit: "10mb" }));
@@ -158,7 +174,7 @@ app.get("/health", (req, res) => {
     webhookConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
     appUrl: APP_URL,
     apiBaseUrl: API_BASE_URL,
-    paymentsRoutesMountedBeforeJson: true,
+    paymentsRoutesMountedWithJsonParser: true,
     driverRoutesMounted: true,
     stripeWebhookMounted: true,
     deliveryPayoutRoutesMounted: true,
@@ -204,11 +220,6 @@ app.post("/create-farmer-stripe-account", async (req, res) => {
       });
 
       accountId = account.id;
-
-      console.log("Stripe connected account created:", {
-        farmerId,
-        accountId,
-      });
     }
 
     const refreshUrl = appendQueryParams(getConnectRefreshUrl(), {
@@ -543,6 +554,19 @@ app.use("/freight", freightRoutes);
 app.use("/driver", driverRoutes);
 app.use("/delivery-payouts", deliveryPayoutRoutes);
 app.use("/payouts", payoutRetryRoutes);
+
+/* =====================================================
+   ERROR HANDLER
+===================================================== */
+
+app.use((err, req, res, next) => {
+  console.error("Backend error:", err);
+
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || "Internal server error.",
+  });
+});
 
 /* =====================================================
    404 HANDLER

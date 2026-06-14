@@ -20,11 +20,10 @@ import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { PAYMENT_LINKS } from "../config/paymentLinks";
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 
-const FREIGHT_ROUTES = {
+const ROUTES = {
   dashboard: "/freight/dashboard",
   board: "/freight/board",
   liveLoads: "/freight/live-loads",
@@ -37,10 +36,7 @@ const FREIGHT_ROUTES = {
   help: "/freight/help",
   login: "/freight/login",
   register: "/freight/register",
-  success: "/freight/subscription-success",
 } as const;
-
-type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
 
 const COLORS = {
   bg: "#F4F5F7",
@@ -61,16 +57,29 @@ function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
-function goTo(route: FreightRoute) {
-  router.push(route as any);
+function isActiveStatus(status: any) {
+  return ["active", "trialing", "past_due"].includes(normalize(status));
+}
+
+async function saveSession(user: any) {
+  await AsyncStorage.setItem("currentUser", JSON.stringify(user));
+  await AsyncStorage.setItem("currentFreight", JSON.stringify(user));
+  await AsyncStorage.setItem("currentFreightUser", JSON.stringify(user));
+  await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(user));
+  await AsyncStorage.setItem("currentUserRole", "freight");
+  await AsyncStorage.setItem("userRole", "freight");
 }
 
 export default function FreightSubscriptionScreen() {
   const [email, setEmail] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [manualCustomerId, setManualCustomerId] = useState("");
+
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+
   const [freightUser, setFreightUser] = useState<any>(null);
 
   useFocusEffect(
@@ -95,77 +104,63 @@ export default function FreightSubscriptionScreen() {
     }
   }
 
-  async function persistFreightUser(user: any, saveToSupabase = true) {
-    const now = new Date().toISOString();
-    const realId = user.id || user.freightId;
+  function buildLocalUser(row: any, stored: any = {}) {
+    const realId = row?.id || row?.freight_id || stored?.id || stored?.freightId || "";
 
-    if (!realId) {
-      throw new Error("Missing Supabase freight profile ID.");
-    }
-
-    const normalizedUser = {
-      ...user,
+    return {
+      ...(stored || {}),
+      ...(row || {}),
       id: realId,
       freightId: realId,
-      email: normalize(user.email),
-      companyName: user.companyName || user.businessName || user.name || "",
-      businessName: user.businessName || user.companyName || user.name || "",
-      name: user.name || user.companyName || user.businessName || "",
+      freight_id: realId,
       role: "freight",
-      updatedAt: now,
-      stripeCustomerId: user.stripeCustomerId || user.stripe_customer_id || user.customerId || "",
+      email: normalize(row?.email || stored?.email || ""),
+      accountId: row?.account_id || stored?.accountId || stored?.account_id || "",
+      account_id: row?.account_id || stored?.account_id || stored?.accountId || "",
+      companyName:
+        row?.company_name ||
+        row?.business_name ||
+        stored?.companyName ||
+        stored?.businessName ||
+        "",
+      businessName:
+        row?.business_name ||
+        row?.company_name ||
+        stored?.businessName ||
+        stored?.companyName ||
+        "",
+      username: row?.username || stored?.username || "",
+      membershipStatus: row?.membership_status || stored?.membershipStatus || "not_started",
+      subscriptionStatus: row?.subscription_status || stored?.subscriptionStatus || "not_started",
+      accountActive: Boolean(row?.account_active ?? stored?.accountActive ?? false),
+      freightBoardAccess: isActiveStatus(row?.subscription_status || stored?.subscriptionStatus),
+      hasActiveSubscription: isActiveStatus(row?.subscription_status || stored?.subscriptionStatus),
+      stripeId: row?.stripe_id || row?.stripe_customer_id || stored?.stripeId || "",
+      stripe_id: row?.stripe_id || row?.stripe_customer_id || stored?.stripe_id || "",
+      stripeCustomerId: row?.stripe_customer_id || row?.stripe_id || stored?.stripeCustomerId || "",
+      stripe_customer_id: row?.stripe_customer_id || row?.stripe_id || stored?.stripe_customer_id || "",
       stripeSubscriptionId:
-        user.stripeSubscriptionId || user.stripe_subscription_id || user.subscriptionId || "",
-      stripeAccountId: user.stripeAccountId || user.stripe_account_id || "",
-      stripe_account_id: user.stripe_account_id || user.stripeAccountId || "",
+        row?.stripe_subscription_id || row?.subscription_id || stored?.stripeSubscriptionId || "",
+      stripe_subscription_id:
+        row?.stripe_subscription_id || row?.subscription_id || stored?.stripe_subscription_id || "",
+      subscriptionId:
+        row?.subscription_id || row?.stripe_subscription_id || stored?.subscriptionId || "",
+      subscription_id:
+        row?.subscription_id || row?.stripe_subscription_id || stored?.subscription_id || "",
+      stripeAccountId: row?.stripe_account_id || stored?.stripeAccountId || "",
+      stripe_account_id: row?.stripe_account_id || stored?.stripe_account_id || "",
     };
-
-    if (saveToSupabase) {
-      const { error } = await supabase
-        .from("freight_users")
-        .update({
-          email: normalizedUser.email,
-          company_name: normalizedUser.companyName,
-          business_name: normalizedUser.businessName,
-          name: normalizedUser.name,
-          role: "freight",
-          membership_status: normalizedUser.membershipStatus,
-          subscription_status: normalizedUser.subscriptionStatus,
-          account_active: normalizedUser.accountActive,
-          stripe_customer_id: normalizedUser.stripeCustomerId || null,
-          stripe_subscription_id: normalizedUser.stripeSubscriptionId || null,
-          stripe_account_id: normalizedUser.stripeAccountId || normalizedUser.stripe_account_id || null,
-          updated_at: now,
-        })
-        .eq("id", normalizedUser.id);
-
-      if (error) {
-        console.log("Freight subscription Supabase sync error:", error.message);
-        throw error;
-      }
-    }
-
-    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedUser));
-    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedUser));
-    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedUser));
-    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedUser));
-    await AsyncStorage.setItem("currentUserRole", "freight");
-    await AsyncStorage.setItem("userRole", "freight");
-
-    setFreightUser(normalizedUser);
-    return normalizedUser;
   }
 
   async function loadFreightUser() {
     try {
       const stored = await getStoredFreightUser();
       const { data: authData } = await supabase.auth.getUser();
-      const authUser = authData?.user;
 
-      const savedEmail = normalize(stored?.email || authUser?.email || "");
+      const savedEmail = normalize(stored?.email || authData?.user?.email || "");
 
       if (!savedEmail) {
-        router.replace(FREIGHT_ROUTES.login as any);
+        router.replace(ROUTES.login as any);
         return;
       }
 
@@ -176,78 +171,32 @@ export default function FreightSubscriptionScreen() {
         .maybeSingle();
 
       if (error) {
-        console.log("LOAD_FREIGHT_SUBSCRIPTION_SUPABASE_ERROR:", error.message);
-      }
-
-      if (!dbFreight) {
-        Alert.alert(
-          "Freight Profile Missing",
-          "No freight profile was found for this email. Please complete freight registration again."
-        );
-        router.replace(FREIGHT_ROUTES.register as any);
+        Alert.alert("Load Error", error.message);
         return;
       }
 
-      const merged = {
-        ...(stored || {}),
-        ...(dbFreight || {}),
-        id: dbFreight.id,
-        freightId: dbFreight.id,
-        email: normalize(dbFreight.email || savedEmail),
-        companyName:
-          dbFreight.company_name ||
-          dbFreight.business_name ||
-          stored?.companyName ||
-          stored?.businessName ||
-          "",
-        businessName:
-          dbFreight.business_name ||
-          dbFreight.company_name ||
-          stored?.businessName ||
-          stored?.companyName ||
-          "",
-        role: "freight",
-        membershipStatus:
-          dbFreight.membership_status || stored?.membershipStatus || "not_started",
-        subscriptionStatus:
-          dbFreight.subscription_status || stored?.subscriptionStatus || "not_started",
-        membershipType: stored?.membershipType || "freight_membership",
-        planType: stored?.planType || "freight",
-        freightBoardAccess:
-          dbFreight.subscription_status === "active" || stored?.freightBoardAccess || false,
-        accountActive: dbFreight.account_active ?? stored?.accountActive ?? false,
-        hasActiveSubscription:
-          dbFreight.subscription_status === "active" || stored?.hasActiveSubscription || false,
-        stripeCustomerId:
-          dbFreight.stripe_customer_id || stored?.stripeCustomerId || stored?.customerId || "",
-        stripeSubscriptionId:
-          dbFreight.stripe_subscription_id ||
-          stored?.stripeSubscriptionId ||
-          stored?.subscriptionId ||
-          "",
-        stripeAccountId:
-          dbFreight.stripe_account_id ||
-          stored?.stripeAccountId ||
-          stored?.stripe_account_id ||
-          "",
-        stripe_account_id:
-          dbFreight.stripe_account_id ||
-          stored?.stripe_account_id ||
-          stored?.stripeAccountId ||
-          "",
-      };
+      if (!dbFreight?.id) {
+        Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
+        router.replace(ROUTES.register as any);
+        return;
+      }
+
+      const merged = buildLocalUser(dbFreight, stored);
 
       setEmail(merged.email || "");
-      setCompanyName(merged.companyName || "");
-      await persistFreightUser(merged, false);
-    } catch (error) {
-      console.log("LOAD_FREIGHT_SUBSCRIPTION_ERROR:", error);
+      setCompanyName(merged.companyName || merged.businessName || "");
+      setManualCustomerId(merged.stripeCustomerId || "");
+
+      setFreightUser(merged);
+      await saveSession(merged);
+    } catch (error: any) {
+      Alert.alert("Load Error", error?.message || "Unable to load freight subscription.");
     }
   }
 
   async function openUrl(url: string) {
     if (!url || !url.startsWith("http")) {
-      Alert.alert("Stripe Error", "Invalid Stripe checkout URL.");
+      Alert.alert("Stripe Error", "Invalid Stripe URL.");
       return;
     }
 
@@ -259,13 +208,137 @@ export default function FreightSubscriptionScreen() {
     await WebBrowser.openBrowserAsync(url);
   }
 
+  async function refreshFromSupabase() {
+    await loadFreightUser();
+  }
+
+  async function syncExistingSubscription(silent = false) {
+    if (!freightUser?.id && !freightUser?.freightId) {
+      if (!silent) Alert.alert("Save Required", "Save freight registration first.");
+      return null;
+    }
+
+    try {
+      setSyncing(true);
+
+      const freightId = freightUser.id || freightUser.freightId;
+
+      const response = await fetch(`${API_BASE_URL}/payments/force-sync-freight-subscription`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          userId: freightId,
+          freightId,
+          freight_id: freightId,
+          email: normalize(email || freightUser.email),
+          businessName: companyName.trim() || freightUser.companyName,
+          companyName: companyName.trim() || freightUser.companyName,
+          name: companyName.trim() || freightUser.companyName,
+          username: normalize(freightUser.username || email),
+          stripeCustomerId: manualCustomerId.trim(),
+          stripe_customer_id: manualCustomerId.trim(),
+        }),
+      });
+
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
+
+      if (!response.ok || !json.success) {
+        if (!silent) {
+          Alert.alert(
+            "Sync Not Found",
+            json.error ||
+              "No existing Stripe freight subscription was found. Do not purchase again if you already paid."
+          );
+        }
+        return null;
+      }
+
+      await refreshFromSupabase();
+
+      if (!silent) {
+        Alert.alert("Subscription Restored", "Your existing Stripe subscription was linked to Supabase.");
+      }
+
+      return json;
+    } catch (error: any) {
+      if (!silent) Alert.alert("Sync Error", error?.message || "Unable to sync subscription.");
+      return null;
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function linkStripeCustomerManually() {
+    const customerId = manualCustomerId.trim();
+    const freightId = freightUser?.id || freightUser?.freightId;
+
+    if (!freightId) {
+      Alert.alert("Save Required", "Save freight registration first.");
+      return;
+    }
+
+    if (!customerId.startsWith("cus_")) {
+      Alert.alert("Invalid Stripe Customer", "Paste the Stripe Customer ID that starts with cus_.");
+      return;
+    }
+
+    try {
+      setSyncing(true);
+
+      const response = await fetch(`${API_BASE_URL}/payments/link-freight-stripe-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          freightId,
+          freight_id: freightId,
+          userId: freightId,
+          email: normalize(email || freightUser.email),
+          stripeCustomerId: customerId,
+          stripe_customer_id: customerId,
+        }),
+      });
+
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
+
+      if (!response.ok || !json.success) {
+        Alert.alert("Link Failed", json.error || "Unable to link Stripe customer.");
+        return;
+      }
+
+      await refreshFromSupabase();
+
+      Alert.alert("Stripe Linked", "The Stripe customer/subscription was linked to this freight account.");
+    } catch (error: any) {
+      Alert.alert("Link Error", error?.message || "Unable to link Stripe customer.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function startSubscription() {
     if (loading) return;
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = normalize(email);
     const cleanCompany = companyName.trim();
+    const freightId = freightUser?.id || freightUser?.freightId;
+    const accountId = freightUser?.accountId || freightUser?.account_id || "";
 
-    if (!freightUser?.id && !freightUser?.freightId) {
+    if (!freightId) {
       Alert.alert("Profile Missing", "Please complete freight registration before subscribing.");
       return;
     }
@@ -280,92 +353,111 @@ export default function FreightSubscriptionScreen() {
       return;
     }
 
+    if (isActiveStatus(freightUser?.subscriptionStatus || freightUser?.subscription_status)) {
+      Alert.alert("Already Active", "This freight account already has an active subscription.");
+      return;
+    }
+
+    const restored = await syncExistingSubscription(true);
+
+    if (restored?.stripeSubscriptionId) {
+      Alert.alert("Subscription Found", "Your existing Stripe subscription was restored.", [
+        { text: "Dashboard", onPress: () => router.replace(ROUTES.dashboard as any) },
+        { text: "Stay Here", style: "cancel" },
+      ]);
+      return;
+    }
+
     try {
       setLoading(true);
 
-      const freightId = freightUser.id || freightUser.freightId;
+      const response = await fetch(`${API_BASE_URL}/payments/create-freight-subscription-checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          planType: "freight",
+          userId: freightId,
+          freightId,
+          freight_id: freightId,
+          accountId,
+          account_id: accountId,
+          email: cleanEmail,
+          customerEmail: cleanEmail,
+          companyName: cleanCompany,
+          businessName: cleanCompany,
+          name: cleanCompany,
+          username: normalize(freightUser?.username || cleanEmail),
+          successUrl: `${API_BASE_URL.replace("/api", "")}/freight/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: `${API_BASE_URL.replace("/api", "")}/freight/subscription`,
+        }),
+      });
 
-      const pendingFreight = {
-        ...freightUser,
-        id: freightId,
-        freightId,
-        email: cleanEmail,
-        companyName: cleanCompany,
-        businessName: cleanCompany,
-        name: cleanCompany,
-        role: "freight",
-        membershipStatus: "pending_payment",
-        subscriptionStatus: "pending_payment",
-        membershipType: "freight_membership",
-        planType: "freight",
-        freightBoardAccess: false,
-        accountActive: false,
-        hasActiveSubscription: false,
-        updatedAt: new Date().toISOString(),
-      };
+      const text = await response.text();
+      let json: any = {};
 
-      await persistFreightUser(pendingFreight, true);
-      await AsyncStorage.setItem("pendingFreightSubscription", JSON.stringify(pendingFreight));
-
-      const stripeUrl = PAYMENT_LINKS.freightMembership;
-
-      if (!stripeUrl) {
-        throw new Error("Freight membership payment link missing.");
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
       }
 
-      await openUrl(stripeUrl);
+      if (!response.ok || !json.success) {
+        Alert.alert(
+          "Checkout Error",
+          json.error || "Backend checkout failed. Do not use a Stripe payment link."
+        );
+        return;
+      }
 
-      Alert.alert(
-        "Complete Payment",
-        "After payment is complete, return to Farm2Home and tap 'I Completed Payment'."
+      if (json.alreadySubscribed) {
+        await refreshFromSupabase();
+
+        Alert.alert("Subscription Already Linked", "Your Stripe subscription is already active.", [
+          { text: "Dashboard", onPress: () => router.replace(ROUTES.dashboard as any) },
+          { text: "Stay Here", style: "cancel" },
+        ]);
+        return;
+      }
+
+      if (!json.url) {
+        Alert.alert("Checkout Error", "Backend did not return a Stripe Checkout URL.");
+        return;
+      }
+
+      await AsyncStorage.setItem(
+        "pendingFreightSubscription",
+        JSON.stringify({
+          ...freightUser,
+          id: freightId,
+          freightId,
+          accountId,
+          email: cleanEmail,
+          companyName: cleanCompany,
+          businessName: cleanCompany,
+          role: "freight",
+          stripeCustomerId: json.stripeCustomerId || "",
+          checkoutSessionId: json.sessionId || json.id || "",
+        })
       );
+
+      await openUrl(json.url);
     } catch (error: any) {
-      console.log("FREIGHT_SUBSCRIPTION_ERROR:", error);
-      Alert.alert("Subscription Error", error?.message || "Unable to start freight membership.");
+      Alert.alert("Subscription Error", error?.message || "Unable to start freight subscription.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function continueAfterPayment() {
-    try {
-      const pending = await AsyncStorage.getItem("pendingFreightSubscription");
-
-      if (!pending) {
-        Alert.alert("No Pending Membership", "Please complete freight membership payment first.");
-        return;
-      }
-
-      const pendingFreight = JSON.parse(pending);
-
-      const activatedFreight = {
-        ...pendingFreight,
-        membershipStatus: "active",
-        subscriptionStatus: "active",
-        hasActiveSubscription: true,
-        freightBoardAccess: true,
-        accountActive: true,
-        activatedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      await persistFreightUser(activatedFreight, true);
-      await AsyncStorage.setItem("freightSubscriptionStatus", "active");
-      await AsyncStorage.removeItem("pendingFreightSubscription");
-
-      router.replace(FREIGHT_ROUTES.success as any);
-    } catch (error: any) {
-      console.log("FREIGHT_CONTINUE_AFTER_PAYMENT_ERROR:", error);
-      Alert.alert("Activation Error", error?.message || "Unable to activate freight membership.");
-    }
-  }
-
   async function manageBillingPortal() {
     const stripeCustomerId =
-      freightUser?.stripeCustomerId || freightUser?.stripe_customer_id || freightUser?.customerId;
+      freightUser?.stripeCustomerId ||
+      freightUser?.stripe_customer_id ||
+      freightUser?.stripeId ||
+      freightUser?.stripe_id;
 
     if (!stripeCustomerId) {
-      Alert.alert("Missing Stripe Customer", "No Stripe customer ID was found for this freight account.");
+      Alert.alert("Missing Stripe Customer", "No Stripe customer ID was found. Link or sync subscription first.");
       return;
     }
 
@@ -383,14 +475,21 @@ export default function FreightSubscriptionScreen() {
         }),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let json: any = {};
 
-      if (!response.ok || data.error || !data.url) {
-        Alert.alert("Billing Error", data.error || "Unable to open billing portal.");
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
+
+      if (!response.ok || !json.url) {
+        Alert.alert("Billing Error", json.error || "Unable to open billing portal.");
         return;
       }
 
-      await openUrl(data.url);
+      await openUrl(json.url);
     } catch (error: any) {
       Alert.alert("Billing Error", error?.message || "Unable to open billing portal.");
     } finally {
@@ -402,68 +501,68 @@ export default function FreightSubscriptionScreen() {
     const subscriptionId =
       freightUser?.stripeSubscriptionId ||
       freightUser?.stripe_subscription_id ||
-      freightUser?.subscriptionId;
+      freightUser?.subscriptionId ||
+      freightUser?.subscription_id;
 
     if (!subscriptionId) {
       Alert.alert("No Subscription", "No active freight subscription ID was found.");
       return;
     }
 
-    Alert.alert(
-      "Cancel Freight Membership",
-      "Are you sure you want to cancel your freight membership?",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, Cancel",
-          style: "destructive",
-          onPress: async () => {
+    Alert.alert("Cancel Freight Membership", "Are you sure you want to cancel this membership?", [
+      { text: "No", style: "cancel" },
+      {
+        text: "Yes, Cancel",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            setCancelLoading(true);
+
+            const response = await fetch(`${API_BASE_URL}/payments/cancel-subscription`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                subscriptionId,
+                carrierId: freightUser?.id || freightUser?.freightId,
+                role: "freight",
+              }),
+            });
+
+            const text = await response.text();
+            let json: any = {};
+
             try {
-              setCancelLoading(true);
-
-              const response = await fetch(`${API_BASE_URL}/payments/cancel-subscription`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  subscriptionId,
-                  carrierId: freightUser?.id || freightUser?.freightId,
-                  role: "freight",
-                }),
-              });
-
-              const data = await response.json();
-
-              if (!response.ok || data.error) {
-                Alert.alert("Stripe Error", data.error || "Unable to cancel.");
-                return;
-              }
-
-              const updatedFreight = {
-                ...freightUser,
-                membershipStatus: "canceled",
-                subscriptionStatus: "canceled",
-                hasActiveSubscription: false,
-                freightBoardAccess: false,
-                accountActive: false,
-                updatedAt: new Date().toISOString(),
-              };
-
-              await persistFreightUser(updatedFreight, true);
-
-              Alert.alert("Canceled", "Freight subscription was canceled.");
-            } catch (error: any) {
-              Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
-            } finally {
-              setCancelLoading(false);
+              json = text ? JSON.parse(text) : {};
+            } catch {
+              json = { success: false, error: text };
             }
-          },
+
+            if (!response.ok || json.error) {
+              Alert.alert("Stripe Error", json.error || "Unable to cancel.");
+              return;
+            }
+
+            await refreshFromSupabase();
+
+            Alert.alert("Canceled", "Freight subscription was canceled.");
+          } catch (error: any) {
+            Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
+          } finally {
+            setCancelLoading(false);
+          }
         },
-      ]
-    );
+      },
+    ]);
   }
 
   function membershipStatus() {
-    return freightUser?.membershipStatus || freightUser?.subscriptionStatus || "not_started";
+    return (
+      freightUser?.membershipStatus ||
+      freightUser?.membership_status ||
+      freightUser?.subscriptionStatus ||
+      freightUser?.subscription_status ||
+      "not_started"
+    );
   }
 
   function statusColor() {
@@ -480,10 +579,7 @@ export default function FreightSubscriptionScreen() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <KeyboardAvoidingView
-        style={styles.page}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
@@ -494,12 +590,11 @@ export default function FreightSubscriptionScreen() {
               <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
               <Text style={styles.title}>Freight Membership</Text>
               <Text style={styles.subtitle}>
-                Subscribe to access freight posting, live load board tools, route management,
-                carrier dispatch, and logistics support.
+                Backend Stripe Checkout only. No static payment links. No local activation.
               </Text>
             </View>
 
-            <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+            <TouchableOpacity style={styles.heroIcon} onPress={() => router.push(ROUTES.dashboard as any)}>
               <Ionicons name="card-outline" size={34} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
@@ -507,44 +602,19 @@ export default function FreightSubscriptionScreen() {
           <View style={styles.priceCard}>
             <Text style={styles.priceLabel}>Monthly Freight Membership</Text>
             <Text style={styles.price}>Freight Access Plan</Text>
-            <Text style={styles.priceSub}>
-              Production Mode Enabled · Stripe Live Payment Links Active
-            </Text>
+            <Text style={styles.priceSub}>Stripe Customer: {freightUser?.stripeCustomerId || "Not linked"}</Text>
+            <Text style={styles.priceSub}>Subscription: {freightUser?.stripeSubscriptionId || "Not linked"}</Text>
 
             <View style={[styles.statusPill, { backgroundColor: statusColor() }]}>
               <Text style={styles.statusPillText}>{membershipStatus()}</Text>
             </View>
           </View>
 
-          <View style={styles.featureBox}>
-            <SectionHeader
-              icon="sparkles-outline"
-              title="Membership Includes"
-              subtitle="Carrier tools built for Farm2Home freight operations."
-            />
-
-            {[
-              "Freight board access",
-              "Load posting tools",
-              "Delivery tracking",
-              "Route and dispatch support",
-              "Carrier verification workflow",
-              "Farm-to-market logistics opportunities",
-              "Freight profile and billing management",
-              "Live operations support",
-            ].map((item) => (
-              <View key={item} style={styles.featureItem}>
-                <Ionicons name="checkmark-circle" size={18} color={COLORS.green} />
-                <Text style={styles.featureText}>{item}</Text>
-              </View>
-            ))}
-          </View>
-
           <View style={styles.card}>
             <SectionHeader
               icon="business-outline"
               title="Billing Profile"
-              subtitle="Confirm the freight company and email used for membership billing."
+              subtitle="Confirm company info before opening backend Stripe Checkout."
             />
 
             <Text style={styles.inputLabel}>Company Name</Text>
@@ -572,28 +642,97 @@ export default function FreightSubscriptionScreen() {
               style={[styles.primaryButton, loading && styles.disabledButton]}
               onPress={startSubscription}
               disabled={loading}
-              activeOpacity={0.85}
             >
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
                   <Ionicons name="card-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.primaryButtonText}>Pay Membership with Stripe</Text>
+                  <Text style={styles.primaryButtonText}>Start Backend Stripe Checkout</Text>
                 </>
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.completedButton} onPress={continueAfterPayment} activeOpacity={0.85}>
-              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.completedButtonText}>I Completed Payment</Text>
+            <TouchableOpacity
+              style={[styles.secondaryButton, syncing && styles.disabledButton]}
+              onPress={() => syncExistingSubscription(false)}
+              disabled={syncing}
+            >
+              {syncing ? (
+                <ActivityIndicator color={COLORS.red} />
+              ) : (
+                <>
+                  <Ionicons name="refresh-outline" size={18} color={COLORS.red} />
+                  <Text style={styles.secondaryButtonText}>Restore Existing Paid Subscription</Text>
+                </>
+              )}
             </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="link-outline"
+              title="Manual Stripe Link"
+              subtitle="Use this only for subscriptions already paid with a Stripe payment link."
+            />
+
+            <Text style={styles.inputLabel}>Stripe Customer ID</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="cus_..."
+              placeholderTextColor="#9CA3AF"
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={manualCustomerId}
+              onChangeText={setManualCustomerId}
+            />
 
             <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={manageBillingPortal}
-              disabled={portalLoading}
+              style={[styles.completedButton, syncing && styles.disabledButton]}
+              onPress={linkStripeCustomerManually}
+              disabled={syncing}
             >
+              {syncing ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="link-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.completedButtonText}>Link Existing Stripe Customer</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.featureBox}>
+            <SectionHeader
+              icon="sparkles-outline"
+              title="Membership Includes"
+              subtitle="Carrier tools built for Farm2Home freight operations."
+            />
+
+            {[
+              "Freight board access",
+              "Live load board tools",
+              "Route and dispatch support",
+              "Payment tracking",
+              "Broker / farmer details",
+              "Freight profile and billing management",
+            ].map((item) => (
+              <View key={item} style={styles.featureItem}>
+                <Ionicons name="checkmark-circle" size={18} color={COLORS.green} />
+                <Text style={styles.featureText}>{item}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              icon="settings-outline"
+              title="Billing Management"
+              subtitle="Use after Stripe customer ID is linked."
+            />
+
+            <TouchableOpacity style={styles.secondaryButton} onPress={manageBillingPortal} disabled={portalLoading}>
               {portalLoading ? (
                 <ActivityIndicator color={COLORS.red} />
               ) : (
@@ -604,11 +743,7 @@ export default function FreightSubscriptionScreen() {
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={cancelSubscription}
-              disabled={cancelLoading}
-            >
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelSubscription} disabled={cancelLoading}>
               {cancelLoading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
@@ -621,18 +756,18 @@ export default function FreightSubscriptionScreen() {
           </View>
 
           <View style={styles.quickGrid}>
-            <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
-            <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
-            <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
-            <QuickLink icon="pulse-outline" label="Live Loads" route={FREIGHT_ROUTES.liveLoads} />
-            <QuickLink icon="business-outline" label="Profile" route={FREIGHT_ROUTES.profile} />
-            <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-            <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
-            <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
-            <QuickLink icon="help-circle-outline" label="Help" route={FREIGHT_ROUTES.help} />
+            <QuickLink icon="grid-outline" label="Dashboard" route={ROUTES.dashboard} />
+            <QuickLink icon="list-outline" label="Load Board" route={ROUTES.board} />
+            <QuickLink icon="briefcase-outline" label="My Loads" route={ROUTES.myLoads} />
+            <QuickLink icon="pulse-outline" label="Live Loads" route={ROUTES.liveLoads} />
+            <QuickLink icon="business-outline" label="Profile" route={ROUTES.profile} />
+            <QuickLink icon="business-outline" label="Connect Bank" route={ROUTES.connectBank} />
+            <QuickLink icon="settings-outline" label="Settings" route={ROUTES.settings} />
+            <QuickLink icon="headset-outline" label="Support" route={ROUTES.support} />
+            <QuickLink icon="help-circle-outline" label="Help" route={ROUTES.help} />
           </View>
 
-          <TouchableOpacity style={styles.darkButton} onPress={() => router.replace(FREIGHT_ROUTES.login as any)}>
+          <TouchableOpacity style={styles.darkButton} onPress={() => router.replace(ROUTES.login as any)}>
             <Text style={styles.darkButtonText}>Back to Freight Login</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -671,10 +806,10 @@ function QuickLink({
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
-  route: FreightRoute;
+  route: string;
 }) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => router.push(route as any)}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickLinkText}>{label}</Text>
     </TouchableOpacity>
