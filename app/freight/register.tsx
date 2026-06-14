@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -26,6 +27,8 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   "https://farm2home-production-e4bd.up.railway.app";
+
+const FREIGHT_PAYMENT_LINK = "https://buy.stripe.com/9B68wO45dgohbFtgfmdUY01";
 
 const COLORS = {
   bg: "#F3F4F6",
@@ -139,6 +142,15 @@ export default function FreightRegister() {
   useEffect(() => {
     loadSavedFreight();
   }, []);
+
+  async function openPaymentLink() {
+    if (Platform.OS === "web") {
+      window.location.href = FREIGHT_PAYMENT_LINK;
+      return;
+    }
+
+    await Linking.openURL(FREIGHT_PAYMENT_LINK);
+  }
 
   async function loadSavedFreight() {
     try {
@@ -502,32 +514,28 @@ export default function FreightRegister() {
     if (securityAnswer2) freightPayload.security_answer_2 = normalizeAnswer(securityAnswer2);
     if (securityAnswer3) freightPayload.security_answer_3 = normalizeAnswer(securityAnswer3);
 
-    const profilePayload: any = {
-      id: carrierId,
-      auth_user_id: carrierId,
-      profile_id: carrierId,
-      account_id: finalAccountId,
-      role: "freight",
-      full_name: cleanContactName,
-      name: cleanContactName,
-      email: cleanEmailValue,
-      phone: cleanPhone,
-      username: cleanUsername,
-      company_name: cleanCompanyName,
-      stripe_id: finalStripeId || null,
-      stripe_customer_id: finalStripeCustomerId || null,
-      stripe_account_id: finalStripeAccountId || null,
-      stripe_subscription_id: finalSubscriptionId || null,
-      subscription_id: finalSubscriptionId || null,
-      membership_status: finalSubscriptionId ? "active" : "registration_saved",
-      subscription_status: finalSubscriptionId ? subscriptionStatus || "active" : "not_started",
-      account_active: true,
-      updated_at: now,
-    };
-
     await supabase.from("profiles").upsert(
       {
-        ...profilePayload,
+        id: carrierId,
+        auth_user_id: carrierId,
+        profile_id: carrierId,
+        account_id: finalAccountId,
+        role: "freight",
+        full_name: cleanContactName,
+        name: cleanContactName,
+        email: cleanEmailValue,
+        phone: cleanPhone,
+        username: cleanUsername,
+        company_name: cleanCompanyName,
+        stripe_id: finalStripeId || null,
+        stripe_customer_id: finalStripeCustomerId || null,
+        stripe_account_id: finalStripeAccountId || null,
+        stripe_subscription_id: finalSubscriptionId || null,
+        subscription_id: finalSubscriptionId || null,
+        membership_status: finalSubscriptionId ? "active" : "registration_saved",
+        subscription_status: finalSubscriptionId ? subscriptionStatus || "active" : "not_started",
+        account_active: true,
+        updated_at: now,
         created_at: now,
       },
       { onConflict: "id" }
@@ -692,7 +700,6 @@ export default function FreightRegister() {
         { text: "Stay Here", style: "cancel" },
       ]);
     } catch (error: any) {
-      console.log("SAVE FREIGHT REGISTER ERROR:", error);
       Alert.alert("Save Error", error?.message || "Unable to save freight registration.");
     } finally {
       setSaving(false);
@@ -711,7 +718,7 @@ export default function FreightRegister() {
     if (hasActiveSubscription) {
       Alert.alert(
         "Subscription Already Active",
-        "This freight account already has an active Stripe subscription. No duplicate subscription will be created.",
+        "This freight account already has an active Stripe subscription.",
         [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
       );
       return;
@@ -722,7 +729,7 @@ export default function FreightRegister() {
     if (synced?.stripeSubscriptionId) {
       Alert.alert(
         "Subscription Found",
-        "Existing Stripe subscription was found and saved to Supabase. No duplicate subscription was created.",
+        "Existing Stripe subscription was found and saved to Supabase.",
         [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
       );
       return;
@@ -754,7 +761,11 @@ export default function FreightRegister() {
       const json = await response.json();
 
       if (!response.ok || !json.success) {
-        Alert.alert("Checkout Error", json.error || "Unable to start Stripe checkout.");
+        Alert.alert(
+          "Backend Checkout Not Available",
+          json.error || "Opening Stripe payment link instead.",
+          [{ text: "Open Payment Link", onPress: openPaymentLink }]
+        );
         return;
       }
 
@@ -768,7 +779,7 @@ export default function FreightRegister() {
 
         Alert.alert(
           "Subscription Already Active",
-          "Existing Stripe subscription was found and saved to Supabase. No duplicate subscription was created.",
+          "Existing Stripe subscription was found and saved to Supabase.",
           [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
         );
 
@@ -780,14 +791,23 @@ export default function FreightRegister() {
         setStripeCustomerId(json.stripeCustomerId);
       }
 
-      if (Platform.OS === "web" && json.url) {
-        window.location.href = json.url;
+      if (json.url) {
+        if (Platform.OS === "web") {
+          window.location.href = json.url;
+          return;
+        }
+
+        await Linking.openURL(json.url);
         return;
       }
 
-      Alert.alert("Checkout Created", "Open the checkout URL in your browser to complete payment.");
+      await openPaymentLink();
     } catch (error: any) {
-      Alert.alert("Checkout Error", error?.message || "Unable to start checkout.");
+      Alert.alert(
+        "Checkout Error",
+        error?.message || "Backend checkout failed. Opening Stripe payment link.",
+        [{ text: "Open Payment Link", onPress: openPaymentLink }]
+      );
     } finally {
       setSaving(false);
     }
@@ -881,10 +901,7 @@ export default function FreightRegister() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <KeyboardAvoidingView
-        style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView
           style={styles.page}
           contentContainerStyle={styles.content}
@@ -899,18 +916,18 @@ export default function FreightRegister() {
             <Text style={styles.title}>Carrier Registration</Text>
             <Text style={styles.subtitle}>
               Save registration, recover existing Stripe IDs, prevent duplicate subscriptions, and
-              submit directly to the freight dashboard.
+              use Stripe checkout or payment link fallback.
             </Text>
           </View>
 
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
               <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
-              <Text style={styles.noticeTitle}>No Duplicate Subscriptions</Text>
+              <Text style={styles.noticeTitle}>Checkout Protection</Text>
             </View>
             <Text style={styles.noticeText}>
-              Before checkout starts, Farm2Home checks Supabase and Stripe by email. If an existing
-              subscription is found, it updates missing IDs and routes you to the dashboard.
+              Backend checkout is tried first so IDs save automatically. If backend checkout fails,
+              the Stripe payment link opens as a fallback.
             </Text>
           </View>
 
@@ -1006,11 +1023,7 @@ export default function FreightRegister() {
             </View>
           </View>
 
-          <TouchableOpacity
-            style={[styles.button, saving && styles.disabledButton]}
-            onPress={saveRegistration}
-            disabled={saving}
-          >
+          <TouchableOpacity style={[styles.button, saving && styles.disabledButton]} onPress={saveRegistration} disabled={saving}>
             {saving ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
@@ -1021,11 +1034,7 @@ export default function FreightRegister() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.darkButton, saving && styles.disabledButton]}
-            onPress={startSubscriptionCheckout}
-            disabled={saving}
-          >
+          <TouchableOpacity style={[styles.darkButton, saving && styles.disabledButton]} onPress={startSubscriptionCheckout} disabled={saving}>
             <Ionicons name="card-outline" size={18} color="#FFFFFF" />
             <Text style={styles.buttonText}>
               {hasActiveSubscription ? "Subscription Active" : "Start Freight Subscription"}
@@ -1037,10 +1046,7 @@ export default function FreightRegister() {
             <Text style={styles.buttonText}>Submit & Go to Freight Dashboard</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.outlineButton}
-            onPress={() => router.push("/freight/connect-bank" as any)}
-          >
+          <TouchableOpacity style={styles.outlineButton} onPress={() => router.push("/freight/connect-bank" as any)}>
             <Ionicons name="business-outline" size={18} color={COLORS.red} />
             <Text style={styles.outlineButtonText}>Connect Bank / Payouts</Text>
           </TouchableOpacity>
