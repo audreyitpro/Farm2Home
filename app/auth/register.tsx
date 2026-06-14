@@ -1,299 +1,203 @@
-import React, { useState } from "react";
+// app/auth/register.tsx
+
+import React from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { router } from "expo-router";
 
-import { AppUserRole, signUpWithEmail } from "../services/authService";
+type RegisterRole = {
+  id: string;
+  title: string;
+  subtitle: string;
+  route: string;
+  icon: string;
+};
 
-const roles: { label: string; value: AppUserRole }[] = [
-  { label: "Customer", value: "customer" },
-  { label: "Farmer", value: "farmer" },
-  { label: "Freight", value: "freight" },
-  { label: "Driver", value: "driver" },
+const REGISTER_ROLES: RegisterRole[] = [
+  {
+    id: "customer",
+    title: "Customer",
+    subtitle: "Shop fresh farm products and manage orders.",
+    route: "/customer/register",
+    icon: "🛒",
+  },
+  {
+    id: "farmer",
+    title: "Farmer",
+    subtitle: "Sell products, manage inventory, and fulfill orders.",
+    route: "/farmer/register",
+    icon: "🌾",
+  },
+  {
+    id: "driver",
+    title: "Driver",
+    subtitle: "Accept delivery jobs and manage route work.",
+    route: "/driver/register",
+    icon: "🚚",
+  },
+  {
+    id: "freight",
+    title: "Freight Carrier",
+    subtitle: "Access freight loads, dispatch tools, and payouts.",
+    route: "/freight/register",
+    icon: "🚛",
+  },
 ];
 
 export default function RegisterScreen() {
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  const [role, setRole] = useState<AppUserRole>("customer");
-  const [loading, setLoading] = useState(false);
-
-  async function handleRegister() {
-    if (loading) return;
-
-    const cleanName = fullName.trim();
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (!cleanName || !cleanEmail || !password.trim()) {
-      Alert.alert("Missing Fields", "Enter full name, email, and password.");
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert("Weak Password", "Password must be at least 6 characters.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      const result = await signUpWithEmail({
-        email: cleanEmail,
-        password,
-        fullName: cleanName,
-        role,
-      });
-
-      console.log("Register result:", result);
-
-      if (!result?.success) {
-        Alert.alert(
-          "Registration Failed",
-          result?.error || "Unable to register."
-        );
-        return;
-      }
-
-      Alert.alert("Account Created", "Registration successful.", [
-        {
-          text: "OK",
-          onPress: () => router.replace("/auth/login"),
-        },
-      ]);
-    } catch (error: any) {
-      console.log("Register error:", error);
-      Alert.alert(
-        "Registration Failed",
-        error?.message || "Unable to register right now."
-      );
-    } finally {
-      setLoading(false);
-    }
+  function goTo(route: string) {
+    router.push(route as any);
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+      <View style={styles.hero}>
+        <Text style={styles.logo}>🌱</Text>
+        <Text style={styles.kicker}>Farm2Home</Text>
+        <Text style={styles.title}>Create Your Account</Text>
+        <Text style={styles.subtitle}>
+          Choose the account type you want to register. Each profile saves to
+          Supabase and connects to the correct dashboard.
+        </Text>
+      </View>
+
+      <View style={styles.card}>
+        {REGISTER_ROLES.map((item) => (
+          <TouchableOpacity
+            key={item.id}
+            style={styles.roleCard}
+            onPress={() => goTo(item.route)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.roleIcon}>{item.icon}</Text>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.roleTitle}>{item.title}</Text>
+              <Text style={styles.roleSubtitle}>{item.subtitle}</Text>
+            </View>
+
+            <Text style={styles.arrow}>›</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <TouchableOpacity
+        style={styles.loginButton}
+        onPress={() => router.push("/auth/login" as any)}
       >
-        <View style={styles.hero}>
-          <Text style={styles.logo}>🌾</Text>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>
-            Join Farm2Home as a customer, farmer, driver, or freight partner.
-          </Text>
-        </View>
+        <Text style={styles.loginText}>Already have an account? Login</Text>
+      </TouchableOpacity>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Register</Text>
-
-          <Text style={styles.label}>Full Name</Text>
-          <TextInput
-            value={fullName}
-            onChangeText={setFullName}
-            placeholder="Enter full name"
-            style={styles.input}
-            placeholderTextColor="#94A3B8"
-          />
-
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Enter email"
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            style={styles.input}
-            placeholderTextColor="#94A3B8"
-          />
-
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Create password"
-            secureTextEntry
-            style={styles.input}
-            placeholderTextColor="#94A3B8"
-          />
-
-          <Text style={styles.label}>Account Type</Text>
-
-          <View style={styles.roleGrid}>
-            {roles.map((item) => {
-              const active = role === item.value;
-
-              return (
-                <TouchableOpacity
-                  key={item.value}
-                  style={[styles.roleButton, active && styles.roleButtonActive]}
-                  onPress={() => setRole(item.value)}
-                  disabled={loading}
-                >
-                  <Text
-                    style={[styles.roleText, active && styles.roleTextActive]}
-                  >
-                    {item.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <TouchableOpacity
-            style={[styles.registerButton, loading && styles.disabledButton]}
-            onPress={handleRegister}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.registerText}>Create Account</Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.loginButton}
-            onPress={() => router.push("/auth/login")}
-            disabled={loading}
-          >
-            <Text style={styles.loginText}>Already have an account? Login</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.bottomSpacer} />
-      </ScrollView>
-    </KeyboardAvoidingView>
+      <TouchableOpacity
+        style={styles.homeButton}
+        onPress={() => router.replace("/" as any)}
+      >
+        <Text style={styles.homeText}>Back Home</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  page: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#F7F7F2",
   },
-  scrollContent: {
-    padding: 22,
+  content: {
+    padding: 20,
+    paddingTop: 60,
     paddingBottom: 80,
   },
   hero: {
-    alignItems: "center",
-    marginTop: 50,
-    marginBottom: 24,
+    backgroundColor: "#064E3B",
+    borderRadius: 28,
+    padding: 24,
+    marginBottom: 18,
   },
   logo: {
-    fontSize: 60,
-    marginBottom: 10,
+    fontSize: 54,
+    marginBottom: 8,
+  },
+  kicker: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    fontSize: 12,
   },
   title: {
-    color: "#064E3B",
-    fontSize: 36,
+    color: "#FFFFFF",
+    fontSize: 34,
     fontWeight: "900",
-    textAlign: "center",
+    marginTop: 8,
   },
   subtitle: {
-    color: "#475569",
+    color: "#D1FAE5",
     fontWeight: "700",
-    textAlign: "center",
-    marginTop: 8,
-    lineHeight: 22,
+    lineHeight: 23,
+    marginTop: 10,
   },
   card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 28,
-    padding: 22,
+    borderRadius: 24,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#E5E7EB",
   },
-  cardTitle: {
-    color: "#111827",
-    fontSize: 28,
-    fontWeight: "900",
-    marginBottom: 20,
-  },
-  label: {
-    color: "#374151",
-    fontWeight: "800",
-    marginBottom: 8,
-    marginTop: 8,
-  },
-  input: {
-    backgroundColor: "#F8FAFC",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    color: "#111827",
-    fontWeight: "700",
-  },
-  roleGrid: {
+  roleCard: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 12,
+  },
+  roleIcon: {
+    fontSize: 32,
+    marginRight: 14,
+  },
+  roleTitle: {
+    color: "#111827",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  roleSubtitle: {
+    color: "#6B7280",
+    fontWeight: "700",
+    lineHeight: 20,
     marginTop: 4,
   },
-  roleButton: {
-    width: "47%",
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 16,
-    padding: 14,
-    alignItems: "center",
-  },
-  roleButtonActive: {
-    backgroundColor: "#10B981",
-    borderColor: "#10B981",
-  },
-  roleText: {
-    color: "#374151",
+  arrow: {
+    fontSize: 34,
+    color: "#2F7D32",
     fontWeight: "900",
-  },
-  roleTextActive: {
-    color: "#FFFFFF",
-  },
-  registerButton: {
-    backgroundColor: "#10B981",
-    padding: 16,
-    borderRadius: 18,
-    alignItems: "center",
-    marginTop: 22,
-  },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  registerText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
+    marginLeft: 10,
   },
   loginButton: {
+    backgroundColor: "#2F7D32",
+    borderRadius: 18,
+    padding: 16,
     alignItems: "center",
     marginTop: 18,
   },
   loginText: {
-    color: "#10B981",
+    color: "#FFFFFF",
     fontWeight: "900",
+    fontSize: 16,
   },
-  bottomSpacer: {
-    height: 80,
+  homeButton: {
+    padding: 16,
+    alignItems: "center",
+  },
+  homeText: {
+    color: "#064E3B",
+    fontWeight: "900",
   },
 });

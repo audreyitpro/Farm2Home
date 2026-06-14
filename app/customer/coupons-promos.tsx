@@ -200,4 +200,4 @@ const styles = StyleSheet.create({
     color: "#064E3B",
     fontWeight: "900",
   },
-}); 
+});
