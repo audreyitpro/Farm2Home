@@ -368,9 +368,12 @@ export default function FreightRegister() {
 
   async function syncStripeByEmail(targetEmail?: string, silent = false) {
     const finalEmail = normalize(targetEmail || email);
+    const finalBusinessName = companyName.trim();
 
-    if (!finalEmail) {
-      if (!silent) Alert.alert("Email Required", "Save or enter email before syncing Stripe.");
+    if (!finalEmail && !finalBusinessName) {
+      if (!silent) {
+        Alert.alert("Search Required", "Enter an email or business name first.");
+      }
       return null;
     }
 
@@ -383,17 +386,33 @@ export default function FreightRegister() {
         body: JSON.stringify({
           role: "freight",
           email: finalEmail,
+          businessName: finalBusinessName,
+          companyName: finalBusinessName,
+          name: finalBusinessName,
           userId: savedCarrierId || freightId,
           freightId: savedCarrierId || freightId,
+          freight_id: savedCarrierId || freightId,
         }),
       });
 
-      const json = await response.json();
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
 
       if (!response.ok || !json.success) {
         if (!silent) {
-          Alert.alert("Stripe Sync", json.error || "No Stripe customer/subscription found yet.");
+          Alert.alert(
+            "Stripe Sync Not Found",
+            json.error ||
+              "No Stripe customer/subscription was found for that email or business name."
+          );
         }
+
         return null;
       }
 
@@ -402,15 +421,26 @@ export default function FreightRegister() {
       setSubscriptionId(json.stripeSubscriptionId || "");
       setSubscriptionStatus(json.subscriptionStatus || "");
 
-      await loadSavedFreight();
+      if (json.updatedRows?.[0]) {
+        hydrateForm(json.updatedRows[0]);
+        await saveHydratedSession(json.updatedRows[0]);
+      } else {
+        await loadSavedFreight();
+      }
 
       if (!silent) {
-        Alert.alert("Stripe Synced", "Stripe customer and subscription IDs were saved to Supabase.");
+        Alert.alert(
+          "Stripe Synced",
+          "Stripe customer/subscription information was found by email or business name and saved."
+        );
       }
 
       return json;
     } catch (error: any) {
-      if (!silent) Alert.alert("Stripe Sync Error", error?.message || "Unable to sync Stripe.");
+      if (!silent) {
+        Alert.alert("Stripe Sync Error", error?.message || "Unable to sync Stripe.");
+      }
+
       return null;
     } finally {
       setSyncingStripe(false);
@@ -758,7 +788,14 @@ export default function FreightRegister() {
         }),
       });
 
-      const json = await response.json();
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
 
       if (!response.ok || !json.success) {
         Alert.alert(
@@ -915,8 +952,8 @@ export default function FreightRegister() {
             <Text style={styles.kicker}>Farm2Home Freight</Text>
             <Text style={styles.title}>Carrier Registration</Text>
             <Text style={styles.subtitle}>
-              Save registration, recover existing Stripe IDs, prevent duplicate subscriptions, and
-              use Stripe checkout or payment link fallback.
+              Save registration, recover existing Stripe IDs by email or business name, prevent
+              duplicate subscriptions, and use Stripe checkout/payment link.
             </Text>
           </View>
 
@@ -926,8 +963,8 @@ export default function FreightRegister() {
               <Text style={styles.noticeTitle}>Checkout Protection</Text>
             </View>
             <Text style={styles.noticeText}>
-              Backend checkout is tried first so IDs save automatically. If backend checkout fails,
-              the Stripe payment link opens as a fallback.
+              Farm2Home searches Stripe by email first, then business name. If an existing customer
+              or subscription is found, missing IDs are saved to Supabase.
             </Text>
           </View>
 
@@ -942,7 +979,7 @@ export default function FreightRegister() {
 
             <TouchableOpacity
               style={[styles.syncButton, syncingStripe && styles.disabledButton]}
-              onPress={() => syncStripeByEmail()}
+              onPress={() => syncStripeByEmail(email, false)}
               disabled={syncingStripe}
             >
               {syncingStripe ? (

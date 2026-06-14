@@ -154,7 +154,39 @@ async function findStripeCustomerByEmail(email) {
 
     return searched?.data?.[0] || null;
   } catch (error) {
-    console.log("Stripe customer search skipped:", error.message);
+    console.log("Stripe customer email search skipped:", error.message);
+    return null;
+  }
+}
+
+async function findStripeCustomerByBusinessName(businessName) {
+  const finalName = clean(businessName);
+  if (!finalName || !stripe) return null;
+
+  try {
+    const searched = await stripe.customers.search({
+      query: `name:'${escapeStripeSearch(finalName)}'`,
+      limit: 1,
+    });
+
+    if (searched?.data?.[0]) return searched.data[0];
+  } catch (error) {
+    console.log("Stripe customer business name search skipped:", error.message);
+  }
+
+  try {
+    const listed = await stripe.customers.list({ limit: 100 });
+    const normalizedName = finalName.toLowerCase();
+
+    return (
+      listed?.data?.find((customer) => {
+        const name = clean(customer.name).toLowerCase();
+        const description = clean(customer.description).toLowerCase();
+        return name.includes(normalizedName) || description.includes(normalizedName);
+      }) || null
+    );
+  } catch (error) {
+    console.log("Stripe customer list name fallback skipped:", error.message);
     return null;
   }
 }
@@ -194,12 +226,16 @@ function pickBestSubscription(subscriptions = []) {
 }
 
 async function getOrCreateCustomer({ finalEmail, finalName, metadata }) {
-  const existingCustomer = await findStripeCustomerByEmail(finalEmail);
+  let existingCustomer = null;
+
+  if (finalEmail) existingCustomer = await findStripeCustomerByEmail(finalEmail);
+  if (!existingCustomer?.id && finalName) existingCustomer = await findStripeCustomerByBusinessName(finalName);
 
   if (existingCustomer?.id) {
     try {
       await stripe.customers.update(existingCustomer.id, {
-        name: finalName,
+        email: existingCustomer.email || finalEmail,
+        name: existingCustomer.name || finalName,
         metadata,
       });
     } catch (error) {
@@ -520,7 +556,15 @@ async function createSubscriptionCheckoutHandler(req, res) {
       metadata.customer_id = finalUserId;
     }
 
-    const existingCustomer = await findStripeCustomerByEmail(finalEmail);
+    let existingCustomer = null;
+
+    if (finalEmail) {
+      existingCustomer = await findStripeCustomerByEmail(finalEmail);
+    }
+
+    if (!existingCustomer?.id && finalName) {
+      existingCustomer = await findStripeCustomerByBusinessName(finalName);
+    }
 
     if (existingCustomer?.id && mode === "subscription") {
       const existingSubscriptions = await findStripeSubscriptionsByCustomer(existingCustomer.id);
@@ -551,11 +595,13 @@ async function createSubscriptionCheckoutHandler(req, res) {
       }
     }
 
-    const stripeCustomerId = existingCustomer?.id || await getOrCreateCustomer({
-      finalEmail,
-      finalName,
-      metadata,
-    });
+    const stripeCustomerId =
+      existingCustomer?.id ||
+      (await getOrCreateCustomer({
+        finalEmail,
+        finalName,
+        metadata,
+      }));
 
     const sessionCreatePayload = {
       mode,
@@ -564,7 +610,7 @@ async function createSubscriptionCheckoutHandler(req, res) {
       success_url:
         body.successUrl ||
         body.success_url ||
-        `${APP_URL}/${role}/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+        `${APP_URL}/${role}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:
         body.cancelUrl ||
         body.cancel_url ||
@@ -802,24 +848,43 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     if (!requireSupabase(res)) return;
 
     const email = cleanEmail(req.body?.email);
+    const businessName = clean(req.body?.businessName || req.body?.companyName || req.body?.name);
     const role = clean(req.body?.role || "freight").toLowerCase();
     const userId = getRoleIdFromBody(req.body || {}, role);
     const table = getTableForRole(role);
 
-    if (!email) return res.status(400).json({ success: false, error: "email is required." });
-    if (!table) return res.status(400).json({ success: false, error: "Valid role is required." });
+    if (!email && !businessName) {
+      return res.status(400).json({
+        success: false,
+        error: "email or businessName is required.",
+      });
+    }
 
-    const customer = await findStripeCustomerByEmail(email);
+    if (!table) {
+      return res.status(400).json({ success: false, error: "Valid role is required." });
+    }
+
+    let customer = null;
+
+    if (email) {
+      customer = await findStripeCustomerByEmail(email);
+    }
+
+    if (!customer?.id && businessName) {
+      customer = await findStripeCustomerByBusinessName(businessName);
+    }
 
     if (!customer?.id) {
       return res.status(404).json({
         success: false,
-        error: "No Stripe customer found for this email.",
+        error: "No Stripe customer found for this email or business name.",
       });
     }
 
     const subscriptions = await findStripeSubscriptionsByCustomer(customer.id);
     const bestSub = pickBestSubscription(subscriptions);
+
+    const resolvedEmail = cleanEmail(customer.email || email);
 
     const payload = {
       stripe_id: customer.id,
@@ -841,19 +906,22 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     const { data, error } = await updateRoleTable({
       role,
       userId,
-      email,
+      email: resolvedEmail,
       payload,
     });
 
     if (error) throw error;
 
-    await updateProfileByIdOrEmail(userId, email, payload);
+    await updateProfileByIdOrEmail(userId, resolvedEmail, payload);
 
     return res.json({
       success: true,
       role,
-      email,
+      email: resolvedEmail,
+      businessName,
+      matchedBy: email && cleanEmail(customer.email) === email ? "email" : "businessName",
       stripeCustomerId: customer.id,
+      stripeCustomerName: customer.name || null,
       stripeSubscriptionId: bestSub?.id || null,
       subscriptionStatus: bestSub?.status || null,
       subscriptionActive: bestSub ? isActiveSubscriptionStatus(bestSub.status) : false,
@@ -863,7 +931,7 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     console.error("sync-stripe-by-email error:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to sync Stripe by email.",
+      error: error.message || "Unable to sync Stripe by email or business name.",
     });
   }
 });
@@ -886,12 +954,19 @@ router.post("/sync-all-stripe-role", async (req, res) => {
 
     for (const row of rows || []) {
       const email = cleanEmail(row.email);
-      if (!email) continue;
+      const businessName = clean(row.business_name || row.company_name || row.name);
+      let customer = null;
 
-      const customer = await findStripeCustomerByEmail(email);
+      if (email) customer = await findStripeCustomerByEmail(email);
+      if (!customer?.id && businessName) customer = await findStripeCustomerByBusinessName(businessName);
 
       if (!customer?.id) {
-        results.push({ email, updated: false, reason: "No Stripe customer found" });
+        results.push({
+          email,
+          businessName,
+          updated: false,
+          reason: "No Stripe customer found",
+        });
         continue;
       }
 
@@ -928,14 +1003,15 @@ router.post("/sync-all-stripe-role", async (req, res) => {
       const updateResult = await updateRoleTable({
         role,
         userId: idValue,
-        email,
+        email: email || cleanEmail(customer.email),
         payload,
       });
 
-      await updateProfileByIdOrEmail(idValue, email, payload);
+      await updateProfileByIdOrEmail(idValue, email || cleanEmail(customer.email), payload);
 
       results.push({
         email,
+        businessName,
         updated: !updateResult.error,
         stripeCustomerId: customer.id,
         stripeSubscriptionId: bestSub?.id || null,
