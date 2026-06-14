@@ -469,7 +469,7 @@ export default function FarmerDashboard() {
               <Text style={styles.kicker}>Farm2Home Farmer Center</Text>
               <Text style={styles.heroTitle}>{farmName}</Text>
               <Text style={styles.heroSubtitle}>
-                Manage products, inventory, orders, delivery, and store setup.
+                Manage products, inventory, orders, staff drivers, dispatch, and delivery.
               </Text>
             </View>
 
@@ -496,7 +496,23 @@ export default function FarmerDashboard() {
           <ActionButton label="Store Setup" icon="🏪" onPress={() => goTo("/farmer/setup-store")} />
           <ActionButton label="Orders" icon="📦" onPress={() => goTo("/farmer/orders")} />
           <ActionButton label="Delivery" icon="🚚" onPress={() => goTo("/farmer/delivery-orders")} />
+          <ActionButton label="Staff Drivers" icon="👥" onPress={() => goTo("/farmer/farmer-drivers")} />
+          <ActionButton label="Dispatch" icon="📍" onPress={() => goTo("/farmer/delivery-orders")} />
           <ActionButton label="Payouts" icon="💳" onPress={() => goTo("/farmer/connect-bank")} />
+        </View>
+
+        <View style={styles.driverOpsCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.driverOpsKicker}>Driver Operations</Text>
+            <Text style={styles.driverOpsTitle}>Manage personal staff drivers</Text>
+            <Text style={styles.driverOpsText}>
+              Add drivers on staff, view preferred drivers, and dispatch delivery orders before posting to the open Driver Board.
+            </Text>
+          </View>
+
+          <Pressable style={styles.driverOpsButton} onPress={() => goTo("/farmer/farmer-drivers")}>
+            <Text style={styles.driverOpsButtonText}>Open</Text>
+          </Pressable>
         </View>
 
         <View style={styles.statsGrid}>
@@ -752,6 +768,44 @@ const styles = StyleSheet.create({
   },
   quickIcon: { fontSize: 24, marginBottom: 8 },
   quickLabel: { color: COLORS.text, fontWeight: "900" },
+
+  driverOpsCard: {
+    backgroundColor: COLORS.dark,
+    borderRadius: 24,
+    padding: 18,
+    marginBottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  driverOpsKicker: {
+    color: "#BBF7D0",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    marginBottom: 5,
+  },
+  driverOpsTitle: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  driverOpsText: {
+    color: "#D1D5DB",
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  driverOpsButton: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 16,
+  },
+  driverOpsButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
 
   statsGrid: { flexDirection: "row", flexWrap: "wrap", marginBottom: 18 },
   statCard: {

@@ -34,8 +34,6 @@ const COLORS = {
   muted: "#6B7280",
   border: "#E5E7EB",
   green: "#16A34A",
-  amber: "#D97706",
-  slate: "#64748B",
 };
 
 const SECURITY_QUESTIONS = [
@@ -51,12 +49,29 @@ const SECURITY_QUESTIONS = [
   "What is your favorite color?",
 ];
 
-function normalize(value: string) {
+function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
-function normalizeAnswer(value: string) {
-  return String(value || "").trim().toLowerCase();
+function clean(value: any) {
+  return String(value || "").trim();
+}
+
+function normalizeAnswer(value: any) {
+  return normalize(value);
+}
+
+function fallbackCustomerAccountId() {
+  return `Customer_${Date.now()}`;
+}
+
+async function saveCurrentCustomer(customerAccount: any) {
+  await AsyncStorage.setItem("pendingCustomer", JSON.stringify(customerAccount));
+  await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerAccount));
+  await AsyncStorage.setItem("currentUser", JSON.stringify(customerAccount));
+  await AsyncStorage.setItem("farm2homeCurrentCustomer", JSON.stringify(customerAccount));
+  await AsyncStorage.setItem("userRole", "customer");
+  await AsyncStorage.setItem("currentUserRole", "customer");
 }
 
 export default function CustomerRegister() {
@@ -83,25 +98,28 @@ export default function CustomerRegister() {
   );
 
   function validateForm() {
-    if (
-      !fullName.trim() ||
-      !email.trim() ||
-      !phone.trim() ||
-      !username.trim() ||
-      !password.trim() ||
-      !confirmPassword.trim()
-    ) {
-      Alert.alert("Missing Info", "Please complete all customer fields.");
+    if (!fullName.trim() || !email.trim() || !phone.trim()) {
+      Alert.alert("Missing Info", "Please enter your name, email, and phone.");
       return false;
     }
 
-    if (!email.trim().includes("@")) {
+    if (!normalize(email).includes("@")) {
       Alert.alert("Invalid Email", "Please enter a valid email address.");
       return false;
     }
 
-    if (username.trim().length < 4) {
+    if (!username.trim()) {
+      Alert.alert("Username Required", "Please create a username.");
+      return false;
+    }
+
+    if (normalize(username).length < 4) {
       Alert.alert("Invalid Username", "Username must be at least 4 characters.");
+      return false;
+    }
+
+    if (!password.trim() || !confirmPassword.trim()) {
+      Alert.alert("Password Required", "Please create and confirm your password.");
       return false;
     }
 
@@ -115,13 +133,8 @@ export default function CustomerRegister() {
       return false;
     }
 
-    if (selectedQuestions.length !== 3) {
-      Alert.alert("Security Required", "Please select 3 security questions.");
-      return false;
-    }
-
-    if (new Set(selectedQuestions).size !== 3) {
-      Alert.alert("Duplicate Questions", "Please select 3 different security questions.");
+    if (selectedQuestions.length !== 3 || new Set(selectedQuestions).size !== 3) {
+      Alert.alert("Security Required", "Please select 3 different security questions.");
       return false;
     }
 
@@ -139,53 +152,39 @@ export default function CustomerRegister() {
       p_prefix: "Customer",
     });
 
-    if (error) {
-      console.log("Customer account_id RPC error:", error.message);
-      throw error;
-    }
-
-    if (!data) {
-      throw new Error("Unable to generate customer account ID.");
+    if (error || !data) {
+      console.log("Customer account_id RPC fallback:", error?.message);
+      return fallbackCustomerAccountId();
     }
 
     return String(data);
   }
 
-  async function checkDuplicateCustomer(cleanEmail: string, cleanUsername: string) {
+  async function findExistingCustomer(cleanEmail: string, cleanUsername: string) {
     const { data, error } = await supabase
       .from("customers")
-      .select("id,account_id,email,username")
+      .select("*")
       .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-      .maybeSingle();
+      .limit(1);
 
     if (error) {
       console.log("Customer duplicate check error:", error.message);
-      return false;
+      return null;
     }
 
-    if (data) {
-      Alert.alert(
-        "Account Exists",
-        "A customer account already exists with this email or username."
-      );
-      return true;
-    }
-
-    return false;
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
 
   async function upsertProfile(payload: any) {
-    const { data: existingProfile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", payload.id)
-      .maybeSingle();
+    const now = new Date().toISOString();
 
-    if (existingProfile?.id) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({
+    const { data, error } = await supabase
+      .from("profiles")
+      .upsert(
+        {
+          id: payload.id,
           auth_user_id: payload.id,
+          profile_id: payload.id,
           account_id: payload.account_id,
           role: "customer",
           full_name: payload.full_name,
@@ -193,33 +192,19 @@ export default function CustomerRegister() {
           email: payload.email,
           phone: payload.phone,
           username: payload.username,
+          stripe_id: payload.stripe_id || null,
+          stripe_customer_id: payload.stripe_customer_id || null,
+          stripe_subscription_id: payload.stripe_subscription_id || null,
+          subscription_id: payload.subscription_id || null,
+          stripe_checkout_session_id: payload.stripe_checkout_session_id || null,
+          subscription_status: payload.subscription_status || "not_started",
+          membership_status: payload.membership_status || "not_started",
           account_active: true,
-          updated_at: payload.updated_at,
-        })
-        .eq("id", payload.id)
-        .select("*")
-        .single();
-
-      if (error) throw error;
-      return data;
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .insert({
-        id: payload.id,
-        auth_user_id: payload.id,
-        account_id: payload.account_id,
-        role: "customer",
-        full_name: payload.full_name,
-        name: payload.name,
-        email: payload.email,
-        phone: payload.phone,
-        username: payload.username,
-        account_active: true,
-        created_at: payload.created_at,
-        updated_at: payload.updated_at,
-      })
+          updated_at: now,
+          created_at: payload.created_at || now,
+        },
+        { onConflict: "id" }
+      )
       .select("*")
       .single();
 
@@ -227,13 +212,15 @@ export default function CustomerRegister() {
     return data;
   }
 
-  async function saveCurrentCustomer(customerAccount: any) {
-    await AsyncStorage.setItem("pendingCustomer", JSON.stringify(customerAccount));
-    await AsyncStorage.setItem("currentCustomer", JSON.stringify(customerAccount));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(customerAccount));
-    await AsyncStorage.setItem("farm2homeCurrentCustomer", JSON.stringify(customerAccount));
-    await AsyncStorage.setItem("userRole", "customer");
-    await AsyncStorage.setItem("currentUserRole", "customer");
+  async function saveCustomerRow(customerPayload: any) {
+    const { data, error } = await supabase
+      .from("customers")
+      .upsert(customerPayload, { onConflict: "id" })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return data;
   }
 
   async function openCheckoutUrl(url: string) {
@@ -250,22 +237,194 @@ export default function CustomerRegister() {
     await WebBrowser.openBrowserAsync(url);
   }
 
+  async function startCustomerCheckout(customerRow: any, localCustomer: any) {
+    const customerId = customerRow.id;
+    const accountId = customerRow.account_id;
+    const cleanEmail = normalize(customerRow.email);
+    const cleanFullName = clean(customerRow.full_name || customerRow.name);
+    const cleanUsername = normalize(customerRow.username);
+
+    const response = await fetch(`${API_BASE_URL}/payments/create-customer-subscription-checkout`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        role: "customer",
+        planType: "customer",
+
+        userId: customerId,
+        customerId,
+        customer_id: customerId,
+        profileId: customerId,
+        authUserId: customerId,
+
+        accountId,
+        account_id: accountId,
+
+        customerEmail: cleanEmail,
+        email: cleanEmail,
+
+        name: cleanFullName,
+        fullName: cleanFullName,
+        companyName: cleanFullName,
+        businessName: cleanFullName,
+        username: cleanUsername,
+
+        successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${APP_URL}/customer/register`,
+      }),
+    });
+
+    const text = await response.text();
+
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { success: false, error: text };
+    }
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || data.message || "Stripe checkout failed.");
+    }
+
+    if (data.alreadySubscribed) {
+      const stripeCustomerId = data.stripeCustomerId || data.customerId || "";
+      const stripeSubscriptionId = data.stripeSubscriptionId || "";
+
+      const updatePayload = {
+        stripe_id: stripeCustomerId || null,
+        stripe_customer_id: stripeCustomerId || null,
+        stripe_subscription_id: stripeSubscriptionId || null,
+        subscription_id: stripeSubscriptionId || null,
+        membership_status: "active",
+        subscription_status: data.subscriptionStatus || "active",
+        customer_membership_paid: true,
+        account_active: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      await supabase.from("customers").update(updatePayload).eq("id", customerId);
+      await supabase.from("profiles").update(updatePayload).eq("id", customerId);
+
+      const activeCustomer = {
+        ...localCustomer,
+        stripeId: stripeCustomerId,
+        stripeCustomerId,
+        stripeSubscriptionId,
+        subscriptionId: stripeSubscriptionId,
+        membershipStatus: "active",
+        subscriptionStatus: data.subscriptionStatus || "active",
+        customerMembershipPaid: true,
+        accountActive: true,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await saveCurrentCustomer(activeCustomer);
+
+      Alert.alert("Subscription Active", "Your customer subscription is already active.", [
+        { text: "Continue", onPress: () => router.replace("/customer/marketplace" as any) },
+      ]);
+
+      return;
+    }
+
+    if (!data.url) {
+      throw new Error("Stripe checkout URL was not returned.");
+    }
+
+    const stripeCustomerId =
+      data.stripeCustomerId ||
+      data.stripe_customer_id ||
+      data.customerId ||
+      data.customer_id ||
+      "";
+
+    const stripeCheckoutSessionId = data.id || data.sessionId || "";
+
+    const pendingPayload = {
+      stripe_id: stripeCustomerId || null,
+      stripe_customer_id: stripeCustomerId || null,
+      stripe_checkout_session_id: stripeCheckoutSessionId || null,
+      membership_status: "pending_payment",
+      subscription_status: "pending_payment",
+      updated_at: new Date().toISOString(),
+    };
+
+    await supabase.from("customers").update(pendingPayload).eq("id", customerId);
+    await supabase.from("profiles").update(pendingPayload).eq("id", customerId);
+
+    await saveCurrentCustomer({
+      ...localCustomer,
+      stripeId: stripeCustomerId,
+      stripeCustomerId,
+      stripeCheckoutSessionId,
+      membershipStatus: "pending_payment",
+      subscriptionStatus: "pending_payment",
+      updatedAt: new Date().toISOString(),
+    });
+
+    await openCheckoutUrl(data.url);
+  }
+
   async function createAccountAndSubscribe() {
     if (loading) return;
     if (!validateForm()) return;
 
-    const cleanFullName = fullName.trim();
+    const cleanFullName = clean(fullName);
     const cleanEmail = normalize(email);
-    const cleanPhone = phone.trim();
+    const cleanPhone = clean(phone);
     const cleanUsername = normalize(username);
-    const cleanPassword = password.trim();
+    const cleanPassword = clean(password);
     const now = new Date().toISOString();
 
     try {
       setLoading(true);
 
-      const duplicate = await checkDuplicateCustomer(cleanEmail, cleanUsername);
-      if (duplicate) return;
+      const existingCustomer = await findExistingCustomer(cleanEmail, cleanUsername);
+
+      if (existingCustomer?.id) {
+        const localExisting = {
+          ...existingCustomer,
+          id: existingCustomer.id,
+          customerId: existingCustomer.id,
+          accountId: existingCustomer.account_id,
+          account_id: existingCustomer.account_id,
+          role: "customer",
+          fullName: existingCustomer.full_name || existingCustomer.name || cleanFullName,
+          name: existingCustomer.name || existingCustomer.full_name || cleanFullName,
+          email: normalize(existingCustomer.email || cleanEmail),
+          phone: existingCustomer.phone || cleanPhone,
+          username: existingCustomer.username || cleanUsername,
+          stripeCustomerId: existingCustomer.stripe_customer_id || existingCustomer.stripe_id || "",
+          stripeSubscriptionId:
+            existingCustomer.stripe_subscription_id || existingCustomer.subscription_id || "",
+          subscriptionId:
+            existingCustomer.subscription_id || existingCustomer.stripe_subscription_id || "",
+          membershipStatus: existingCustomer.membership_status || "not_started",
+          subscriptionStatus: existingCustomer.subscription_status || "not_started",
+          accountActive: true,
+          updatedAt: now,
+        };
+
+        await saveCurrentCustomer(localExisting);
+
+        Alert.alert(
+          "Account Exists",
+          "This customer account already exists. You can login or continue to subscription.",
+          [
+            { text: "Login", onPress: () => router.replace("/customer/login" as any) },
+            {
+              text: "Subscribe",
+              onPress: () => startCustomerCheckout(existingCustomer, localExisting),
+            },
+            { text: "Cancel", style: "cancel" },
+          ]
+        );
+
+        return;
+      }
 
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -288,7 +447,7 @@ export default function CustomerRegister() {
       const customerId = authData?.user?.id;
 
       if (!customerId) {
-        Alert.alert("Signup Error", "Unable to create customer account. Please try again.");
+        Alert.alert("Signup Error", "Unable to create customer auth account.");
         return;
       }
 
@@ -312,8 +471,10 @@ export default function CustomerRegister() {
         subscription_status: "not_started",
         membership_status: "not_started",
 
+        stripe_id: null,
         stripe_customer_id: null,
         stripe_subscription_id: null,
+        subscription_id: null,
         stripe_checkout_session_id: null,
 
         security_question_1: securityQuestion1,
@@ -331,26 +492,16 @@ export default function CustomerRegister() {
       };
 
       await upsertProfile(customerPayload);
-
-      const { data: customerRow, error: customerError } = await supabase
-        .from("customers")
-        .upsert(customerPayload, { onConflict: "id" })
-        .select("*")
-        .single();
-
-      if (customerError) {
-        Alert.alert("Customer Profile Error", customerError.message);
-        return;
-      }
+      const customerRow = await saveCustomerRow(customerPayload);
 
       const localCustomer = {
         id: customerId,
-        accountId,
-        account_id: accountId,
         customerId,
         authUserId: customerId,
         profileId: customerId,
         profile_id: customerId,
+        accountId,
+        account_id: accountId,
         role: "customer",
 
         fullName: cleanFullName,
@@ -364,8 +515,10 @@ export default function CustomerRegister() {
         subscriptionStatus: "not_started",
         membershipStatus: "not_started",
 
+        stripeId: "",
         stripeCustomerId: "",
         stripeSubscriptionId: "",
+        subscriptionId: "",
         stripeCheckoutSessionId: "",
 
         securityQuestion1,
@@ -380,106 +533,7 @@ export default function CustomerRegister() {
       };
 
       await saveCurrentCustomer(localCustomer);
-
-      const response = await fetch(`${API_BASE_URL}/payments/create-subscription-checkout`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          customerEmail: cleanEmail,
-          email: cleanEmail,
-          name: cleanFullName,
-          username: cleanUsername,
-
-          userId: customerId,
-          customerId,
-          profileId: customerRow?.profile_id || customerId,
-          authUserId: customerId,
-          accountId,
-          account_id: accountId,
-
-          role: "customer",
-          planType: "customer",
-
-          successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
-          cancelUrl: `${APP_URL}/customer/register`,
-        }),
-      });
-
-      const text = await response.text();
-
-      let data: {
-        success?: boolean;
-        url?: string;
-        id?: string;
-        sessionId?: string;
-        stripeCustomerId?: string;
-        customerId?: string;
-        stripe_customer_id?: string;
-        customer_id?: string;
-        error?: string;
-        message?: string;
-      } = {};
-
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = {};
-      }
-
-      if (!response.ok || !data.url) {
-        Alert.alert(
-          "Account Created",
-          data.error ||
-            data.message ||
-            "Your account was created, but Stripe checkout did not open. Please try subscribing from the customer subscription screen."
-        );
-
-        router.replace("/customer/subscription" as any);
-        return;
-      }
-
-      const stripeCustomerId =
-        data.stripeCustomerId ||
-        data.stripe_customer_id ||
-        data.customerId ||
-        data.customer_id ||
-        "";
-
-      const stripeCheckoutSessionId = data.id || data.sessionId || "";
-
-      await supabase
-        .from("customers")
-        .update({
-          stripe_customer_id: stripeCustomerId || null,
-          stripe_checkout_session_id: stripeCheckoutSessionId || null,
-          membership_status: "pending_payment",
-          subscription_status: "pending_payment",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", customerId);
-
-      await supabase
-        .from("profiles")
-        .update({
-          stripe_customer_id: stripeCustomerId || null,
-          stripe_checkout_session_id: stripeCheckoutSessionId || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", customerId);
-
-      const checkoutCustomer = {
-        ...localCustomer,
-        stripeCustomerId,
-        stripeCheckoutSessionId,
-        membershipStatus: "pending_payment",
-        subscriptionStatus: "pending_payment",
-        updatedAt: new Date().toISOString(),
-      };
-
-      await saveCurrentCustomer(checkoutCustomer);
-      await openCheckoutUrl(data.url);
+      await startCustomerCheckout(customerRow, localCustomer);
     } catch (error: any) {
       console.log("CUSTOMER REGISTER ERROR:", error);
       Alert.alert(
@@ -600,14 +654,13 @@ export default function CustomerRegister() {
             </View>
 
             <Text style={styles.noticeText}>
-              Your customer profile is saved to Supabase immediately. Your permanent account ID
-              stays separate from the Supabase Auth UUID. Stripe customer and subscription IDs are
-              permanently saved when checkout starts and payment completes.
+              Your customer profile is saved to Supabase first. Stripe Checkout is then created
+              from the backend so your customer ID and subscription are linked correctly.
             </Text>
           </View>
 
           <View style={styles.priceCard}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.priceTitle}>Customer Membership</Text>
               <Text style={styles.priceText}>
                 $4.99 monthly marketplace access for Farm2Home shopping and ordering.
@@ -642,6 +695,7 @@ export default function CustomerRegister() {
               onChangeText={setEmail}
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
             />
 
             <TextInput
@@ -853,7 +907,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 4,
     lineHeight: 20,
-    maxWidth: 640,
   },
   priceBadge: {
     backgroundColor: COLORS.black,
