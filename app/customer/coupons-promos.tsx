@@ -1,243 +1,203 @@
-import React, { useState } from "react";
+// app/auth/register.tsx
+
+import React from "react";
 import {
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import farmTheme from "../styles/farmTheme";
+import { router } from "expo-router";
 
-type Promo = {
+type RegisterRole = {
   id: string;
-  code: string;
   title: string;
-  description: string;
-  discount: string;
+  subtitle: string;
+  route: string;
+  icon: string;
 };
 
-const promos: Promo[] = [
+const REGISTER_ROLES: RegisterRole[] = [
   {
-    id: "fresh10",
-    code: "FRESH10",
-    title: "Fresh Produce Discount",
-    description: "Save on fresh produce orders.",
-    discount: "10% OFF",
+    id: "customer",
+    title: "Customer",
+    subtitle: "Shop fresh farm products and manage orders.",
+    route: "/customer/register",
+    icon: "🛒",
   },
   {
-    id: "free-delivery",
-    code: "DELIVERYFREE",
-    title: "Free Delivery",
-    description: "Free delivery on eligible local farm orders.",
-    discount: "FREE DELIVERY",
+    id: "farmer",
+    title: "Farmer",
+    subtitle: "Sell products, manage inventory, and fulfill orders.",
+    route: "/farmer/register",
+    icon: "🌾",
   },
   {
-    id: "family15",
-    code: "FAMILY15",
-    title: "Family Bundle Savings",
-    description: "Save on family grocery bundles.",
-    discount: "$15 OFF",
+    id: "driver",
+    title: "Driver",
+    subtitle: "Accept delivery jobs and manage route work.",
+    route: "/driver/register",
+    icon: "🚚",
+  },
+  {
+    id: "freight",
+    title: "Freight Carrier",
+    subtitle: "Access freight loads, dispatch tools, and payouts.",
+    route: "/freight/register",
+    icon: "🚛",
   },
 ];
 
-export default function CouponsPromos() {
-  const [promoCode, setPromoCode] = useState("");
-  const [activeCode, setActiveCode] = useState("");
-
-  function applyPromo(code?: string) {
-    const selectedCode = (code || promoCode).trim().toUpperCase();
-
-    if (!selectedCode) {
-      Alert.alert("Promo Needed", "Enter a promo code.");
-      return;
-    }
-
-    const found = promos.find((promo) => promo.code === selectedCode);
-
-    if (!found) {
-      Alert.alert("Invalid Promo", "That promo code is not available.");
-      return;
-    }
-
-    setActiveCode(found.code);
-    setPromoCode("");
-    Alert.alert("Promo Applied", `${found.discount} applied with ${found.code}.`);
+export default function RegisterScreen() {
+  function goTo(route: string) {
+    router.push(route as any);
   }
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
-        <Text style={styles.eyebrow}>Farm2Home Savings</Text>
-        <Text style={styles.title}>Coupons & Promos</Text>
+        <Text style={styles.logo}>🌱</Text>
+        <Text style={styles.kicker}>Farm2Home</Text>
+        <Text style={styles.title}>Create Your Account</Text>
         <Text style={styles.subtitle}>
-          Apply discounts, free delivery codes, family bundle savings, and
-          seasonal farm promotions.
+          Choose the account type you want to register. Each profile saves to
+          Supabase and connects to the correct dashboard.
         </Text>
       </View>
 
-      <View style={styles.applyCard}>
-        <Text style={styles.applyTitle}>Apply Promo Code</Text>
+      <View style={styles.card}>
+        {REGISTER_ROLES.map((item) => (
+          <TouchableOpacity
+            key={item.id}
+            style={styles.roleCard}
+            onPress={() => goTo(item.route)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.roleIcon}>{item.icon}</Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Enter promo code"
-          value={promoCode}
-          onChangeText={setPromoCode}
-          autoCapitalize="characters"
-        />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.roleTitle}>{item.title}</Text>
+              <Text style={styles.roleSubtitle}>{item.subtitle}</Text>
+            </View>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={() => applyPromo()}>
-          <Text style={styles.primaryText}>Apply Promo</Text>
-        </TouchableOpacity>
-
-        {activeCode ? (
-          <View style={styles.activeBox}>
-            <Text style={styles.activeText}>Active Promo: {activeCode}</Text>
-          </View>
-        ) : null}
-      </View>
-
-      <Text style={styles.sectionTitle}>Available Promotions</Text>
-
-      {promos.map((promo) => (
-        <View key={promo.id} style={styles.promoCard}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.discount}>{promo.discount}</Text>
-            <Text style={styles.promoTitle}>{promo.title}</Text>
-            <Text style={styles.promoDescription}>{promo.description}</Text>
-            <Text style={styles.promoCode}>Code: {promo.code}</Text>
-          </View>
-
-          <TouchableOpacity style={styles.applySmallButton} onPress={() => applyPromo(promo.code)}>
-            <Text style={styles.applySmallText}>Apply</Text>
+            <Text style={styles.arrow}>›</Text>
           </TouchableOpacity>
-        </View>
-      ))}
-
-      <View style={styles.aiCard}>
-        <Text style={styles.aiTitle}>AI Promo Engine</Text>
-        <Text style={styles.aiText}>
-          Later this can personalize coupons based on cart value, customer
-          loyalty, favorite farms, churn risk, seasonal inventory, and referrals.
-        </Text>
+        ))}
       </View>
 
-      <View style={{ height: 90 }} />
+      <TouchableOpacity
+        style={styles.loginButton}
+        onPress={() => router.push("/auth/login" as any)}
+      >
+        <Text style={styles.loginText}>Already have an account? Login</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.homeButton}
+        onPress={() => router.replace("/" as any)}
+      >
+        <Text style={styles.homeText}>Back Home</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: farmTheme.colors.background },
-
+  page: {
+    flex: 1,
+    backgroundColor: "#F7F7F2",
+  },
+  content: {
+    padding: 20,
+    paddingTop: 60,
+    paddingBottom: 80,
+  },
   hero: {
-    backgroundColor: farmTheme.colors.primary,
-    paddingTop: 64,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
+    backgroundColor: "#064E3B",
+    borderRadius: 28,
+    padding: 24,
+    marginBottom: 18,
   },
-
-  eyebrow: { color: "#D1FAE5", fontWeight: "900", marginBottom: 8 },
-
-  title: { color: "#FFFFFF", fontSize: 36, fontWeight: "900", marginBottom: 10 },
-
-  subtitle: { color: "#E8F5E9", fontWeight: "700", lineHeight: 23 },
-
-  applyCard: {
-    backgroundColor: "#FFFFFF",
-    margin: 18,
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    ...farmTheme.shadow,
+  logo: {
+    fontSize: 54,
+    marginBottom: 8,
   },
-
-  applyTitle: {
-    color: farmTheme.colors.text,
-    fontSize: 23,
+  kicker: {
+    color: "#BBF7D0",
     fontWeight: "900",
-    marginBottom: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    fontSize: 12,
   },
-
-  input: {
+  title: {
+    color: "#FFFFFF",
+    fontSize: 34,
+    fontWeight: "900",
+    marginTop: 8,
+  },
+  subtitle: {
+    color: "#D1FAE5",
+    fontWeight: "700",
+    lineHeight: 23,
+    marginTop: 10,
+  },
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  roleCard: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#F9FAFB",
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    borderRadius: 14,
-    padding: 14,
-    color: farmTheme.colors.text,
-    fontWeight: "900",
-    marginBottom: 14,
-  },
-
-  primaryButton: {
-    backgroundColor: farmTheme.colors.primary,
-    padding: 15,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-
-  primaryText: { color: "#FFFFFF", fontWeight: "900" },
-
-  activeBox: {
-    backgroundColor: "#F0FDF4",
-    padding: 12,
-    borderRadius: 14,
-    marginTop: 12,
-  },
-
-  activeText: { color: farmTheme.colors.primary, fontWeight: "900" },
-
-  sectionTitle: {
-    color: farmTheme.colors.text,
-    fontSize: 23,
-    fontWeight: "900",
-    paddingHorizontal: 18,
-    marginBottom: 12,
-  },
-
-  promoCard: {
-    backgroundColor: "#FFFFFF",
-    marginHorizontal: 18,
-    marginBottom: 12,
     borderRadius: 20,
     padding: 16,
-    borderWidth: 1,
-    borderColor: farmTheme.colors.border,
-    flexDirection: "row",
-    gap: 12,
+    marginBottom: 12,
+  },
+  roleIcon: {
+    fontSize: 32,
+    marginRight: 14,
+  },
+  roleTitle: {
+    color: "#111827",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  roleSubtitle: {
+    color: "#6B7280",
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  arrow: {
+    fontSize: 34,
+    color: "#2F7D32",
+    fontWeight: "900",
+    marginLeft: 10,
+  },
+  loginButton: {
+    backgroundColor: "#2F7D32",
+    borderRadius: 18,
+    padding: 16,
+    alignItems: "center",
+    marginTop: 18,
+  },
+  loginText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  homeButton: {
+    padding: 16,
     alignItems: "center",
   },
-
-  discount: { color: farmTheme.colors.primary, fontSize: 22, fontWeight: "900" },
-
-  promoTitle: { color: farmTheme.colors.text, fontSize: 18, fontWeight: "900", marginTop: 4 },
-
-  promoDescription: { color: farmTheme.colors.mutedText, fontWeight: "700", marginTop: 5 },
-
-  promoCode: { color: farmTheme.colors.text, fontWeight: "900", marginTop: 8 },
-
-  applySmallButton: {
-    backgroundColor: farmTheme.colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    borderRadius: 999,
+  homeText: {
+    color: "#064E3B",
+    fontWeight: "900",
   },
-
-  applySmallText: { color: "#FFFFFF", fontWeight: "900" },
-
-  aiCard: {
-    backgroundColor: "#064E3B",
-    marginHorizontal: 18,
-    marginTop: 8,
-    borderRadius: 22,
-    padding: 18,
-  },
-
-  aiTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "900", marginBottom: 8 },
-
-  aiText: { color: "#BBF7D0", fontWeight: "700", lineHeight: 22 },
-});
+}); 
