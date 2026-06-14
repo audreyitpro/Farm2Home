@@ -389,6 +389,7 @@ export default function FreightRegister() {
           businessName: finalBusinessName,
           companyName: finalBusinessName,
           name: finalBusinessName,
+          username: normalize(username),
           userId: savedCarrierId || freightId,
           freightId: savedCarrierId || freightId,
           freight_id: savedCarrierId || freightId,
@@ -445,6 +446,97 @@ export default function FreightRegister() {
     } finally {
       setSyncingStripe(false);
     }
+  }
+
+  async function forceSyncFreightSubscription(silent = false) {
+    const finalEmail = normalize(email);
+    const finalBusinessName = companyName.trim();
+    const finalUsername = normalize(username);
+    const finalId = savedCarrierId || freightId;
+
+    if (!finalEmail && !finalBusinessName && !finalUsername && !finalId) {
+      if (!silent) {
+        Alert.alert("Missing Info", "Enter your email, business name, or username first.");
+      }
+      return null;
+    }
+
+    try {
+      setSyncingStripe(true);
+
+      const response = await fetch(`${API_BASE_URL}/payments/force-sync-freight-subscription`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          email: finalEmail,
+          businessName: finalBusinessName,
+          companyName: finalBusinessName,
+          name: finalBusinessName,
+          username: finalUsername,
+          freightId: finalId,
+          freight_id: finalId,
+          userId: finalId,
+        }),
+      });
+
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
+
+      if (!response.ok || !json.success) {
+        if (!silent) {
+          Alert.alert(
+            "Subscription Not Found",
+            json.error ||
+              "No active Stripe subscription was found. Do not purchase again. Copy the cus_ customer ID from Stripe and use force sync."
+          );
+        }
+        return null;
+      }
+
+      setStripeCustomerId(json.stripeCustomerId || "");
+      setStripeId(json.stripeCustomerId || "");
+      setSubscriptionId(json.stripeSubscriptionId || "");
+      setSubscriptionStatus(json.subscriptionStatus || "active");
+
+      await loadSavedFreight();
+
+      if (!silent) {
+        Alert.alert(
+          "Subscription Restored",
+          "Your existing freight subscription was retrieved from Stripe and saved to Supabase."
+        );
+      }
+
+      return json;
+    } catch (error: any) {
+      if (!silent) {
+        Alert.alert("Force Sync Error", error?.message || "Unable to restore subscription.");
+      }
+      return null;
+    } finally {
+      setSyncingStripe(false);
+    }
+  }
+
+  async function retrieveExistingStripeInfo() {
+    const synced = await syncStripeByEmail(email, true);
+
+    if (synced?.stripeCustomerId) {
+      Alert.alert(
+        "Stripe Synced",
+        "Existing Stripe customer/subscription information was restored."
+      );
+      return;
+    }
+
+    await forceSyncFreightSubscription(false);
   }
 
   async function saveFreightUserRow(carrierId: string, savedAccountId?: string) {
@@ -684,7 +776,11 @@ export default function FreightRegister() {
         hydrateForm(duplicate);
         await saveHydratedSession(duplicate);
         await saveFreightUserRow(duplicate.id, duplicate.account_id || undefined);
-        await syncStripeByEmail(cleanEmailValue, true);
+
+        const synced = await syncStripeByEmail(cleanEmailValue, true);
+        if (!synced?.stripeCustomerId) {
+          await forceSyncFreightSubscription(true);
+        }
 
         Alert.alert("Updated", "Existing freight registration was updated and Stripe IDs were checked.");
         return;
@@ -723,7 +819,11 @@ export default function FreightRegister() {
       setAccountId(generatedAccountId);
 
       await saveFreightUserRow(carrierId, generatedAccountId);
-      await syncStripeByEmail(cleanEmailValue, true);
+
+      const synced = await syncStripeByEmail(cleanEmailValue, true);
+      if (!synced?.stripeCustomerId) {
+        await forceSyncFreightSubscription(true);
+      }
 
       Alert.alert("Registration Saved", "Freight registration was saved to Supabase.", [
         { text: "Dashboard", onPress: () => submitToDashboard() },
@@ -798,10 +898,25 @@ export default function FreightRegister() {
       }
 
       if (!response.ok || !json.success) {
+        const restored = await forceSyncFreightSubscription(true);
+
+        if (restored?.stripeSubscriptionId) {
+          Alert.alert(
+            "Subscription Restored",
+            "Your existing freight subscription was found and saved. No new payment was created.",
+            [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
+          );
+          return;
+        }
+
         Alert.alert(
-          "Backend Checkout Not Available",
-          json.error || "Opening Stripe payment link instead.",
-          [{ text: "Open Payment Link", onPress: openPaymentLink }]
+          "Checkout Not Available",
+          json.error ||
+            "Backend checkout failed and no existing subscription was restored. Do not purchase again until Stripe/Supabase sync is fixed.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Payment Link Anyway", onPress: openPaymentLink },
+          ]
         );
         return;
       }
@@ -840,10 +955,25 @@ export default function FreightRegister() {
 
       await openPaymentLink();
     } catch (error: any) {
+      const restored = await forceSyncFreightSubscription(true);
+
+      if (restored?.stripeSubscriptionId) {
+        Alert.alert(
+          "Subscription Restored",
+          "Your existing freight subscription was found and saved. No new payment was created.",
+          [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
+        );
+        return;
+      }
+
       Alert.alert(
         "Checkout Error",
-        error?.message || "Backend checkout failed. Opening Stripe payment link.",
-        [{ text: "Open Payment Link", onPress: openPaymentLink }]
+        error?.message ||
+          "Backend checkout failed and no existing subscription was restored. Do not purchase again until Stripe/Supabase sync is fixed.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open Payment Link Anyway", onPress: openPaymentLink },
+        ]
       );
     } finally {
       setSaving(false);
@@ -952,7 +1082,7 @@ export default function FreightRegister() {
             <Text style={styles.kicker}>Farm2Home Freight</Text>
             <Text style={styles.title}>Carrier Registration</Text>
             <Text style={styles.subtitle}>
-              Save registration, recover existing Stripe IDs by email or business name, prevent
+              Save registration, recover existing Stripe IDs by email, business name, or username, prevent
               duplicate subscriptions, and use Stripe checkout/payment link.
             </Text>
           </View>
@@ -963,8 +1093,8 @@ export default function FreightRegister() {
               <Text style={styles.noticeTitle}>Checkout Protection</Text>
             </View>
             <Text style={styles.noticeText}>
-              Farm2Home searches Stripe by email first, then business name. If an existing customer
-              or subscription is found, missing IDs are saved to Supabase.
+              Farm2Home searches Stripe by email, business name, and username metadata. If an existing customer
+              or subscription is found, missing IDs are saved to Supabase. Do not purchase another subscription while syncing.
             </Text>
           </View>
 
@@ -979,7 +1109,7 @@ export default function FreightRegister() {
 
             <TouchableOpacity
               style={[styles.syncButton, syncingStripe && styles.disabledButton]}
-              onPress={() => syncStripeByEmail(email, false)}
+              onPress={retrieveExistingStripeInfo}
               disabled={syncingStripe}
             >
               {syncingStripe ? (

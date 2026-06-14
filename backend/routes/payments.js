@@ -182,13 +182,75 @@ async function findStripeCustomerByBusinessName(businessName) {
       listed?.data?.find((customer) => {
         const name = clean(customer.name).toLowerCase();
         const description = clean(customer.description).toLowerCase();
-        return name.includes(normalizedName) || description.includes(normalizedName);
+        const metadataBusiness = clean(customer.metadata?.business_name || customer.metadata?.company_name).toLowerCase();
+
+        return (
+          name.includes(normalizedName) ||
+          description.includes(normalizedName) ||
+          metadataBusiness.includes(normalizedName)
+        );
       }) || null
     );
   } catch (error) {
     console.log("Stripe customer list name fallback skipped:", error.message);
     return null;
   }
+}
+
+async function findStripeCustomerByUsernameRole(username, role) {
+  const finalUsername = clean(username).toLowerCase();
+  const finalRole = clean(role).toLowerCase();
+
+  if (!finalUsername || !stripe) return null;
+
+  try {
+    const listed = await stripe.customers.list({ limit: 100 });
+
+    return (
+      listed?.data?.find((customer) => {
+        const metadataUsername = clean(customer.metadata?.username).toLowerCase();
+        const metadataRole = clean(customer.metadata?.role).toLowerCase();
+
+        const usernameMatches = metadataUsername === finalUsername;
+        const roleMatches = !finalRole || !metadataRole || metadataRole === finalRole;
+
+        return usernameMatches && roleMatches;
+      }) || null
+    );
+  } catch (error) {
+    console.log("Stripe customer username fallback skipped:", error.message);
+    return null;
+  }
+}
+
+async function findStripeCustomerSmart({ email, businessName, username, role, stripeCustomerId }) {
+  let customer = null;
+
+  if (stripeCustomerId) {
+    try {
+      customer = await stripe.customers.retrieve(stripeCustomerId);
+      if (customer?.id && !customer.deleted) return customer;
+    } catch (error) {
+      console.log("Stripe customer direct retrieve skipped:", error.message);
+    }
+  }
+
+  if (email) {
+    customer = await findStripeCustomerByEmail(email);
+    if (customer?.id) return customer;
+  }
+
+  if (businessName) {
+    customer = await findStripeCustomerByBusinessName(businessName);
+    if (customer?.id) return customer;
+  }
+
+  if (username) {
+    customer = await findStripeCustomerByUsernameRole(username, role);
+    if (customer?.id) return customer;
+  }
+
+  return null;
 }
 
 async function findStripeSubscriptionsByCustomer(customerId) {
@@ -226,17 +288,24 @@ function pickBestSubscription(subscriptions = []) {
 }
 
 async function getOrCreateCustomer({ finalEmail, finalName, metadata }) {
-  let existingCustomer = null;
-
-  if (finalEmail) existingCustomer = await findStripeCustomerByEmail(finalEmail);
-  if (!existingCustomer?.id && finalName) existingCustomer = await findStripeCustomerByBusinessName(finalName);
+  const existingCustomer = await findStripeCustomerSmart({
+    email: finalEmail,
+    businessName: finalName,
+    username: metadata?.username,
+    role: metadata?.role,
+  });
 
   if (existingCustomer?.id) {
     try {
       await stripe.customers.update(existingCustomer.id, {
         email: existingCustomer.email || finalEmail,
-        name: existingCustomer.name || finalName,
-        metadata,
+        name: finalName || existingCustomer.name,
+        metadata: {
+          ...(existingCustomer.metadata || {}),
+          ...metadata,
+          business_name: finalName || existingCustomer.metadata?.business_name || "",
+          company_name: finalName || existingCustomer.metadata?.company_name || "",
+        },
       });
     } catch (error) {
       console.log("Stripe customer metadata update skipped:", error.message);
@@ -248,7 +317,11 @@ async function getOrCreateCustomer({ finalEmail, finalName, metadata }) {
   const customer = await stripe.customers.create({
     email: finalEmail,
     name: finalName,
-    metadata,
+    metadata: {
+      ...metadata,
+      business_name: finalName,
+      company_name: finalName,
+    },
   });
 
   return customer.id;
@@ -286,6 +359,22 @@ async function updateProfileByIdOrEmail(idValue, finalEmail, payload) {
 
   if (finalEmail) {
     await supabase.from("profiles").update(payload).eq("email", finalEmail);
+  }
+}
+
+async function updateAdminVerificationByIdOrEmail(idValue, finalEmail, payload) {
+  if (!supabase) return;
+
+  if (idValue) {
+    await supabase
+      .from("admin_verifications")
+      .update(payload)
+      .or(`id.eq.${idValue},freight_id.eq.${idValue},profile_id.eq.${idValue},carrier_id.eq.${idValue}`);
+    return;
+  }
+
+  if (finalEmail) {
+    await supabase.from("admin_verifications").update(payload).eq("email", finalEmail);
   }
 }
 
@@ -351,6 +440,10 @@ async function syncExistingStripeSubscriptionToSupabase({
   if (error) throw error;
 
   await updateProfileByIdOrEmail(userId, email, payload);
+
+  if (role === "freight") {
+    await updateAdminVerificationByIdOrEmail(userId, email, payload);
+  }
 
   return {
     payload,
@@ -422,6 +515,10 @@ async function updateSubscriptionFromSession(session) {
 
   await updateRoleTable({ role, userId, email: finalEmail, payload });
   await updateProfileByIdOrEmail(userId, finalEmail, payload);
+
+  if (role === "freight") {
+    await updateAdminVerificationByIdOrEmail(userId, finalEmail, payload);
+  }
 }
 
 async function updateSubscriptionFromSubscription(subscription) {
@@ -457,6 +554,10 @@ async function updateSubscriptionFromSubscription(subscription) {
 
   await updateRoleTable({ role, userId, email: finalEmail, payload });
   await updateProfileByIdOrEmail(userId, finalEmail, payload);
+
+  if (role === "freight") {
+    await updateAdminVerificationByIdOrEmail(userId, finalEmail, payload);
+  }
 }
 
 async function updateConnectAccount(account) {
@@ -483,6 +584,10 @@ async function updateConnectAccount(account) {
 
   await updateRoleTable({ role, userId, email: finalEmail, payload });
   await updateProfileByIdOrEmail(userId, finalEmail, payload);
+
+  if (role === "freight") {
+    await updateAdminVerificationByIdOrEmail(userId, finalEmail, payload);
+  }
 }
 
 async function createSubscriptionCheckoutHandler(req, res) {
@@ -503,6 +608,7 @@ async function createSubscriptionCheckoutHandler(req, res) {
         body.name ||
         `${role || "Farm2Home"} User`
     );
+    const username = clean(body.username);
 
     if (!role) return res.status(400).json({ success: false, error: "role is required." });
     if (!finalUserId) return res.status(400).json({ success: false, error: "userId/profile ID is required." });
@@ -532,8 +638,10 @@ async function createSubscriptionCheckoutHandler(req, res) {
       accountId,
       account_id: accountId,
       email: finalEmail,
-      username: clean(body.username),
+      username,
       name: finalName,
+      business_name: finalName,
+      company_name: finalName,
     };
 
     if (role === "freight") {
@@ -556,15 +664,12 @@ async function createSubscriptionCheckoutHandler(req, res) {
       metadata.customer_id = finalUserId;
     }
 
-    let existingCustomer = null;
-
-    if (finalEmail) {
-      existingCustomer = await findStripeCustomerByEmail(finalEmail);
-    }
-
-    if (!existingCustomer?.id && finalName) {
-      existingCustomer = await findStripeCustomerByBusinessName(finalName);
-    }
+    const existingCustomer = await findStripeCustomerSmart({
+      email: finalEmail,
+      businessName: finalName,
+      username,
+      role,
+    });
 
     if (existingCustomer?.id && mode === "subscription") {
       const existingSubscriptions = await findStripeSubscriptionsByCustomer(existingCustomer.id);
@@ -602,6 +707,16 @@ async function createSubscriptionCheckoutHandler(req, res) {
         finalName,
         metadata,
       }));
+
+    try {
+      await stripe.customers.update(stripeCustomerId, {
+        name: finalName,
+        email: finalEmail,
+        metadata,
+      });
+    } catch (error) {
+      console.log("Stripe customer pre-checkout update skipped:", error.message);
+    }
 
     const sessionCreatePayload = {
       mode,
@@ -645,6 +760,10 @@ async function createSubscriptionCheckoutHandler(req, res) {
     });
 
     await updateProfileByIdOrEmail(finalUserId, finalEmail, pendingPayload);
+
+    if (role === "freight") {
+      await updateAdminVerificationByIdOrEmail(finalUserId, finalEmail, pendingPayload);
+    }
 
     return res.json({
       success: true,
@@ -770,6 +889,8 @@ router.post("/create-connect-account", async (req, res) => {
           account_id: accountId,
           email,
           name: businessName,
+          business_name: businessName,
+          company_name: businessName,
         },
       });
     }
@@ -849,14 +970,16 @@ router.post("/sync-stripe-by-email", async (req, res) => {
 
     const email = cleanEmail(req.body?.email);
     const businessName = clean(req.body?.businessName || req.body?.companyName || req.body?.name);
+    const username = clean(req.body?.username);
     const role = clean(req.body?.role || "freight").toLowerCase();
     const userId = getRoleIdFromBody(req.body || {}, role);
+    const stripeCustomerId = clean(req.body?.stripeCustomerId || req.body?.stripe_customer_id);
     const table = getTableForRole(role);
 
-    if (!email && !businessName) {
+    if (!email && !businessName && !username && !stripeCustomerId) {
       return res.status(400).json({
         success: false,
-        error: "email or businessName is required.",
+        error: "email, businessName, username, or stripeCustomerId is required.",
       });
     }
 
@@ -864,20 +987,19 @@ router.post("/sync-stripe-by-email", async (req, res) => {
       return res.status(400).json({ success: false, error: "Valid role is required." });
     }
 
-    let customer = null;
-
-    if (email) {
-      customer = await findStripeCustomerByEmail(email);
-    }
-
-    if (!customer?.id && businessName) {
-      customer = await findStripeCustomerByBusinessName(businessName);
-    }
+    const customer = await findStripeCustomerSmart({
+      email,
+      businessName,
+      username,
+      role,
+      stripeCustomerId,
+    });
 
     if (!customer?.id) {
       return res.status(404).json({
         success: false,
-        error: "No Stripe customer found for this email or business name.",
+        error:
+          "No Stripe customer found for this email, business name, username, or customer ID.",
       });
     }
 
@@ -914,12 +1036,17 @@ router.post("/sync-stripe-by-email", async (req, res) => {
 
     await updateProfileByIdOrEmail(userId, resolvedEmail, payload);
 
+    if (role === "freight") {
+      await updateAdminVerificationByIdOrEmail(userId, resolvedEmail, payload);
+    }
+
     return res.json({
       success: true,
       role,
       email: resolvedEmail,
       businessName,
-      matchedBy: email && cleanEmail(customer.email) === email ? "email" : "businessName",
+      username,
+      matchedBy: customer.email && email && cleanEmail(customer.email) === email ? "email" : "fallback",
       stripeCustomerId: customer.id,
       stripeCustomerName: customer.name || null,
       stripeSubscriptionId: bestSub?.id || null,
@@ -931,7 +1058,118 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     console.error("sync-stripe-by-email error:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || "Unable to sync Stripe by email or business name.",
+      error: error.message || "Unable to sync Stripe by email, business name, or username.",
+    });
+  }
+});
+
+router.post("/force-sync-freight-subscription", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+    if (!requireSupabase(res)) return;
+
+    const email = cleanEmail(req.body?.email);
+    const freightId = clean(req.body?.freightId || req.body?.freight_id || req.body?.userId);
+    const businessName = clean(req.body?.businessName || req.body?.companyName || req.body?.name);
+    const username = clean(req.body?.username);
+    const stripeCustomerId = clean(req.body?.stripeCustomerId || req.body?.stripe_customer_id);
+
+    if (!email && !freightId && !businessName && !username && !stripeCustomerId) {
+      return res.status(400).json({
+        success: false,
+        error: "Provide email, freightId, businessName, username, or stripeCustomerId.",
+      });
+    }
+
+    const customer = await findStripeCustomerSmart({
+      email,
+      businessName,
+      username,
+      role: "freight",
+      stripeCustomerId,
+    });
+
+    if (!customer?.id) {
+      return res.status(404).json({
+        success: false,
+        error:
+          "No Stripe customer found. Do not purchase again. Copy the customer ID that starts with cus_ from Stripe and use it for force sync.",
+      });
+    }
+
+    const subscriptions = await findStripeSubscriptionsByCustomer(customer.id);
+    const activeSub =
+      subscriptions.find((sub) => ["active", "trialing", "past_due"].includes(sub.status)) ||
+      subscriptions[0];
+
+    if (!activeSub?.id) {
+      return res.status(404).json({
+        success: false,
+        error: "Stripe customer found, but no subscription was found.",
+        stripeCustomerId: customer.id,
+      });
+    }
+
+    const resolvedEmail = cleanEmail(customer.email || email);
+
+    const payload = {
+      stripe_id: customer.id,
+      stripe_customer_id: customer.id,
+      stripe_subscription_id: activeSub.id,
+      subscription_id: activeSub.id,
+      subscription_status: activeSub.status,
+      membership_status: isActiveSubscriptionStatus(activeSub.status) ? "active" : activeSub.status,
+      freight_membership_paid: isPaidStatus(activeSub.status),
+      account_active: isActiveSubscriptionStatus(activeSub.status),
+      updated_at: nowIso(),
+    };
+
+    let updateResult = null;
+
+    if (freightId) {
+      updateResult = await supabase
+        .from("freight_users")
+        .update(payload)
+        .or(`id.eq.${freightId},freight_id.eq.${freightId},profile_id.eq.${freightId},auth_user_id.eq.${freightId}`)
+        .select();
+    } else if (resolvedEmail) {
+      updateResult = await supabase
+        .from("freight_users")
+        .update(payload)
+        .eq("email", resolvedEmail)
+        .select();
+    }
+
+    if (updateResult?.error) throw updateResult.error;
+
+    if (!updateResult?.data?.length) {
+      return res.status(404).json({
+        success: false,
+        error:
+          "Stripe subscription found, but no matching freight_users row was updated. Save freight registration first, then run sync again.",
+        stripeCustomerId: customer.id,
+        stripeSubscriptionId: activeSub.id,
+        subscriptionStatus: activeSub.status,
+      });
+    }
+
+    await updateProfileByIdOrEmail(freightId, resolvedEmail, payload);
+    await updateAdminVerificationByIdOrEmail(freightId, resolvedEmail, payload);
+
+    return res.json({
+      success: true,
+      message: "Freight subscription force-synced from Stripe to Supabase.",
+      stripeCustomerId: customer.id,
+      stripeSubscriptionId: activeSub.id,
+      subscriptionStatus: activeSub.status,
+      email: resolvedEmail,
+      updatedRows: updateResult?.data || [],
+    });
+  } catch (error) {
+    console.error("force-sync-freight-subscription error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to force sync freight subscription.",
     });
   }
 });
@@ -955,15 +1193,20 @@ router.post("/sync-all-stripe-role", async (req, res) => {
     for (const row of rows || []) {
       const email = cleanEmail(row.email);
       const businessName = clean(row.business_name || row.company_name || row.name);
-      let customer = null;
+      const username = clean(row.username);
 
-      if (email) customer = await findStripeCustomerByEmail(email);
-      if (!customer?.id && businessName) customer = await findStripeCustomerByBusinessName(businessName);
+      const customer = await findStripeCustomerSmart({
+        email,
+        businessName,
+        username,
+        role,
+      });
 
       if (!customer?.id) {
         results.push({
           email,
           businessName,
+          username,
           updated: false,
           reason: "No Stripe customer found",
         });
@@ -1009,9 +1252,14 @@ router.post("/sync-all-stripe-role", async (req, res) => {
 
       await updateProfileByIdOrEmail(idValue, email || cleanEmail(customer.email), payload);
 
+      if (role === "freight") {
+        await updateAdminVerificationByIdOrEmail(idValue, email || cleanEmail(customer.email), payload);
+      }
+
       results.push({
         email,
         businessName,
+        username,
         updated: !updateResult.error,
         stripeCustomerId: customer.id,
         stripeSubscriptionId: bestSub?.id || null,
