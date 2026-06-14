@@ -5,6 +5,13 @@ const Stripe = require("stripe");
 const { createClient } = require("@supabase/supabase-js");
 
 const router = express.Router();
+router.use((req, res, next) => {
+  if (req.originalUrl.includes("/payments/webhook")) {
+    return next();
+  }
+
+  return express.json({ limit: "2mb" })(req, res, next);
+});
 
 const APP_URL = process.env.APP_URL || "https://farm2home-rho.vercel.app";
 
