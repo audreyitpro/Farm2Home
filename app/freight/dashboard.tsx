@@ -20,62 +20,24 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-const FREIGHT_ROUTES = {
+const ROUTES = {
   dashboard: "/freight/dashboard",
   board: "/freight/board",
   liveLoads: "/freight/live-loads",
+  loadDetail: "/freight/load-detail",
   myLoads: "/freight/my-loads",
-
-  tracking: "/freight/tracking",
-  liveRoute: "/freight/live-route",
-  routeDetails: "/freight/route-details",
-  routeExceptions: "/freight/route-exceptions",
-  loadIssues: "/freight/load-issues",
-
-  communicationCenter: "/freight/communication-center",
-  loadChat: "/freight/load-chat",
-  dispatchAlerts: "/freight/dispatch-alerts",
-  notifications: "/freight/notifications",
-
-  serviceArea: "/freight/service-area",
-  aiLoadMatching: "/freight/ai-load-matching",
-  loadRecommendations: "/freight/load-recommendations",
   rateOptimizer: "/freight/rate-optimizer",
-  costCalculator: "/freight/cost-calculator",
-
-  fuelTracker: "/freight/fuel-tracker",
-  maintenanceTracker: "/freight/maintenance-tracker",
-  expenseCenter: "/freight/expense-center",
-  profitabilityDashboard: "/freight/profitability-dashboard",
-  taxCenter: "/freight/tax-center",
-  yearEndSummary: "/freight/year-end-summary",
-  reportExport: "/freight/report-export",
-
-  businessDocuments: "/freight/business-documents",
-  complianceVault: "/freight/compliance-vault",
-  reviewStatus: "/freight/review-status",
-  safety: "/freight/safety",
-  insurance: "/freight/insurance",
-  adminReview: "/freight/admin-review",
-
-  settlements: "/freight/settlements",
-  payoutCenter: "/freight/payout-center",
-  deliveryHistory: "/freight/delivery-history",
-  analytics: "/freight/analytics",
-  earnings: "/freight/earnings",
+  paymentSuccess: "/freight/payment-success",
   connectBank: "/freight/connect-bank",
-
+  notifications: "/freight/notifications",
   profile: "/freight/profile",
   settings: "/freight/settings",
   support: "/freight/support",
-  help: "/freight/help",
-  subscription: "/freight/subscription",
-  managementCenter: "/freight/freight-management-center",
 } as const;
 
-type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+type FreightRoute = (typeof ROUTES)[keyof typeof ROUTES];
 
-type FreightStatus =
+type LoadStatus =
   | "OPEN"
   | "BOOKED"
   | "PICKED_UP"
@@ -91,44 +53,34 @@ type FreightLoad = {
   pickupState: string;
   deliveryCity: string;
   deliveryState: string;
+  pickupLocation: string;
+  deliveryLocation: string;
+  farmerName: string;
+  brokerName: string;
   rate: number;
   miles: number;
-  weight?: string;
-  farmerName?: string;
-  status: FreightStatus;
-  equipment?: string;
-  pickupDate?: string;
-  pickup_location?: string;
-  dropoff_location?: string;
-  farmer_name?: string;
-  equipment_type?: string;
-  weight_lbs?: number | null;
-  distance_miles?: number | null;
-  pickup_date?: string | null;
-  pickup_time?: string | null;
-  carrier_id?: string | null;
-  driver_id?: string | null;
-  accepted_by?: string | null;
-  accepted_at?: string | null;
-  picked_up_at?: string | null;
-  delivered_at?: string | null;
+  weight: string;
+  equipment: string;
+  pickupDate: string;
+  status: LoadStatus;
   created_at?: string | null;
 };
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F3F4F6",
   card: "#FFFFFF",
   surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#991B1B",
   green: "#16A34A",
+  blue: "#2563EB",
   amber: "#D97706",
   purple: "#7C3AED",
-  blue: "#2563EB",
-  slate: "#64748B",
+  slate: "#475569",
 };
 
 function normalize(value: any) {
@@ -145,14 +97,13 @@ function money(value: number) {
 function splitCityState(location?: string | null) {
   const raw = String(location || "").trim();
   const parts = raw.split(",").map((x) => x.trim());
-
   return {
     city: parts[0] || "TBD",
     state: parts[1] || "",
   };
 }
 
-function mapDbStatus(status: any): FreightStatus {
+function mapStatus(status: any): LoadStatus {
   const value = normalize(status);
 
   if (value === "available" || value === "open") return "OPEN";
@@ -165,7 +116,7 @@ function mapDbStatus(status: any): FreightStatus {
   return "OPEN";
 }
 
-function toDbStatus(status: FreightStatus) {
+function toDbStatus(status: LoadStatus) {
   if (status === "OPEN") return "available";
   if (status === "BOOKED") return "accepted";
   if (status === "PICKED_UP") return "picked_up";
@@ -174,31 +125,36 @@ function toDbStatus(status: FreightStatus) {
   return "cancelled";
 }
 
-function mapDbLoad(row: any): FreightLoad {
-  const pickup = splitCityState(row.pickup_location || row.pickup_address);
-  const dropoff = splitCityState(row.dropoff_location || row.dropoff_address);
+function mapLoad(row: any): FreightLoad {
+  const pickupRaw = row.pickup_location || row.pickup_address || "";
+  const dropoffRaw = row.dropoff_location || row.dropoff_address || "";
+  const pickup = splitCityState(pickupRaw);
+  const dropoff = splitCityState(dropoffRaw);
 
   return {
-    ...row,
     id: String(row.id),
-    title: row.title || row.commodity || "Freight Load",
-    commodity: row.commodity || "Farm Freight",
+    title: row.title || row.load_title || row.commodity || "Farm Freight Load",
+    commodity: row.commodity || row.product_name || "Farm Freight",
     pickupCity: pickup.city,
     pickupState: pickup.state,
     deliveryCity: dropoff.city,
     deliveryState: dropoff.state,
+    pickupLocation: pickupRaw || "Pickup TBD",
+    deliveryLocation: dropoffRaw || "Delivery TBD",
+    farmerName: row.farmer_name || row.farm_name || "Farm2Home Farmer",
+    brokerName: row.broker_name || row.farmer_name || row.farm_name || "Farm2Home Broker",
     rate: Number(row.rate || row.freight_total || row.total_due || row.payout_amount || 0),
     miles: Number(row.distance_miles || row.miles || 0),
     weight: row.weight_lbs
       ? `${Number(row.weight_lbs).toLocaleString()} lbs`
       : row.weight || "TBD",
-    farmerName: row.farmer_name || row.farmerName || "Farm2Home Partner",
-    status: mapDbStatus(row.status),
-    equipment: row.equipment_type || row.equipment || "Standard",
+    equipment: row.equipment_type || row.equipment || "Box Truck / Reefer / Flatbed",
     pickupDate:
       row.pickup_date && row.pickup_time
         ? `${row.pickup_date} · ${row.pickup_time}`
         : row.pickup_date || row.pickupDate || "TBD",
+    status: mapStatus(row.status),
+    created_at: row.created_at || null,
   };
 }
 
@@ -206,11 +162,23 @@ function goTo(route: FreightRoute) {
   router.push(route as any);
 }
 
+function openLoad(route: FreightRoute, loadId?: string) {
+  if (!loadId) {
+    goTo(route);
+    return;
+  }
+
+  router.push({
+    pathname: route as any,
+    params: { loadId },
+  });
+}
+
 export default function FreightDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [carrierName, setCarrierName] = useState("Freight Connect Carrier");
   const [carrier, setCarrier] = useState<any>(null);
+  const [carrierName, setCarrierName] = useState("Farm2Home Freight Carrier");
   const [loads, setLoads] = useState<FreightLoad[]>([]);
 
   useFocusEffect(
@@ -247,13 +215,13 @@ export default function FreightDashboard() {
         nextCarrier.businessName ||
         nextCarrier.company_name ||
         nextCarrier.business_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
       businessName:
         nextCarrier.businessName ||
         nextCarrier.companyName ||
         nextCarrier.business_name ||
         nextCarrier.company_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -288,19 +256,16 @@ export default function FreightDashboard() {
         .maybeSingle();
 
       if (error) {
-        console.log("Freight dashboard carrier error:", error.message);
+        console.log("Freight carrier lookup error:", error.message);
       }
 
       if (!dbCarrier) {
-        Alert.alert(
-          "Freight Profile Missing",
-          "Please complete freight registration first."
-        );
+        Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
         router.replace("/freight/register" as any);
         return;
       }
 
-      const mergedCarrier = await persistCarrier({
+      const merged = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
         id: dbCarrier.id,
@@ -312,22 +277,28 @@ export default function FreightDashboard() {
           dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
-          "Freight Connect Carrier",
+          "Farm2Home Freight Carrier",
         businessName:
           dbCarrier.business_name ||
           dbCarrier.company_name ||
           stored?.businessName ||
           stored?.companyName ||
-          "Freight Connect Carrier",
+          "Farm2Home Freight Carrier",
         membershipStatus:
           dbCarrier.membership_status || stored?.membershipStatus || "Active",
         subscriptionStatus:
           dbCarrier.subscription_status || stored?.subscriptionStatus || "active",
+        stripeConnectId:
+          dbCarrier.stripe_connect_id ||
+          dbCarrier.stripe_account_id ||
+          dbCarrier.stripe_id ||
+          stored?.stripeConnectId ||
+          null,
       });
 
-      await loadFreightLoads(mergedCarrier.id);
+      await loadLoads(merged.id);
     } catch (error) {
-      console.log("Freight dashboard load error:", error);
+      console.log("Freight dashboard error:", error);
       Alert.alert("Dashboard Error", "Unable to load freight dashboard.");
       setLoads([]);
     } finally {
@@ -336,7 +307,7 @@ export default function FreightDashboard() {
     }
   }
 
-  async function loadFreightLoads(carrierId: string) {
+  async function loadLoads(carrierId: string) {
     try {
       const { data, error } = await supabase
         .from("freight_loads")
@@ -352,7 +323,7 @@ export default function FreightDashboard() {
         return;
       }
 
-      setLoads(Array.isArray(data) ? data.map(mapDbLoad) : []);
+      setLoads(Array.isArray(data) ? data.map(mapLoad) : []);
     } catch (error) {
       console.log("Freight load sync skipped:", error);
       setLoads([]);
@@ -364,7 +335,7 @@ export default function FreightDashboard() {
     await loadDashboard();
   }
 
-  async function updateLoadStatus(load: FreightLoad, nextStatus: FreightStatus) {
+  async function updateLoadStatus(load: FreightLoad, nextStatus: LoadStatus) {
     if (!carrier?.id) {
       Alert.alert("Carrier Missing", "Please log in again.");
       return;
@@ -372,31 +343,30 @@ export default function FreightDashboard() {
 
     const now = new Date().toISOString();
 
-    const updatePayload: any = {
+    const payload: any = {
       status: toDbStatus(nextStatus),
       updated_at: now,
     };
 
     if (nextStatus === "BOOKED") {
-      updatePayload.carrier_id = carrier.id;
-      updatePayload.freight_user_id = carrier.id;
-      updatePayload.accepted_by = carrier.id;
-      updatePayload.accepted_at = now;
-      updatePayload.carrier_name = carrier.companyName || carrier.businessName || carrierName;
-      updatePayload.carrier_email = carrier.email || null;
+      payload.carrier_id = carrier.id;
+      payload.freight_user_id = carrier.id;
+      payload.accepted_by = carrier.id;
+      payload.accepted_at = now;
+      payload.carrier_name = carrier.companyName || carrier.businessName || carrierName;
+      payload.carrier_email = carrier.email || null;
     }
 
-    if (nextStatus === "PICKED_UP") updatePayload.picked_up_at = now;
+    if (nextStatus === "PICKED_UP") payload.picked_up_at = now;
+    if (nextStatus === "IN_TRANSIT") payload.in_transit_at = now;
+
     if (nextStatus === "DELIVERED") {
-      updatePayload.delivered_at = now;
-      updatePayload.settlement_status = "pending";
-      updatePayload.payout_status = "pending";
+      payload.delivered_at = now;
+      payload.settlement_status = "pending";
+      payload.payout_status = "pending";
     }
 
-    const { error } = await supabase
-      .from("freight_loads")
-      .update(updatePayload)
-      .eq("id", load.id);
+    const { error } = await supabase.from("freight_loads").update(payload).eq("id", load.id);
 
     if (error) {
       Alert.alert("Update Failed", error.message);
@@ -408,7 +378,7 @@ export default function FreightDashboard() {
       load_id: load.id,
       title:
         nextStatus === "BOOKED"
-          ? "Load Accepted"
+          ? "Load Booked"
           : nextStatus === "PICKED_UP"
           ? "Pickup Confirmed"
           : nextStatus === "IN_TRANSIT"
@@ -422,16 +392,16 @@ export default function FreightDashboard() {
       created_at: now,
     });
 
-    await loadFreightLoads(carrier.id);
+    await loadLoads(carrier.id);
   }
 
-  async function acceptLoad(load: FreightLoad) {
+  async function bookLoad(load: FreightLoad) {
     await updateLoadStatus(load, "BOOKED");
 
-    Alert.alert("Load Accepted", `${load.title} has been assigned to your carrier account.`, [
+    Alert.alert("Load Booked", `${load.title} has been added to My Booked Loads.`, [
       {
         text: "View My Loads",
-        onPress: () => goTo(FREIGHT_ROUTES.myLoads),
+        onPress: () => goTo(ROUTES.myLoads),
       },
       {
         text: "Stay Here",
@@ -440,242 +410,41 @@ export default function FreightDashboard() {
     ]);
   }
 
-  const openLoads = useMemo(
-    () => loads.filter((item) => mapDbStatus(item.status) === "OPEN"),
+  const openLoads = useMemo(() => loads.filter((x) => x.status === "OPEN"), [loads]);
+
+  const bookedLoads = useMemo(
+    () => loads.filter((x) => ["BOOKED", "PICKED_UP", "IN_TRANSIT"].includes(x.status)),
     [loads]
   );
 
-  const activeLoads = useMemo(
-    () =>
-      loads.filter((item) =>
-        ["BOOKED", "PICKED_UP", "IN_TRANSIT"].includes(mapDbStatus(item.status))
-      ),
-    [loads]
-  );
+  const deliveredLoads = useMemo(() => loads.filter((x) => x.status === "DELIVERED"), [loads]);
 
-  const completedLoads = useMemo(
-    () => loads.filter((item) => mapDbStatus(item.status) === "DELIVERED"),
-    [loads]
-  );
-
-  const visibleRevenue = useMemo(
+  const totalVisibleRevenue = useMemo(
     () => loads.reduce((sum, item) => sum + Number(item.rate || 0), 0),
     [loads]
   );
 
-  const activeRevenue = useMemo(
-    () => activeLoads.reduce((sum, item) => sum + Number(item.rate || 0), 0),
-    [activeLoads]
+  const bookedRevenue = useMemo(
+    () => bookedLoads.reduce((sum, item) => sum + Number(item.rate || 0), 0),
+    [bookedLoads]
   );
 
-  function openLoadRoute(route: FreightRoute, load?: FreightLoad) {
-    if (!load) {
-      goTo(route);
-      return;
-    }
+  const avgRatePerMile = useMemo(() => {
+    const totalMiles = loads.reduce((sum, item) => sum + Number(item.miles || 0), 0);
+    if (!totalMiles) return 0;
+    return totalVisibleRevenue / totalMiles;
+  }, [loads, totalVisibleRevenue]);
 
-    router.push({
-      pathname: route as any,
-      params: {
-        loadId: load.id,
-      },
-    });
-  }
-
-  function getStatusColor(status: FreightStatus) {
-    switch (status) {
-      case "OPEN":
-        return COLORS.blue;
-      case "BOOKED":
-        return COLORS.red;
-      case "PICKED_UP":
-        return COLORS.amber;
-      case "IN_TRANSIT":
-        return COLORS.purple;
-      case "DELIVERED":
-        return COLORS.green;
-      default:
-        return COLORS.slate;
-    }
-  }
-
-  function renderAction(load: FreightLoad) {
-    const status = mapDbStatus(load.status);
-
-    if (status === "OPEN") {
-      return (
-        <TouchableOpacity style={styles.primaryAction} onPress={() => acceptLoad(load)}>
-          <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryActionText}>Accept Load</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    if (status === "BOOKED") {
-      return (
-        <TouchableOpacity
-          style={styles.warningAction}
-          onPress={() => updateLoadStatus(load, "PICKED_UP")}
-        >
-          <Ionicons name="archive-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryActionText}>Confirm Pickup</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    if (status === "PICKED_UP") {
-      return (
-        <TouchableOpacity
-          style={styles.transitAction}
-          onPress={() => updateLoadStatus(load, "IN_TRANSIT")}
-        >
-          <Ionicons name="navigate-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryActionText}>Start Transit</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    if (status === "IN_TRANSIT") {
-      return (
-        <TouchableOpacity
-          style={styles.successAction}
-          onPress={() => updateLoadStatus(load, "DELIVERED")}
-        >
-          <Ionicons name="checkmark-done-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryActionText}>Complete Delivery</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    return (
-      <View style={styles.completedBadge}>
-        <Ionicons name="checkmark-done-circle" size={18} color="#FFFFFF" />
-        <Text style={styles.completedText}>Completed</Text>
-      </View>
-    );
-  }
-
-  function renderLoad({ item }: { item: FreightLoad }) {
-    const status = mapDbStatus(item.status);
-    const payoutPerMile = item.miles > 0 ? item.rate / item.miles : 0;
-
-    return (
-      <View style={styles.loadCard}>
-        <View style={styles.cardTopRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.loadTitle}>{item.title}</Text>
-            <Text style={styles.commodity}>{item.commodity}</Text>
-            <Text style={styles.routeText}>
-              {item.pickupCity}, {item.pickupState} → {item.deliveryCity},{" "}
-              {item.deliveryState}
-            </Text>
-          </View>
-
-          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(status) }]}>
-            <Text style={styles.statusText}>{status.replace(/_/g, " ")}</Text>
-          </View>
-        </View>
-
-        <View style={styles.detailGrid}>
-          <DetailBox icon="calendar-outline" label="Pickup" value={item.pickupDate || "TBD"} />
-          <DetailBox icon="car-outline" label="Equipment" value={item.equipment || "Standard"} />
-          <DetailBox icon="scale-outline" label="Weight" value={item.weight || "TBD"} />
-          <DetailBox icon="leaf-outline" label="Posted By" value={item.farmerName || "Farm2Home Partner"} />
-        </View>
-
-        <View style={styles.payoutRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.payoutLabel}>Carrier Payout</Text>
-            <Text style={styles.payoutAmount}>{money(item.rate)}</Text>
-            <Text style={styles.mileText}>
-              {item.miles} miles · ${payoutPerMile.toFixed(2)} / mile
-            </Text>
-          </View>
-
-          <View style={styles.actionStack}>
-            {renderAction(item)}
-
-            <TouchableOpacity
-              style={styles.trackAction}
-              onPress={() => openLoadRoute(FREIGHT_ROUTES.routeDetails, item)}
-            >
-              <Ionicons name="document-text-outline" size={18} color={COLORS.red} />
-              <Text style={styles.trackActionText}>Details</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.trackAction}
-              onPress={() => openLoadRoute(FREIGHT_ROUTES.liveRoute, item)}
-            >
-              <Ionicons name="map-outline" size={18} color={COLORS.red} />
-              <Text style={styles.trackActionText}>Live Route</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.trackAction}
-              onPress={() => openLoadRoute(FREIGHT_ROUTES.loadChat, item)}
-            >
-              <Ionicons name="chatbubble-outline" size={18} color={COLORS.red} />
-              <Text style={styles.trackActionText}>Chat</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  }
-
-  const quickActions: {
-    title: string;
-    icon: keyof typeof Ionicons.glyphMap;
-    route: FreightRoute;
-  }[] = [
-    { title: "My Loads", icon: "briefcase-outline", route: FREIGHT_ROUTES.myLoads },
-    { title: "Live Loads", icon: "pulse-outline", route: FREIGHT_ROUTES.liveLoads },
-    { title: "Freight Tracking", icon: "navigate-outline", route: FREIGHT_ROUTES.tracking },
-    { title: "Live Route", icon: "map-outline", route: FREIGHT_ROUTES.liveRoute },
-    { title: "Route Details", icon: "trail-sign-outline", route: FREIGHT_ROUTES.routeDetails },
-    { title: "Route Exceptions", icon: "warning-outline", route: FREIGHT_ROUTES.routeExceptions },
-    { title: "Load Issues", icon: "alert-circle-outline", route: FREIGHT_ROUTES.loadIssues },
-    { title: "Chat Center", icon: "chatbubbles-outline", route: FREIGHT_ROUTES.communicationCenter },
-    { title: "Load Chat", icon: "chatbubble-outline", route: FREIGHT_ROUTES.loadChat },
-    { title: "Dispatch Alerts", icon: "megaphone-outline", route: FREIGHT_ROUTES.dispatchAlerts },
-    { title: "Notifications", icon: "notifications-outline", route: FREIGHT_ROUTES.notifications },
-    { title: "Payout Center", icon: "wallet-outline", route: FREIGHT_ROUTES.payoutCenter },
-    { title: "Settlements", icon: "receipt-outline", route: FREIGHT_ROUTES.settlements },
-    { title: "Delivery History", icon: "time-outline", route: FREIGHT_ROUTES.deliveryHistory },
-    { title: "Earnings", icon: "cash-outline", route: FREIGHT_ROUTES.earnings },
-    { title: "Analytics", icon: "bar-chart-outline", route: FREIGHT_ROUTES.analytics },
-    { title: "Connect Bank", icon: "business-outline", route: FREIGHT_ROUTES.connectBank },
-    { title: "Documents", icon: "folder-open-outline", route: FREIGHT_ROUTES.businessDocuments },
-    { title: "Compliance Vault", icon: "shield-checkmark-outline", route: FREIGHT_ROUTES.complianceVault },
-    { title: "Review Status", icon: "clipboard-outline", route: FREIGHT_ROUTES.reviewStatus },
-    { title: "Safety", icon: "medical-outline", route: FREIGHT_ROUTES.safety },
-    { title: "Insurance", icon: "umbrella-outline", route: FREIGHT_ROUTES.insurance },
-    { title: "Admin Review", icon: "reader-outline", route: FREIGHT_ROUTES.adminReview },
-    { title: "Service Area", icon: "map-outline", route: FREIGHT_ROUTES.serviceArea },
-    { title: "AI Matching", icon: "sparkles-outline", route: FREIGHT_ROUTES.aiLoadMatching },
-    { title: "Recommendations", icon: "bulb-outline", route: FREIGHT_ROUTES.loadRecommendations },
-    { title: "Rate Optimizer", icon: "trending-up-outline", route: FREIGHT_ROUTES.rateOptimizer },
-    { title: "Cost Calculator", icon: "calculator-outline", route: FREIGHT_ROUTES.costCalculator },
-    { title: "Fuel Tracker", icon: "speedometer-outline", route: FREIGHT_ROUTES.fuelTracker },
-    { title: "Maintenance", icon: "construct-outline", route: FREIGHT_ROUTES.maintenanceTracker },
-    { title: "Expenses", icon: "receipt-outline", route: FREIGHT_ROUTES.expenseCenter },
-    { title: "Profitability", icon: "analytics-outline", route: FREIGHT_ROUTES.profitabilityDashboard },
-    { title: "Taxes", icon: "document-text-outline", route: FREIGHT_ROUTES.taxCenter },
-    { title: "Year End", icon: "calendar-outline", route: FREIGHT_ROUTES.yearEndSummary },
-    { title: "Export Reports", icon: "download-outline", route: FREIGHT_ROUTES.reportExport },
-    { title: "Profile", icon: "person-outline", route: FREIGHT_ROUTES.profile },
-    { title: "Settings", icon: "settings-outline", route: FREIGHT_ROUTES.settings },
-    { title: "Support", icon: "headset-outline", route: FREIGHT_ROUTES.support },
-    { title: "Help", icon: "help-circle-outline", route: FREIGHT_ROUTES.help },
-  ];
+  const alertsCount = useMemo(() => {
+    return loads.filter((x) => x.status === "OPEN" || x.status === "IN_TRANSIT").length;
+  }, [loads]);
 
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
         <ActivityIndicator size="large" color={COLORS.red} />
-        <Text style={styles.centerText}>Loading freight operations...</Text>
+        <Text style={styles.centerText}>Loading Farm2Home Freight...</Text>
       </SafeAreaView>
     );
   }
@@ -691,23 +460,25 @@ export default function FreightDashboard() {
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.heroEyebrow}>Farm2Home Freight Connect</Text>
-              <Text style={styles.heroTitle}>Freight Operations Center</Text>
+              <Text style={styles.heroEyebrow}>Farm2Home Freight</Text>
+              <Text style={styles.heroTitle}>Carrier Load Board</Text>
               <Text style={styles.heroSubtitle}>
-                Manage load opportunities, dispatch, tracking, documents, payout visibility,
-                and delivery completion from one carrier workspace.
+                Find farm freight, compare route value, book loads, track payouts, review farmer
+                details, and manage active dispatch from one carrier dashboard.
               </Text>
             </View>
 
-            <TouchableOpacity
-              style={styles.heroIcon}
-              onPress={() => goTo(FREIGHT_ROUTES.notifications)}
-            >
-              <Ionicons name="notifications-outline" size={34} color="#FFFFFF" />
+            <TouchableOpacity style={styles.alertButton} onPress={() => goTo(ROUTES.notifications)}>
+              <Ionicons name="notifications-outline" size={26} color="#FFFFFF" />
+              {alertsCount > 0 ? (
+                <View style={styles.alertDot}>
+                  <Text style={styles.alertDotText}>{alertsCount}</Text>
+                </View>
+              ) : null}
             </TouchableOpacity>
           </View>
 
-          <View style={styles.carrierRibbon}>
+          <View style={styles.carrierCard}>
             <Text style={styles.carrierLabel}>Carrier Account</Text>
             <Text style={styles.carrierName}>{carrierName}</Text>
             <Text style={styles.carrierSub}>
@@ -717,48 +488,66 @@ export default function FreightDashboard() {
           </View>
         </View>
 
-        <View style={styles.navRow}>
-          <TouchableOpacity style={styles.navButton} onPress={() => goTo(FREIGHT_ROUTES.board)}>
-            <Ionicons name="list-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.navText}>Load Board</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.navButtonOutline}
-            onPress={() => goTo(FREIGHT_ROUTES.communicationCenter)}
-          >
-            <Ionicons name="chatbubbles-outline" size={18} color={COLORS.red} />
-            <Text style={styles.navTextOutline}>Chat Center</Text>
-          </TouchableOpacity>
+        <View style={styles.primaryNav}>
+          <NavButton title="Load Board" icon="search-outline" route={ROUTES.board} filled />
+          <NavButton title="Live Loads" icon="pulse-outline" route={ROUTES.liveLoads} />
         </View>
 
         <View style={styles.metricsRow}>
-          <MetricCard icon="cube-outline" label="Open Loads" value={openLoads.length} route={FREIGHT_ROUTES.board} />
-          <MetricCard icon="navigate-outline" label="Active Routes" value={activeLoads.length} route={FREIGHT_ROUTES.liveRoute} />
-          <MetricCard icon="checkmark-done-outline" label="Completed" value={completedLoads.length} route={FREIGHT_ROUTES.deliveryHistory} />
+          <MetricCard
+            icon="cube-outline"
+            label="Available Loads"
+            value={openLoads.length}
+            route={ROUTES.board}
+          />
+          <MetricCard
+            icon="briefcase-outline"
+            label="Booked Loads"
+            value={bookedLoads.length}
+            route={ROUTES.myLoads}
+          />
+          <MetricCard
+            icon="checkmark-done-outline"
+            label="Delivered"
+            value={deliveredLoads.length}
+            route={ROUTES.myLoads}
+          />
         </View>
 
         <View style={styles.revenueCard}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.revenueLabel}>Visible Route Value</Text>
-            <Text style={styles.revenueValue}>{money(visibleRevenue)}</Text>
-            <Text style={styles.revenueSub}>Active value: {money(activeRevenue)}</Text>
+          <View>
+            <Text style={styles.revenueLabel}>Board Value</Text>
+            <Text style={styles.revenueValue}>{money(totalVisibleRevenue)}</Text>
+            <Text style={styles.revenueSub}>
+              Booked value {money(bookedRevenue)} · Avg {money(avgRatePerMile)} / mi
+            </Text>
           </View>
 
-          <TouchableOpacity style={styles.boardButton} onPress={() => goTo(FREIGHT_ROUTES.board)}>
-            <Ionicons name="open-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.boardButtonText}>Open Board</Text>
+          <TouchableOpacity style={styles.revenueButton} onPress={() => goTo(ROUTES.rateOptimizer)}>
+            <Ionicons name="trending-up-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.revenueButtonText}>Optimize</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.quickGrid}>
-          {quickActions.map((item) => (
-            <QuickAction key={item.title} title={item.title} icon={item.icon} route={item.route} />
-          ))}
+        <Text style={styles.sectionTitle}>Carrier Tools</Text>
+
+        <View style={styles.toolGrid}>
+          <ToolCard title="Available Loads" icon="cube-outline" route={ROUTES.board} />
+          <ToolCard title="My Booked Loads" icon="briefcase-outline" route={ROUTES.myLoads} />
+          <ToolCard title="Live Load Board" icon="pulse-outline" route={ROUTES.liveLoads} />
+          <ToolCard title="Rate Optimizer" icon="trending-up-outline" route={ROUTES.rateOptimizer} />
+          <ToolCard title="Route Details" icon="map-outline" route={ROUTES.loadDetail} />
+          <ToolCard title="Payment Tracking" icon="receipt-outline" route={ROUTES.paymentSuccess} />
+          <ToolCard title="Connect Bank / Payouts" icon="business-outline" route={ROUTES.connectBank} />
+          <ToolCard title="Broker / Farmer Details" icon="people-outline" route={ROUTES.loadDetail} />
+          <ToolCard title="Alerts" icon="notifications-outline" route={ROUTES.notifications} />
+          <ToolCard title="Carrier Profile" icon="person-outline" route={ROUTES.profile} />
+          <ToolCard title="Settings" icon="settings-outline" route={ROUTES.settings} />
+          <ToolCard title="Support" icon="headset-outline" route={ROUTES.support} />
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Dispatch Queue</Text>
+          <Text style={styles.sectionTitle}>Truckstop-Style Load Board</Text>
 
           <TouchableOpacity style={styles.refreshButton} onPress={refreshDashboard}>
             <Ionicons name="refresh-outline" size={17} color={COLORS.red} />
@@ -769,21 +558,52 @@ export default function FreightDashboard() {
         <FlatList
           data={loads}
           keyExtractor={(item) => item.id}
-          renderItem={renderLoad}
+          renderItem={({ item }) => (
+            <LoadCard
+              load={item}
+              onBook={() => bookLoad(item)}
+              onPickup={() => updateLoadStatus(item, "PICKED_UP")}
+              onTransit={() => updateLoadStatus(item, "IN_TRANSIT")}
+              onDelivered={() => updateLoadStatus(item, "DELIVERED")}
+            />
+          )}
           scrollEnabled={false}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={
             <View style={styles.emptyCard}>
-              <Ionicons name="cube-outline" size={38} color={COLORS.red} />
-              <Text style={styles.emptyTitle}>No freight loads found.</Text>
+              <Ionicons name="cube-outline" size={42} color={COLORS.red} />
+              <Text style={styles.emptyTitle}>No farm freight loads found</Text>
               <Text style={styles.emptyText}>
-                Open the board or refresh to check for available farm freight.
+                Refresh the board or open Live Loads to check for newly posted farm, livestock,
+                produce, hay, and refrigerated freight opportunities.
               </Text>
             </View>
           }
         />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function NavButton({
+  title,
+  icon,
+  route,
+  filled,
+}: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: FreightRoute;
+  filled?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={filled ? styles.navFilled : styles.navOutline}
+      onPress={() => goTo(route)}
+    >
+      <Ionicons name={icon} size={18} color={filled ? "#FFFFFF" : COLORS.red} />
+      <Text style={filled ? styles.navFilledText : styles.navOutlineText}>{title}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -799,33 +619,15 @@ function MetricCard({
   route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.statCard} onPress={() => goTo(route)}>
-      <Ionicons name={icon} size={22} color={COLORS.red} />
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <TouchableOpacity style={styles.metricCard} onPress={() => goTo(route)}>
+      <Ionicons name={icon} size={24} color={COLORS.red} />
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function DetailBox({
-  icon,
-  label,
-  value,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.detailBox}>
-      <Ionicons name={icon} size={17} color={COLORS.red} />
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
-    </View>
-  );
-}
-
-function QuickAction({
+function ToolCard({
   title,
   icon,
   route,
@@ -835,15 +637,159 @@ function QuickAction({
   route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.quickCard} onPress={() => goTo(route)}>
-      <Ionicons name={icon} size={23} color={COLORS.red} />
-      <Text style={styles.quickCardText}>{title}</Text>
+    <TouchableOpacity style={styles.toolCard} onPress={() => goTo(route)}>
+      <View style={styles.toolIcon}>
+        <Ionicons name={icon} size={22} color={COLORS.red} />
+      </View>
+      <Text style={styles.toolTitle}>{title}</Text>
     </TouchableOpacity>
   );
 }
 
+function statusColor(status: LoadStatus) {
+  if (status === "OPEN") return COLORS.blue;
+  if (status === "BOOKED") return COLORS.red;
+  if (status === "PICKED_UP") return COLORS.amber;
+  if (status === "IN_TRANSIT") return COLORS.purple;
+  if (status === "DELIVERED") return COLORS.green;
+  return COLORS.slate;
+}
+
+function LoadCard({
+  load,
+  onBook,
+  onPickup,
+  onTransit,
+  onDelivered,
+}: {
+  load: FreightLoad;
+  onBook: () => void;
+  onPickup: () => void;
+  onTransit: () => void;
+  onDelivered: () => void;
+}) {
+  const ratePerMile = load.miles > 0 ? load.rate / load.miles : 0;
+
+  return (
+    <View style={styles.loadCard}>
+      <View style={styles.loadTop}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.loadTitle}>{load.title}</Text>
+          <Text style={styles.loadSub}>{load.commodity}</Text>
+        </View>
+
+        <View style={[styles.statusBadge, { backgroundColor: statusColor(load.status) }]}>
+          <Text style={styles.statusText}>{load.status.replace(/_/g, " ")}</Text>
+        </View>
+      </View>
+
+      <View style={styles.routeCard}>
+        <View style={styles.routePoint}>
+          <Ionicons name="radio-button-on-outline" size={18} color={COLORS.green} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.routeLabel}>Pickup</Text>
+            <Text style={styles.routeValue}>
+              {load.pickupCity}, {load.pickupState}
+            </Text>
+            <Text style={styles.routeSmall}>{load.pickupLocation}</Text>
+          </View>
+        </View>
+
+        <View style={styles.routeLine} />
+
+        <View style={styles.routePoint}>
+          <Ionicons name="location-outline" size={18} color={COLORS.red} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.routeLabel}>Delivery</Text>
+            <Text style={styles.routeValue}>
+              {load.deliveryCity}, {load.deliveryState}
+            </Text>
+            <Text style={styles.routeSmall}>{load.deliveryLocation}</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.infoGrid}>
+        <InfoBox icon="calendar-outline" label="Pickup" value={load.pickupDate} />
+        <InfoBox icon="car-outline" label="Equipment" value={load.equipment} />
+        <InfoBox icon="scale-outline" label="Weight" value={load.weight} />
+        <InfoBox icon="people-outline" label="Broker / Farmer" value={load.brokerName} />
+      </View>
+
+      <View style={styles.ratePanel}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rateLabel}>Carrier Rate</Text>
+          <Text style={styles.rateValue}>{money(load.rate)}</Text>
+          <Text style={styles.rateSmall}>
+            {load.miles || 0} miles · {money(ratePerMile)} / mile
+          </Text>
+        </View>
+
+        <View style={styles.loadActions}>
+          {load.status === "OPEN" ? (
+            <TouchableOpacity style={styles.primaryAction} onPress={onBook}>
+              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Book Load</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {load.status === "BOOKED" ? (
+            <TouchableOpacity style={styles.warningAction} onPress={onPickup}>
+              <Ionicons name="archive-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Confirm Pickup</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {load.status === "PICKED_UP" ? (
+            <TouchableOpacity style={styles.transitAction} onPress={onTransit}>
+              <Ionicons name="navigate-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Start Transit</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {load.status === "IN_TRANSIT" ? (
+            <TouchableOpacity style={styles.successAction} onPress={onDelivered}>
+              <Ionicons name="checkmark-done-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryActionText}>Complete</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <TouchableOpacity
+            style={styles.secondaryAction}
+            onPress={() => openLoad(ROUTES.loadDetail, load.id)}
+          >
+            <Ionicons name="document-text-outline" size={18} color={COLORS.red} />
+            <Text style={styles.secondaryActionText}>Details</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function InfoBox({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.infoBox}>
+      <Ionicons name={icon} size={16} color={COLORS.red} />
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value || "TBD"}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -851,212 +797,395 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
+  centerText: {
+    color: COLORS.muted,
+    marginTop: 12,
+    fontWeight: "800",
+  },
   hero: {
     backgroundColor: COLORS.black,
     paddingTop: 28,
-    paddingBottom: 30,
+    paddingBottom: 28,
     paddingHorizontal: 20,
   },
-  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
-  heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 24,
-    backgroundColor: COLORS.red,
-    alignItems: "center",
-    justifyContent: "center",
+  heroTop: {
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
   },
   heroEyebrow: {
     color: "#FCA5A5",
-    fontWeight: "900",
     fontSize: 12,
-    marginBottom: 8,
+    fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 1,
+    marginBottom: 8,
   },
-  heroTitle: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
-  heroSubtitle: { color: "#D1D5DB", lineHeight: 23, fontSize: 15, fontWeight: "700" },
-  carrierRibbon: {
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 34,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
+  heroSubtitle: {
+    color: "#D1D5DB",
+    fontSize: 15,
+    lineHeight: 23,
+    fontWeight: "700",
+  },
+  alertButton: {
+    width: 58,
+    height: 58,
+    borderRadius: 22,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  alertDot: {
+    position: "absolute",
+    right: -4,
+    top: -4,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 999,
+    minWidth: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  alertDotText: {
+    color: COLORS.red,
+    fontWeight: "900",
+    fontSize: 11,
+  },
+  carrierCard: {
+    marginTop: 18,
+    borderRadius: 20,
+    padding: 15,
     backgroundColor: "#111827",
     borderWidth: 1,
     borderColor: "#374151",
-    borderRadius: 18,
-    padding: 14,
-    marginTop: 18,
   },
-  carrierLabel: { color: "#FCA5A5", fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  carrierName: { color: "#FFFFFF", fontSize: 19, fontWeight: "900", marginTop: 4 },
-  carrierSub: { color: "#D1D5DB", fontWeight: "700", marginTop: 4 },
-  navRow: { flexDirection: "row", gap: 10, padding: 18 },
-  navButton: {
+  carrierLabel: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  carrierName: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 5,
+  },
+  carrierSub: {
+    color: "#D1D5DB",
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  primaryNav: {
+    flexDirection: "row",
+    gap: 10,
+    padding: 18,
+  },
+  navFilled: {
     flex: 1,
     backgroundColor: COLORS.red,
-    padding: 14,
-    borderRadius: 14,
+    borderRadius: 15,
+    paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
   },
-  navButtonOutline: {
+  navOutline: {
     flex: 1,
     backgroundColor: COLORS.card,
-    borderWidth: 1,
     borderColor: COLORS.red,
-    padding: 14,
-    borderRadius: 14,
+    borderWidth: 1,
+    borderRadius: 15,
+    paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
   },
-  navText: { color: "#FFFFFF", fontWeight: "900" },
-  navTextOutline: { color: COLORS.red, fontWeight: "900" },
-  metricsRow: { flexDirection: "row", gap: 10, paddingHorizontal: 18, marginBottom: 14 },
-  statCard: {
+  navFilledText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  navOutlineText: {
+    color: COLORS.red,
+    fontWeight: "900",
+  },
+  metricsRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 14,
+  },
+  metricCard: {
     flex: 1,
     backgroundColor: COLORS.card,
     borderRadius: 20,
-    padding: 16,
+    padding: 15,
     alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  statValue: { fontSize: 28, fontWeight: "900", color: COLORS.black, marginTop: 8 },
-  statLabel: {
+  metricValue: {
+    fontSize: 28,
+    fontWeight: "900",
+    color: COLORS.text,
+    marginTop: 7,
+  },
+  metricLabel: {
     color: COLORS.muted,
     fontWeight: "800",
-    marginTop: 4,
     fontSize: 12,
     textAlign: "center",
+    marginTop: 4,
   },
   revenueCard: {
     backgroundColor: COLORS.red,
-    borderRadius: 22,
-    padding: 18,
     marginHorizontal: 18,
+    borderRadius: 24,
+    padding: 18,
     marginBottom: 18,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 12,
   },
-  revenueLabel: { color: "#FFE4E6", fontWeight: "900", fontSize: 12, textTransform: "uppercase" },
-  revenueValue: { color: "#FFFFFF", fontSize: 31, fontWeight: "900", marginTop: 4 },
-  revenueSub: { color: "#FFE4E6", fontWeight: "800", marginTop: 4 },
-  boardButton: {
+  revenueLabel: {
+    color: "#FFE4E6",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  revenueValue: {
+    color: "#FFFFFF",
+    fontSize: 32,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  revenueSub: {
+    color: "#FFE4E6",
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  revenueButton: {
     backgroundColor: COLORS.black,
     paddingHorizontal: 14,
     paddingVertical: 13,
     borderRadius: 16,
     flexDirection: "row",
-    alignItems: "center",
     gap: 7,
+    alignItems: "center",
   },
-  boardButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  quickGrid: {
+  revenueButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  sectionTitle: {
+    fontSize: 23,
+    fontWeight: "900",
+    color: COLORS.text,
+    paddingHorizontal: 18,
+    marginBottom: 12,
+  },
+  toolGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
     paddingHorizontal: 18,
-    marginBottom: 18,
+    marginBottom: 20,
   },
-  quickCard: {
+  toolCard: {
     width: "48%",
     backgroundColor: COLORS.card,
-    borderRadius: 18,
-    padding: 15,
-    alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
-    gap: 8,
-  },
-  quickCardText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
-  sectionHeader: {
-    flexDirection: "row",
+    borderRadius: 18,
+    padding: 15,
+    minHeight: 105,
     justifyContent: "space-between",
+  },
+  toolIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: "#FEF2F2",
     alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  toolTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  sectionHeader: {
     paddingHorizontal: 18,
     marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  sectionTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text },
   refreshButton: {
     backgroundColor: COLORS.card,
-    borderWidth: 1,
     borderColor: COLORS.red,
-    paddingHorizontal: 14,
+    borderWidth: 1,
+    paddingHorizontal: 13,
     paddingVertical: 10,
     borderRadius: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
-  refreshText: { color: COLORS.red, fontWeight: "900" },
-  listContent: { paddingBottom: 80 },
+  refreshText: {
+    color: COLORS.red,
+    fontWeight: "900",
+  },
+  listContent: {
+    paddingBottom: 90,
+  },
   loadCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 18,
     marginHorizontal: 18,
     marginBottom: 16,
+    borderRadius: 24,
+    padding: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderLeftWidth: 4,
+    borderLeftWidth: 5,
     borderLeftColor: COLORS.red,
   },
-  cardTopRow: { flexDirection: "row", gap: 12, justifyContent: "space-between", marginBottom: 14 },
-  loadTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginBottom: 4 },
-  commodity: { color: COLORS.muted, fontWeight: "800", marginBottom: 8 },
-  routeText: { color: COLORS.text, fontSize: 16, fontWeight: "900" },
+  loadTop: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 14,
+  },
+  loadTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  loadSub: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 4,
+  },
   statusBadge: {
-    paddingHorizontal: 11,
+    paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 999,
     alignSelf: "flex-start",
-    maxWidth: 145,
   },
   statusText: {
     color: "#FFFFFF",
-    fontWeight: "900",
     fontSize: 11,
-    textTransform: "capitalize",
+    fontWeight: "900",
   },
-  detailGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 4 },
-  detailBox: {
-    width: "48%",
+  routeCard: {
     backgroundColor: COLORS.surface,
-    borderRadius: 14,
-    padding: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 13,
   },
-  detailLabel: {
+  routePoint: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+  },
+  routeLine: {
+    width: 1,
+    height: 18,
+    backgroundColor: COLORS.border,
+    marginLeft: 8,
+    marginVertical: 4,
+  },
+  routeLabel: {
     color: COLORS.muted,
     fontSize: 11,
     fontWeight: "900",
-    marginTop: 6,
-    marginBottom: 4,
     textTransform: "uppercase",
   },
-  detailValue: { color: COLORS.text, fontWeight: "800", lineHeight: 20 },
-  payoutRow: {
+  routeValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 15,
+    marginTop: 2,
+  },
+  routeSmall: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 2,
+    lineHeight: 18,
+  },
+  infoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  infoBox: {
+    width: "48%",
+    backgroundColor: COLORS.surface,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 12,
+  },
+  infoLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    marginTop: 6,
+  },
+  infoValue: {
+    color: COLORS.text,
+    fontWeight: "800",
+    marginTop: 4,
+    lineHeight: 19,
+  },
+  ratePanel: {
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    paddingTop: 16,
     marginTop: 16,
+    paddingTop: 16,
     flexDirection: "row",
-    justifyContent: "space-between",
     gap: 12,
     alignItems: "center",
   },
-  payoutLabel: { color: COLORS.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  payoutAmount: { color: COLORS.red, fontSize: 30, fontWeight: "900", marginTop: 4 },
-  mileText: { color: COLORS.muted, fontWeight: "800", marginTop: 2 },
-  actionStack: { gap: 8, minWidth: 145 },
+  rateLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  rateValue: {
+    color: COLORS.red,
+    fontSize: 30,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  rateSmall: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  loadActions: {
+    minWidth: 145,
+    gap: 8,
+  },
   primaryAction: {
     backgroundColor: COLORS.red,
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1066,7 +1195,7 @@ const styles = StyleSheet.create({
   },
   warningAction: {
     backgroundColor: COLORS.amber,
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1076,7 +1205,7 @@ const styles = StyleSheet.create({
   },
   transitAction: {
     backgroundColor: COLORS.purple,
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1086,7 +1215,7 @@ const styles = StyleSheet.create({
   },
   successAction: {
     backgroundColor: COLORS.green,
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 13,
     borderRadius: 14,
     alignItems: "center",
@@ -1094,12 +1223,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  primaryActionText: { color: "#FFFFFF", fontWeight: "900" },
-  trackAction: {
+  primaryActionText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  secondaryAction: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.red,
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 12,
     borderRadius: 14,
     alignItems: "center",
@@ -1107,28 +1239,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  trackActionText: { color: COLORS.red, fontWeight: "900" },
-  completedBadge: {
-    backgroundColor: COLORS.green,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 7,
+  secondaryActionText: {
+    color: COLORS.red,
+    fontWeight: "900",
   },
-  completedText: { color: "#FFFFFF", fontWeight: "900" },
   emptyCard: {
     marginHorizontal: 18,
     backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 24,
-    alignItems: "center",
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
+    padding: 24,
+    alignItems: "center",
   },
-  emptyTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginTop: 10 },
+  emptyTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 10,
+  },
   emptyText: {
     color: COLORS.muted,
     fontWeight: "700",

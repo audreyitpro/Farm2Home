@@ -1,14 +1,17 @@
-// app/freight/load-details.tsx
+// app/freight/load-detail.tsx
 
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -17,77 +20,84 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
-import freightTheme from "../styles/freightTheme";
-import {
-  notifyDriverAcceptedLoad,
-  notifyDriverArrivedPickup,
-  notifyDriverArrivedDropoff,
-} from "../services/notificationService";
 
-type LoadStatus =
-  | "available"
-  | "accepted"
-  | "arrived_pickup"
-  | "picked_up"
-  | "in_transit"
-  | "arrived_dropoff"
-  | "delivered"
-  | "cancelled";
+const ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
+  liveLoads: "/freight/live-loads",
+  myLoads: "/freight/my-loads",
+  loadChat: "/freight/load-chat",
+  connectBank: "/freight/connect-bank",
+  paymentSuccess: "/freight/payment-success",
+  rateOptimizer: "/freight/rate-optimizer",
+  tracking: "/freight/tracking",
+  login: "/freight/login",
+  register: "/freight/register",
+} as const;
 
-type FreightLoad = {
-  id: string;
-  title?: string;
-  farmer_name?: string;
-  pickup_location?: string;
-  dropoff_location?: string;
-  pickup_date?: string;
-  pickup_time?: string;
-  dropoff_date?: string | null;
-  dropoff_time?: string | null;
-  equipment_type?: string;
-  weight_lbs?: number | null;
-  temperature_required?: string | null;
-  rate?: number;
-  distance_miles?: number | null;
-  commodity?: string;
-  notes?: string | null;
-  status?: LoadStatus;
-  carrier_id?: string | null;
-  driver_id?: string | null;
-  accepted_by?: string | null;
-  accepted_at?: string | null;
-  arrived_pickup_at?: string | null;
-  picked_up_at?: string | null;
-  arrived_dropoff_at?: string | null;
-  delivered_at?: string | null;
-  created_at?: string;
+const COLORS = {
+  bg: "#F3F4F6",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  green: "#16A34A",
+  amber: "#D97706",
+  blue: "#2563EB",
+  purple: "#7C3AED",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
 };
 
-const TABLE_NAME = "freight_loads";
+function normalize(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
 
-export default function FreightLoadDetailsScreen() {
+function money(value: any) {
+  return `$${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatStatus(value: any) {
+  return String(value || "available").replace(/_/g, " ");
+}
+
+function ratePerMile(load: any) {
+  const miles = Number(load?.distance_miles || load?.miles || 0);
+  const rate = Number(load?.rate || load?.freight_total || load?.payout_amount || 0);
+  if (!miles) return 0;
+  return rate / miles;
+}
+
+export default function FreightLoadDetailScreen() {
   const params = useLocalSearchParams();
-  const loadId = Array.isArray(params.loadId)
-    ? params.loadId[0] || ""
-    : String(params.loadId || "");
+  const loadId = Array.isArray(params.loadId) ? params.loadId[0] : String(params.loadId || "");
 
   const [loading, setLoading] = useState(true);
-  const [load, setLoad] = useState<FreightLoad | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
   const [carrier, setCarrier] = useState<any>(null);
+  const [load, setLoad] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+
+  const [bidPerMile, setBidPerMile] = useState("");
+  const [bidMessage, setBidMessage] = useState("");
 
   useFocusEffect(
     useCallback(() => {
-      loadDetails();
+      loadScreen();
     }, [loadId])
   );
 
-  const ratePerMile = useMemo(() => {
-    const rate = Number(load?.rate || 0);
-    const miles = Number(load?.distance_miles || 0);
-    return miles > 0 ? rate / miles : 0;
+  const totalRate = useMemo(() => {
+    return Number(load?.rate || load?.freight_total || load?.payout_amount || 0);
   }, [load]);
 
-  async function getCurrentFreightUser() {
+  async function getStoredCarrier() {
     const raw =
       (await AsyncStorage.getItem("currentFreightCarrier")) ||
       (await AsyncStorage.getItem("currentFreight")) ||
@@ -97,798 +107,669 @@ export default function FreightLoadDetailsScreen() {
     if (!raw) return null;
 
     try {
-      const parsed = JSON.parse(raw);
-
-      return {
-        ...parsed,
-        id: parsed.id || parsed.freightId || parsed.email,
-        freightId: parsed.freightId || parsed.id || parsed.email,
-        role: "freight",
-        accountActive: parsed.accountActive !== false,
-        membershipStatus: parsed.membershipStatus || "Active",
-        subscriptionStatus: parsed.subscriptionStatus || "active",
-      };
+      return JSON.parse(raw);
     } catch {
       return null;
     }
   }
 
-  async function loadDetails() {
+  async function persistCarrier(nextCarrier: any) {
+    const id = nextCarrier.id || nextCarrier.freightId || nextCarrier.freight_id;
+
+    const normalized = {
+      ...nextCarrier,
+      id,
+      freightId: id,
+      freight_id: id,
+      role: "freight",
+      email: normalize(nextCarrier.email),
+      companyName:
+        nextCarrier.companyName ||
+        nextCarrier.businessName ||
+        nextCarrier.company_name ||
+        nextCarrier.business_name ||
+        "Farm2Home Freight Carrier",
+      businessName:
+        nextCarrier.businessName ||
+        nextCarrier.companyName ||
+        nextCarrier.business_name ||
+        nextCarrier.company_name ||
+        "Farm2Home Freight Carrier",
+    };
+
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalized));
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalized));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalized));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(normalized));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
+
+    setCarrier(normalized);
+    return normalized;
+  }
+
+  async function loadScreen() {
     try {
       setLoading(true);
 
-      const currentCarrier = await getCurrentFreightUser();
+      const stored = await getStoredCarrier();
+      const { data: authData } = await supabase.auth.getUser();
+      const email = normalize(stored?.email || authData?.user?.email || "");
 
-      if (!currentCarrier) {
-        router.replace("/freight/login" as any);
+      if (!email) {
+        router.replace(ROUTES.login as any);
         return;
       }
 
-      setCarrier(currentCarrier);
+      const { data: dbCarrier } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (!dbCarrier) {
+        Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
+        router.replace(ROUTES.register as any);
+        return;
+      }
+
+      const mergedCarrier = await persistCarrier({
+        ...(stored || {}),
+        ...(dbCarrier || {}),
+        id: dbCarrier.id,
+        freightId: dbCarrier.freight_id || dbCarrier.id,
+        freight_id: dbCarrier.freight_id || dbCarrier.id,
+      });
 
       if (!loadId) {
-        Alert.alert("Missing Load", "No freight load was selected.");
-        router.replace("/freight/board" as any);
+        setLoad(null);
         return;
       }
 
-      const { data, error } = await supabase
-        .from(TABLE_NAME)
+      const { data: loadData, error: loadError } = await supabase
+        .from("freight_loads")
         .select("*")
         .eq("id", loadId)
         .maybeSingle();
 
-      if (error) {
-        Alert.alert("Load Error", error.message);
-        return;
-      }
+      if (loadError) throw loadError;
 
-      if (!data) {
-        Alert.alert("Not Found", "This freight load was not found.");
-        router.replace("/freight/board" as any);
-        return;
-      }
+      setLoad(loadData || null);
 
-      setLoad(data as FreightLoad);
+      const { data: chatData } = await supabase
+        .from("freight_load_messages")
+        .select("*")
+        .eq("load_id", loadId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      setMessages(Array.isArray(chatData) ? chatData : []);
     } catch (error: any) {
-      console.log("Freight load details error:", error);
-      Alert.alert("Load Error", error?.message || "Unable to load details.");
+      Alert.alert("Load Detail Error", error?.message || "Unable to load freight details.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
-  async function updateLoad(updates: Partial<FreightLoad>) {
+  async function onRefresh() {
+    setRefreshing(true);
+    await loadScreen();
+  }
+
+  async function updateLoadStatus(nextStatus: string) {
+    if (!load?.id || !carrier?.id) return;
+
+    try {
+      setUpdating(true);
+
+      const now = new Date().toISOString();
+
+      const payload: any = {
+        status: nextStatus,
+        updated_at: now,
+      };
+
+      if (nextStatus === "accepted") {
+        payload.carrier_id = carrier.id;
+        payload.freight_user_id = carrier.id;
+        payload.accepted_by = carrier.id;
+        payload.accepted_at = now;
+        payload.carrier_name = carrier.companyName || carrier.businessName;
+        payload.carrier_email = carrier.email;
+      }
+
+      if (nextStatus === "picked_up") payload.picked_up_at = now;
+      if (nextStatus === "in_transit") payload.in_transit_at = now;
+
+      if (nextStatus === "delivered") {
+        payload.delivered_at = now;
+        payload.settlement_status = "pending";
+        payload.payout_status = "pending";
+      }
+
+      const { error } = await supabase.from("freight_loads").update(payload).eq("id", load.id);
+      if (error) throw error;
+
+      await supabase.from("freight_notifications").insert({
+        freight_user_id: carrier.id,
+        freight_id: carrier.id,
+        user_id: carrier.id,
+        load_id: load.id,
+        title: "Load Updated",
+        message: `${load.title || load.commodity || "Freight Load"} is now ${formatStatus(nextStatus)}.`,
+        type: "load",
+        is_read: false,
+        read: false,
+        created_at: now,
+      });
+
+      await loadScreen();
+    } catch (error: any) {
+      Alert.alert("Update Error", error?.message || "Unable to update load.");
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  async function submitBid() {
+    if (!load?.id || !carrier?.id) return;
+
+    const bidRate = Number(bidPerMile);
+
+    if (!bidRate || Number.isNaN(bidRate) || bidRate <= 0) {
+      Alert.alert("Invalid Bid", "Enter a valid bid per mile.");
+      return;
+    }
+
+    try {
+      setUpdating(true);
+
+      const miles = Number(load.distance_miles || load.miles || 0);
+      const now = new Date().toISOString();
+
+      const { error } = await supabase.from("freight_bids").insert({
+        load_id: load.id,
+        freight_id: carrier.id,
+        carrier_id: carrier.id,
+        carrier_company: carrier.companyName || carrier.businessName,
+        carrier_email: carrier.email,
+        bid_per_mile: bidRate,
+        total_bid: bidRate * miles,
+        message: bidMessage.trim(),
+        status: "pending",
+        created_at: now,
+        updated_at: now,
+      });
+
+      if (error) throw error;
+
+      setBidPerMile("");
+      setBidMessage("");
+
+      Alert.alert("Bid Submitted", "Your freight bid was sent.");
+    } catch (error: any) {
+      Alert.alert("Bid Error", error?.message || "Unable to submit bid.");
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  function openChat() {
     if (!load?.id) return;
-
-    setLoad((prev) => (prev ? { ...prev, ...updates } : prev));
-
-    const { error } = await supabase
-      .from(TABLE_NAME)
-      .update(updates)
-      .eq("id", load.id);
-
-    if (error) {
-      Alert.alert("Update Error", error.message);
-      await loadDetails();
-    }
-  }
-
-  async function acceptLoad() {
-    if (!load) return;
-
-    const carrierId = carrier?.id || carrier?.freightId || carrier?.email || "";
-    const acceptedBy =
-      carrier?.companyName ||
-      carrier?.businessName ||
-      carrier?.contactName ||
-      carrier?.username ||
-      "Farm2Home Freight Carrier";
-
-    if (!carrierId) {
-      Alert.alert("Account Missing", "Please log in again.");
-      return;
-    }
-
-    const updates = {
-      status: "accepted" as LoadStatus,
-      carrier_id: carrierId,
-      accepted_by: acceptedBy,
-      accepted_at: new Date().toISOString(),
-    };
-
-    await updateLoad(updates);
-    await notifyDriverAcceptedLoad();
-
-    Alert.alert("Load Accepted", "This freight load is now assigned to you.");
-  }
-
-  async function markArrivedPickup() {
-    if (!load) return;
-
-    await updateLoad({
-      status: "arrived_pickup",
-      arrived_pickup_at: new Date().toISOString(),
+    router.push({
+      pathname: ROUTES.loadChat as any,
+      params: { loadId: load.id },
     });
-
-    await notifyDriverArrivedPickup();
-  }
-
-  async function markArrivedDropoff() {
-    if (!load) return;
-
-    await updateLoad({
-      status: "arrived_dropoff",
-      arrived_dropoff_at: new Date().toISOString(),
-    });
-
-    await notifyDriverArrivedDropoff();
-  }
-
-  function getActionLabel(status?: LoadStatus) {
-    switch (status) {
-      case "available":
-        return "Accept Load";
-      case "accepted":
-        return "Arrived Pickup";
-      case "arrived_pickup":
-        return "Proof Of Pickup";
-      case "picked_up":
-      case "in_transit":
-        return "Arrived Dropoff";
-      case "arrived_dropoff":
-        return "Proof Of Delivery";
-      case "delivered":
-        return "Delivered";
-      case "cancelled":
-        return "Cancelled";
-      default:
-        return "View Load";
-    }
-  }
-
-  async function handlePrimaryAction() {
-    if (!load) return;
-
-    if (load.status === "available") {
-      await acceptLoad();
-      return;
-    }
-
-    if (load.status === "accepted") {
-      await markArrivedPickup();
-      return;
-    }
-
-    if (load.status === "arrived_pickup") {
-      router.push({
-        pathname: "/driver/proof-of-pickup",
-        params: { loadId: load.id },
-      } as any);
-      return;
-    }
-
-    if (load.status === "picked_up" || load.status === "in_transit") {
-      await markArrivedDropoff();
-      return;
-    }
-
-    if (load.status === "arrived_dropoff") {
-      router.push({
-        pathname: "/driver/proof-of-delivery",
-        params: { loadId: load.id },
-      } as any);
-      return;
-    }
-
-    if (load.status === "delivered") {
-      Alert.alert("Delivered", "This freight load has already been completed.");
-    }
-  }
-
-  function statusColor(status?: LoadStatus) {
-    switch (status) {
-      case "available":
-        return "#2563EB";
-      case "accepted":
-        return freightTheme.colors.primary;
-      case "arrived_pickup":
-        return "#0EA5E9";
-      case "picked_up":
-        return "#F59E0B";
-      case "in_transit":
-        return "#7C3AED";
-      case "arrived_dropoff":
-        return "#0F766E";
-      case "delivered":
-        return "#10B981";
-      case "cancelled":
-        return "#DC2626";
-      default:
-        return "#64748B";
-    }
-  }
-
-  function statusIcon(status?: LoadStatus): keyof typeof Ionicons.glyphMap {
-    switch (status) {
-      case "available":
-        return "cube-outline";
-      case "accepted":
-        return "checkmark-circle-outline";
-      case "arrived_pickup":
-        return "location-outline";
-      case "picked_up":
-        return "archive-outline";
-      case "in_transit":
-        return "navigate-outline";
-      case "arrived_dropoff":
-        return "flag-outline";
-      case "delivered":
-        return "checkmark-done-outline";
-      case "cancelled":
-        return "close-circle-outline";
-      default:
-        return "ellipse-outline";
-    }
-  }
-
-  function formatStatus(status?: string) {
-    return String(status || "unknown")
-      .replace(/_/g, " ")
-      .toLowerCase()
-      .replace(/\b\w/g, (char) => char.toUpperCase());
-  }
-
-  function formatMoney(value?: number | null) {
-    return `$${Number(value || 0).toFixed(2)}`;
-  }
-
-  function DetailBox({
-    icon,
-    label,
-    value,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    label: string;
-    value: string;
-  }) {
-    return (
-      <View style={styles.detailBox}>
-        <Ionicons name={icon} size={18} color="#10B981" />
-        <Text style={styles.detailLabel}>{label}</Text>
-        <Text style={styles.detailValue}>{value}</Text>
-      </View>
-    );
   }
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
-        <View style={styles.loadingScreen}>
-          <ActivityIndicator size="large" color="#10B981" />
-          <Text style={styles.loadingText}>Loading load details...</Text>
-        </View>
+      <SafeAreaView style={styles.center}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <ActivityIndicator size="large" color={COLORS.red} />
+        <Text style={styles.centerText}>Loading load details...</Text>
       </SafeAreaView>
     );
   }
 
   if (!load) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
-        <View style={styles.loadingScreen}>
-          <Text style={styles.emptyTitle}>Load not found.</Text>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => router.replace("/freight/board" as any)}
-          >
-            <Text style={styles.primaryButtonText}>Back to Board</Text>
-          </TouchableOpacity>
-        </View>
+      <SafeAreaView style={styles.center}>
+        <Text style={styles.emptyTitle}>Load not found</Text>
+        <TouchableOpacity style={styles.button} onPress={() => router.replace(ROUTES.board as any)}>
+          <Text style={styles.buttonText}>Back to Load Board</Text>
+        </TouchableOpacity>
       </SafeAreaView>
     );
   }
 
+  const status = normalize(load.status);
+  const isAvailable = ["available", "open"].includes(status);
+  const isBooked = ["accepted", "booked"].includes(status);
+  const isPickedUp = ["picked_up", "arrived_pickup"].includes(status);
+  const isInTransit = ["in_transit", "arrived_dropoff"].includes(status);
+
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
-              <Text style={styles.title}>Load Details</Text>
-              <Text style={styles.subtitle}>
-                Review route, payout, freight requirements, and delivery workflow.
-              </Text>
-            </View>
-
-            <View style={styles.heroIcon}>
-              <Ionicons name="document-text-outline" size={34} color="#FFFFFF" />
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.navRow}>
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => router.push("/freight/board" as any)}
-          >
-            <Ionicons name="list-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.navText}>Board</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="chevron-back-outline" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.navButtonOutline}
-            onPress={() => router.push("/freight/dashboard" as any)}
-          >
-            <Ionicons
-              name="grid-outline"
-              size={18}
-              color={freightTheme.colors.primary}
-            />
-            <Text style={styles.navTextOutline}>Dashboard</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.loadTitle}>{load.title || "Farm2Home Freight Load"}</Text>
-              <Text style={styles.farmName}>
-                Posted by {load.farmer_name || "Farm2Home Partner"}
-              </Text>
-            </View>
-
-            <View
-              style={[
-                styles.statusPill,
-                { backgroundColor: statusColor(load.status) },
-              ]}
-            >
-              <Ionicons name={statusIcon(load.status)} size={14} color="#FFFFFF" />
-              <Text style={styles.statusText}>{formatStatus(load.status)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.routeBox}>
-            <View style={styles.routeStop}>
-              <Ionicons name="radio-button-on" size={18} color="#10B981" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.routeLabel}>Pickup</Text>
-                <Text style={styles.routeText}>
-                  {load.pickup_location || "Pickup location"}
-                </Text>
-                <Text style={styles.routeSub}>
-                  {load.pickup_date || "Scheduled"} • {load.pickup_time || "TBD"}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.routeLine} />
-
-            <View style={styles.routeStop}>
-              <Ionicons name="location" size={18} color="#10B981" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.routeLabel}>Dropoff</Text>
-                <Text style={styles.routeText}>
-                  {load.dropoff_location || "Dropoff location"}
-                </Text>
-                <Text style={styles.routeSub}>
-                  {load.dropoff_date || "Scheduled"} • {load.dropoff_time || "TBD"}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.payoutCard}>
-            <View>
-              <Text style={styles.payoutLabel}>Carrier Payout</Text>
-              <Text style={styles.payoutValue}>{formatMoney(load.rate)}</Text>
-            </View>
-
-            <View style={styles.rateMiniBox}>
-              <Text style={styles.rateMiniLabel}>Rate / Mile</Text>
-              <Text style={styles.rateMiniValue}>${ratePerMile.toFixed(2)}</Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Freight Requirements</Text>
-
-          <View style={styles.detailGrid}>
-            <DetailBox
-              icon="leaf-outline"
-              label="Commodity"
-              value={load.commodity || "Not listed"}
-            />
-
-            <DetailBox
-              icon="car-outline"
-              label="Equipment"
-              value={load.equipment_type || "Not listed"}
-            />
-
-            <DetailBox
-              icon="scale-outline"
-              label="Weight"
-              value={`${Number(load.weight_lbs || 0).toLocaleString()} lbs`}
-            />
-
-            <DetailBox
-              icon="speedometer-outline"
-              label="Miles"
-              value={`${Number(load.distance_miles || 0).toFixed(0)} mi`}
-            />
-
-            <DetailBox
-              icon="thermometer-outline"
-              label="Temperature"
-              value={load.temperature_required || "Not required"}
-            />
-
-            <DetailBox
-              icon="person-outline"
-              label="Accepted By"
-              value={load.accepted_by || "Not accepted yet"}
-            />
-          </View>
-        </View>
-
-        {!!load.notes && (
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Notes</Text>
-            <Text style={styles.notesText}>{load.notes}</Text>
-          </View>
-        )}
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Load Workflow</Text>
-
-          <TouchableOpacity
-            style={[
-              styles.primaryButton,
-              load.status === "delivered" && styles.disabledButton,
-            ]}
-            onPress={handlePrimaryAction}
-            disabled={load.status === "delivered"}
-          >
-            <Ionicons name={statusIcon(load.status)} size={18} color="#FFFFFF" />
-            <Text style={styles.primaryButtonText}>
-              {getActionLabel(load.status)}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farm2Home Freight</Text>
+            <Text style={styles.title}>{load.title || load.commodity || "Load Details"}</Text>
+            <Text style={styles.subtitle}>
+              Broker/farmer details, route details, rate, payment tracking, chat, and status actions.
             </Text>
-          </TouchableOpacity>
+          </View>
+        </View>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() =>
-              router.push({
-                pathname: "/freight/live-route",
-                params: { loadId: load.id, title: load.title || "" },
-              } as any)
-            }
-          >
-            <Ionicons
-              name="map-outline"
-              size={18}
-              color={freightTheme.colors.primary}
+        <View style={styles.statusCard}>
+          <View>
+            <Text style={styles.statusLabel}>Current Load Status</Text>
+            <Text style={styles.statusValue}>{formatStatus(load.status)}</Text>
+          </View>
+          <Ionicons name="cube-outline" size={34} color="#FFFFFF" />
+        </View>
+
+        <View style={styles.card}>
+          <SectionHeader icon="navigate-outline" title="Route Details" />
+          <RouteRow label="Pickup" value={load.pickup_location || load.pickup || "Pickup TBD"} />
+          <RouteRow label="Delivery" value={load.dropoff_location || load.dropoff || "Dropoff TBD"} />
+          <InfoGrid
+            items={[
+              ["Pickup Date", `${load.pickup_date || "TBD"} ${load.pickup_time || ""}`],
+              ["Delivery Date", `${load.dropoff_date || "TBD"} ${load.dropoff_time || ""}`],
+              ["Miles", `${Number(load.distance_miles || load.miles || 0).toFixed(0)} mi`],
+              ["Equipment", load.equipment_type || load.equipment || "TBD"],
+            ]}
+          />
+        </View>
+
+        <View style={styles.card}>
+          <SectionHeader icon="cash-outline" title="Rate & Payment Tracking" />
+          <View style={styles.rateBox}>
+            <Text style={styles.rateValue}>{money(totalRate)}</Text>
+            <Text style={styles.rateSub}>{money(ratePerMile(load))} / mile</Text>
+          </View>
+
+          <InfoGrid
+            items={[
+              ["Settlement", load.settlement_status || "pending"],
+              ["Payout", load.payout_status || "pending"],
+              ["Weight", load.weight_lbs ? `${Number(load.weight_lbs).toLocaleString()} lbs` : "TBD"],
+              ["Temperature", load.temperature_required || "Not required"],
+            ]}
+          />
+
+          <TouchableOpacity style={styles.outlineButton} onPress={() => router.push(ROUTES.connectBank as any)}>
+            <Ionicons name="business-outline" size={18} color={COLORS.red} />
+            <Text style={styles.outlineButtonText}>Connect Bank / Payouts</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.card}>
+          <SectionHeader icon="people-outline" title="Broker / Farmer Details" />
+          <InfoGrid
+            items={[
+              ["Farmer", load.farmer_name || load.farm_name || "Farm2Home Farmer"],
+              ["Broker", load.broker_name || load.farmer_name || "Farm2Home Broker"],
+              ["Contact", load.contact_phone || load.phone || "Not listed"],
+              ["Email", load.contact_email || load.email || "Not listed"],
+            ]}
+          />
+          {!!load.notes && (
+            <View style={styles.notesBox}>
+              <Text style={styles.notesLabel}>Load Notes</Text>
+              <Text style={styles.notesText}>{load.notes}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.card}>
+          <SectionHeader icon="chatbubbles-outline" title="Load Chat" />
+
+          <FlatList
+            data={messages}
+            keyExtractor={(item, index) => String(item.id || index)}
+            scrollEnabled={false}
+            ListEmptyComponent={<Text style={styles.emptySmall}>No messages yet.</Text>}
+            renderItem={({ item }) => (
+              <View style={styles.messageRow}>
+                <Text style={styles.messageName}>
+                  {item.sender_name || item.sender_role || "Message"}
+                </Text>
+                <Text style={styles.messageText}>{item.message || item.body || ""}</Text>
+              </View>
+            )}
+          />
+
+          <TouchableOpacity style={styles.button} onPress={openChat}>
+            <Ionicons name="chatbubble-ellipses-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>Open Load Chat</Text>
+          </TouchableOpacity>
+        </View>
+
+        {isAvailable ? (
+          <View style={styles.card}>
+            <SectionHeader icon="pricetag-outline" title="Submit Carrier Bid" />
+            <TextInput
+              style={styles.input}
+              placeholder="Your bid per mile"
+              placeholderTextColor="#94A3B8"
+              keyboardType="decimal-pad"
+              value={bidPerMile}
+              onChangeText={setBidPerMile}
             />
-            <Text style={styles.secondaryButtonText}>Open Live Route</Text>
-          </TouchableOpacity>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              placeholder="Message to farmer/broker"
+              placeholderTextColor="#94A3B8"
+              multiline
+              value={bidMessage}
+              onChangeText={setBidMessage}
+            />
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
+            <TouchableOpacity
+              style={[styles.button, updating && styles.disabledButton]}
+              onPress={submitBid}
+              disabled={updating}
+            >
+              {updating ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="send-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.buttonText}>Submit Bid</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <View style={styles.actionGrid}>
+          {isAvailable ? (
+            <ActionButton
+              label="Book Load"
+              icon="checkmark-circle-outline"
+              onPress={() => updateLoadStatus("accepted")}
+              disabled={updating}
+            />
+          ) : null}
+
+          {isBooked ? (
+            <ActionButton
+              label="Confirm Pickup"
+              icon="archive-outline"
+              onPress={() => updateLoadStatus("picked_up")}
+              disabled={updating}
+            />
+          ) : null}
+
+          {isPickedUp ? (
+            <ActionButton
+              label="Start Transit"
+              icon="navigate-outline"
+              onPress={() => updateLoadStatus("in_transit")}
+              disabled={updating}
+            />
+          ) : null}
+
+          {isInTransit ? (
+            <ActionButton
+              label="Complete Delivery"
+              icon="checkmark-done-outline"
+              onPress={() => updateLoadStatus("delivered")}
+              disabled={updating}
+            />
+          ) : null}
+
+          <ActionButton
+            label="Live Tracking"
+            icon="map-outline"
             onPress={() =>
               router.push({
-                pathname: "/driver/proof-of-pickup",
+                pathname: ROUTES.tracking as any,
                 params: { loadId: load.id },
-              } as any)
+              })
             }
-          >
-            <Ionicons
-              name="camera-outline"
-              size={18}
-              color={freightTheme.colors.primary}
-            />
-            <Text style={styles.secondaryButtonText}>Proof Of Pickup</Text>
-          </TouchableOpacity>
+          />
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() =>
-              router.push({
-                pathname: "/driver/proof-of-delivery",
-                params: { loadId: load.id },
-              } as any)
-            }
-          >
-            <Ionicons
-              name="checkmark-done-outline"
-              size={18}
-              color={freightTheme.colors.primary}
-            />
-            <Text style={styles.secondaryButtonText}>Proof Of Delivery</Text>
-          </TouchableOpacity>
+          <ActionButton
+            label="Rate Optimizer"
+            icon="trending-up-outline"
+            onPress={() => router.push(ROUTES.rateOptimizer as any)}
+          />
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function SectionHeader({ icon, title }: { icon: keyof typeof Ionicons.glyphMap; title: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons name={icon} size={20} color="#FFFFFF" />
+      </View>
+      <Text style={styles.sectionTitle}>{title}</Text>
+    </View>
+  );
+}
+
+function RouteRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.routeRow}>
+      <Ionicons name={label === "Pickup" ? "radio-button-on-outline" : "location-outline"} size={20} color={COLORS.red} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.routeLabel}>{label}</Text>
+        <Text style={styles.routeValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function InfoGrid({ items }: { items: string[][] }) {
+  return (
+    <View style={styles.infoGrid}>
+      {items.map(([label, value]) => (
+        <View style={styles.infoBox} key={label}>
+          <Text style={styles.infoLabel}>{label}</Text>
+          <Text style={styles.infoValue}>{value || "TBD"}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.actionButton, disabled && styles.disabledButton]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Ionicons name={icon} size={18} color="#FFFFFF" />
+      <Text style={styles.buttonText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: {
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  content: { paddingBottom: 90 },
+  center: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
-  },
-  content: {
-    paddingBottom: 90,
-  },
-  loadingScreen: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
   },
-  loadingText: {
-    color: freightTheme.colors.mutedText,
-    marginTop: 10,
-    fontWeight: "800",
-  },
+  centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
+  emptyTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900", marginBottom: 14 },
   hero: {
-    backgroundColor: "#020617",
-    paddingTop: 22,
-    paddingHorizontal: 20,
-    paddingBottom: 26,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
-  },
-  heroTop: {
+    backgroundColor: COLORS.black,
+    paddingTop: 26,
+    paddingHorizontal: 18,
+    paddingBottom: 28,
     flexDirection: "row",
+    gap: 12,
     alignItems: "flex-start",
-    gap: 14,
   },
-  heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: "#064E3B",
+  backButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: "#1F2937",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
-  kicker: {
-    color: "#10B981",
+  eyebrow: {
+    color: "#FCA5A5",
     fontWeight: "900",
-    fontSize: 12,
-    marginBottom: 8,
     textTransform: "uppercase",
     letterSpacing: 1,
+    fontSize: 12,
   },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 34,
-    fontWeight: "900",
-    marginBottom: 10,
-  },
-  subtitle: {
-    color: "#D1D5DB",
-    lineHeight: 23,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  navRow: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 18,
-  },
-  navButton: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.primary,
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  navButtonOutline: {
-    flex: 1,
-    backgroundColor: freightTheme.colors.card,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  navText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  navTextOutline: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  card: {
-    backgroundColor: freightTheme.colors.card,
+  title: { color: "#FFFFFF", fontSize: 28, fontWeight: "900", marginTop: 6 },
+  subtitle: { color: "#CBD5E1", fontWeight: "700", lineHeight: 21, marginTop: 7 },
+  statusCard: {
+    backgroundColor: COLORS.red,
     borderRadius: 22,
     padding: 18,
     marginHorizontal: 18,
+    marginTop: 16,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "flex-start",
-    marginBottom: 14,
-  },
-  loadTitle: {
-    color: freightTheme.colors.text,
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  farmName: {
-    color: freightTheme.colors.mutedText,
-    fontWeight: "700",
-    marginTop: 4,
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    maxWidth: 150,
-  },
-  statusText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 11,
-  },
-  routeBox: {
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    marginBottom: 14,
-  },
-  routeStop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  routeLine: {
-    width: 2,
-    height: 24,
-    backgroundColor: freightTheme.colors.border,
-    marginLeft: 8,
-    marginVertical: 8,
-  },
-  routeLabel: {
-    color: freightTheme.colors.primary,
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  routeText: {
-    color: freightTheme.colors.text,
-    fontSize: 16,
-    fontWeight: "900",
-    lineHeight: 22,
-    marginTop: 3,
-  },
-  routeSub: {
-    color: freightTheme.colors.mutedText,
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 3,
-  },
-  payoutCard: {
-    backgroundColor: "#064E3B",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#10B981",
-    padding: 16,
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
     alignItems: "center",
   },
-  payoutLabel: {
-    color: "#BBF7D0",
+  statusLabel: {
+    color: "#FFE4E6",
     fontWeight: "900",
     textTransform: "uppercase",
     fontSize: 12,
   },
-  payoutValue: {
+  statusValue: {
     color: "#FFFFFF",
-    fontSize: 30,
+    fontSize: 25,
     fontWeight: "900",
-    marginTop: 4,
+    marginTop: 5,
+    textTransform: "capitalize",
   },
-  rateMiniBox: {
-    backgroundColor: "#052E2B",
-    borderRadius: 14,
-    padding: 12,
+  card: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  sectionHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 14 },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 16,
+    backgroundColor: COLORS.black,
     alignItems: "center",
+    justifyContent: "center",
   },
-  rateMiniLabel: {
-    color: "#BBF7D0",
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  rateMiniValue: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 18,
-    marginTop: 3,
-  },
-  sectionTitle: {
-    color: freightTheme.colors.text,
-    fontSize: 22,
-    fontWeight: "900",
-    marginBottom: 14,
-  },
-  detailGrid: {
+  sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  routeRow: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    marginBottom: 10,
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: 10,
   },
-  detailBox: {
-    width: "48%",
-    backgroundColor: freightTheme.colors.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    padding: 12,
+  routeLabel: {
+    color: COLORS.red,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
-  detailLabel: {
-    color: freightTheme.colors.mutedText,
+  routeValue: { color: COLORS.text, fontWeight: "900", marginTop: 3, lineHeight: 20 },
+  infoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 6 },
+  infoBox: {
+    width: "48%",
+    backgroundColor: COLORS.surface,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 13,
+  },
+  infoLabel: {
+    color: COLORS.muted,
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
-    marginTop: 6,
   },
-  detailValue: {
-    color: freightTheme.colors.text,
-    fontWeight: "800",
-    marginTop: 4,
-    lineHeight: 19,
+  infoValue: { color: COLORS.text, fontWeight: "800", marginTop: 5, lineHeight: 19 },
+  rateBox: {
+    backgroundColor: COLORS.black,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12,
   },
-  notesText: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    lineHeight: 22,
+  rateValue: { color: "#FFFFFF", fontSize: 32, fontWeight: "900" },
+  rateSub: { color: "#CBD5E1", fontWeight: "800", marginTop: 5 },
+  notesBox: {
+    backgroundColor: COLORS.black,
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 12,
   },
-  primaryButton: {
-    backgroundColor: freightTheme.colors.primary,
-    borderRadius: 14,
-    padding: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  secondaryButton: {
-    backgroundColor: freightTheme.colors.surface,
+  notesLabel: { color: "#FCA5A5", fontWeight: "900", marginBottom: 5 },
+  notesText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 20 },
+  messageRow: {
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: COLORS.border,
     borderRadius: 14,
+    padding: 12,
+    marginBottom: 9,
+  },
+  messageName: { color: COLORS.red, fontWeight: "900", textTransform: "capitalize" },
+  messageText: { color: COLORS.text, fontWeight: "700", marginTop: 4 },
+  emptySmall: { color: COLORS.muted, fontWeight: "800", marginBottom: 12 },
+  input: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 15,
+    padding: 14,
+    color: COLORS.text,
+    fontWeight: "700",
+    marginBottom: 12,
+  },
+  textArea: { minHeight: 90, textAlignVertical: "top" },
+  button: {
+    backgroundColor: COLORS.red,
+    borderRadius: 15,
     padding: 15,
     alignItems: "center",
     justifyContent: "center",
@@ -896,17 +777,35 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
   },
-  secondaryButtonText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
+  outlineButton: {
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    borderRadius: 15,
+    padding: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
   },
-  disabledButton: {
-    backgroundColor: "#64748B",
+  outlineButtonText: { color: COLORS.red, fontWeight: "900" },
+  actionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 18,
   },
-  emptyTitle: {
-    color: freightTheme.colors.text,
-    fontSize: 22,
-    fontWeight: "900",
-    marginBottom: 14,
+  actionButton: {
+    width: "48%",
+    backgroundColor: COLORS.red,
+    borderRadius: 16,
+    padding: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
+  disabledButton: { opacity: 0.6 },
+  buttonText: { color: "#FFFFFF", fontWeight: "900", textAlign: "center" },
 });

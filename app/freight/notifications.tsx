@@ -19,13 +19,15 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-const FREIGHT_ROUTES = {
+const ROUTES = {
   dashboard: "/freight/dashboard",
   board: "/freight/board",
   myLoads: "/freight/my-loads",
   liveLoads: "/freight/live-loads",
-  liveRoute: "/freight/live-route",
-  routeDetails: "/freight/route-details",
+  loadDetail: "/freight/load-detail",
+  loadChat: "/freight/load-chat",
+  dispatchAlerts: "/freight/dispatch-alerts",
+  communicationCenter: "/freight/communication-center",
   loadIssues: "/freight/load-issues",
   routeExceptions: "/freight/route-exceptions",
   earnings: "/freight/earnings",
@@ -43,7 +45,7 @@ const FREIGHT_ROUTES = {
   register: "/freight/register",
 } as const;
 
-type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+type FreightRoute = (typeof ROUTES)[keyof typeof ROUTES];
 
 type NotificationItem = {
   id: string;
@@ -59,7 +61,7 @@ type NotificationItem = {
 };
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F3F4F6",
   card: "#FFFFFF",
   surface: "#F9FAFB",
   black: "#050505",
@@ -107,6 +109,32 @@ export default function FreightNotificationsScreen() {
     [notifications]
   );
 
+  const stats = useMemo(() => {
+    const payout = notifications.filter((item) =>
+      normalize(item.type).includes("payout") ||
+      normalize(item.type).includes("earning") ||
+      normalize(item.type).includes("settlement")
+    ).length;
+
+    const load = notifications.filter((item) =>
+      normalize(item.type).includes("load") ||
+      normalize(item.type).includes("route")
+    ).length;
+
+    const issue = notifications.filter((item) =>
+      normalize(item.type).includes("issue") ||
+      normalize(item.type).includes("exception")
+    ).length;
+
+    return {
+      total: notifications.length,
+      unread: unreadCount,
+      payout,
+      load,
+      issue,
+    };
+  }, [notifications, unreadCount]);
+
   async function getStoredCarrier() {
     const raw =
       (await AsyncStorage.getItem("currentFreightCarrier")) ||
@@ -135,13 +163,13 @@ export default function FreightNotificationsScreen() {
         nextCarrier.businessName ||
         nextCarrier.company_name ||
         nextCarrier.business_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
       businessName:
         nextCarrier.businessName ||
         nextCarrier.companyName ||
         nextCarrier.business_name ||
         nextCarrier.company_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
       stripeAccountId:
         nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
       stripe_account_id:
@@ -165,20 +193,22 @@ export default function FreightNotificationsScreen() {
     return [
       {
         id: "freight-welcome",
-        title: "Welcome to Freight Connect",
-        body: `${nextCarrier?.companyName || "Your freight account"} is ready to manage loads, payouts, routes, documents, and support.`,
+        title: "Welcome to Farm2Home Freight",
+        body: `${
+          nextCarrier?.companyName || "Your freight account"
+        } is ready to manage loads, payouts, routes, alerts, and support.`,
         type: "account",
-        route: FREIGHT_ROUTES.dashboard,
+        route: ROUTES.dashboard,
         read: false,
         is_read: false,
         created_at: now,
       },
       {
         id: "freight-connect-bank",
-        title: "Connect Bank",
+        title: "Connect Bank / Payouts",
         body: "Complete Stripe Connect onboarding to receive freight payouts.",
         type: "payout",
-        route: FREIGHT_ROUTES.connectBank,
+        route: ROUTES.connectBank,
         read: false,
         is_read: false,
         created_at: now,
@@ -186,9 +216,9 @@ export default function FreightNotificationsScreen() {
       {
         id: "freight-board",
         title: "Check Load Board",
-        body: "Open the freight board to review available farm, refrigerated, livestock, and bulk loads.",
+        body: "Review available farm, refrigerated, livestock, hay, produce, and bulk freight loads.",
         type: "load",
-        route: FREIGHT_ROUTES.board,
+        route: ROUTES.board,
         read: true,
         is_read: true,
         created_at: now,
@@ -205,7 +235,7 @@ export default function FreightNotificationsScreen() {
       const email = normalize(stored?.email || authData?.user?.email || "");
 
       if (!email) {
-        router.replace(FREIGHT_ROUTES.login as any);
+        router.replace(ROUTES.login as any);
         return;
       }
 
@@ -224,7 +254,7 @@ export default function FreightNotificationsScreen() {
           "Freight Profile Missing",
           "No freight profile was found. Please complete freight registration first."
         );
-        router.replace(FREIGHT_ROUTES.register as any);
+        router.replace(ROUTES.register as any);
         return;
       }
 
@@ -240,13 +270,13 @@ export default function FreightNotificationsScreen() {
           dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
-          "Freight Connect Carrier",
+          "Farm2Home Freight Carrier",
         businessName:
           dbCarrier.business_name ||
           dbCarrier.company_name ||
           stored?.businessName ||
           stored?.companyName ||
-          "Freight Connect Carrier",
+          "Farm2Home Freight Carrier",
       });
 
       const { data, error } = await supabase
@@ -266,22 +296,19 @@ export default function FreightNotificationsScreen() {
       const mapped: NotificationItem[] = Array.isArray(data)
         ? data.map((item: any) => ({
             id: String(item.id),
-            title: item.title || "Freight Notification",
-            body: item.body || item.message || "",
-            type: item.type || item.category || "account",
-            route: mapNotificationRoute(item.type || item.category),
+            title: item.title || item.subject || "Freight Notification",
+            body: item.body || item.message || item.description || "",
+            type: item.type || item.category || item.alert_type || "account",
+            route: mapNotificationRoute(item.type || item.category || item.alert_type),
             read: Boolean(item.read || item.is_read),
             is_read: Boolean(item.read || item.is_read),
-            load_id: item.load_id || null,
-            freight_user_id:
-              item.freight_user_id || item.freight_id || item.user_id || null,
+            load_id: item.load_id || item.freight_load_id || null,
+            freight_user_id: item.freight_user_id || item.freight_id || item.user_id || null,
             created_at: item.created_at,
           }))
         : [];
 
-      setNotifications(
-        mapped.length > 0 ? mapped : fallbackNotifications(mergedCarrier)
-      );
+      setNotifications(mapped.length > 0 ? mapped : fallbackNotifications(mergedCarrier));
     } catch (error) {
       console.log("Freight notifications error:", error);
       Alert.alert("Notifications Error", "Unable to load freight notifications.");
@@ -299,26 +326,30 @@ export default function FreightNotificationsScreen() {
   function mapNotificationRoute(type: string): FreightRoute {
     const value = normalize(type);
 
-    if (value.includes("payout") || value.includes("bank")) return FREIGHT_ROUTES.connectBank;
-    if (value.includes("settlement")) return FREIGHT_ROUTES.settlements;
-    if (value.includes("earning")) return FREIGHT_ROUTES.earnings;
-    if (value.includes("issue")) return FREIGHT_ROUTES.loadIssues;
-    if (value.includes("exception")) return FREIGHT_ROUTES.routeExceptions;
-    if (value.includes("route")) return FREIGHT_ROUTES.liveRoute;
-    if (value.includes("load")) return FREIGHT_ROUTES.board;
-    if (value.includes("support")) return FREIGHT_ROUTES.support;
-    if (value.includes("safety")) return FREIGHT_ROUTES.safety;
-    if (value.includes("insurance")) return FREIGHT_ROUTES.insurance;
-    if (value.includes("review")) return FREIGHT_ROUTES.adminReview;
-    if (value.includes("setting")) return FREIGHT_ROUTES.settings;
-    if (value.includes("profile")) return FREIGHT_ROUTES.profile;
+    if (value.includes("chat") || value.includes("message")) return ROUTES.communicationCenter;
+    if (value.includes("dispatch") || value.includes("alert")) return ROUTES.dispatchAlerts;
+    if (value.includes("payout") || value.includes("bank")) return ROUTES.connectBank;
+    if (value.includes("settlement")) return ROUTES.settlements;
+    if (value.includes("earning")) return ROUTES.earnings;
+    if (value.includes("issue")) return ROUTES.loadIssues;
+    if (value.includes("exception")) return ROUTES.routeExceptions;
+    if (value.includes("route")) return ROUTES.liveLoads;
+    if (value.includes("load")) return ROUTES.board;
+    if (value.includes("support")) return ROUTES.support;
+    if (value.includes("safety")) return ROUTES.safety;
+    if (value.includes("insurance")) return ROUTES.insurance;
+    if (value.includes("review")) return ROUTES.adminReview;
+    if (value.includes("setting")) return ROUTES.settings;
+    if (value.includes("profile")) return ROUTES.profile;
 
-    return FREIGHT_ROUTES.dashboard;
+    return ROUTES.dashboard;
   }
 
   function iconForType(type: string): keyof typeof Ionicons.glyphMap {
     const value = normalize(type);
 
+    if (value.includes("chat") || value.includes("message")) return "chatbubbles-outline";
+    if (value.includes("dispatch") || value.includes("alert")) return "megaphone-outline";
     if (value.includes("payout") || value.includes("bank")) return "cash-outline";
     if (value.includes("settlement") || value.includes("earning")) return "wallet-outline";
     if (value.includes("load")) return "cube-outline";
@@ -336,28 +367,22 @@ export default function FreightNotificationsScreen() {
   function colorForType(type: string) {
     const value = normalize(type);
 
-    if (
-      value.includes("payout") ||
-      value.includes("earning") ||
-      value.includes("settlement")
-    ) {
+    if (value.includes("payout") || value.includes("earning") || value.includes("settlement")) {
       return COLORS.green;
     }
 
-    if (
-      value.includes("issue") ||
-      value.includes("exception") ||
-      value.includes("safety")
-    ) {
+    if (value.includes("issue") || value.includes("exception") || value.includes("safety")) {
       return COLORS.amber;
     }
 
+    if (value.includes("dispatch") || value.includes("alert")) return COLORS.red;
+    if (value.includes("chat") || value.includes("message")) return COLORS.blue;
     if (value.includes("load")) return COLORS.red;
     if (value.includes("route")) return COLORS.purple;
     if (value.includes("support")) return COLORS.blue;
     if (value.includes("insurance") || value.includes("review")) return COLORS.slate;
 
-    return COLORS.amber;
+    return COLORS.black;
   }
 
   async function markAllRead() {
@@ -373,9 +398,7 @@ export default function FreightNotificationsScreen() {
         prev.map((item) => ({ ...item, read: true, is_read: true }))
       );
 
-      const ids = unread
-        .filter((item) => !item.id.startsWith("freight-"))
-        .map((item) => item.id);
+      const ids = unread.filter((item) => !item.id.startsWith("freight-")).map((item) => item.id);
 
       if (ids.length > 0) {
         await supabase
@@ -383,6 +406,7 @@ export default function FreightNotificationsScreen() {
           .update({
             read: true,
             is_read: true,
+            read_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
           .in("id", ids);
@@ -406,6 +430,7 @@ export default function FreightNotificationsScreen() {
           .update({
             read: true,
             is_read: true,
+            read_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
           .eq("id", item.id);
@@ -420,22 +445,27 @@ export default function FreightNotificationsScreen() {
 
     const route: FreightRoute = item.route ?? mapNotificationRoute(item.type);
 
-    const loadRoutes: FreightRoute[] = [
-      FREIGHT_ROUTES.liveRoute,
-      FREIGHT_ROUTES.routeDetails,
-      FREIGHT_ROUTES.loadIssues,
-      FREIGHT_ROUTES.routeExceptions,
-    ];
+    if (item.load_id) {
+      if (
+        route === ROUTES.loadDetail ||
+        route === ROUTES.loadIssues ||
+        route === ROUTES.routeExceptions ||
+        route === ROUTES.liveLoads
+      ) {
+        router.push({
+          pathname: route as any,
+          params: { loadId: item.load_id },
+        });
+        return;
+      }
 
-    if (item.load_id && loadRoutes.includes(route)) {
-      router.push({
-        pathname: route as any,
-        params: {
-          loadId: item.load_id,
-        },
-      });
-
-      return;
+      if (normalize(item.type).includes("chat") || normalize(item.type).includes("message")) {
+        router.push({
+          pathname: ROUTES.loadChat as any,
+          params: { loadId: item.load_id },
+        });
+        return;
+      }
     }
 
     goTo(route);
@@ -457,41 +487,53 @@ export default function FreightNotificationsScreen() {
 
       <View style={styles.hero}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
+          <Text style={styles.eyebrow}>Farm2Home Freight</Text>
           <Text style={styles.title}>Notifications</Text>
           <Text style={styles.subtitle}>
-            Load updates, payout alerts, route messages, support updates,
-            compliance reminders, and account notices.
+            ChatAI-style inbox for load updates, payout alerts, route messages, support notices,
+            compliance reminders, and account alerts.
           </Text>
         </View>
 
         <TouchableOpacity
           style={styles.heroIcon}
-          onPress={() => goTo(FREIGHT_ROUTES.dashboard)}
+          onPress={() => goTo(ROUTES.dispatchAlerts)}
           activeOpacity={0.85}
         >
-          <Ionicons name="notifications-outline" size={34} color="#FFFFFF" />
+          <Ionicons name="notifications-outline" size={32} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.summaryCard}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.summaryTitle}>
-            {carrier?.companyName || carrier?.businessName || "Freight Carrier"}
-          </Text>
-          <Text style={styles.summaryText}>{unreadCount} unread notifications</Text>
+      <View style={styles.profileCard}>
+        <View style={styles.profileAvatar}>
+          <Ionicons name="business-outline" size={28} color="#FFFFFF" />
         </View>
 
-        <TouchableOpacity style={styles.readButton} onPress={markAllRead} activeOpacity={0.85}>
-          <Text style={styles.readButtonText}>Mark all read</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.profileName}>
+            {carrier?.companyName || carrier?.businessName || "Farm2Home Freight Carrier"}
+          </Text>
+          <Text style={styles.profileEmail}>{carrier?.email || "Carrier workspace"}</Text>
+        </View>
+
+        <TouchableOpacity style={styles.readPill} onPress={markAllRead} activeOpacity={0.85}>
+          <Text style={styles.readPillText}>Mark read</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.statsGrid}>
+        <StatCard label="Total" value={String(stats.total)} icon="notifications-outline" />
+        <StatCard label="Unread" value={String(stats.unread)} icon="mail-unread-outline" />
+        <StatCard label="Loads" value={String(stats.load)} icon="cube-outline" />
+        <StatCard label="Payouts" value={String(stats.payout)} icon="wallet-outline" />
+        <StatCard label="Issues" value={String(stats.issue)} icon="warning-outline" />
       </View>
 
       <View style={styles.quickGrid}>
-        <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
-        <QuickLink icon="list-outline" label="Load Board" route={FREIGHT_ROUTES.board} />
-        <QuickLink icon="cash-outline" label="Payouts" route={FREIGHT_ROUTES.payoutCenter} />
-        <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
+        <QuickLink icon="grid-outline" label="Dashboard" route={ROUTES.dashboard} />
+        <QuickLink icon="search-outline" label="Load Board" route={ROUTES.board} />
+        <QuickLink icon="megaphone-outline" label="Dispatch Alerts" route={ROUTES.dispatchAlerts} />
+        <QuickLink icon="chatbubbles-outline" label="Messages" route={ROUTES.communicationCenter} />
       </View>
 
       <FlatList
@@ -500,10 +542,18 @@ export default function FreightNotificationsScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Notification Inbox</Text>
+            <TouchableOpacity onPress={onRefresh}>
+              <Text style={styles.sectionLink}>Refresh</Text>
+            </TouchableOpacity>
+          </View>
+        }
         ListEmptyComponent={
           <View style={styles.emptyCard}>
             <Ionicons name="notifications-off-outline" size={38} color={COLORS.red} />
-            <Text style={styles.emptyTitle}>No freight notifications.</Text>
+            <Text style={styles.emptyTitle}>No freight notifications</Text>
             <Text style={styles.emptyText}>
               Updates about loads, payouts, compliance, route issues, and support will appear here.
             </Text>
@@ -524,11 +574,20 @@ export default function FreightNotificationsScreen() {
 
               <View style={{ flex: 1 }}>
                 <View style={styles.notificationHeader}>
-                  <Text style={styles.notificationTitle}>{item.title}</Text>
-                  {unread && <View style={styles.unreadDot} />}
+                  <Text style={styles.notificationTitle} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  {unread ? <View style={styles.unreadDot} /> : null}
                 </View>
 
-                <Text style={styles.notificationBody}>{item.body}</Text>
+                <Text style={styles.notificationType}>
+                  {String(item.type || "notification").replace(/_/g, " ")}
+                </Text>
+
+                <Text style={styles.notificationBody} numberOfLines={2}>
+                  {item.body}
+                </Text>
+
                 <Text style={styles.notificationDate}>{formatDate(item.created_at)}</Text>
               </View>
 
@@ -538,6 +597,24 @@ export default function FreightNotificationsScreen() {
         }}
       />
     </SafeAreaView>
+  );
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.statCard}>
+      <Ionicons name={icon} size={22} color={COLORS.red} />
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
   );
 }
 
@@ -602,7 +679,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#FFFFFF",
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
     marginBottom: 10,
   },
@@ -611,40 +688,75 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: "700",
   },
-  summaryCard: {
+  profileCard: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginTop: 16,
     marginBottom: 14,
-    borderRadius: 22,
-    padding: 18,
+    borderRadius: 24,
+    padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
+    gap: 14,
   },
-  summaryTitle: {
+  profileAvatar: {
+    width: 58,
+    height: 58,
+    borderRadius: 22,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileName: {
     color: COLORS.text,
     fontSize: 19,
     fontWeight: "900",
   },
-  summaryText: {
+  profileEmail: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  readPill: {
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  readPillText: {
+    color: COLORS.red,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 14,
+  },
+  statCard: {
+    width: "48%",
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  statValue: {
+    color: COLORS.text,
+    fontSize: 24,
+    fontWeight: "900",
+    marginTop: 7,
+  },
+  statLabel: {
     color: COLORS.muted,
     fontWeight: "800",
     marginTop: 4,
-  },
-  readButton: {
-    backgroundColor: COLORS.red,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  readButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 12,
   },
   quickGrid: {
     flexDirection: "row",
@@ -672,12 +784,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 90,
   },
+  sectionHeader: {
+    marginTop: 2,
+    marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 23,
+    fontWeight: "900",
+  },
+  sectionLink: {
+    color: COLORS.red,
+    fontWeight: "900",
+  },
   notificationCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 20,
-    padding: 15,
+    borderRadius: 22,
+    padding: 16,
     marginBottom: 12,
     flexDirection: "row",
     alignItems: "center",
@@ -685,12 +813,13 @@ const styles = StyleSheet.create({
   },
   unreadCard: {
     borderColor: COLORS.red,
+    borderWidth: 2,
     backgroundColor: COLORS.redSoft,
   },
   iconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 18,
+    width: 48,
+    height: 48,
+    borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -704,6 +833,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "900",
     flex: 1,
+  },
+  notificationType: {
+    color: COLORS.red,
+    fontWeight: "900",
+    fontSize: 12,
+    marginTop: 4,
+    textTransform: "capitalize",
   },
   notificationBody: {
     color: COLORS.muted,

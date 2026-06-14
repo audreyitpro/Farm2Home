@@ -20,8 +20,9 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-const FREIGHT_ROUTES = {
-  managementCenter: "/freight/freight-management-center",
+const ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
   communicationCenter: "/freight/communication-center",
   dispatchCenter: "/freight/dispatch-center",
   myLoads: "/freight/my-loads",
@@ -30,24 +31,27 @@ const FREIGHT_ROUTES = {
   routeExceptions: "/freight/route-exceptions",
   reviewStatus: "/freight/review-status",
   support: "/freight/support",
+  notifications: "/freight/notifications",
   login: "/freight/login",
   register: "/freight/register",
 } as const;
 
-type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+type FreightRoute = (typeof ROUTES)[keyof typeof ROUTES];
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F3F4F6",
   card: "#FFFFFF",
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
+  redDark: "#991B1B",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
   green: "#16A34A",
   amber: "#D97706",
   blue: "#2563EB",
+  purple: "#7C3AED",
 };
 
 function normalize(value: any) {
@@ -84,6 +88,8 @@ function alertIcon(type: any): keyof typeof Ionicons.glyphMap {
   if (value.includes("review")) return "eye-outline";
   if (value.includes("exception")) return "warning-outline";
   if (value.includes("message")) return "chatbubbles-outline";
+  if (value.includes("payment")) return "card-outline";
+  if (value.includes("payout")) return "wallet-outline";
 
   return "notifications-outline";
 }
@@ -152,7 +158,7 @@ export default function FreightDispatchAlertsScreen() {
         nextCarrier.businessName ||
         nextCarrier.company_name ||
         nextCarrier.business_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -175,7 +181,7 @@ export default function FreightDispatchAlertsScreen() {
       const email = normalize(stored?.email || authData?.user?.email || "");
 
       if (!email) {
-        router.replace(FREIGHT_ROUTES.login as any);
+        router.replace(ROUTES.login as any);
         return;
       }
 
@@ -189,7 +195,7 @@ export default function FreightDispatchAlertsScreen() {
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
-        router.replace(FREIGHT_ROUTES.register as any);
+        router.replace(ROUTES.register as any);
         return;
       }
 
@@ -204,13 +210,15 @@ export default function FreightDispatchAlertsScreen() {
           dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
-          "Freight Connect Carrier",
+          "Farm2Home Freight Carrier",
       });
 
       const { data: alertData, error: alertError } = await supabase
         .from("freight_notifications")
         .select("*")
-        .eq("freight_id", mergedCarrier.id)
+        .or(
+          `freight_id.eq.${mergedCarrier.id},freight_user_id.eq.${mergedCarrier.id},user_id.eq.${mergedCarrier.id}`
+        )
         .order("created_at", { ascending: false });
 
       if (alertError) {
@@ -224,7 +232,7 @@ export default function FreightDispatchAlertsScreen() {
         .from("freight_loads")
         .select("*")
         .or(
-          `carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
+          `carrier_id.eq.${mergedCarrier.id},freight_user_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
         )
         .order("updated_at", { ascending: false });
 
@@ -296,30 +304,30 @@ export default function FreightDispatchAlertsScreen() {
     const loadId = alertItem.load_id || alertItem.freight_load_id;
 
     if (type.includes("exception")) {
-      goTo(FREIGHT_ROUTES.routeExceptions);
+      goTo(ROUTES.routeExceptions);
       return;
     }
 
     if (type.includes("review")) {
-      goTo(FREIGHT_ROUTES.reviewStatus);
+      goTo(ROUTES.reviewStatus);
       return;
     }
 
     if (loadId) {
       router.push({
-        pathname: FREIGHT_ROUTES.loadChat as any,
+        pathname: ROUTES.loadChat as any,
         params: { loadId: String(loadId) },
       });
       return;
     }
 
-    goTo(FREIGHT_ROUTES.communicationCenter);
+    goTo(ROUTES.communicationCenter);
   }
 
   function createDemoAlert() {
     Alert.alert(
       "Dispatch Alert Example",
-      "In production, dispatch alerts will be created by dispatch, route exceptions, load status updates, review notices, and system notifications."
+      "Dispatch alerts will be created by dispatch, load status changes, route exceptions, payment notices, and Farm2Home system updates."
     );
   }
 
@@ -338,17 +346,24 @@ export default function FreightDispatchAlertsScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.alertTitle}>{item.title || item.subject || "Dispatch Alert"}</Text>
+            <View style={styles.alertTitleRow}>
+              <Text style={styles.alertTitle} numberOfLines={1}>
+                {item.title || item.subject || "Dispatch Alert"}
+              </Text>
+
+              {unread ? <View style={styles.unreadDot} /> : null}
+            </View>
+
             <Text style={styles.alertMeta}>
-              {String(type).replace(/_/g, " ")} · {String(priority).replace(/_/g, " ")} ·{" "}
-              {formatDate(item.created_at)}
+              {String(type).replace(/_/g, " ")} · {String(priority).replace(/_/g, " ")}
             </Text>
+
             <Text style={styles.alertText} numberOfLines={3}>
               {item.body || item.message || item.description || "No alert details available."}
             </Text>
-          </View>
 
-          {unread && <View style={styles.unreadDot} />}
+            <Text style={styles.alertTime}>{formatDate(item.created_at)}</Text>
+          </View>
         </TouchableOpacity>
 
         <View style={styles.actionRow}>
@@ -391,7 +406,7 @@ export default function FreightDispatchAlertsScreen() {
         style={styles.loadCard}
         onPress={() =>
           router.push({
-            pathname: FREIGHT_ROUTES.loadChat as any,
+            pathname: ROUTES.loadChat as any,
             params: { loadId: String(item.id) },
           })
         }
@@ -401,8 +416,10 @@ export default function FreightDispatchAlertsScreen() {
         </View>
 
         <View style={{ flex: 1 }}>
-          <Text style={styles.loadTitle}>{item.title || item.commodity || "Active Load"}</Text>
-          <Text style={styles.loadSub}>
+          <Text style={styles.loadTitle} numberOfLines={1}>
+            {item.title || item.commodity || "Active Load"}
+          </Text>
+          <Text style={styles.loadSub} numberOfLines={1}>
             {item.pickup_location || item.origin || "Pickup"} →{" "}
             {item.dropoff_location || item.destination || "Dropoff"}
           </Text>
@@ -425,10 +442,12 @@ export default function FreightDispatchAlertsScreen() {
   }
 
   const activeLoads = loads.filter((item) =>
-    ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
+    ["accepted", "booked", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
       normalize(item.status)
     )
   );
+
+  const visibleAlerts = alerts.filter((item) => normalize(item.status) !== "cleared");
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -441,27 +460,32 @@ export default function FreightDispatchAlertsScreen() {
       >
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
+            <Text style={styles.eyebrow}>Farm2Home Freight</Text>
             <Text style={styles.title}>Dispatch Alerts</Text>
             <Text style={styles.subtitle}>
-              Urgent dispatch alerts, route exceptions, load updates, pickup and delivery
-              issues, review notices, and system notifications.
+              ChatAI-style alert inbox for urgent dispatch notices, route exceptions, load updates,
+              payment notices, and review messages.
             </Text>
           </View>
 
           <TouchableOpacity style={styles.heroIcon} onPress={createDemoAlert}>
-            <Ionicons name="notifications-outline" size={34} color="#FFFFFF" />
+            <Ionicons name="megaphone-outline" size={30} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.carrierCard}>
-          <View style={styles.avatar}>
+        <View style={styles.profileCard}>
+          <View style={styles.profileAvatar}>
             <Ionicons name="business-outline" size={28} color="#FFFFFF" />
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
-            <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
+            <Text style={styles.profileName}>{carrier?.companyName || "Farm2Home Freight Carrier"}</Text>
+            <Text style={styles.profileEmail}>{carrier?.email || "Carrier workspace"}</Text>
+          </View>
+
+          <View style={styles.alertPill}>
+            <View style={styles.alertPillDot} />
+            <Text style={styles.alertPillText}>{stats.unread} unread</Text>
           </View>
         </View>
 
@@ -474,15 +498,20 @@ export default function FreightDispatchAlertsScreen() {
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="navigate-circle-outline" label="Dispatch" route={FREIGHT_ROUTES.dispatchCenter} />
-          <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
-          <QuickLink icon="chatbubbles-outline" label="Messages" route={FREIGHT_ROUTES.communicationCenter} />
-          <QuickLink icon="warning-outline" label="Exceptions" route={FREIGHT_ROUTES.routeExceptions} />
-          <QuickLink icon="eye-outline" label="Review Status" route={FREIGHT_ROUTES.reviewStatus} />
-          <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+          <QuickLink icon="grid-outline" label="Dashboard" route={ROUTES.dashboard} />
+          <QuickLink icon="search-outline" label="Load Board" route={ROUTES.board} />
+          <QuickLink icon="briefcase-outline" label="My Loads" route={ROUTES.myLoads} />
+          <QuickLink icon="chatbubbles-outline" label="Messages" route={ROUTES.communicationCenter} />
+          <QuickLink icon="warning-outline" label="Exceptions" route={ROUTES.routeExceptions} />
+          <QuickLink icon="headset-outline" label="Support" route={ROUTES.support} />
         </View>
 
-        <Text style={styles.sectionTitle}>Active Load Updates</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Active Load Updates</Text>
+          <TouchableOpacity onPress={() => goTo(ROUTES.myLoads)}>
+            <Text style={styles.sectionLink}>View all</Text>
+          </TouchableOpacity>
+        </View>
 
         <FlatList
           data={activeLoads.slice(0, 5)}
@@ -490,42 +519,43 @@ export default function FreightDispatchAlertsScreen() {
           scrollEnabled={false}
           renderItem={renderLoadUpdate}
           ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="cube-outline" size={38} color={COLORS.red} />
-              <Text style={styles.emptyTitle}>No active load updates.</Text>
-              <Text style={styles.emptyText}>
-                Accepted and in-transit loads will appear here for dispatch monitoring.
-              </Text>
-            </View>
+            <EmptyState
+              icon="cube-outline"
+              title="No active load updates"
+              message="Accepted and in-transit loads will appear here for dispatch monitoring."
+            />
           }
         />
 
-        <Text style={styles.sectionTitle}>Dispatch Alerts</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Alert Inbox</Text>
+          <TouchableOpacity onPress={onRefresh}>
+            <Text style={styles.sectionLink}>Refresh</Text>
+          </TouchableOpacity>
+        </View>
 
         <FlatList
-          data={alerts.filter((item) => normalize(item.status) !== "cleared")}
+          data={visibleAlerts}
           keyExtractor={(item, index) => String(item.id || index)}
           scrollEnabled={false}
           renderItem={renderAlert}
           ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="notifications-outline" size={38} color={COLORS.green} />
-              <Text style={styles.emptyTitle}>No active dispatch alerts.</Text>
-              <Text style={styles.emptyText}>
-                Urgent dispatch notices, route exceptions, and review messages will appear here.
-              </Text>
-            </View>
+            <EmptyState
+              icon="notifications-outline"
+              title="No active dispatch alerts"
+              message="Urgent dispatch notices, route exceptions, and review messages will appear here."
+            />
           }
         />
 
-        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.communicationCenter)}>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(ROUTES.communicationCenter)}>
           <Ionicons name="chatbubbles-outline" size={18} color="#FFFFFF" />
           <Text style={styles.primaryText}>Open Communication Center</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}>
-          <Ionicons name="apps-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Management Center</Text>
+        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(ROUTES.notifications)}>
+          <Ionicons name="notifications-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.primaryText}>All Notifications</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -567,6 +597,24 @@ function QuickLink({
   );
 }
 
+function EmptyState({
+  icon,
+  title,
+  message,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  message: string;
+}) {
+  return (
+    <View style={styles.emptyCard}>
+      <Ionicons name={icon} size={38} color={COLORS.red} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyText}>{message}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 90 },
@@ -602,11 +650,11 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
+  title: { color: "#FFFFFF", fontSize: 34, fontWeight: "900", marginBottom: 10 },
   subtitle: { color: "#D1D5DB", lineHeight: 22, fontWeight: "700" },
-  carrierCard: {
+  profileCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 16,
     marginHorizontal: 18,
     marginTop: 16,
@@ -617,16 +665,34 @@ const styles = StyleSheet.create({
     gap: 14,
     alignItems: "center",
   },
-  avatar: {
+  profileAvatar: {
     width: 58,
     height: 58,
-    borderRadius: 20,
+    borderRadius: 22,
     backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
   },
-  carrierName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
-  carrierEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  profileName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
+  profileEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  alertPill: {
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  alertPillDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.red,
+  },
+  alertPillText: { color: COLORS.red, fontWeight: "900", fontSize: 12 },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -637,12 +703,12 @@ const styles = StyleSheet.create({
   statCard: {
     width: "48%",
     backgroundColor: COLORS.card,
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 15,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  statValue: { color: COLORS.text, fontSize: 22, fontWeight: "900", marginTop: 7 },
+  statValue: { color: COLORS.text, fontSize: 24, fontWeight: "900", marginTop: 7 },
   statLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 4 },
   quickGrid: {
     flexDirection: "row",
@@ -662,19 +728,29 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
+  sectionHeader: {
+    paddingHorizontal: 18,
+    marginTop: 4,
+    marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   sectionTitle: {
     color: COLORS.text,
     fontSize: 23,
     fontWeight: "900",
-    paddingHorizontal: 18,
-    marginBottom: 12,
+  },
+  sectionLink: {
+    color: COLORS.red,
+    fontWeight: "900",
   },
   loadCard: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
-    marginBottom: 14,
+    marginBottom: 12,
     borderRadius: 22,
-    padding: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
@@ -682,25 +758,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   loadIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 18,
+    width: 48,
+    height: 48,
+    borderRadius: 19,
     backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
   },
-  loadTitle: { color: COLORS.text, fontSize: 17, fontWeight: "900" },
+  loadTitle: { color: COLORS.text, fontSize: 16, fontWeight: "900" },
   loadSub: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
   loadMeta: {
-    color: COLORS.text,
-    fontWeight: "700",
+    color: COLORS.red,
+    fontWeight: "900",
     marginTop: 4,
     textTransform: "capitalize",
   },
   alertCard: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
-    marginBottom: 14,
+    marginBottom: 12,
     borderRadius: 22,
     padding: 16,
     borderWidth: 1,
@@ -709,30 +785,53 @@ const styles = StyleSheet.create({
   alertCardUnread: {
     borderColor: COLORS.red,
     borderWidth: 2,
+    backgroundColor: "#FFF7F7",
   },
   alertTop: {
     flexDirection: "row",
     gap: 12,
-    alignItems: "center",
+    alignItems: "flex-start",
   },
   alertIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 18,
+    width: 48,
+    height: 48,
+    borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
   },
-  alertTitle: { color: COLORS.text, fontSize: 17, fontWeight: "900" },
+  alertTitleRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  alertTitle: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: "900",
+  },
   alertMeta: {
-    color: COLORS.muted,
-    fontWeight: "700",
+    color: COLORS.red,
+    fontWeight: "900",
     marginTop: 4,
     textTransform: "capitalize",
+    fontSize: 12,
   },
-  alertText: { color: COLORS.text, fontWeight: "700", lineHeight: 20, marginTop: 6 },
+  alertText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 6,
+  },
+  alertTime: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 11,
+    marginTop: 7,
+  },
   unreadDot: {
-    width: 12,
-    height: 12,
+    width: 11,
+    height: 11,
     borderRadius: 999,
     backgroundColor: COLORS.red,
   },

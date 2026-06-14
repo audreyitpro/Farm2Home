@@ -23,31 +23,36 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-const FREIGHT_ROUTES = {
+const ROUTES = {
   communicationCenter: "/freight/communication-center",
-  managementCenter: "/freight/freight-management-center",
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
   myLoads: "/freight/my-loads",
-  dispatchCenter: "/freight/dispatch-center",
+  liveLoads: "/freight/live-loads",
+  loadDetail: "/freight/load-detail",
+  dispatchAlerts: "/freight/dispatch-alerts",
   routeExceptions: "/freight/route-exceptions",
   support: "/freight/support",
   login: "/freight/login",
   register: "/freight/register",
 } as const;
 
-type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+type FreightRoute = (typeof ROUTES)[keyof typeof ROUTES];
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F3F4F6",
   card: "#FFFFFF",
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
+  redDark: "#991B1B",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
   green: "#16A34A",
   amber: "#D97706",
   blue: "#2563EB",
+  purple: "#7C3AED",
 };
 
 function normalize(value: any) {
@@ -61,8 +66,22 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
+function money(value: any) {
+  return `$${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function goTo(route: FreightRoute) {
   router.push(route as any);
+}
+
+function openLoadDetail(loadId: string) {
+  router.push({
+    pathname: ROUTES.loadDetail as any,
+    params: { loadId },
+  });
 }
 
 export default function FreightLoadChatScreen() {
@@ -87,9 +106,9 @@ export default function FreightLoadChatScreen() {
   const stats = useMemo(() => {
     return {
       total: messages.length,
-      dispatchCount: messages.filter((m) => normalize(m.sender_role) === "dispatch").length,
-      farmerCount: messages.filter((m) => normalize(m.sender_role) === "farmer").length,
-      customerCount: messages.filter((m) => normalize(m.sender_role) === "customer").length,
+      dispatch: messages.filter((m) => normalize(m.sender_role) === "dispatch").length,
+      farmer: messages.filter((m) => normalize(m.sender_role) === "farmer").length,
+      customer: messages.filter((m) => normalize(m.sender_role) === "customer").length,
     };
   }, [messages]);
 
@@ -121,7 +140,7 @@ export default function FreightLoadChatScreen() {
         nextCarrier.businessName ||
         nextCarrier.company_name ||
         nextCarrier.business_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -144,7 +163,7 @@ export default function FreightLoadChatScreen() {
       const email = normalize(stored?.email || authData?.user?.email || "");
 
       if (!email) {
-        router.replace(FREIGHT_ROUTES.login as any);
+        router.replace(ROUTES.login as any);
         return;
       }
 
@@ -158,7 +177,7 @@ export default function FreightLoadChatScreen() {
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
-        router.replace(FREIGHT_ROUTES.register as any);
+        router.replace(ROUTES.register as any);
         return;
       }
 
@@ -173,7 +192,7 @@ export default function FreightLoadChatScreen() {
           dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
-          "Freight Connect Carrier",
+          "Farm2Home Freight Carrier",
       });
 
       if (!loadId) {
@@ -254,7 +273,7 @@ export default function FreightLoadChatScreen() {
         carrier_id: carrier.id,
         sender_id: carrier.id,
         sender_role: "freight",
-        sender_name: carrier.companyName || carrier.businessName || "Freight Carrier",
+        sender_name: carrier.companyName || carrier.businessName || "Farm2Home Freight Carrier",
         message: messageBody.trim(),
         body: messageBody.trim(),
         status: "sent",
@@ -268,11 +287,7 @@ export default function FreightLoadChatScreen() {
       setMessageBody("");
       await loadChat();
     } catch (error: any) {
-      Alert.alert(
-        "Send Error",
-        error?.message ||
-          "Unable to send load chat message. Make sure freight_load_messages table exists."
-      );
+      Alert.alert("Send Error", error?.message || "Unable to send load chat message.");
     } finally {
       setSending(false);
     }
@@ -304,9 +319,15 @@ export default function FreightLoadChatScreen() {
 
     return (
       <View style={[styles.messageRow, mine ? styles.messageRowMine : styles.messageRowOther]}>
+        {!mine ? (
+          <View style={[styles.messageAvatar, { backgroundColor: roleColor(role) }]}>
+            <Ionicons name="person-outline" size={18} color="#FFFFFF" />
+          </View>
+        ) : null}
+
         <View style={[styles.messageBubble, mine ? styles.messageBubbleMine : styles.messageBubbleOther]}>
           <View style={styles.messageMetaRow}>
-            <View style={[styles.roleDot, { backgroundColor: roleColor(role) }]} />
+            <View style={[styles.roleDot, { backgroundColor: mine ? "#FFFFFF" : roleColor(role) }]} />
             <Text style={[styles.messageRole, mine && styles.messageRoleMine]}>
               {item.sender_name || String(role).replace(/_/g, " ")}
             </Text>
@@ -342,29 +363,26 @@ export default function FreightLoadChatScreen() {
         style={styles.keyboard}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={styles.hero}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => goTo(FREIGHT_ROUTES.communicationCenter)}
-          >
+        <View style={styles.chatHeader}>
+          <TouchableOpacity style={styles.backButton} onPress={() => goTo(ROUTES.communicationCenter)}>
             <Ionicons name="chevron-back-outline" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
+          <View style={styles.headerAvatar}>
+            <Ionicons name="cube-outline" size={23} color="#FFFFFF" />
+          </View>
+
           <View style={{ flex: 1 }}>
-            <Text style={styles.eyebrow}>Load Chat</Text>
-            <Text style={styles.title}>{load?.title || load?.commodity || "Freight Load"}</Text>
-            <Text style={styles.subtitle}>
-              {(load?.pickup_location || load?.origin || "Pickup") +
-                " → " +
-                (load?.dropoff_location || load?.destination || "Dropoff")}
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {load?.title || load?.commodity || "Freight Load"}
+            </Text>
+            <Text style={styles.headerSub} numberOfLines={1}>
+              {load?.pickup_location || "Pickup"} → {load?.dropoff_location || "Dropoff"}
             </Text>
           </View>
 
-          <TouchableOpacity
-            style={styles.heroIcon}
-            onPress={() => goTo(FREIGHT_ROUTES.dispatchCenter)}
-          >
-            <Ionicons name="chatbubbles-outline" size={28} color="#FFFFFF" />
+          <TouchableOpacity style={styles.headerIcon} onPress={() => openLoadDetail(loadId)}>
+            <Ionicons name="document-text-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
@@ -377,21 +395,19 @@ export default function FreightLoadChatScreen() {
         >
           <View style={styles.loadCard}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.loadTitle}>
-                {load?.title || load?.commodity || "Load Details"}
-              </Text>
+              <Text style={styles.loadTitle}>{load?.title || load?.commodity || "Load Details"}</Text>
               <Text style={styles.loadSub}>
                 Status: {String(load?.status || "load").replace(/_/g, " ")}
               </Text>
               <Text style={styles.loadSub}>
-                Broker/Dispatch: {load?.broker || load?.dispatcher_name || "Farm2Home Dispatch"}
+                Rate: {money(load?.rate || load?.freight_total || load?.payout_amount || 0)}
+              </Text>
+              <Text style={styles.loadSub}>
+                Broker/Farmer: {load?.broker_name || load?.farmer_name || "Farm2Home Dispatch"}
               </Text>
             </View>
 
-            <TouchableOpacity
-              style={styles.issueButton}
-              onPress={() => goTo(FREIGHT_ROUTES.routeExceptions)}
-            >
+            <TouchableOpacity style={styles.issueButton} onPress={() => goTo(ROUTES.routeExceptions)}>
               <Ionicons name="warning-outline" size={18} color={COLORS.red} />
               <Text style={styles.issueText}>Issue</Text>
             </TouchableOpacity>
@@ -399,9 +415,9 @@ export default function FreightLoadChatScreen() {
 
           <View style={styles.statsGrid}>
             <StatCard label="Messages" value={String(stats.total)} icon="chatbubble-outline" />
-            <StatCard label="Dispatch" value={String(stats.dispatchCount)} icon="navigate-outline" />
-            <StatCard label="Farmer" value={String(stats.farmerCount)} icon="leaf-outline" />
-            <StatCard label="Customer" value={String(stats.customerCount)} icon="person-outline" />
+            <StatCard label="Dispatch" value={String(stats.dispatch)} icon="navigate-outline" />
+            <StatCard label="Farmer" value={String(stats.farmer)} icon="leaf-outline" />
+            <StatCard label="Customer" value={String(stats.customer)} icon="person-outline" />
           </View>
 
           <View style={styles.quickRow}>
@@ -411,7 +427,7 @@ export default function FreightLoadChatScreen() {
             <QuickButton text="Delivery completed." onPress={sendQuickMessage} />
           </View>
 
-          <Text style={styles.sectionTitle}>Messages</Text>
+          <Text style={styles.sectionTitle}>Conversation</Text>
 
           <FlatList
             data={messages}
@@ -421,9 +437,9 @@ export default function FreightLoadChatScreen() {
             ListEmptyComponent={
               <View style={styles.emptyCard}>
                 <Ionicons name="chatbubbles-outline" size={38} color={COLORS.red} />
-                <Text style={styles.emptyTitle}>No messages yet.</Text>
+                <Text style={styles.emptyTitle}>No messages yet</Text>
                 <Text style={styles.emptyText}>
-                  Start the load chat with dispatch, farmer, or customer updates.
+                  Start the load conversation with dispatch, farmer, or customer updates.
                 </Text>
               </View>
             }
@@ -500,13 +516,13 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
-  hero: {
+  chatHeader: {
     backgroundColor: COLORS.black,
     paddingTop: 22,
-    paddingHorizontal: 18,
-    paddingBottom: 22,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
     flexDirection: "row",
-    gap: 12,
+    gap: 11,
     alignItems: "center",
   },
   backButton: {
@@ -517,24 +533,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  heroIcon: {
-    width: 48,
-    height: 48,
+  headerAvatar: {
+    width: 46,
+    height: 46,
     borderRadius: 18,
     backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
   },
-  eyebrow: {
-    color: "#FCA5A5",
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    fontSize: 12,
-    marginBottom: 4,
+  headerIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: "#1F2937",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  title: { color: "#FFFFFF", fontSize: 22, fontWeight: "900" },
-  subtitle: { color: "#D1D5DB", fontWeight: "700", marginTop: 4 },
+  headerTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900" },
+  headerSub: { color: "#D1D5DB", fontWeight: "700", marginTop: 4 },
   body: { flex: 1 },
   bodyContent: { paddingBottom: 20 },
   loadCard: {
@@ -609,11 +625,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     marginBottom: 12,
   },
-  messageRow: { paddingHorizontal: 18, marginBottom: 12 },
-  messageRowMine: { alignItems: "flex-end" },
-  messageRowOther: { alignItems: "flex-start" },
+  messageRow: {
+    paddingHorizontal: 18,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+  },
+  messageRowMine: { justifyContent: "flex-end" },
+  messageRowOther: { justifyContent: "flex-start" },
+  messageAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   messageBubble: {
-    maxWidth: "86%",
+    maxWidth: "82%",
     borderRadius: 20,
     padding: 14,
     borderWidth: 1,
@@ -621,10 +650,12 @@ const styles = StyleSheet.create({
   messageBubbleMine: {
     backgroundColor: COLORS.red,
     borderColor: COLORS.red,
+    borderBottomRightRadius: 6,
   },
   messageBubbleOther: {
     backgroundColor: COLORS.card,
     borderColor: COLORS.border,
+    borderBottomLeftRadius: 6,
   },
   messageMetaRow: {
     flexDirection: "row",

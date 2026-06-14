@@ -22,16 +22,18 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-const STRIPE_BUY_BUTTON_ID = "buy_btn_1Thv9XCfiUZdoSmRqMvxAPee";
-const STRIPE_PUBLISHABLE_KEY =
-  "pk_live_51TTl33CfiUZdoSmRb0FzebTFOelowqxf1RikjB8mH7hBCMASmORBT9F8hud7VFL7suy59d8XIOBRGHUGMiXYkjCb00RAs1GpA9";
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  "https://farm2home-production-e4bd.up.railway.app";
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F3F4F6",
   card: "#FFFFFF",
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
+  green: "#16A34A",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
@@ -51,12 +53,20 @@ const SECURITY_QUESTIONS = [
   "What was your first delivery vehicle?",
 ];
 
-function normalize(value: string) {
-  return String(value || "").trim().toLowerCase();
+function clean(value: any) {
+  return String(value || "").trim();
 }
 
-function normalizeAnswer(value: string) {
-  return String(value || "").trim().toLowerCase();
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function normalizeAnswer(value: any) {
+  return normalize(value);
+}
+
+function makeFallbackAccountId() {
+  return `Freight_${Date.now()}`;
 }
 
 async function saveFreightSession(carrier: any) {
@@ -71,12 +81,16 @@ async function saveFreightSession(carrier: any) {
 
 export default function FreightRegister() {
   const [saving, setSaving] = useState(false);
-  const [savedCarrierId, setSavedCarrierId] = useState("");
+  const [syncingStripe, setSyncingStripe] = useState(false);
 
+  const [savedCarrierId, setSavedCarrierId] = useState("");
   const [freightId, setFreightId] = useState("");
   const [accountId, setAccountId] = useState("");
   const [stripeId, setStripeId] = useState("");
+  const [stripeCustomerId, setStripeCustomerId] = useState("");
+  const [stripeAccountId, setStripeAccountId] = useState("");
   const [subscriptionId, setSubscriptionId] = useState("");
+  const [subscriptionStatus, setSubscriptionStatus] = useState("");
 
   const [companyName, setCompanyName] = useState("");
   const [contactName, setContactName] = useState("");
@@ -115,71 +129,132 @@ export default function FreightRegister() {
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
+  const hasActiveSubscription = useMemo(() => {
+    return Boolean(
+      subscriptionId &&
+        ["active", "trialing", "past_due"].includes(normalize(subscriptionStatus || "active"))
+    );
+  }, [subscriptionId, subscriptionStatus]);
+
   useEffect(() => {
-    async function loadSavedFreight() {
-      try {
-        const saved =
-          (await AsyncStorage.getItem("currentFreightCarrier")) ||
-          (await AsyncStorage.getItem("currentFreight")) ||
-          (await AsyncStorage.getItem("currentFreightUser"));
-
-        if (!saved) return;
-
-        const carrier = JSON.parse(saved);
-
-        setFreightId(carrier.id || carrier.freightId || carrier.freight_id || "");
-        setSavedCarrierId(carrier.id || carrier.freightId || carrier.freight_id || "");
-        setAccountId(carrier.accountId || carrier.account_id || "");
-        setStripeId(carrier.stripeCustomerId || carrier.stripe_customer_id || carrier.stripeId || "");
-        setSubscriptionId(carrier.stripeSubscriptionId || carrier.stripe_subscription_id || "");
-
-        setCompanyName(carrier.companyName || carrier.company_name || "");
-        setContactName(carrier.contactName || carrier.contact_name || "");
-        setEmail(carrier.email || "");
-        setPhone(carrier.phone || "");
-        setUsername(carrier.username || "");
-        setServiceArea(carrier.serviceArea || carrier.service_area || "");
-
-        setBusinessAddress(carrier.businessAddress || carrier.business_address || "");
-        setCity(carrier.city || "");
-        setStateValue(carrier.state || "");
-        setZipCode(carrier.zipCode || carrier.zip_code || "");
-
-        setMdotNumber(carrier.mdotNumber || carrier.mdot_number || carrier.dot_number || "");
-        setMcNumber(carrier.mcNumber || carrier.mc_number || "");
-        setInsuranceProvider(carrier.insuranceProvider || carrier.insurance_provider || "");
-        setInsurancePolicyNumber(
-          carrier.insurancePolicyNumber || carrier.insurance_policy_number || ""
-        );
-
-        setAuthorityActive(Boolean(carrier.authorityActive || carrier.authority_active));
-        setInsuranceActive(Boolean(carrier.insuranceActive || carrier.insurance_active));
-        setLicensedLivestock(Boolean(carrier.licensedLivestock || carrier.licensed_livestock));
-        setLicensedRefrigeratedFood(
-          Boolean(carrier.licensedRefrigeratedFood || carrier.licensed_refrigerated_food)
-        );
-      } catch (error) {
-        console.log("LOAD FREIGHT SESSION ERROR:", error);
-      }
-    }
-
     loadSavedFreight();
   }, []);
 
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
+  async function loadSavedFreight() {
+    try {
+      const saved =
+        (await AsyncStorage.getItem("currentFreightCarrier")) ||
+        (await AsyncStorage.getItem("currentFreight")) ||
+        (await AsyncStorage.getItem("currentFreightUser"));
 
-    const existing = document.querySelector(
-      'script[src="https://js.stripe.com/v3/buy-button.js"]'
+      let localCarrier: any = null;
+
+      if (saved) {
+        localCarrier = JSON.parse(saved);
+        hydrateForm(localCarrier);
+      }
+
+      const { data: authData } = await supabase.auth.getUser();
+      const authEmail = normalize(authData?.user?.email || localCarrier?.email || email);
+
+      if (!authEmail) return;
+
+      const { data: dbCarrier, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", authEmail)
+        .maybeSingle();
+
+      if (error) {
+        console.log("LOAD FREIGHT DB ERROR:", error.message);
+        return;
+      }
+
+      if (dbCarrier?.id) {
+        hydrateForm(dbCarrier);
+        await saveHydratedSession(dbCarrier);
+      }
+    } catch (error) {
+      console.log("LOAD FREIGHT SESSION ERROR:", error);
+    }
+  }
+
+  async function saveHydratedSession(carrier: any) {
+    await saveFreightSession({
+      ...carrier,
+      id: carrier.id,
+      freightId: carrier.freight_id || carrier.id,
+      freight_id: carrier.freight_id || carrier.id,
+      accountId: carrier.account_id || "",
+      account_id: carrier.account_id || "",
+      companyName: carrier.company_name || carrier.business_name || "",
+      company_name: carrier.company_name || carrier.business_name || "",
+      businessName: carrier.business_name || carrier.company_name || "",
+      business_name: carrier.business_name || carrier.company_name || "",
+      contactName: carrier.contact_name || carrier.name || "",
+      contact_name: carrier.contact_name || carrier.name || "",
+      stripeId: carrier.stripe_id || carrier.stripe_customer_id || "",
+      stripeCustomerId: carrier.stripe_customer_id || carrier.stripe_id || "",
+      stripeAccountId: carrier.stripe_account_id || "",
+      stripeSubscriptionId: carrier.stripe_subscription_id || carrier.subscription_id || "",
+      subscriptionId: carrier.subscription_id || carrier.stripe_subscription_id || "",
+      subscriptionStatus: carrier.subscription_status || "",
+      role: "freight",
+    });
+  }
+
+  function hydrateForm(carrier: any) {
+    const dbFreightId = carrier.id || carrier.freightId || carrier.freight_id || "";
+    const dbStripeCustomerId =
+      carrier.stripeCustomerId ||
+      carrier.stripe_customer_id ||
+      carrier.stripeId ||
+      carrier.stripe_id ||
+      "";
+
+    setFreightId(dbFreightId);
+    setSavedCarrierId(dbFreightId);
+    setAccountId(carrier.accountId || carrier.account_id || "");
+    setStripeId(carrier.stripeId || carrier.stripe_id || dbStripeCustomerId || "");
+    setStripeCustomerId(dbStripeCustomerId);
+    setStripeAccountId(carrier.stripeAccountId || carrier.stripe_account_id || "");
+    setSubscriptionId(
+      carrier.subscriptionId ||
+        carrier.subscription_id ||
+        carrier.stripeSubscriptionId ||
+        carrier.stripe_subscription_id ||
+        ""
+    );
+    setSubscriptionStatus(carrier.subscriptionStatus || carrier.subscription_status || "");
+
+    setCompanyName(carrier.companyName || carrier.company_name || carrier.business_name || "");
+    setContactName(carrier.contactName || carrier.contact_name || carrier.full_name || carrier.name || "");
+    setEmail(carrier.email || "");
+    setPhone(carrier.phone || "");
+    setUsername(carrier.username || "");
+    setServiceArea(carrier.serviceArea || carrier.service_area || "");
+
+    setBusinessAddress(carrier.businessAddress || carrier.business_address || "");
+    setCity(carrier.city || "");
+    setStateValue(carrier.state || "");
+    setZipCode(carrier.zipCode || carrier.zip_code || "");
+
+    setMdotNumber(carrier.mdotNumber || carrier.mdot_number || carrier.dot_number || "");
+    setMcNumber(carrier.mcNumber || carrier.mc_number || "");
+    setInsuranceProvider(carrier.insuranceProvider || carrier.insurance_provider || "");
+    setInsurancePolicyNumber(carrier.insurancePolicyNumber || carrier.insurance_policy_number || "");
+
+    setAuthorityActive(Boolean(carrier.authorityActive || carrier.authority_active));
+    setInsuranceActive(Boolean(carrier.insuranceActive || carrier.insurance_active));
+    setLicensedLivestock(Boolean(carrier.licensedLivestock || carrier.licensed_livestock));
+    setLicensedRefrigeratedFood(
+      Boolean(carrier.licensedRefrigeratedFood || carrier.licensed_refrigerated_food)
     );
 
-    if (existing) return;
-
-    const script = document.createElement("script");
-    script.src = "https://js.stripe.com/v3/buy-button.js";
-    script.async = true;
-    document.body.appendChild(script);
-  }, []);
+    setSecurityQuestion1(carrier.security_question_1 || carrier.securityQuestion1 || "");
+    setSecurityQuestion2(carrier.security_question_2 || carrier.securityQuestion2 || "");
+    setSecurityQuestion3(carrier.security_question_3 || carrier.securityQuestion3 || "");
+  }
 
   function validateForm() {
     if (!companyName.trim() || !contactName.trim() || !normalize(email) || !phone.trim()) {
@@ -192,7 +267,7 @@ export default function FreightRegister() {
       return false;
     }
 
-    if (!username.trim() || !password.trim() || !confirmPassword.trim()) {
+    if (!savedCarrierId && (!username.trim() || !password.trim() || !confirmPassword.trim())) {
       Alert.alert("Login Required", "Please create a username and password.");
       return false;
     }
@@ -202,12 +277,12 @@ export default function FreightRegister() {
       return false;
     }
 
-    if (password.trim().length < 6) {
+    if (!savedCarrierId && password.trim().length < 6) {
       Alert.alert("Weak Password", "Password must be at least 6 characters.");
       return false;
     }
 
-    if (password.trim() !== confirmPassword.trim()) {
+    if (!savedCarrierId && password.trim() !== confirmPassword.trim()) {
       Alert.alert("Password Mismatch", "Passwords do not match.");
       return false;
     }
@@ -217,7 +292,7 @@ export default function FreightRegister() {
       return false;
     }
 
-    if (!securityAnswer1.trim() || !securityAnswer2.trim() || !securityAnswer3.trim()) {
+    if (!savedCarrierId && (!securityAnswer1.trim() || !securityAnswer2.trim() || !securityAnswer3.trim())) {
       Alert.alert("Security Answers Required", "Please answer all 3 security questions.");
       return false;
     }
@@ -258,23 +333,17 @@ export default function FreightRegister() {
 
     if (error) {
       console.log("Freight account_id RPC error:", error.message);
-      throw error;
+      return makeFallbackAccountId();
     }
 
-    if (!data) {
-      throw new Error("Unable to generate freight account ID.");
-    }
-
-    return String(data);
+    return data ? String(data) : makeFallbackAccountId();
   }
 
-  async function checkDuplicateFreight(cleanEmail: string, cleanUsername: string) {
+  async function checkDuplicateFreight(cleanEmailValue: string, cleanUsername: string) {
     const { data, error } = await supabase
       .from("freight_users")
-      .select(
-        "id,account_id,freight_id,email,username,stripe_id,stripe_customer_id,stripe_subscription_id"
-      )
-      .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
+      .select("*")
+      .or(`email.eq.${cleanEmailValue},username.eq.${cleanUsername}`)
       .limit(1);
 
     if (error) {
@@ -285,17 +354,73 @@ export default function FreightRegister() {
     return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
 
+  async function syncStripeByEmail(targetEmail?: string, silent = false) {
+    const finalEmail = normalize(targetEmail || email);
+
+    if (!finalEmail) {
+      if (!silent) Alert.alert("Email Required", "Save or enter email before syncing Stripe.");
+      return null;
+    }
+
+    try {
+      setSyncingStripe(true);
+
+      const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          email: finalEmail,
+          userId: savedCarrierId || freightId,
+          freightId: savedCarrierId || freightId,
+        }),
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || !json.success) {
+        if (!silent) {
+          Alert.alert("Stripe Sync", json.error || "No Stripe customer/subscription found yet.");
+        }
+        return null;
+      }
+
+      setStripeId(json.stripeCustomerId || "");
+      setStripeCustomerId(json.stripeCustomerId || "");
+      setSubscriptionId(json.stripeSubscriptionId || "");
+      setSubscriptionStatus(json.subscriptionStatus || "");
+
+      await loadSavedFreight();
+
+      if (!silent) {
+        Alert.alert("Stripe Synced", "Stripe customer and subscription IDs were saved to Supabase.");
+      }
+
+      return json;
+    } catch (error: any) {
+      if (!silent) Alert.alert("Stripe Sync Error", error?.message || "Unable to sync Stripe.");
+      return null;
+    } finally {
+      setSyncingStripe(false);
+    }
+  }
+
   async function saveFreightUserRow(carrierId: string, savedAccountId?: string) {
     const now = new Date().toISOString();
 
     const cleanCompanyName = companyName.trim();
     const cleanContactName = contactName.trim();
-    const cleanEmail = normalize(email);
+    const cleanEmailValue = normalize(email);
     const cleanPhone = phone.trim();
     const cleanUsername = normalize(username);
     const finalAccountId = savedAccountId || accountId || (await generateFreightAccountId());
 
-    const freightPayload = {
+    const finalStripeCustomerId = stripeCustomerId || stripeId || "";
+    const finalStripeId = stripeId || stripeCustomerId || "";
+    const finalSubscriptionId = subscriptionId || "";
+    const finalStripeAccountId = stripeAccountId || "";
+
+    const freightPayload: any = {
       id: carrierId,
       account_id: finalAccountId,
       freight_id: carrierId,
@@ -309,18 +434,18 @@ export default function FreightRegister() {
       full_name: cleanContactName,
       name: cleanContactName,
       owner_name: cleanContactName,
-      email: cleanEmail,
+      email: cleanEmailValue,
       phone: cleanPhone,
       username: cleanUsername,
 
       account_active: true,
 
-      stripe_id: stripeId || null,
-      stripe_account_id: null,
-      stripe_customer_id: stripeId || null,
-      stripe_subscription_id: subscriptionId || null,
-      stripe_checkout_session_id: null,
-      stripe_connect_status: "not_started",
+      stripe_id: finalStripeId || null,
+      stripe_customer_id: finalStripeCustomerId || null,
+      stripe_account_id: finalStripeAccountId || null,
+      stripe_subscription_id: finalSubscriptionId || null,
+      subscription_id: finalSubscriptionId || null,
+      stripe_connect_status: finalStripeAccountId ? "started" : "not_started",
       payouts_enabled: false,
       charges_enabled: false,
       stripe_payouts_enabled: false,
@@ -328,11 +453,8 @@ export default function FreightRegister() {
       stripe_onboarding_complete: false,
 
       security_question_1: securityQuestion1,
-      security_answer_1: normalizeAnswer(securityAnswer1),
       security_question_2: securityQuestion2,
-      security_answer_2: normalizeAnswer(securityAnswer2),
       security_question_3: securityQuestion3,
-      security_answer_3: normalizeAnswer(securityAnswer3),
 
       service_area: serviceArea.trim(),
       business_address: businessAddress.trim(),
@@ -351,14 +473,14 @@ export default function FreightRegister() {
       licensed_livestock: licensedLivestock,
       licensed_refrigerated_food: licensedRefrigeratedFood,
 
-      approved: false,
-      verification_status: "PENDING_VERIFICATION",
-      compliance_status: "PENDING_VERIFICATION",
+      approved: true,
+      verification_status: "REGISTERED",
+      compliance_status: "PENDING_REVIEW",
       admin_review_status: "pending",
 
-      membership_status: subscriptionId ? "active" : "registration_saved",
-      subscription_status: subscriptionId ? "active" : "not_started",
-      freight_membership_paid: Boolean(subscriptionId),
+      membership_status: finalSubscriptionId ? "active" : "registration_saved",
+      subscription_status: finalSubscriptionId ? subscriptionStatus || "active" : "not_started",
+      freight_membership_paid: Boolean(finalSubscriptionId),
 
       push_notifications: true,
       new_load_alerts: true,
@@ -373,58 +495,61 @@ export default function FreightRegister() {
       privacy_mode: false,
       notifications_enabled: true,
       expo_push_token: "",
-
-      created_at: now,
       updated_at: now,
     };
 
-    const { error: profileError } = await supabase.from("profiles").upsert(
+    if (securityAnswer1) freightPayload.security_answer_1 = normalizeAnswer(securityAnswer1);
+    if (securityAnswer2) freightPayload.security_answer_2 = normalizeAnswer(securityAnswer2);
+    if (securityAnswer3) freightPayload.security_answer_3 = normalizeAnswer(securityAnswer3);
+
+    const profilePayload: any = {
+      id: carrierId,
+      auth_user_id: carrierId,
+      profile_id: carrierId,
+      account_id: finalAccountId,
+      role: "freight",
+      full_name: cleanContactName,
+      name: cleanContactName,
+      email: cleanEmailValue,
+      phone: cleanPhone,
+      username: cleanUsername,
+      company_name: cleanCompanyName,
+      stripe_id: finalStripeId || null,
+      stripe_customer_id: finalStripeCustomerId || null,
+      stripe_account_id: finalStripeAccountId || null,
+      stripe_subscription_id: finalSubscriptionId || null,
+      subscription_id: finalSubscriptionId || null,
+      membership_status: finalSubscriptionId ? "active" : "registration_saved",
+      subscription_status: finalSubscriptionId ? subscriptionStatus || "active" : "not_started",
+      account_active: true,
+      updated_at: now,
+    };
+
+    await supabase.from("profiles").upsert(
       {
-        id: carrierId,
-        auth_user_id: carrierId,
-        account_id: finalAccountId,
-        role: "freight",
-        full_name: cleanContactName,
-        name: cleanContactName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-        company_name: cleanCompanyName,
-        account_active: true,
+        ...profilePayload,
         created_at: now,
-        updated_at: now,
       },
       { onConflict: "id" }
     );
 
-    if (profileError) {
-      console.log("PROFILE SAVE ERROR:", profileError.message);
-    }
-
     const { data: existingFreightUser, error: existingError } = await supabase
       .from("freight_users")
-      .select("id,account_id")
+      .select("*")
       .eq("id", carrierId)
       .maybeSingle();
 
-    if (existingError) {
-      console.log("FREIGHT LOOKUP ERROR:", existingError.message);
-      Alert.alert("Lookup Error", existingError.message);
-      throw existingError;
-    }
+    if (existingError) throw existingError;
 
     let savedFreightUser: any = null;
     let saveError: any = null;
 
     if (existingFreightUser?.id) {
-      const { created_at, ...updatePayload } = freightPayload as any;
-
       const result = await supabase
         .from("freight_users")
         .update({
-          ...updatePayload,
+          ...freightPayload,
           account_id: existingFreightUser.account_id || finalAccountId,
-          updated_at: now,
         })
         .eq("id", carrierId)
         .select()
@@ -435,7 +560,7 @@ export default function FreightRegister() {
     } else {
       const result = await supabase
         .from("freight_users")
-        .insert([freightPayload])
+        .insert([{ ...freightPayload, created_at: now }])
         .select()
         .single();
 
@@ -443,36 +568,13 @@ export default function FreightRegister() {
       saveError = result.error;
     }
 
-    if (saveError) {
-      console.log("FREIGHT USERS SAVE ERROR:", saveError.message);
-      Alert.alert("Freight Save Error", saveError.message);
-      throw saveError;
-    }
-
-    if (!savedFreightUser?.id) {
-      throw new Error("Freight registration did not save to freight_users.");
-    }
-
-    const verify = await supabase
-      .from("freight_users")
-      .select("*")
-      .eq("id", carrierId)
-      .maybeSingle();
-
-    if (verify.error) {
-      console.log("VERIFY SAVE ERROR:", verify.error.message);
-      Alert.alert("Verify Error", verify.error.message);
-      throw verify.error;
-    }
-
-    if (!verify.data?.id) {
-      throw new Error("Freight registration could not be verified in freight_users.");
-    }
+    if (saveError) throw saveError;
+    if (!savedFreightUser?.id) throw new Error("Freight registration did not save.");
 
     await supabase.from("admin_verifications").upsert(
       {
         id: carrierId,
-        account_id: verify.data.account_id || finalAccountId,
+        account_id: savedFreightUser.account_id || finalAccountId,
         carrier_id: carrierId,
         freight_id: carrierId,
         profile_id: carrierId,
@@ -483,7 +585,7 @@ export default function FreightRegister() {
         business_name: cleanCompanyName,
         contact_name: cleanContactName,
         owner_name: cleanContactName,
-        email: cleanEmail,
+        email: cleanEmailValue,
         phone: cleanPhone,
         username: cleanUsername,
         business_address: businessAddress.trim(),
@@ -499,114 +601,33 @@ export default function FreightRegister() {
         insurance_active: insuranceActive,
         licensed_livestock: licensedLivestock,
         licensed_refrigerated_food: licensedRefrigeratedFood,
-        status: "PENDING_VERIFICATION",
-        compliance_status: "PENDING_VERIFICATION",
+        status: "PENDING_REVIEW",
+        compliance_status: "PENDING_REVIEW",
         admin_review_status: "pending",
         review_decision: "pending",
-        approved: false,
+        approved: true,
         rejected: false,
         reviewed: false,
         needs_more_info: false,
         account_active: true,
-        membership_status: subscriptionId ? "active" : "registration_saved",
-        subscription_status: subscriptionId ? "active" : "not_started",
-        freight_membership_paid: Boolean(subscriptionId),
-        stripe_id: stripeId || null,
-        stripe_customer_id: stripeId || null,
-        stripe_subscription_id: subscriptionId || null,
-        created_at: now,
+        membership_status: finalSubscriptionId ? "active" : "registration_saved",
+        subscription_status: finalSubscriptionId ? subscriptionStatus || "active" : "not_started",
+        freight_membership_paid: Boolean(finalSubscriptionId),
+        stripe_id: finalStripeId || null,
+        stripe_customer_id: finalStripeCustomerId || null,
+        stripe_account_id: finalStripeAccountId || null,
+        stripe_subscription_id: finalSubscriptionId || null,
+        subscription_id: finalSubscriptionId || null,
         updated_at: now,
+        created_at: now,
       },
       { onConflict: "id" }
     );
 
-    const localCarrier = {
-      id: carrierId,
-      accountId: verify.data.account_id || finalAccountId,
-      account_id: verify.data.account_id || finalAccountId,
+    await saveHydratedSession(savedFreightUser);
+    hydrateForm(savedFreightUser);
 
-      freightId: carrierId,
-      freight_id: carrierId,
-      profileId: carrierId,
-      profile_id: carrierId,
-      authUserId: carrierId,
-      auth_user_id: carrierId,
-
-      role: "freight",
-
-      companyName: cleanCompanyName,
-      company_name: cleanCompanyName,
-      businessName: cleanCompanyName,
-      business_name: cleanCompanyName,
-      contactName: cleanContactName,
-      contact_name: cleanContactName,
-
-      email: cleanEmail,
-      phone: cleanPhone,
-      username: cleanUsername,
-
-      serviceArea: serviceArea.trim(),
-      service_area: serviceArea.trim(),
-
-      businessAddress: businessAddress.trim(),
-      business_address: businessAddress.trim(),
-      city: city.trim(),
-      state: stateValue.trim().toUpperCase(),
-      zipCode: zipCode.trim(),
-      zip_code: zipCode.trim(),
-
-      mdotNumber: mdotNumber.trim(),
-      mdot_number: mdotNumber.trim(),
-      dot_number: mdotNumber.trim(),
-      mcNumber: mcNumber.trim(),
-      mc_number: mcNumber.trim(),
-
-      insuranceProvider: insuranceProvider.trim(),
-      insurance_provider: insuranceProvider.trim(),
-      insurancePolicyNumber: insurancePolicyNumber.trim(),
-      insurance_policy_number: insurancePolicyNumber.trim(),
-
-      authorityActive,
-      authority_active: authorityActive,
-      insuranceActive,
-      insurance_active: insuranceActive,
-      licensedLivestock,
-      licensed_livestock: licensedLivestock,
-      licensedRefrigeratedFood,
-      licensed_refrigerated_food: licensedRefrigeratedFood,
-
-      accountActive: true,
-      account_active: true,
-
-      stripeId: stripeId || "",
-      stripe_customer_id: stripeId || "",
-      stripeCustomerId: stripeId || "",
-      stripeSubscriptionId: subscriptionId || "",
-      stripe_subscription_id: subscriptionId || "",
-
-      membershipStatus: subscriptionId ? "active" : "registration_saved",
-      membership_status: subscriptionId ? "active" : "registration_saved",
-      subscriptionStatus: subscriptionId ? "active" : "not_started",
-      subscription_status: subscriptionId ? "active" : "not_started",
-
-      freightMembershipPaid: Boolean(subscriptionId),
-      freight_membership_paid: Boolean(subscriptionId),
-
-      createdAt: now,
-      created_at: now,
-      updatedAt: now,
-      updated_at: now,
-    };
-
-    await saveFreightSession(localCarrier);
-
-    setFreightId(carrierId);
-    setAccountId(verify.data.account_id || finalAccountId);
-    setSavedCarrierId(carrierId);
-    setStripeId(verify.data.stripe_customer_id || verify.data.stripe_id || "");
-    setSubscriptionId(verify.data.stripe_subscription_id || "");
-
-    return verify.data;
+    return savedFreightUser;
   }
 
   async function saveRegistration() {
@@ -616,26 +637,23 @@ export default function FreightRegister() {
     try {
       setSaving(true);
 
-      const cleanEmail = normalize(email);
+      const cleanEmailValue = normalize(email);
       const cleanUsername = normalize(username);
 
-      const duplicate = await checkDuplicateFreight(cleanEmail, cleanUsername);
+      const duplicate = await checkDuplicateFreight(cleanEmailValue, cleanUsername);
 
       if (duplicate?.id) {
-        setFreightId(duplicate.freight_id || duplicate.id);
-        setSavedCarrierId(duplicate.id);
-        setAccountId(duplicate.account_id || "");
-        setStripeId(duplicate.stripe_id || duplicate.stripe_customer_id || "");
-        setSubscriptionId(duplicate.stripe_subscription_id || "");
-
+        hydrateForm(duplicate);
+        await saveHydratedSession(duplicate);
         await saveFreightUserRow(duplicate.id, duplicate.account_id || undefined);
+        await syncStripeByEmail(cleanEmailValue, true);
 
-        Alert.alert("Updated", "Existing freight registration was updated in freight_users.");
+        Alert.alert("Updated", "Existing freight registration was updated and Stripe IDs were checked.");
         return;
       }
 
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: cleanEmail,
+        email: cleanEmailValue,
         password: password.trim(),
         options: {
           data: {
@@ -667,14 +685,124 @@ export default function FreightRegister() {
       setAccountId(generatedAccountId);
 
       await saveFreightUserRow(carrierId, generatedAccountId);
+      await syncStripeByEmail(cleanEmailValue, true);
 
-      Alert.alert("Registration Saved", "Your freight registration was saved to freight_users.");
+      Alert.alert("Registration Saved", "Freight registration was saved to Supabase.", [
+        { text: "Dashboard", onPress: () => submitToDashboard() },
+        { text: "Stay Here", style: "cancel" },
+      ]);
     } catch (error: any) {
       console.log("SAVE FREIGHT REGISTER ERROR:", error);
       Alert.alert("Save Error", error?.message || "Unable to save freight registration.");
     } finally {
       setSaving(false);
     }
+  }
+
+  async function startSubscriptionCheckout() {
+    const finalId = savedCarrierId || freightId;
+    const finalEmail = normalize(email);
+
+    if (!finalId || !finalEmail) {
+      Alert.alert("Save Required", "Save registration before starting subscription.");
+      return;
+    }
+
+    if (hasActiveSubscription) {
+      Alert.alert(
+        "Subscription Already Active",
+        "This freight account already has an active Stripe subscription. No duplicate subscription will be created.",
+        [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
+      );
+      return;
+    }
+
+    const synced = await syncStripeByEmail(finalEmail, true);
+
+    if (synced?.stripeSubscriptionId) {
+      Alert.alert(
+        "Subscription Found",
+        "Existing Stripe subscription was found and saved to Supabase. No duplicate subscription was created.",
+        [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const response = await fetch(`${API_BASE_URL}/payments/create-freight-subscription-checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          planType: "freight",
+          userId: finalId,
+          freightId: finalId,
+          freight_id: finalId,
+          accountId,
+          account_id: accountId,
+          email: finalEmail,
+          customerEmail: finalEmail,
+          companyName: companyName.trim(),
+          businessName: companyName.trim(),
+          name: contactName.trim(),
+          username: normalize(username),
+        }),
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || !json.success) {
+        Alert.alert("Checkout Error", json.error || "Unable to start Stripe checkout.");
+        return;
+      }
+
+      if (json.alreadySubscribed) {
+        setStripeId(json.stripeCustomerId || "");
+        setStripeCustomerId(json.stripeCustomerId || "");
+        setSubscriptionId(json.stripeSubscriptionId || "");
+        setSubscriptionStatus(json.subscriptionStatus || "active");
+
+        await loadSavedFreight();
+
+        Alert.alert(
+          "Subscription Already Active",
+          "Existing Stripe subscription was found and saved to Supabase. No duplicate subscription was created.",
+          [{ text: "Go to Dashboard", onPress: () => submitToDashboard() }]
+        );
+
+        return;
+      }
+
+      if (json.stripeCustomerId) {
+        setStripeId(json.stripeCustomerId);
+        setStripeCustomerId(json.stripeCustomerId);
+      }
+
+      if (Platform.OS === "web" && json.url) {
+        window.location.href = json.url;
+        return;
+      }
+
+      Alert.alert("Checkout Created", "Open the checkout URL in your browser to complete payment.");
+    } catch (error: any) {
+      Alert.alert("Checkout Error", error?.message || "Unable to start checkout.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitToDashboard() {
+    const finalId = savedCarrierId || freightId;
+
+    if (!finalId) {
+      Alert.alert("Save Required", "Save your freight registration first.");
+      return;
+    }
+
+    await loadSavedFreight();
+    router.replace("/freight/dashboard" as any);
   }
 
   function renderQuestionPicker(
@@ -709,7 +837,7 @@ export default function FreightRegister() {
 
         <TextInput
           style={styles.input}
-          placeholder="Hidden answer"
+          placeholder={savedCarrierId ? "Leave blank to keep saved answer" : "Hidden answer"}
           placeholderTextColor="#94A3B8"
           value={answer}
           onChangeText={setAnswer}
@@ -728,24 +856,6 @@ export default function FreightRegister() {
         <Text style={styles.section}>{title}</Text>
       </View>
     );
-  }
-
-  function WebStripeBuyButton() {
-    if (Platform.OS !== "web") {
-      return (
-        <View style={styles.nativeStripeNotice}>
-          <Text style={styles.nativeStripeText}>
-            Stripe Buy Button is available on web. For mobile, use the backend Checkout flow or open
-            this registration page in the browser.
-          </Text>
-        </View>
-      );
-    }
-
-    return React.createElement("stripe-buy-button" as any, {
-      "buy-button-id": STRIPE_BUY_BUTTON_ID,
-      "publishable-key": STRIPE_PUBLISHABLE_KEY,
-    });
   }
 
   function ReadOnlyIdBox({
@@ -785,65 +895,48 @@ export default function FreightRegister() {
             <View style={styles.heroIcon}>
               <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
             </View>
-            <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
+            <Text style={styles.kicker}>Farm2Home Freight</Text>
             <Text style={styles.title}>Carrier Registration</Text>
             <Text style={styles.subtitle}>
-              Save your freight carrier registration to Supabase, then complete your freight
-              subscription using Stripe.
+              Save registration, recover existing Stripe IDs, prevent duplicate subscriptions, and
+              submit directly to the freight dashboard.
             </Text>
           </View>
 
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
               <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
-              <Text style={styles.noticeTitle}>Automatic Account IDs</Text>
+              <Text style={styles.noticeTitle}>No Duplicate Subscriptions</Text>
             </View>
             <Text style={styles.noticeText}>
-              Account IDs are assigned automatically. The Supabase UUID stays unchanged, and
-              Farm2Home creates a separate readable ID like Freight_001.
+              Before checkout starts, Farm2Home checks Supabase and Stripe by email. If an existing
+              subscription is found, it updates missing IDs and routes you to the dashboard.
             </Text>
-          </View>
-
-          <View style={styles.priceBox}>
-            <View>
-              <Text style={styles.price}>$9.99 / month</Text>
-              <Text style={styles.priceSub}>Farm2Home Freight Membership</Text>
-            </View>
-            <View style={styles.priceIcon}>
-              <Ionicons name="flash-outline" size={22} color="#FFFFFF" />
-            </View>
           </View>
 
           <View style={styles.card}>
-            <SectionHeader icon="key-outline" title="Account IDs" />
+            <SectionHeader icon="key-outline" title="System IDs" />
+            <ReadOnlyIdBox label="Supabase UUID / Freight ID" value={freightId} fallback="Assigned after save" />
+            <ReadOnlyIdBox label="Static Account ID" value={accountId} fallback="Assigned after save" />
+            <ReadOnlyIdBox label="Stripe ID" value={stripeId} fallback="Assigned by Stripe" />
+            <ReadOnlyIdBox label="Stripe Customer ID" value={stripeCustomerId} fallback="Assigned by Stripe checkout" />
+            <ReadOnlyIdBox label="Stripe Subscription ID" value={subscriptionId} fallback="Assigned by Stripe webhook" />
+            <ReadOnlyIdBox label="Stripe Connect Account ID" value={stripeAccountId} fallback="Assigned by Connect Bank" />
 
-            <Text style={styles.helperText}>
-              These values are assigned automatically. Do not enter account IDs manually.
-            </Text>
-
-            <ReadOnlyIdBox
-              label="Supabase UUID / Freight ID"
-              value={freightId}
-              fallback="Assigned after save"
-            />
-
-            <ReadOnlyIdBox
-              label="Static Account ID"
-              value={accountId}
-              fallback="Assigned after save"
-            />
-
-            <ReadOnlyIdBox
-              label="Stripe Customer ID"
-              value={stripeId}
-              fallback="Assigned by Stripe checkout/webhook"
-            />
-
-            <ReadOnlyIdBox
-              label="Stripe Subscription ID"
-              value={subscriptionId}
-              fallback="Assigned by Stripe checkout/webhook"
-            />
+            <TouchableOpacity
+              style={[styles.syncButton, syncingStripe && styles.disabledButton]}
+              onPress={() => syncStripeByEmail()}
+              disabled={syncingStripe}
+            >
+              {syncingStripe ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="refresh-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.syncButtonText}>Find / Retrieve Missing Stripe Info</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
@@ -858,8 +951,14 @@ export default function FreightRegister() {
           <View style={styles.card}>
             <SectionHeader icon="lock-closed-outline" title="Create Freight Login" />
             <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
-            <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
-            <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" />
+            {!savedCarrierId ? (
+              <>
+                <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+                <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" />
+              </>
+            ) : (
+              <Text style={styles.helperText}>Password already exists. Use reset password if needed.</Text>
+            )}
           </View>
 
           <View style={styles.securityCard}>
@@ -922,17 +1021,29 @@ export default function FreightRegister() {
             )}
           </TouchableOpacity>
 
-          <View style={styles.stripeCard}>
-            <SectionHeader icon="card-outline" title="Start Subscription" />
-            <Text style={styles.stripeText}>
-              After saving registration, complete payment below. Stripe customer and subscription
-              IDs must be saved by your backend Checkout/webhook.
+          <TouchableOpacity
+            style={[styles.darkButton, saving && styles.disabledButton]}
+            onPress={startSubscriptionCheckout}
+            disabled={saving}
+          >
+            <Ionicons name="card-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>
+              {hasActiveSubscription ? "Subscription Active" : "Start Freight Subscription"}
             </Text>
+          </TouchableOpacity>
 
-            <View style={styles.buyButtonBox}>
-              <WebStripeBuyButton />
-            </View>
-          </View>
+          <TouchableOpacity style={styles.successButton} onPress={submitToDashboard}>
+            <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.buttonText}>Submit & Go to Freight Dashboard</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.outlineButton}
+            onPress={() => router.push("/freight/connect-bank" as any)}
+          >
+            <Ionicons name="business-outline" size={18} color={COLORS.red} />
+            <Text style={styles.outlineButtonText}>Connect Bank / Payouts</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity onPress={() => router.push("/freight/login" as any)}>
             <Text style={styles.link}>Already registered? Login</Text>
@@ -991,26 +1102,6 @@ const styles = StyleSheet.create({
   noticeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
   noticeTitle: { color: COLORS.text, fontWeight: "900", fontSize: 17 },
   noticeText: { color: COLORS.text, fontWeight: "700", lineHeight: 22 },
-  priceBox: {
-    backgroundColor: COLORS.red,
-    padding: 18,
-    borderRadius: 20,
-    marginHorizontal: 18,
-    marginBottom: 16,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  price: { fontSize: 27, fontWeight: "900", color: "#FFFFFF" },
-  priceSub: { color: "#FFE4E6", marginTop: 4, fontWeight: "800" },
-  priceIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 18,
-    backgroundColor: COLORS.black,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   card: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
@@ -1028,43 +1119,6 @@ const styles = StyleSheet.create({
     padding: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
-  },
-  stripeCard: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 18,
-    marginTop: 12,
-    marginBottom: 16,
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  stripeText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 21,
-    marginBottom: 14,
-  },
-  buyButtonBox: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 12,
-    minHeight: 90,
-    justifyContent: "center",
-  },
-  nativeStripeNotice: {
-    backgroundColor: "#FFF1F2",
-    borderColor: COLORS.red,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-  },
-  nativeStripeText: {
-    color: COLORS.red,
-    fontWeight: "800",
-    lineHeight: 20,
   },
   sectionHeader: { flexDirection: "row", gap: 10, alignItems: "center", marginBottom: 16 },
   sectionIcon: {
@@ -1091,7 +1145,7 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 21,
-    marginBottom: 14,
+    marginBottom: 10,
   },
   readOnlyBox: {
     backgroundColor: COLORS.surface,
@@ -1114,9 +1168,18 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 15,
   },
-  readOnlyFallback: {
-    color: "#94A3B8",
+  readOnlyFallback: { color: "#94A3B8" },
+  syncButton: {
+    backgroundColor: COLORS.black,
+    borderRadius: 14,
+    padding: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 4,
   },
+  syncButtonText: { color: "#FFFFFF", fontWeight: "900" },
   securityBox: { marginBottom: 12 },
   securityLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
   questionChip: {
@@ -1160,6 +1223,47 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
+  },
+  darkButton: {
+    backgroundColor: COLORS.black,
+    padding: 16,
+    borderRadius: 16,
+    marginHorizontal: 18,
+    marginTop: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  successButton: {
+    backgroundColor: COLORS.green,
+    padding: 16,
+    borderRadius: 16,
+    marginHorizontal: 18,
+    marginTop: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  outlineButton: {
+    backgroundColor: "#FFF1F2",
+    borderColor: COLORS.red,
+    borderWidth: 1,
+    padding: 16,
+    borderRadius: 16,
+    marginHorizontal: 18,
+    marginTop: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  outlineButtonText: {
+    color: COLORS.red,
+    textAlign: "center",
+    fontWeight: "900",
+    fontSize: 16,
   },
   disabledButton: { opacity: 0.6 },
   buttonText: {

@@ -19,30 +19,56 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-const FREIGHT_ROUTES = {
+const ROUTES = {
   dashboard: "/freight/dashboard",
   board: "/freight/board",
   liveLoads: "/freight/live-loads",
   myLoads: "/freight/my-loads",
+  loadDetail: "/freight/load-detail",
+  loadChat: "/freight/load-chat",
+  tracking: "/freight/tracking",
   liveRoute: "/freight/live-route",
   proofOfPickup: "/freight/proof-of-pickup",
   proofOfDelivery: "/freight/proof-of-delivery",
+  connectBank: "/freight/connect-bank",
   profile: "/freight/profile",
   settings: "/freight/settings",
-  connectBank: "/freight/connect-bank",
   login: "/freight/login",
   register: "/freight/register",
 } as const;
 
-type FreightRoute = (typeof FREIGHT_ROUTES)[keyof typeof FREIGHT_ROUTES];
+type FreightRoute = (typeof ROUTES)[keyof typeof ROUTES];
+
+type FreightLoad = {
+  id: string;
+  title?: string;
+  commodity?: string;
+  farmer_name?: string;
+  broker_name?: string;
+  pickup_location?: string;
+  dropoff_location?: string;
+  pickup_date?: string;
+  pickup_time?: string;
+  equipment_type?: string;
+  weight_lbs?: number;
+  distance_miles?: number;
+  rate?: number;
+  freight_total?: number;
+  payout_amount?: number;
+  status?: string;
+  payout_status?: string;
+  settlement_status?: string;
+  notes?: string;
+  updated_at?: string;
+};
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F3F4F6",
   card: "#FFFFFF",
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
-  redDark: "#9F1117",
+  redDark: "#991B1B",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
@@ -54,74 +80,56 @@ const COLORS = {
   slate: "#64748B",
 };
 
-type FreightLoad = {
-  id: string;
-  title?: string;
-  commodity?: string;
-  farmer_name?: string;
-  pickup_location?: string;
-  dropoff_location?: string;
-  pickup_date?: string;
-  pickup_time?: string;
-  dropoff_date?: string;
-  dropoff_time?: string;
-  equipment_type?: string;
-  weight_lbs?: number;
-  distance_miles?: number;
-  rate?: number;
-  status?: string;
-  notes?: string;
-  carrier_id?: string;
-  driver_id?: string;
-  accepted_by?: string;
-  accepted_at?: string;
-  arrived_pickup_at?: string;
-  picked_up_at?: string;
-  in_transit_at?: string;
-  arrived_dropoff_at?: string;
-  delivered_at?: string;
-  updated_at?: string;
-};
-
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
-function money(value: number) {
+function money(value: any) {
   return `$${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 }
 
-function goTo(route: FreightRoute) {
-  router.push(route as any);
+function loadValue(load: FreightLoad) {
+  return Number(load.rate || load.freight_total || load.payout_amount || 0);
 }
 
-function statusColor(status: string) {
-  const value = normalize(status);
-
-  if (value === "accepted") return COLORS.red;
-  if (value === "arrived_pickup") return COLORS.teal;
-  if (value === "picked_up") return COLORS.amber;
-  if (value === "in_transit") return COLORS.purple;
-  if (value === "arrived_dropoff") return COLORS.teal;
-  if (value === "delivered" || value === "completed") return COLORS.green;
-  if (value === "cancelled") return COLORS.redDark;
-
-  return COLORS.slate;
-}
-
-function statusLabel(status: string) {
+function statusLabel(status: any) {
   return String(status || "accepted")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export default function MyFreightLoads() {
+function statusColor(status: any) {
+  const value = normalize(status);
+
+  if (["accepted", "booked"].includes(value)) return COLORS.red;
+  if (value === "arrived_pickup") return COLORS.teal;
+  if (value === "picked_up") return COLORS.amber;
+  if (value === "in_transit") return COLORS.purple;
+  if (value === "arrived_dropoff") return COLORS.teal;
+  if (["delivered", "completed"].includes(value)) return COLORS.green;
+  if (value === "cancelled") return COLORS.redDark;
+
+  return COLORS.slate;
+}
+
+function goTo(route: FreightRoute) {
+  router.push(route as any);
+}
+
+function openWithLoad(route: FreightRoute, loadId: string) {
+  router.push({
+    pathname: route as any,
+    params: { loadId },
+  });
+}
+
+export default function FreightMyLoadsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
+  const [updatingId, setUpdatingId] = useState("");
   const [carrier, setCarrier] = useState<any>(null);
   const [loads, setLoads] = useState<FreightLoad[]>([]);
 
@@ -148,10 +156,13 @@ export default function MyFreightLoads() {
   }
 
   async function persistCarrier(nextCarrier: any) {
+    const id = nextCarrier.id || nextCarrier.freightId || nextCarrier.freight_id;
+
     const normalizedCarrier = {
       ...nextCarrier,
-      id: nextCarrier.id || nextCarrier.freightId,
-      freightId: nextCarrier.freightId || nextCarrier.id,
+      id,
+      freightId: id,
+      freight_id: id,
       role: "freight",
       email: normalize(nextCarrier.email),
       companyName:
@@ -159,21 +170,15 @@ export default function MyFreightLoads() {
         nextCarrier.businessName ||
         nextCarrier.company_name ||
         nextCarrier.business_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
       businessName:
         nextCarrier.businessName ||
         nextCarrier.companyName ||
         nextCarrier.business_name ||
         nextCarrier.company_name ||
-        "Freight Connect Carrier",
-      stripeAccountId:
-        nextCarrier.stripeAccountId ||
-        nextCarrier.stripe_account_id ||
-        "",
-      stripe_account_id:
-        nextCarrier.stripe_account_id ||
-        nextCarrier.stripeAccountId ||
-        "",
+        "Farm2Home Freight Carrier",
+      stripeAccountId: nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
+      stripe_account_id: nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -193,12 +198,10 @@ export default function MyFreightLoads() {
 
       const stored = await getStoredCarrier();
       const { data: authData } = await supabase.auth.getUser();
-      const authUser = authData?.user;
-
-      const email = normalize(stored?.email || authUser?.email || "");
+      const email = normalize(stored?.email || authData?.user?.email || "");
 
       if (!email) {
-        router.replace(FREIGHT_ROUTES.login as any);
+        router.replace(ROUTES.login as any);
         return;
       }
 
@@ -208,59 +211,31 @@ export default function MyFreightLoads() {
         .eq("email", email)
         .maybeSingle();
 
-      if (carrierError) {
-        console.log("My freight loads profile error:", carrierError.message);
-      }
+      if (carrierError) console.log("My freight loads profile error:", carrierError.message);
 
       if (!dbCarrier) {
-        Alert.alert(
-          "Freight Profile Missing",
-          "No freight profile was found for this email. Please complete freight registration again."
-        );
-        router.replace(FREIGHT_ROUTES.register as any);
+        Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
+        router.replace(ROUTES.register as any);
         return;
       }
 
-      const mergedCarrier = {
+      const mergedCarrier = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
         id: dbCarrier.id,
-        freightId: dbCarrier.id,
+        freightId: dbCarrier.freight_id || dbCarrier.id,
+        freight_id: dbCarrier.freight_id || dbCarrier.id,
         email: normalize(dbCarrier.email || email),
-        role: "freight",
-        companyName:
-          dbCarrier.company_name ||
-          dbCarrier.business_name ||
-          stored?.companyName ||
-          stored?.businessName ||
-          stored?.contactName ||
-          "Freight Connect Carrier",
-        businessName:
-          dbCarrier.business_name ||
-          dbCarrier.company_name ||
-          stored?.businessName ||
-          stored?.companyName ||
-          "Freight Connect Carrier",
-        stripeAccountId:
-          dbCarrier.stripe_account_id ||
-          stored?.stripeAccountId ||
-          stored?.stripe_account_id ||
-          "",
-        stripe_account_id:
-          dbCarrier.stripe_account_id ||
-          stored?.stripe_account_id ||
-          stored?.stripeAccountId ||
-          "",
-      };
-
-      await persistCarrier(mergedCarrier);
+      });
 
       const carrierId = mergedCarrier.id;
 
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
-        .or(`carrier_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`)
+        .or(
+          `carrier_id.eq.${carrierId},freight_user_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`
+        )
         .order("updated_at", { ascending: false });
 
       if (error) {
@@ -286,6 +261,8 @@ export default function MyFreightLoads() {
 
   async function updateLoadStatus(load: FreightLoad, status: string) {
     try {
+      setUpdatingId(load.id);
+
       const now = new Date().toISOString();
 
       const payload: any = {
@@ -297,52 +274,72 @@ export default function MyFreightLoads() {
       if (status === "picked_up") payload.picked_up_at = now;
       if (status === "in_transit") payload.in_transit_at = now;
       if (status === "arrived_dropoff") payload.arrived_dropoff_at = now;
-      if (status === "delivered") payload.delivered_at = now;
 
-      const { error } = await supabase
-        .from("freight_loads")
-        .update(payload)
-        .eq("id", load.id);
+      if (status === "delivered") {
+        payload.delivered_at = now;
+        payload.settlement_status = "pending";
+        payload.payout_status = "pending";
+      }
 
+      const { error } = await supabase.from("freight_loads").update(payload).eq("id", load.id);
       if (error) throw error;
 
+      if (carrier?.id) {
+        await supabase.from("freight_notifications").insert({
+          freight_user_id: carrier.id,
+          freight_id: carrier.id,
+          user_id: carrier.id,
+          load_id: load.id,
+          title: "Load Status Updated",
+          message: `${load.title || load.commodity || "Freight Load"} marked as ${statusLabel(status)}.`,
+          type: "load",
+          is_read: false,
+          read: false,
+          created_at: now,
+        });
+      }
+
       await loadMyLoads();
-      Alert.alert("Load Updated", `Load marked as ${statusLabel(status)}.`);
     } catch (error: any) {
       Alert.alert("Update Error", error?.message || "Unable to update this load.");
+    } finally {
+      setUpdatingId("");
     }
   }
 
-  function openLiveRoute(load: FreightLoad) {
-    router.push({
-      pathname: FREIGHT_ROUTES.liveRoute as any,
-      params: { loadId: load.id },
-    });
-  }
+  const stats = useMemo(() => {
+    const booked = loads.filter((x) => ["accepted", "booked"].includes(normalize(x.status)));
+    const active = loads.filter((x) =>
+      ["accepted", "booked", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
+        normalize(x.status)
+      )
+    );
+    const delivered = loads.filter((x) => ["delivered", "completed"].includes(normalize(x.status)));
+    const totalValue = loads.reduce((sum, x) => sum + loadValue(x), 0);
+    const pendingPayout = loads
+      .filter((x) => ["pending", "processing", ""].includes(normalize(x.payout_status)))
+      .reduce((sum, x) => sum + loadValue(x), 0);
 
-  function openProofOfPickup(load: FreightLoad) {
-    router.push({
-      pathname: FREIGHT_ROUTES.proofOfPickup as any,
-      params: { loadId: load.id },
-    });
-  }
+    return {
+      booked: booked.length,
+      active: active.length,
+      delivered: delivered.length,
+      totalValue,
+      pendingPayout,
+    };
+  }, [loads]);
 
-  function openProofOfDelivery(load: FreightLoad) {
-    router.push({
-      pathname: FREIGHT_ROUTES.proofOfDelivery as any,
-      params: { loadId: load.id },
-    });
-  }
-
-  function renderActions(load: FreightLoad) {
+  function nextAction(load: FreightLoad) {
     const status = normalize(load.status);
+    const busy = updatingId === load.id;
 
-    if (status === "accepted") {
+    if (status === "accepted" || status === "booked") {
       return (
         <ActionButton
           title="Arrived Pickup"
           icon="location-outline"
           color={COLORS.red}
+          busy={busy}
           onPress={() => updateLoadStatus(load, "arrived_pickup")}
         />
       );
@@ -354,7 +351,7 @@ export default function MyFreightLoads() {
           title="Proof Pickup"
           icon="camera-outline"
           color={COLORS.teal}
-          onPress={() => openProofOfPickup(load)}
+          onPress={() => openWithLoad(ROUTES.proofOfPickup, load.id)}
         />
       );
     }
@@ -365,6 +362,7 @@ export default function MyFreightLoads() {
           title="Start Transit"
           icon="navigate-outline"
           color={COLORS.purple}
+          busy={busy}
           onPress={() => updateLoadStatus(load, "in_transit")}
         />
       );
@@ -376,6 +374,7 @@ export default function MyFreightLoads() {
           title="Arrived Dropoff"
           icon="flag-outline"
           color={COLORS.teal}
+          busy={busy}
           onPress={() => updateLoadStatus(load, "arrived_dropoff")}
         />
       );
@@ -387,7 +386,7 @@ export default function MyFreightLoads() {
           title="Proof Delivery"
           icon="checkmark-done-outline"
           color={COLORS.green}
-          onPress={() => openProofOfDelivery(load)}
+          onPress={() => openWithLoad(ROUTES.proofOfDelivery, load.id)}
         />
       );
     }
@@ -408,22 +407,6 @@ export default function MyFreightLoads() {
     );
   }
 
-  const stats = useMemo(() => {
-    const active = loads.filter((x) =>
-      ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
-        normalize(x.status)
-      )
-    );
-
-    const completed = loads.filter((x) =>
-      ["delivered", "completed"].includes(normalize(x.status))
-    );
-
-    const totalValue = loads.reduce((sum, x) => sum + Number(x.rate || 0), 0);
-
-    return { active: active.length, completed: completed.length, totalValue };
-  }, [loads]);
-
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
@@ -440,35 +423,41 @@ export default function MyFreightLoads() {
 
       <View style={styles.hero}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
+          <Text style={styles.eyebrow}>Farm2Home Freight</Text>
           <Text style={styles.title}>My Loads</Text>
           <Text style={styles.subtitle}>
-            {carrier?.companyName || "Freight Connect Carrier"} · Manage accepted, active,
-            and completed freight loads.
+            {carrier?.companyName || "Freight Carrier"} · Booked, active, delivered, payout, route,
+            tracking, and chat.
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.dashboard)}>
+        <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(ROUTES.dashboard)}>
           <Ionicons name="briefcase-outline" size={32} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
       <View style={styles.summaryRow}>
+        <SummaryCard label="Booked" value={stats.booked} />
         <SummaryCard label="Active" value={stats.active} />
-        <SummaryCard label="Completed" value={stats.completed} />
-        <SummaryCard label="Value" value={money(stats.totalValue)} />
+        <SummaryCard label="Delivered" value={stats.delivered} />
+      </View>
+
+      <View style={styles.valueCard}>
+        <View>
+          <Text style={styles.valueLabel}>Total Load Value</Text>
+          <Text style={styles.valueAmount}>{money(stats.totalValue)}</Text>
+          <Text style={styles.valueSub}>Pending payout: {money(stats.pendingPayout)}</Text>
+        </View>
+
+        <TouchableOpacity style={styles.valueButton} onPress={() => goTo(ROUTES.connectBank)}>
+          <Ionicons name="business-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.valueButtonText}>Payouts</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.navRow}>
-        <NavButton title="Load Board" icon="list-outline" route={FREIGHT_ROUTES.board} />
-        <NavButton title="Live Loads" icon="pulse-outline" route={FREIGHT_ROUTES.liveLoads} outline />
-      </View>
-
-      <View style={styles.quickGrid}>
-        <QuickLink icon="grid-outline" label="Dashboard" route={FREIGHT_ROUTES.dashboard} />
-        <QuickLink icon="person-outline" label="Profile" route={FREIGHT_ROUTES.profile} />
-        <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-        <QuickLink icon="settings-outline" label="Settings" route={FREIGHT_ROUTES.settings} />
+        <NavButton title="Load Board" icon="list-outline" route={ROUTES.board} />
+        <NavButton title="Live Loads" icon="pulse-outline" route={ROUTES.liveLoads} outline />
       </View>
 
       <FlatList
@@ -479,62 +468,93 @@ export default function MyFreightLoads() {
         ListEmptyComponent={
           <View style={styles.emptyCard}>
             <Ionicons name="cube-outline" size={38} color={COLORS.red} />
-            <Text style={styles.emptyTitle}>No claimed loads yet.</Text>
+            <Text style={styles.emptyTitle}>No booked loads yet</Text>
             <Text style={styles.emptyText}>
-              Claim a delivery from the freight board to manage it here.
+              Book a farm freight load from the board to manage it here.
             </Text>
 
-            <TouchableOpacity style={styles.emptyButton} onPress={() => goTo(FREIGHT_ROUTES.board)}>
+            <TouchableOpacity style={styles.emptyButton} onPress={() => goTo(ROUTES.board)}>
               <Ionicons name="list-outline" size={18} color="#FFFFFF" />
               <Text style={styles.emptyButtonText}>Open Load Board</Text>
             </TouchableOpacity>
           </View>
         }
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={styles.headerRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.loadTitle}>{item.title || item.commodity || "Freight Load"}</Text>
-                <Text style={styles.loadId}>Load #{String(item.id).slice(-6)}</Text>
+        renderItem={({ item }) => {
+          const payoutStatus = item.payout_status || "pending";
+          const settlementStatus = item.settlement_status || "pending";
+
+          return (
+            <View style={styles.card}>
+              <View style={styles.headerRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.loadTitle}>{item.title || item.commodity || "Freight Load"}</Text>
+                  <Text style={styles.loadId}>Load #{String(item.id).slice(-6)}</Text>
+                </View>
+
+                <View style={[styles.statusPill, { backgroundColor: statusColor(item.status || "") }]}>
+                  <Text style={styles.statusText}>{statusLabel(item.status || "")}</Text>
+                </View>
               </View>
 
-              <View style={[styles.statusPill, { backgroundColor: statusColor(item.status || "") }]}>
-                <Text style={styles.statusText}>{statusLabel(item.status || "")}</Text>
-              </View>
-            </View>
-
-            <View style={styles.routeBox}>
-              <Text style={styles.route}>{item.pickup_location || "Pickup TBD"}</Text>
-              <Text style={styles.arrow}>→</Text>
-              <Text style={styles.route}>{item.dropoff_location || "Dropoff TBD"}</Text>
-            </View>
-
-            <View style={styles.detailsBox}>
-              <Text style={styles.detail}>Commodity: {item.commodity || "Farm Freight"}</Text>
-              <Text style={styles.detail}>
-                Pickup: {item.pickup_date || "TBD"} · {item.pickup_time || "TBD"}
-              </Text>
-              <Text style={styles.detail}>Equipment: {item.equipment_type || "Standard"}</Text>
-              <Text style={styles.detail}>Posted By: {item.farmer_name || "Farm2Home Partner"}</Text>
-            </View>
-
-            {!!item.notes && <Text style={styles.description}>{item.notes}</Text>}
-
-            <View style={styles.footerRow}>
-              <View style={styles.payoutBlock}>
-                <Text style={styles.rateLabel}>Payout</Text>
-                <Text style={styles.payout}>{money(Number(item.rate || 0))}</Text>
+              <View style={styles.routeBox}>
+                <View style={styles.routeStop}>
+                  <Ionicons name="radio-button-on-outline" size={18} color={COLORS.green} />
+                  <Text style={styles.route}>{item.pickup_location || "Pickup TBD"}</Text>
+                </View>
+                <View style={styles.routeLine} />
+                <View style={styles.routeStop}>
+                  <Ionicons name="location-outline" size={18} color={COLORS.red} />
+                  <Text style={styles.route}>{item.dropoff_location || "Dropoff TBD"}</Text>
+                </View>
               </View>
 
-              {renderActions(item)}
-            </View>
+              <View style={styles.detailsGrid}>
+                <InfoBox label="Commodity" value={item.commodity || "Farm Freight"} />
+                <InfoBox label="Pickup" value={`${item.pickup_date || "TBD"} · ${item.pickup_time || "TBD"}`} />
+                <InfoBox label="Equipment" value={item.equipment_type || "Standard"} />
+                <InfoBox label="Miles" value={`${Number(item.distance_miles || 0).toFixed(0)} mi`} />
+                <InfoBox label="Broker/Farmer" value={item.broker_name || item.farmer_name || "Farm2Home Partner"} />
+                <InfoBox label="Payout Status" value={statusLabel(payoutStatus)} />
+                <InfoBox label="Settlement" value={statusLabel(settlementStatus)} />
+                <InfoBox label="Load Value" value={money(loadValue(item))} />
+              </View>
 
-            <TouchableOpacity style={styles.routeButton} onPress={() => openLiveRoute(item)}>
-              <Ionicons name="map-outline" size={18} color={COLORS.red} />
-              <Text style={styles.routeButtonText}>Open Live Route</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+              {!!item.notes && <Text style={styles.description}>{item.notes}</Text>}
+
+              <View style={styles.footerRow}>
+                <View style={styles.payoutBlock}>
+                  <Text style={styles.rateLabel}>Payout</Text>
+                  <Text style={styles.payout}>{money(loadValue(item))}</Text>
+                </View>
+
+                {nextAction(item)}
+              </View>
+
+              <View style={styles.buttonGrid}>
+                <SmallButton
+                  title="Details"
+                  icon="document-text-outline"
+                  onPress={() => openWithLoad(ROUTES.loadDetail, item.id)}
+                />
+                <SmallButton
+                  title="Chat"
+                  icon="chatbubbles-outline"
+                  onPress={() => openWithLoad(ROUTES.loadChat, item.id)}
+                />
+                <SmallButton
+                  title="Tracking"
+                  icon="map-outline"
+                  onPress={() => openWithLoad(ROUTES.tracking, item.id)}
+                />
+                <SmallButton
+                  title="Live Route"
+                  icon="navigate-outline"
+                  onPress={() => openWithLoad(ROUTES.liveRoute, item.id)}
+                />
+              </View>
+            </View>
+          );
+        }}
       />
     </SafeAreaView>
   );
@@ -561,30 +581,19 @@ function NavButton({
   outline?: boolean;
 }) {
   return (
-    <TouchableOpacity
-      style={outline ? styles.navOutline : styles.navButton}
-      onPress={() => goTo(route)}
-    >
+    <TouchableOpacity style={outline ? styles.navOutline : styles.navButton} onPress={() => goTo(route)}>
       <Ionicons name={icon} size={18} color={outline ? COLORS.red : "#FFFFFF"} />
       <Text style={outline ? styles.navOutlineText : styles.navText}>{title}</Text>
     </TouchableOpacity>
   );
 }
 
-function QuickLink({
-  icon,
-  label,
-  route,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  route: FreightRoute;
-}) {
+function InfoBox({ label, value }: { label: string; value: string }) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
-      <Ionicons name={icon} size={21} color={COLORS.red} />
-      <Text style={styles.quickText}>{label}</Text>
-    </TouchableOpacity>
+    <View style={styles.infoBox}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value || "TBD"}</Text>
+    </View>
   );
 }
 
@@ -593,16 +602,45 @@ function ActionButton({
   icon,
   color,
   onPress,
+  busy,
 }: {
   title: string;
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
   onPress: () => void;
+  busy?: boolean;
 }) {
   return (
-    <TouchableOpacity style={[styles.actionButton, { backgroundColor: color }]} onPress={onPress}>
-      <Ionicons name={icon} size={17} color="#FFFFFF" />
-      <Text style={styles.actionText}>{title}</Text>
+    <TouchableOpacity
+      style={[styles.actionButton, { backgroundColor: color }, busy && styles.disabledButton]}
+      onPress={onPress}
+      disabled={busy}
+    >
+      {busy ? (
+        <ActivityIndicator color="#FFFFFF" />
+      ) : (
+        <>
+          <Ionicons name={icon} size={17} color="#FFFFFF" />
+          <Text style={styles.actionText}>{title}</Text>
+        </>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function SmallButton({
+  title,
+  icon,
+  onPress,
+}: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.smallButton} onPress={onPress}>
+      <Ionicons name={icon} size={17} color={COLORS.red} />
+      <Text style={styles.smallButtonText}>{title}</Text>
     </TouchableOpacity>
   );
 }
@@ -641,18 +679,8 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 32,
-    fontWeight: "900",
-    marginTop: 6,
-  },
-  subtitle: {
-    color: "#D1D5DB",
-    marginTop: 8,
-    lineHeight: 22,
-    fontWeight: "700",
-  },
+  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginTop: 6 },
+  subtitle: { color: "#D1D5DB", marginTop: 8, lineHeight: 22, fontWeight: "700" },
   summaryRow: {
     flexDirection: "row",
     gap: 10,
@@ -669,6 +697,30 @@ const styles = StyleSheet.create({
   },
   summaryValue: { color: COLORS.black, fontSize: 21, fontWeight: "900" },
   summaryLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 4 },
+  valueCard: {
+    backgroundColor: COLORS.red,
+    borderRadius: 22,
+    padding: 18,
+    marginHorizontal: 18,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  valueLabel: { color: "#FFE4E6", fontWeight: "900", textTransform: "uppercase", fontSize: 12 },
+  valueAmount: { color: "#FFFFFF", fontSize: 30, fontWeight: "900", marginTop: 4 },
+  valueSub: { color: "#FFE4E6", fontWeight: "800", marginTop: 4 },
+  valueButton: {
+    backgroundColor: COLORS.black,
+    borderRadius: 14,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    flexDirection: "row",
+    gap: 7,
+    alignItems: "center",
+  },
+  valueButtonText: { color: "#FFFFFF", fontWeight: "900" },
   navRow: {
     flexDirection: "row",
     gap: 10,
@@ -699,28 +751,6 @@ const styles = StyleSheet.create({
   },
   navText: { color: "#FFFFFF", fontWeight: "900" },
   navOutlineText: { color: COLORS.red, fontWeight: "900" },
-  quickGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingHorizontal: 18,
-    marginBottom: 10,
-  },
-  quickLink: {
-    width: "48%",
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 13,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: "center",
-    gap: 7,
-  },
-  quickText: {
-    color: COLORS.text,
-    fontWeight: "900",
-    textAlign: "center",
-  },
   listContent: { paddingHorizontal: 18, paddingBottom: 90 },
   emptyCard: {
     backgroundColor: COLORS.card,
@@ -749,10 +779,7 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: "center",
   },
-  emptyButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
+  emptyButtonText: { color: "#FFFFFF", fontWeight: "900" },
   card: {
     backgroundColor: COLORS.card,
     borderColor: COLORS.border,
@@ -779,23 +806,37 @@ const styles = StyleSheet.create({
     padding: 14,
     marginTop: 14,
   },
-  route: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
-  arrow: { color: COLORS.red, fontSize: 22, fontWeight: "900", marginVertical: 4 },
-  detailsBox: {
+  routeStop: { flexDirection: "row", gap: 9, alignItems: "center" },
+  routeLine: {
+    width: 1,
+    height: 18,
+    backgroundColor: COLORS.border,
+    marginLeft: 8,
+    marginVertical: 5,
+  },
+  route: { color: COLORS.text, fontSize: 16, fontWeight: "900", flex: 1 },
+  detailsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  infoBox: {
+    width: "48%",
     backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
-    marginTop: 12,
+    borderRadius: 14,
+    padding: 12,
   },
-  detail: { color: COLORS.text, fontWeight: "700", marginBottom: 6 },
-  description: {
+  infoLabel: {
     color: COLORS.muted,
-    lineHeight: 21,
-    marginTop: 12,
-    fontWeight: "700",
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
   },
+  infoValue: { color: COLORS.text, fontWeight: "800", marginTop: 5, lineHeight: 18 },
+  description: { color: COLORS.muted, lineHeight: 21, marginTop: 12, fontWeight: "700" },
   footerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -813,12 +854,14 @@ const styles = StyleSheet.create({
   },
   payout: { color: COLORS.red, fontSize: 28, fontWeight: "900" },
   actionButton: {
+    minWidth: 145,
     paddingHorizontal: 14,
     paddingVertical: 13,
     borderRadius: 14,
     flexDirection: "row",
     gap: 7,
     alignItems: "center",
+    justifyContent: "center",
   },
   actionText: { color: "#FFFFFF", fontWeight: "900" },
   completeBadge: {
@@ -838,17 +881,24 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   inactiveText: { color: "#FFFFFF", fontWeight: "900" },
-  routeButton: {
+  buttonGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  smallButton: {
+    width: "48%",
     backgroundColor: "#FFF1F2",
     borderWidth: 1,
     borderColor: COLORS.red,
     borderRadius: 14,
-    padding: 13,
-    marginTop: 12,
+    padding: 12,
     flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
     justifyContent: "center",
+    gap: 7,
+    alignItems: "center",
   },
-  routeButtonText: { color: COLORS.red, fontWeight: "900" },
+  smallButtonText: { color: COLORS.red, fontWeight: "900", fontSize: 12 },
+  disabledButton: { opacity: 0.6 },
 });

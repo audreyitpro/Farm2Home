@@ -21,15 +21,16 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-const FREIGHT_ROUTES = {
-  managementCenter: "/freight/freight-management-center",
-  dispatchCenter: "/freight/dispatch-center",
+const ROUTES = {
+  dashboard: "/freight/dashboard",
+  board: "/freight/board",
   myLoads: "/freight/my-loads",
   liveLoads: "/freight/live-loads",
-  support: "/freight/support",
+  loadChat: "/freight/load-chat",
+  dispatchAlerts: "/freight/dispatch-alerts",
   notifications: "/freight/notifications",
+  support: "/freight/support",
   reviewStatus: "/freight/review-status",
-  complianceVault: "/freight/compliance-vault",
   loadIssues: "/freight/load-issues",
   routeExceptions: "/freight/route-exceptions",
   login: "/freight/login",
@@ -37,17 +38,19 @@ const FREIGHT_ROUTES = {
 } as const;
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F3F4F6",
   card: "#FFFFFF",
   surface: "#F9FAFB",
   black: "#050505",
   red: "#D71920",
+  redDark: "#991B1B",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
   green: "#16A34A",
   amber: "#D97706",
   blue: "#2563EB",
+  purple: "#7C3AED",
 };
 
 function normalize(value: any) {
@@ -75,9 +78,9 @@ export default function FreightCommunicationCenterScreen() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [loads, setLoads] = useState<any[]>([]);
 
+  const [selectedType, setSelectedType] = useState("Dispatch");
   const [subject, setSubject] = useState("");
   const [messageBody, setMessageBody] = useState("");
-  const [messageType, setMessageType] = useState("Support");
 
   useFocusEffect(
     useCallback(() => {
@@ -88,15 +91,12 @@ export default function FreightCommunicationCenterScreen() {
   const stats = useMemo(() => {
     const unreadMessages = messages.filter((item) => !item.read_at && !item.is_read).length;
     const activeAlerts = alerts.filter((item) =>
-      ["new", "active", "unread", "pending"].includes(normalize(item.status))
+      ["new", "active", "unread", "pending"].includes(normalize(item.status || item.type))
     ).length;
     const activeLoads = loads.filter((item) =>
-      ["accepted", "arrived_pickup", "picked_up", "in_transit", "arrived_dropoff"].includes(
+      ["accepted", "booked", "picked_up", "in_transit", "arrived_pickup"].includes(
         normalize(item.status)
       )
-    ).length;
-    const reviewMessages = messages.filter((item) =>
-      normalize(item.message_type || item.type).includes("review")
     ).length;
 
     return {
@@ -104,7 +104,6 @@ export default function FreightCommunicationCenterScreen() {
       unreadMessages,
       activeAlerts,
       activeLoads,
-      reviewMessages,
     };
   }, [messages, alerts, loads]);
 
@@ -136,7 +135,7 @@ export default function FreightCommunicationCenterScreen() {
         nextCarrier.businessName ||
         nextCarrier.company_name ||
         nextCarrier.business_name ||
-        "Freight Connect Carrier",
+        "Farm2Home Freight Carrier",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -159,7 +158,7 @@ export default function FreightCommunicationCenterScreen() {
       const email = normalize(stored?.email || authData?.user?.email || "");
 
       if (!email) {
-        router.replace(FREIGHT_ROUTES.login as any);
+        router.replace(ROUTES.login as any);
         return;
       }
 
@@ -173,7 +172,7 @@ export default function FreightCommunicationCenterScreen() {
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
-        router.replace(FREIGHT_ROUTES.register as any);
+        router.replace(ROUTES.register as any);
         return;
       }
 
@@ -188,13 +187,13 @@ export default function FreightCommunicationCenterScreen() {
           dbCarrier.business_name ||
           stored?.companyName ||
           stored?.businessName ||
-          "Freight Connect Carrier",
+          "Farm2Home Freight Carrier",
       });
 
       const { data: messageData } = await supabase
         .from("freight_messages")
         .select("*")
-        .eq("freight_id", mergedCarrier.id)
+        .or(`freight_id.eq.${mergedCarrier.id},carrier_id.eq.${mergedCarrier.id},sender_id.eq.${mergedCarrier.id}`)
         .order("created_at", { ascending: false });
 
       setMessages(Array.isArray(messageData) ? messageData : []);
@@ -202,7 +201,7 @@ export default function FreightCommunicationCenterScreen() {
       const { data: alertData } = await supabase
         .from("freight_notifications")
         .select("*")
-        .eq("freight_id", mergedCarrier.id)
+        .or(`freight_id.eq.${mergedCarrier.id},freight_user_id.eq.${mergedCarrier.id},user_id.eq.${mergedCarrier.id}`)
         .order("created_at", { ascending: false });
 
       setAlerts(Array.isArray(alertData) ? alertData : []);
@@ -211,7 +210,7 @@ export default function FreightCommunicationCenterScreen() {
         .from("freight_loads")
         .select("*")
         .or(
-          `carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
+          `carrier_id.eq.${mergedCarrier.id},freight_user_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
         )
         .order("updated_at", { ascending: false });
 
@@ -250,7 +249,7 @@ export default function FreightCommunicationCenterScreen() {
         carrier_id: carrier.id,
         sender_id: carrier.id,
         sender_role: "freight",
-        message_type: messageType,
+        message_type: selectedType,
         subject: subject.trim(),
         body: messageBody.trim(),
         status: "sent",
@@ -264,13 +263,10 @@ export default function FreightCommunicationCenterScreen() {
       setSubject("");
       setMessageBody("");
 
-      Alert.alert("Sent", "Your message was sent.");
+      Alert.alert("Message Sent", "Your freight message was sent.");
       await loadCommunicationCenter();
     } catch (error: any) {
-      Alert.alert(
-        "Send Error",
-        error?.message || "Unable to send message. Make sure freight_messages table exists."
-      );
+      Alert.alert("Send Error", error?.message || "Unable to send message.");
     } finally {
       setSending(false);
     }
@@ -291,51 +287,59 @@ export default function FreightCommunicationCenterScreen() {
 
       await loadCommunicationCenter();
     } catch {
-      // Keep UI stable if table columns differ.
+      // keep stable if schema differs
     }
   }
 
   function openLoadChat(load: any) {
     router.push({
-      pathname: "/freight/load-chat" as any,
+      pathname: ROUTES.loadChat as any,
       params: { loadId: load.id },
     });
   }
 
   function renderMessage({ item }: { item: any }) {
     const unread = !item.read_at && !item.is_read;
+    const type = item.message_type || item.type || "Message";
 
     return (
-      <TouchableOpacity style={styles.messageCard} onPress={() => markMessageRead(item)}>
-        <View style={[styles.messageIcon, { backgroundColor: unread ? COLORS.red : COLORS.black }]}>
-          <Ionicons name="mail-outline" size={21} color="#FFFFFF" />
+      <TouchableOpacity style={styles.chatRow} onPress={() => markMessageRead(item)}>
+        <View style={[styles.chatAvatar, unread && styles.chatAvatarUnread]}>
+          <Ionicons name="chatbubble-ellipses-outline" size={22} color="#FFFFFF" />
         </View>
 
-        <View style={{ flex: 1 }}>
-          <Text style={styles.messageTitle}>{item.subject || item.title || "Freight Message"}</Text>
-          <Text style={styles.messageSub}>
-            {item.message_type || item.type || "Message"} · {formatDate(item.created_at)}
-          </Text>
-          <Text style={styles.messageBody} numberOfLines={2}>
+        <View style={styles.chatContent}>
+          <View style={styles.chatTop}>
+            <Text style={styles.chatTitle} numberOfLines={1}>
+              {item.subject || item.title || "Freight Message"}
+            </Text>
+            <Text style={styles.chatTime}>{formatDate(item.created_at)}</Text>
+          </View>
+
+          <Text style={styles.chatType}>{type}</Text>
+
+          <Text style={styles.chatPreview} numberOfLines={2}>
             {item.body || item.message || item.content || "No message details."}
           </Text>
         </View>
 
-        {unread && <View style={styles.unreadDot} />}
+        {unread ? <View style={styles.unreadDot} /> : null}
       </TouchableOpacity>
     );
   }
 
-  function renderLoad({ item }: { item: any }) {
+  function renderLoadChat({ item }: { item: any }) {
     return (
-      <TouchableOpacity style={styles.loadCard} onPress={() => openLoadChat(item)}>
+      <TouchableOpacity style={styles.loadChatRow} onPress={() => openLoadChat(item)}>
         <View style={styles.loadIcon}>
-          <Ionicons name="chatbubbles-outline" size={21} color="#FFFFFF" />
+          <Ionicons name="cube-outline" size={21} color="#FFFFFF" />
         </View>
 
         <View style={{ flex: 1 }}>
-          <Text style={styles.loadTitle}>{item.title || item.commodity || "Freight Load Chat"}</Text>
-          <Text style={styles.loadSub}>
+          <Text style={styles.loadTitle} numberOfLines={1}>
+            {item.title || item.commodity || "Freight Load Chat"}
+          </Text>
+          <Text style={styles.loadSub} numberOfLines={1}>
             {item.pickup_location || "Pickup"} → {item.dropoff_location || "Dropoff"}
           </Text>
           <Text style={styles.loadMeta}>{String(item.status || "load").replace(/_/g, " ")}</Text>
@@ -368,60 +372,68 @@ export default function FreightCommunicationCenterScreen() {
       >
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-            <Text style={styles.title}>Communication Center</Text>
+            <Text style={styles.eyebrow}>Farm2Home Freight</Text>
+            <Text style={styles.title}>Messages</Text>
             <Text style={styles.subtitle}>
-              Carrier support messages, farmer/customer/load chat routing, dispatch alerts,
-              review status messages, and Freight Connect notifications.
+              Dispatch, farmer/broker chat, support, alerts, and load conversations in one
+              ChatAI-style carrier inbox.
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.notifications)}>
-            <Ionicons name="chatbubbles-outline" size={34} color="#FFFFFF" />
+          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(ROUTES.notifications)}>
+            <Ionicons name="notifications-outline" size={28} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.carrierCard}>
-          <View style={styles.avatar}>
+        <View style={styles.profileCard}>
+          <View style={styles.profileAvatar}>
             <Ionicons name="business-outline" size={28} color="#FFFFFF" />
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
-            <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
+            <Text style={styles.profileName}>{carrier?.companyName || "Farm2Home Freight Carrier"}</Text>
+            <Text style={styles.profileEmail}>{carrier?.email || "Carrier workspace"}</Text>
+          </View>
+
+          <View style={styles.onlinePill}>
+            <View style={styles.onlineDot} />
+            <Text style={styles.onlineText}>Online</Text>
           </View>
         </View>
 
         <View style={styles.statsGrid}>
-          <StatCard label="Messages" value={String(stats.messages)} icon="mail-outline" />
+          <StatCard label="Messages" value={String(stats.messages)} icon="chatbubble-outline" />
           <StatCard label="Unread" value={String(stats.unreadMessages)} icon="mail-unread-outline" />
           <StatCard label="Alerts" value={String(stats.activeAlerts)} icon="notifications-outline" />
           <StatCard label="Active Loads" value={String(stats.activeLoads)} icon="cube-outline" />
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickLink icon="navigate-circle-outline" label="Dispatch" route={FREIGHT_ROUTES.dispatchCenter} />
-          <QuickLink icon="briefcase-outline" label="My Loads" route={FREIGHT_ROUTES.myLoads} />
-          <QuickLink icon="notifications-outline" label="Notifications" route={FREIGHT_ROUTES.notifications} />
-          <QuickLink icon="eye-outline" label="Review Status" route={FREIGHT_ROUTES.reviewStatus} />
-          <QuickLink icon="warning-outline" label="Exceptions" route={FREIGHT_ROUTES.routeExceptions} />
-          <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+          <QuickLink icon="grid-outline" label="Dashboard" route={ROUTES.dashboard} />
+          <QuickLink icon="search-outline" label="Load Board" route={ROUTES.board} />
+          <QuickLink icon="briefcase-outline" label="My Loads" route={ROUTES.myLoads} />
+          <QuickLink icon="pulse-outline" label="Live Loads" route={ROUTES.liveLoads} />
+          <QuickLink icon="megaphone-outline" label="Dispatch Alerts" route={ROUTES.dispatchAlerts} />
+          <QuickLink icon="headset-outline" label="Support" route={ROUTES.support} />
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Send Message</Text>
+        <View style={styles.composeCard}>
+          <View style={styles.composeTop}>
+            <Text style={styles.cardTitle}>New Message</Text>
+            <Ionicons name="create-outline" size={22} color={COLORS.red} />
+          </View>
 
           <View style={styles.typeRow}>
-            {["Support", "Dispatch", "Review", "Load Issue"].map((type) => {
-              const active = messageType === type;
+            {["Dispatch", "Support", "Review", "Load Issue"].map((type) => {
+              const active = selectedType === type;
 
               return (
                 <TouchableOpacity
                   key={type}
-                  style={[styles.typeButton, active && styles.typeButtonActive]}
-                  onPress={() => setMessageType(type)}
+                  style={active ? styles.typeButtonActive : styles.typeButton}
+                  onPress={() => setSelectedType(type)}
                 >
-                  <Text style={[styles.typeText, active && styles.typeTextActive]}>{type}</Text>
+                  <Text style={active ? styles.typeTextActive : styles.typeText}>{type}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -432,7 +444,7 @@ export default function FreightCommunicationCenterScreen() {
             style={styles.input}
             value={subject}
             onChangeText={setSubject}
-            placeholder="Message subject"
+            placeholder="Enter subject"
             placeholderTextColor="#94A3B8"
           />
 
@@ -441,14 +453,14 @@ export default function FreightCommunicationCenterScreen() {
             style={[styles.input, styles.textArea]}
             value={messageBody}
             onChangeText={setMessageBody}
-            placeholder="Type your message..."
+            placeholder="Type your freight message..."
             placeholderTextColor="#94A3B8"
             multiline
             textAlignVertical="top"
           />
 
           <TouchableOpacity
-            style={[styles.primaryButtonInner, sending && styles.disabledButton]}
+            style={[styles.sendButton, sending && styles.disabledButton]}
             onPress={sendMessage}
             disabled={sending}
           >
@@ -457,56 +469,62 @@ export default function FreightCommunicationCenterScreen() {
             ) : (
               <>
                 <Ionicons name="send-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.primaryText}>Send Message</Text>
+                <Text style={styles.sendText}>Send Message</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionTitle}>Load Chat Routing</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Load Conversations</Text>
+          <TouchableOpacity onPress={() => goTo(ROUTES.myLoads)}>
+            <Text style={styles.sectionLink}>View all</Text>
+          </TouchableOpacity>
+        </View>
 
         <FlatList
-          data={loads.slice(0, 5)}
+          data={loads.slice(0, 6)}
           keyExtractor={(item, index) => String(item.id || index)}
           scrollEnabled={false}
-          renderItem={renderLoad}
+          renderItem={renderLoadChat}
           ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="chatbubbles-outline" size={38} color={COLORS.red} />
-              <Text style={styles.emptyTitle}>No load chats yet.</Text>
-              <Text style={styles.emptyText}>
-                Accepted and active freight loads will appear here for chat routing.
-              </Text>
-            </View>
+            <EmptyState
+              icon="chatbubbles-outline"
+              title="No load chats yet"
+              message="Booked and active loads will appear here for freight chat."
+            />
           }
         />
 
-        <Text style={styles.sectionTitle}>Recent Messages</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Recent Inbox</Text>
+          <TouchableOpacity onPress={onRefresh}>
+            <Text style={styles.sectionLink}>Refresh</Text>
+          </TouchableOpacity>
+        </View>
 
         <FlatList
-          data={messages.slice(0, 10)}
+          data={messages.slice(0, 12)}
           keyExtractor={(item, index) => String(item.id || index)}
           scrollEnabled={false}
           renderItem={renderMessage}
           ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="mail-outline" size={38} color={COLORS.red} />
-              <Text style={styles.emptyTitle}>No messages yet.</Text>
-              <Text style={styles.emptyText}>
-                Support, dispatch, review, and load messages will appear here.
-              </Text>
-            </View>
+            <EmptyState
+              icon="mail-outline"
+              title="No messages yet"
+              message="Dispatch, support, review, and load messages will appear here."
+            />
           }
         />
 
-        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.support)}>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(ROUTES.support)}>
           <Ionicons name="headset-outline" size={18} color="#FFFFFF" />
           <Text style={styles.primaryText}>Open Support</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}>
-          <Ionicons name="apps-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Management Center</Text>
+        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(ROUTES.dispatchAlerts)}>
+          <Ionicons name="megaphone-outline" size={18} color="#FFFFFF" />
+          <Text style={styles.primaryText}>View Dispatch Alerts</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -548,6 +566,24 @@ function QuickLink({
   );
 }
 
+function EmptyState({
+  icon,
+  title,
+  message,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  message: string;
+}) {
+  return (
+    <View style={styles.emptyCard}>
+      <Ionicons name={icon} size={38} color={COLORS.red} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyText}>{message}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 90 },
@@ -583,11 +619,11 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
+  title: { color: "#FFFFFF", fontSize: 34, fontWeight: "900", marginBottom: 10 },
   subtitle: { color: "#D1D5DB", lineHeight: 22, fontWeight: "700" },
-  carrierCard: {
+  profileCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 16,
     marginHorizontal: 18,
     marginTop: 16,
@@ -598,16 +634,32 @@ const styles = StyleSheet.create({
     gap: 14,
     alignItems: "center",
   },
-  avatar: {
+  profileAvatar: {
     width: 58,
     height: 58,
-    borderRadius: 20,
+    borderRadius: 22,
     backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
   },
-  carrierName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
-  carrierEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  profileName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
+  profileEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  onlinePill: {
+    backgroundColor: "#DCFCE7",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  onlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+  },
+  onlineText: { color: COLORS.green, fontWeight: "900", fontSize: 12 },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -618,12 +670,12 @@ const styles = StyleSheet.create({
   statCard: {
     width: "48%",
     backgroundColor: COLORS.card,
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 15,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  statValue: { color: COLORS.text, fontSize: 22, fontWeight: "900", marginTop: 7 },
+  statValue: { color: COLORS.text, fontSize: 24, fontWeight: "900", marginTop: 7 },
   statLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 4 },
   quickGrid: {
     flexDirection: "row",
@@ -643,16 +695,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
-  card: {
+  composeCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 18,
     marginHorizontal: 18,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  cardTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900", marginBottom: 12 },
+  composeTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  cardTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900", marginBottom: 12 },
   typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   typeButton: {
     backgroundColor: COLORS.surface,
@@ -664,73 +721,119 @@ const styles = StyleSheet.create({
   },
   typeButtonActive: {
     backgroundColor: COLORS.red,
+    borderWidth: 1,
     borderColor: COLORS.red,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   typeText: { color: COLORS.text, fontWeight: "900" },
-  typeTextActive: { color: "#FFFFFF" },
+  typeTextActive: { color: "#FFFFFF", fontWeight: "900" },
   label: { color: COLORS.text, fontWeight: "900", marginBottom: 7, marginTop: 8 },
   input: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 14,
     color: COLORS.text,
     fontWeight: "700",
     marginBottom: 12,
   },
   textArea: { minHeight: 110 },
-  primaryButtonInner: {
+  sendButton: {
     backgroundColor: COLORS.red,
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 16,
+    padding: 15,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
     marginTop: 8,
   },
+  sendText: { color: "#FFFFFF", fontWeight: "900" },
+  disabledButton: { opacity: 0.6 },
+  sectionHeader: {
+    paddingHorizontal: 18,
+    marginTop: 4,
+    marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   sectionTitle: {
     color: COLORS.text,
     fontSize: 23,
     fontWeight: "900",
-    paddingHorizontal: 18,
-    marginBottom: 12,
   },
-  messageCard: {
+  sectionLink: {
+    color: COLORS.red,
+    fontWeight: "900",
+  },
+  chatRow: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
-    marginBottom: 14,
+    marginBottom: 12,
     borderRadius: 22,
-    padding: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
     gap: 12,
     alignItems: "center",
   },
-  messageIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 18,
+  chatAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 19,
+    backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
   },
-  messageTitle: { color: COLORS.text, fontSize: 17, fontWeight: "900" },
-  messageSub: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  messageBody: { color: COLORS.text, fontWeight: "700", lineHeight: 20, marginTop: 5 },
+  chatAvatarUnread: {
+    backgroundColor: COLORS.red,
+  },
+  chatContent: { flex: 1 },
+  chatTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  chatTitle: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  chatTime: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  chatType: {
+    color: COLORS.red,
+    fontWeight: "900",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  chatPreview: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 5,
+  },
   unreadDot: {
-    width: 12,
-    height: 12,
+    width: 11,
+    height: 11,
     borderRadius: 999,
     backgroundColor: COLORS.red,
   },
-  loadCard: {
+  loadChatRow: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
-    marginBottom: 14,
+    marginBottom: 12,
     borderRadius: 22,
-    padding: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
@@ -738,18 +841,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   loadIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 18,
+    width: 48,
+    height: 48,
+    borderRadius: 19,
     backgroundColor: COLORS.red,
     alignItems: "center",
     justifyContent: "center",
   },
-  loadTitle: { color: COLORS.text, fontSize: 17, fontWeight: "900" },
+  loadTitle: { color: COLORS.text, fontSize: 16, fontWeight: "900" },
   loadSub: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
   loadMeta: {
-    color: COLORS.text,
-    fontWeight: "700",
+    color: COLORS.red,
+    fontWeight: "900",
     marginTop: 4,
     textTransform: "capitalize",
   },
@@ -793,6 +896,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: { opacity: 0.6 },
   primaryText: { color: "#FFFFFF", fontWeight: "900" },
 });
