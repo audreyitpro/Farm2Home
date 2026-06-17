@@ -1,10 +1,11 @@
 // app/driver/register.tsx
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -19,7 +20,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
 import * as DocumentPicker from "expo-document-picker";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL, APP_URL } from "../config/api";
@@ -67,8 +68,21 @@ function normalizeAnswer(value: string) {
   return String(value || "").trim().toLowerCase();
 }
 
+async function saveDriverSession(driver: any) {
+  await AsyncStorage.setItem("pendingDriver", JSON.stringify(driver));
+  await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
+  await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
+  await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(driver));
+  await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(driver));
+  await AsyncStorage.setItem("userRole", "driver");
+  await AsyncStorage.setItem("currentUserRole", "driver");
+}
+
 export default function DriverRegisterScreen() {
+  const params = useLocalSearchParams();
+
   const [loading, setLoading] = useState(false);
+  const [processingReturn, setProcessingReturn] = useState(false);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -101,6 +115,43 @@ export default function DriverRegisterScreen() {
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
+  useEffect(() => {
+    const stripeStatus = String(params?.stripe || params?.payment || "");
+    const returnedDriverId = String(params?.driverId || params?.driver_id || "");
+
+    if (stripeStatus === "success") {
+      handleStripeSuccessReturn(returnedDriverId);
+    }
+  }, [params?.stripe, params?.payment, params?.driverId, params?.driver_id]);
+
+  async function handleStripeSuccessReturn(returnedDriverId?: string) {
+    if (processingReturn) return;
+
+    try {
+      setProcessingReturn(true);
+
+      const saved =
+        (await AsyncStorage.getItem("currentDriver")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentDriver")) ||
+        (await AsyncStorage.getItem("farm2homeDriverSession"));
+
+      const localDriver = saved ? JSON.parse(saved) : null;
+      const finalDriverId = returnedDriverId || localDriver?.id || localDriver?.driverId;
+
+      if (!finalDriverId) {
+        Alert.alert("Driver Not Found", "Stripe payment completed, but the driver profile could not be found.");
+        return;
+      }
+
+      await forceSyncDriverSubscription(finalDriverId, localDriver);
+      await markDriverApplicationSubmittedAndOpenDashboard(finalDriverId);
+    } catch (error: any) {
+      Alert.alert("Stripe Return Error", error?.message || "Unable to complete driver registration.");
+    } finally {
+      setProcessingReturn(false);
+    }
+  }
+
   async function generateDriverAccountId() {
     const { data, error } = await supabase.rpc("next_account_id", {
       p_role: "driver",
@@ -120,17 +171,15 @@ export default function DriverRegisterScreen() {
   }
 
   async function upsertProfile(payload: any) {
-    const { data: existingProfile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", payload.id)
-      .maybeSingle();
+    const now = new Date().toISOString();
 
-    if (existingProfile?.id) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({
+    const { data, error } = await supabase
+      .from("profiles")
+      .upsert(
+        {
+          id: payload.id,
           auth_user_id: payload.id,
+          profile_id: payload.id,
           account_id: payload.account_id,
           role: "driver",
           full_name: payload.full_name,
@@ -139,32 +188,11 @@ export default function DriverRegisterScreen() {
           phone: payload.phone,
           username: payload.username,
           account_active: true,
-          updated_at: payload.updated_at,
-        })
-        .eq("id", payload.id)
-        .select("*")
-        .single();
-
-      if (error) throw error;
-      return data;
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .insert({
-        id: payload.id,
-        auth_user_id: payload.id,
-        account_id: payload.account_id,
-        role: "driver",
-        full_name: payload.full_name,
-        name: payload.name,
-        email: payload.email,
-        phone: payload.phone,
-        username: payload.username,
-        account_active: true,
-        created_at: payload.created_at,
-        updated_at: payload.updated_at,
-      })
+          updated_at: payload.updated_at || now,
+          created_at: payload.created_at || now,
+        },
+        { onConflict: "id" }
+      )
       .select("*")
       .single();
 
@@ -231,26 +259,17 @@ export default function DriverRegisterScreen() {
     }
 
     if (!vehicleType.trim() || !licenseNumber.trim() || !serviceArea.trim()) {
-      Alert.alert(
-        "Driver Info Required",
-        "Vehicle type, license number, and service area are required."
-      );
+      Alert.alert("Driver Info Required", "Vehicle type, license number, and service area are required.");
       return false;
     }
 
     if (!licenseDocument || !insuranceDocument) {
-      Alert.alert(
-        "Documents Required",
-        "Please upload your driver license and insurance document."
-      );
+      Alert.alert("Documents Required", "Please upload your driver license and insurance document.");
       return false;
     }
 
     if (!hasInsurance || !hasValidLicense || !acceptsBackgroundCheck) {
-      Alert.alert(
-        "Verification Required",
-        "Confirm insurance, valid license, and background check authorization."
-      );
+      Alert.alert("Verification Required", "Confirm insurance, valid license, and background check authorization.");
       return false;
     }
 
@@ -285,10 +304,7 @@ export default function DriverRegisterScreen() {
     }
 
     if (data) {
-      Alert.alert(
-        "Account Exists",
-        "A driver account already exists with this email or username."
-      );
+      Alert.alert("Account Exists", "A driver account already exists with this email or username.");
       return true;
     }
 
@@ -338,16 +354,6 @@ export default function DriverRegisterScreen() {
     }
   }
 
-  async function saveDriverSession(driver: any) {
-    await AsyncStorage.setItem("pendingDriver", JSON.stringify(driver));
-    await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
-    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(driver));
-    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(driver));
-    await AsyncStorage.setItem("userRole", "driver");
-    await AsyncStorage.setItem("currentUserRole", "driver");
-  }
-
   async function openCheckoutUrl(url: string) {
     if (!url || !url.startsWith("http")) {
       Alert.alert("Stripe Error", "No valid Stripe checkout URL returned.");
@@ -359,73 +365,235 @@ export default function DriverRegisterScreen() {
       return;
     }
 
-    await WebBrowser.openBrowserAsync(url);
+    await Linking.openURL(url).catch(async () => {
+      await WebBrowser.openBrowserAsync(url);
+    });
   }
 
   async function createDriverStripeCheckout({
-  cleanEmail,
-  cleanFullName,
-  cleanUsername,
-  driverId,
-  accountId,
-}: {
-  cleanEmail: string;
-  cleanFullName: string;
-  cleanUsername: string;
-  driverId: string;
-  accountId: string;
-}) {
-  const response = await fetch(`${API_BASE_URL}/payments/create-driver-subscription-checkout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      role: "driver",
-      planType: "driver",
-      userId: driverId,
-      driverId,
-      driver_id: driverId,
-      accountId,
-      account_id: accountId,
-      email: cleanEmail,
-      customerEmail: cleanEmail,
-      companyName: cleanFullName,
-      businessName: cleanFullName,
-      name: cleanFullName,
-      username: cleanUsername,
-      successUrl: `${APP_URL}/driver/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${APP_URL}/driver/register`,
-    }),
-  });
+    cleanEmail,
+    cleanFullName,
+    cleanUsername,
+    driverId,
+    accountId,
+  }: {
+    cleanEmail: string;
+    cleanFullName: string;
+    cleanUsername: string;
+    driverId: string;
+    accountId: string;
+  }) {
+    const successUrl = `${APP_URL}/driver/register?stripe=success&driverId=${encodeURIComponent(driverId)}`;
+    const cancelUrl = `${APP_URL}/driver/register?stripe=cancelled&driverId=${encodeURIComponent(driverId)}`;
 
-  const text = await response.text();
+    const response = await fetch(`${API_BASE_URL}/payments/create-driver-subscription-checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        role: "driver",
+        planType: "driver",
+        userId: driverId,
+        driverId,
+        driver_id: driverId,
+        accountId,
+        account_id: accountId,
+        email: cleanEmail,
+        customerEmail: cleanEmail,
+        driver_email: cleanEmail,
+        companyName: cleanFullName,
+        businessName: cleanFullName,
+        name: cleanFullName,
+        username: cleanUsername,
+        successUrl,
+        success_url: successUrl,
+        cancelUrl,
+        cancel_url: cancelUrl,
+        metadata: {
+          role: "driver",
+          driver_id: driverId,
+          account_id: accountId,
+          driver_email: cleanEmail,
+          email: cleanEmail,
+          name: cleanFullName,
+          username: cleanUsername,
+        },
+      }),
+    });
 
-  let data: any = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
+    const text = await response.text();
 
-  if (!response.ok || !data.url) {
-    throw new Error(
-      data.error ||
-        data.message ||
-        data.raw ||
-        "Stripe checkout failed."
-    );
-  }
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
 
-  if (data.alreadySubscribed) {
+    if (!response.ok || (!data.url && !data.alreadySubscribed)) {
+      throw new Error(data.error || data.message || data.raw || "Stripe checkout failed.");
+    }
+
     return data;
   }
 
-  if (!data.url) {
-    throw new Error("Stripe checkout URL was not returned.");
+  async function forceSyncDriverSubscription(driverId: string, localDriver?: any) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "driver",
+          email: normalize(localDriver?.email || email),
+          name: localDriver?.name || localDriver?.fullName || fullName,
+          username: normalize(localDriver?.username || username),
+          userId: driverId,
+          driverId,
+          driver_id: driverId,
+        }),
+      });
+
+      const text = await response.text();
+      let json: any = {};
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
+
+      if (!response.ok || !json.success) return null;
+
+      const stripeCustomerId = json.stripeCustomerId || json.stripe_customer_id || "";
+      const stripeSubscriptionId = json.stripeSubscriptionId || json.stripe_subscription_id || "";
+      const subscriptionStatus = json.subscriptionStatus || json.subscription_status || "active";
+
+      if (stripeCustomerId || stripeSubscriptionId) {
+        await supabase
+          .from("drivers")
+          .update({
+            stripe_customer_id: stripeCustomerId || null,
+            stripe_subscription_id: stripeSubscriptionId || null,
+            subscription_id: stripeSubscriptionId || null,
+            subscription_status: subscriptionStatus,
+            membership_status: stripeSubscriptionId ? "active" : "pending",
+            driver_membership_paid: Boolean(stripeSubscriptionId),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", driverId);
+
+        await supabase
+          .from("profiles")
+          .update({
+            stripe_customer_id: stripeCustomerId || null,
+            stripe_subscription_id: stripeSubscriptionId || null,
+            subscription_id: stripeSubscriptionId || null,
+            subscription_status: subscriptionStatus,
+            membership_status: stripeSubscriptionId ? "active" : "pending",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", driverId);
+      }
+
+      return json;
+    } catch {
+      return null;
+    }
   }
 
-  return data;
-}
-  
+  async function markDriverApplicationSubmittedAndOpenDashboard(driverId: string) {
+    const now = new Date().toISOString();
+
+    const { data: driverRow } = await supabase
+      .from("drivers")
+      .select("*")
+      .eq("id", driverId)
+      .maybeSingle();
+
+    const paid = Boolean(driverRow?.stripe_subscription_id || driverRow?.subscription_id);
+
+    await supabase
+      .from("drivers")
+      .update({
+        application_submitted: true,
+        submitted_at: now,
+        approved: true,
+        verified: true,
+        account_active: true,
+        verification_status: "SUBMITTED",
+        compliance_status: "SUBMITTED",
+        admin_review_status: "submitted",
+        membership_status: paid ? "active" : "pending",
+        subscription_status: driverRow?.subscription_status || (paid ? "active" : "pending"),
+        driver_membership_paid: paid,
+        updated_at: now,
+      })
+      .eq("id", driverId);
+
+    await supabase
+      .from("profiles")
+      .update({
+        account_active: true,
+        membership_status: paid ? "active" : "pending",
+        subscription_status: driverRow?.subscription_status || (paid ? "active" : "pending"),
+        updated_at: now,
+      })
+      .eq("id", driverId);
+
+    await supabase.from("admin_verifications").upsert(
+      {
+        id: driverId,
+        driver_id: driverId,
+        profile_id: driverId,
+        account_id: driverRow?.account_id || "",
+        account_type: "DRIVER",
+        role: "driver",
+        type: "DRIVER",
+        full_name: driverRow?.full_name || driverRow?.name || "",
+        name: driverRow?.name || driverRow?.full_name || "",
+        email: driverRow?.email || "",
+        phone: driverRow?.phone || "",
+        username: driverRow?.username || "",
+        status: "SUBMITTED",
+        compliance_status: "SUBMITTED",
+        admin_review_status: "submitted",
+        review_decision: "submitted",
+        approved: true,
+        rejected: false,
+        reviewed: false,
+        needs_more_info: false,
+        account_active: true,
+        application_submitted: true,
+        submitted_at: now,
+        membership_status: paid ? "active" : "pending",
+        subscription_status: driverRow?.subscription_status || (paid ? "active" : "pending"),
+        driver_membership_paid: paid,
+        stripe_customer_id: driverRow?.stripe_customer_id || null,
+        stripe_subscription_id: driverRow?.stripe_subscription_id || driverRow?.subscription_id || null,
+        subscription_id: driverRow?.stripe_subscription_id || driverRow?.subscription_id || null,
+        updated_at: now,
+        created_at: driverRow?.created_at || now,
+      },
+      { onConflict: "id" }
+    );
+
+    const { data: updatedDriver } = await supabase
+      .from("drivers")
+      .select("*")
+      .eq("id", driverId)
+      .maybeSingle();
+
+    if (updatedDriver) {
+      await saveDriverSession({
+        ...updatedDriver,
+        role: "driver",
+        driverId: updatedDriver.id,
+        accountId: updatedDriver.account_id,
+        accountActive: true,
+        applicationSubmitted: true,
+      });
+    }
+
+    router.replace("/driver/dashboard" as any);
+  }
 
   async function registerDriver() {
     if (loading) return;
@@ -523,6 +691,12 @@ export default function DriverRegisterScreen() {
         verified: true,
         account_active: true,
 
+        application_submitted: false,
+        submitted_at: null,
+        verification_status: "PENDING_PAYMENT",
+        compliance_status: "PENDING_PAYMENT",
+        admin_review_status: "pending_payment",
+
         stripe_account_id: null,
         stripe_customer_id: null,
         stripe_subscription_id: null,
@@ -534,8 +708,8 @@ export default function DriverRegisterScreen() {
         stripe_charges_enabled: false,
         stripe_onboarding_complete: false,
 
-        subscription_status: "not_started",
-        membership_status: "not_started",
+        subscription_status: "pending_payment",
+        membership_status: "pending_payment",
         driver_membership_paid: false,
 
         notifications_enabled: true,
@@ -557,131 +731,75 @@ export default function DriverRegisterScreen() {
       }
 
       const localDriver = {
-        id: driverId,
+        ...driverPayload,
+        driverId,
         accountId,
         account_id: accountId,
-        driverId,
-        authUserId: driverId,
-        profileId: driverId,
-        profile_id: driverId,
-        role: "driver",
-
         fullName: cleanFullName,
-        name: cleanFullName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-
         vehicleType: vehicleType.trim(),
         licenseNumber: licenseNumber.trim(),
         serviceArea: serviceArea.trim(),
-
         hasInsurance,
         hasValidLicense,
         acceptsBackgroundCheck,
-
         licenseDocument: uploadedLicense,
         insuranceDocument: uploadedInsurance,
-        uploadedDocs: {
-          driver_license: uploadedLicense,
-          insurance: uploadedInsurance,
-        },
         documentsUploaded: true,
-
-        securityQuestion1,
-        securityAnswer1: normalizeAnswer(securityAnswer1),
-        securityQuestion2,
-        securityAnswer2: normalizeAnswer(securityAnswer2),
-        securityQuestion3,
-        securityAnswer3: normalizeAnswer(securityAnswer3),
-
-        approved: true,
-        verified: true,
-        accountActive: true,
-
-        stripeAccountId: "",
-        stripeCustomerId: "",
-        stripeSubscriptionId: "",
-        stripeCheckoutSessionId: "",
-        stripeConnectStatus: "not_started",
-        payoutsEnabled: false,
-        chargesEnabled: false,
-        onboardingComplete: false,
-
-        subscriptionStatus: "not_started",
-        membershipStatus: "not_started",
+        applicationSubmitted: false,
+        subscriptionStatus: "pending_payment",
+        membershipStatus: "pending_payment",
         driverMembershipPaid: false,
-
-        createdAt: now,
-        updatedAt: now,
       };
 
       await saveDriverSession(localDriver);
 
-      try {
-        const data = await createDriverStripeCheckout({
-          cleanEmail,
-          cleanFullName,
-          cleanUsername,
-          driverId,
-          accountId,
-        });
+      const data = await createDriverStripeCheckout({
+        cleanEmail,
+        cleanFullName,
+        cleanUsername,
+        driverId,
+        accountId,
+      });
 
-        const stripeCustomerId =
-          data.stripeCustomerId ||
-          data.stripe_customer_id ||
-          data.customerId ||
-          data.customer_id ||
-          "";
+      const stripeCustomerId =
+        data.stripeCustomerId ||
+        data.stripe_customer_id ||
+        data.customerId ||
+        data.customer_id ||
+        "";
 
-        const stripeCheckoutSessionId = data.id || data.sessionId || "";
+      const stripeCheckoutSessionId = data.id || data.sessionId || data.session_id || "";
 
-        await supabase
-          .from("drivers")
-          .update({
-            stripe_customer_id: stripeCustomerId || null,
-            stripe_checkout_session_id: stripeCheckoutSessionId || null,
-            membership_status: "pending_payment",
-            subscription_status: "pending_payment",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", driverId);
+      await supabase
+        .from("drivers")
+        .update({
+          stripe_customer_id: stripeCustomerId || null,
+          stripe_checkout_session_id: stripeCheckoutSessionId || null,
+          membership_status: data.alreadySubscribed ? "active" : "pending_payment",
+          subscription_status: data.subscriptionStatus || (data.alreadySubscribed ? "active" : "pending_payment"),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", driverId);
 
-        await supabase
-          .from("profiles")
-          .update({
-            stripe_customer_id: stripeCustomerId || null,
-            stripe_checkout_session_id: stripeCheckoutSessionId || null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", driverId);
+      await saveDriverSession({
+        ...localDriver,
+        stripeCustomerId,
+        stripeCheckoutSessionId,
+        membershipStatus: data.alreadySubscribed ? "active" : "pending_payment",
+        subscriptionStatus: data.subscriptionStatus || (data.alreadySubscribed ? "active" : "pending_payment"),
+        updatedAt: new Date().toISOString(),
+      });
 
-        const checkoutDriver = {
-          ...localDriver,
-          stripeCustomerId,
-          stripeCheckoutSessionId,
-          membershipStatus: "pending_payment",
-          subscriptionStatus: "pending_payment",
-          updatedAt: new Date().toISOString(),
-        };
-
-        await saveDriverSession(checkoutDriver);
-        await openCheckoutUrl(data.url);
-      } catch (stripeError: any) {
-        Alert.alert(
-          "Driver Account Created",
-          stripeError?.message ||
-            "Your driver account was created, but Stripe checkout did not open."
-        );
-
-        router.replace("/driver/profile" as any);
+      if (data.alreadySubscribed) {
+        await forceSyncDriverSubscription(driverId, localDriver);
+        await markDriverApplicationSubmittedAndOpenDashboard(driverId);
+        return;
       }
+
+      await openCheckoutUrl(data.url);
     } catch (error: any) {
       console.log("Driver register error:", error);
-      Alert.alert(
-        "Registration Error",
-        error?.message || "Unable to complete driver registration."
-      );
+      Alert.alert("Registration Error", error?.message || "Unable to complete driver registration.");
     } finally {
       setLoading(false);
     }
@@ -709,12 +827,7 @@ export default function DriverRegisterScreen() {
                 onPress={() => setSelectedQuestion(question)}
                 activeOpacity={0.85}
               >
-                <Text
-                  style={[
-                    styles.questionChipText,
-                    active && styles.questionChipTextActive,
-                  ]}
-                >
+                <Text style={[styles.questionChipText, active && styles.questionChipTextActive]}>
                   {question}
                 </Text>
               </TouchableOpacity>
@@ -778,19 +891,25 @@ export default function DriverRegisterScreen() {
             <Text style={styles.kicker}>Farm2Home Driver Portal</Text>
             <Text style={styles.title}>Driver Registration</Text>
             <Text style={styles.subtitle}>
-              Join the Farm2Driver board to accept local farm delivery orders,
-              freight-linked jobs, and route-based delivery opportunities.
+              Register, complete Stripe checkout, and your application will automatically submit before opening the Driver Dashboard.
             </Text>
           </View>
 
-          <View style={styles.noticeBox}>
-            <Text style={styles.noticeTitle}>Permanent Profile Setup</Text>
-            <Text style={styles.noticeText}>
-              Your driver profile is saved to Supabase immediately. Your static account ID
-              stays separate from the Supabase Auth UUID. Stripe customer, subscription,
-              and payout IDs are permanently saved as each Stripe step is completed.
-            </Text>
-          </View>
+          {processingReturn ? (
+            <View style={styles.noticeBox}>
+              <Text style={styles.noticeTitle}>Completing Driver Registration</Text>
+              <Text style={styles.noticeText}>
+                Please wait while we sync Stripe, submit your application, and open your dashboard.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.noticeBox}>
+              <Text style={styles.noticeTitle}>Permanent Profile Setup</Text>
+              <Text style={styles.noticeText}>
+                Your driver profile is saved to Supabase before Stripe checkout. Stripe customer and subscription IDs are synced after payment.
+              </Text>
+            </View>
+          )}
 
           <View style={styles.priceBox}>
             <View>
@@ -809,120 +928,34 @@ export default function DriverRegisterScreen() {
               subtitle="Basic contact details for your driver profile."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Full Name"
-              placeholderTextColor="#94A3B8"
-              value={fullName}
-              onChangeText={setFullName}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              placeholderTextColor="#94A3B8"
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Phone"
-              placeholderTextColor="#94A3B8"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
+            <TextInput style={styles.input} placeholder="Full Name" placeholderTextColor="#94A3B8" value={fullName} onChangeText={setFullName} />
+            <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#94A3B8" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+            <TextInput style={styles.input} placeholder="Phone" placeholderTextColor="#94A3B8" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
           </View>
 
           <View style={styles.formCard}>
-            <SectionHeader
-              title="Create Driver Login"
-              icon="lock-closed-outline"
-              subtitle="Create credentials for the Driver Portal."
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Create Username"
-              placeholderTextColor="#94A3B8"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Create Password"
-              placeholderTextColor="#94A3B8"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm Password"
-              placeholderTextColor="#94A3B8"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
+            <SectionHeader title="Create Driver Login" icon="lock-closed-outline" subtitle="Create credentials for the Driver Portal." />
+            <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
+            <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+            <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" />
           </View>
 
           <View style={styles.formCard}>
-            <SectionHeader
-              title="Driver Verification"
-              icon="shield-checkmark-outline"
-              subtitle="Vehicle, license, insurance, and service area."
-            />
+            <SectionHeader title="Driver Verification" icon="shield-checkmark-outline" subtitle="Vehicle, license, insurance, and service area." />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Vehicle Type"
-              placeholderTextColor="#94A3B8"
-              value={vehicleType}
-              onChangeText={setVehicleType}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Driver License Number"
-              placeholderTextColor="#94A3B8"
-              value={licenseNumber}
-              onChangeText={setLicenseNumber}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Service Area"
-              placeholderTextColor="#94A3B8"
-              value={serviceArea}
-              onChangeText={setServiceArea}
-            />
+            <TextInput style={styles.input} placeholder="Vehicle Type" placeholderTextColor="#94A3B8" value={vehicleType} onChangeText={setVehicleType} />
+            <TextInput style={styles.input} placeholder="Driver License Number" placeholderTextColor="#94A3B8" value={licenseNumber} onChangeText={setLicenseNumber} />
+            <TextInput style={styles.input} placeholder="Service Area" placeholderTextColor="#94A3B8" value={serviceArea} onChangeText={setServiceArea} />
 
             <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("license")}>
-              <Ionicons
-                name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"}
-                size={20}
-                color={COLORS.red}
-              />
+              <Ionicons name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={COLORS.red} />
               <Text style={styles.uploadText}>
                 {licenseDocument ? `License: ${licenseDocument.name}` : "Upload Driver License"}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("insurance")}>
-              <Ionicons
-                name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"}
-                size={20}
-                color={COLORS.red}
-              />
+              <Ionicons name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={COLORS.red} />
               <Text style={styles.uploadText}>
                 {insuranceDocument ? `Insurance: ${insuranceDocument.name}` : "Upload Insurance"}
               </Text>
@@ -945,35 +978,10 @@ export default function DriverRegisterScreen() {
           </View>
 
           <View style={styles.securityCard}>
-            <SectionHeader
-              title="Security Questions"
-              icon="key-outline"
-              subtitle="Choose 3 questions for account verification."
-            />
-
-            {renderQuestionPicker(
-              "Security Question 1",
-              securityQuestion1,
-              setSecurityQuestion1,
-              securityAnswer1,
-              setSecurityAnswer1
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 2",
-              securityQuestion2,
-              setSecurityQuestion2,
-              securityAnswer2,
-              setSecurityAnswer2
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 3",
-              securityQuestion3,
-              setSecurityQuestion3,
-              securityAnswer3,
-              setSecurityAnswer3
-            )}
+            <SectionHeader title="Security Questions" icon="key-outline" subtitle="Choose 3 questions for account verification." />
+            {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
+            {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
+            {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
           </View>
 
           <TouchableOpacity
@@ -1063,16 +1071,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  price: {
-    fontSize: 26,
-    fontWeight: "900",
-    color: "#FFFFFF",
-  },
-  priceSub: {
-    color: "#FFE4E6",
-    marginTop: 4,
-    fontWeight: "800",
-  },
+  price: { fontSize: 26, fontWeight: "900", color: "#FFFFFF" },
+  priceSub: { color: "#FFE4E6", marginTop: 4, fontWeight: "800" },
   priceBadge: {
     width: 44,
     height: 44,
@@ -1113,11 +1113,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  section: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
+  section: { fontSize: 20, fontWeight: "900", color: COLORS.text },
   sectionSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -1146,11 +1142,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  uploadText: {
-    color: COLORS.red,
-    fontWeight: "900",
-    flex: 1,
-  },
+  uploadText: { color: COLORS.red, fontWeight: "900", flex: 1 },
   switchRow: {
     backgroundColor: COLORS.surface,
     padding: 14,
@@ -1193,9 +1185,7 @@ const styles = StyleSheet.create({
     color: COLORS.red,
     fontWeight: "900",
   },
-  questionChipTextActive: {
-    color: "#FFFFFF",
-  },
+  questionChipTextActive: { color: "#FFFFFF" },
   button: {
     backgroundColor: COLORS.red,
     padding: 16,

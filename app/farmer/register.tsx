@@ -93,6 +93,15 @@ function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
 }
 
+function openExternalUrl(url: string) {
+  if (Platform.OS === "web") {
+    window.location.href = url;
+    return;
+  }
+
+  router.push(url as any);
+}
+
 export default function FarmerRegister() {
   const [ownerName, setOwnerName] = useState("");
   const [farmName, setFarmName] = useState("");
@@ -205,14 +214,8 @@ export default function FarmerRegister() {
       p_prefix: "Farmer",
     });
 
-    if (error) {
-      console.log("Farmer account_id RPC error:", error.message);
-      throw error;
-    }
-
-    if (!data) {
-      throw new Error("Unable to generate farmer account ID.");
-    }
+    if (error) throw error;
+    if (!data) throw new Error("Unable to generate farmer account ID.");
 
     return String(data);
   }
@@ -255,22 +258,25 @@ export default function FarmerRegister() {
       .eq("id", payload.id)
       .maybeSingle();
 
+    const profilePayload = {
+      id: payload.id,
+      auth_user_id: payload.id,
+      account_id: payload.account_id,
+      role: "farmer",
+      full_name: payload.owner_name,
+      name: payload.owner_name,
+      email: payload.email,
+      phone: payload.phone,
+      username: payload.username,
+      company_name: payload.business_name,
+      account_active: true,
+      updated_at: payload.updated_at,
+    };
+
     if (existingProfile?.id) {
       const { data, error } = await supabase
         .from("profiles")
-        .update({
-          auth_user_id: payload.id,
-          account_id: payload.account_id,
-          role: "farmer",
-          full_name: payload.owner_name,
-          name: payload.owner_name,
-          email: payload.email,
-          phone: payload.phone,
-          username: payload.username,
-          company_name: payload.business_name,
-          account_active: true,
-          updated_at: payload.updated_at,
-        })
+        .update(profilePayload)
         .eq("id", payload.id)
         .select("*")
         .single();
@@ -282,19 +288,8 @@ export default function FarmerRegister() {
     const { data, error } = await supabase
       .from("profiles")
       .insert({
-        id: payload.id,
-        auth_user_id: payload.id,
-        account_id: payload.account_id,
-        role: "farmer",
-        full_name: payload.owner_name,
-        name: payload.owner_name,
-        email: payload.email,
-        phone: payload.phone,
-        username: payload.username,
-        company_name: payload.business_name,
-        account_active: true,
+        ...profilePayload,
         created_at: payload.created_at,
-        updated_at: payload.updated_at,
       })
       .select("*")
       .single();
@@ -304,77 +299,74 @@ export default function FarmerRegister() {
   }
 
   async function createAdminVerificationRecord(farmerPayload: any) {
-    const adminPayload = {
-      id: farmerPayload.id,
-      account_id: farmerPayload.account_id,
-      farmer_id: farmerPayload.id,
-      profile_id: farmerPayload.profile_id,
-      account_type: "FARMER",
-      role: "farmer",
-      type: "FARMER",
+    const { error } = await supabase.from("admin_verifications").upsert(
+      {
+        id: farmerPayload.id,
+        account_id: farmerPayload.account_id,
+        farmer_id: farmerPayload.id,
+        profile_id: farmerPayload.profile_id,
+        account_type: "FARMER",
+        role: "farmer",
+        type: "FARMER",
 
-      farm_name: farmerPayload.farm_name,
-      business_name: farmerPayload.business_name,
-      company_name: farmerPayload.business_name,
-      owner_name: farmerPayload.owner_name,
-      email: farmerPayload.email,
-      phone: farmerPayload.phone,
-      username: farmerPayload.username,
+        farm_name: farmerPayload.farm_name,
+        business_name: farmerPayload.business_name,
+        company_name: farmerPayload.business_name,
+        owner_name: farmerPayload.owner_name,
+        email: farmerPayload.email,
+        phone: farmerPayload.phone,
+        username: farmerPayload.username,
 
-      business_address: farmerPayload.business_address,
-      address: farmerPayload.address,
-      city: farmerPayload.city,
-      state: farmerPayload.state,
-      zip_code: farmerPayload.zip_code,
+        business_address: farmerPayload.business_address,
+        address: farmerPayload.address,
+        city: farmerPayload.city,
+        state: farmerPayload.state,
+        zip_code: farmerPayload.zip_code,
 
-      selected_products: farmerPayload.selected_products,
-      selected_product_categories: farmerPayload.selected_product_categories,
-      legal_agreements: farmerPayload.legal_agreements,
+        selected_products: farmerPayload.selected_products,
+        selected_product_categories: farmerPayload.selected_product_categories,
+        legal_agreements: farmerPayload.legal_agreements,
 
-      status: "ACTIVE",
-      compliance_status: "ACTIVE",
-      admin_review_status: "DOCUMENT_REVIEW_ONLY",
-      review_decision: "NOT_REQUIRED",
+        status: "ACTIVE",
+        compliance_status: "ACTIVE",
+        admin_review_status: "DOCUMENT_REVIEW_ONLY",
+        review_decision: "NOT_REQUIRED",
 
-      approved: true,
-      rejected: false,
-      reviewed: false,
-      needs_more_info: false,
-      account_active: true,
-      store_unlocked: true,
+        approved: true,
+        rejected: false,
+        reviewed: false,
+        needs_more_info: false,
+        account_active: true,
+        store_unlocked: true,
 
-      compliance_submitted: false,
-      application_fee_paid: false,
-      farmer_membership_paid: false,
-      monthly_membership_started: false,
+        compliance_submitted: false,
+        application_fee_paid: false,
+        farmer_membership_paid: false,
+        monthly_membership_started: false,
 
-      stripe_account_id: null,
-      farmer_stripe_account_id: null,
-      stripe_customer_id: null,
-      stripe_subscription_id: null,
-      stripe_checkout_session_id: null,
-      stripe_connect_status: "not_started",
-      payouts_enabled: false,
-      charges_enabled: false,
-      stripe_payouts_enabled: false,
-      stripe_charges_enabled: false,
-      stripe_onboarding_complete: false,
+        stripe_account_id: null,
+        farmer_stripe_account_id: null,
+        stripe_customer_id: null,
+        stripe_subscription_id: null,
+        stripe_checkout_session_id: null,
+        stripe_connect_status: "not_started",
+        payouts_enabled: false,
+        charges_enabled: false,
+        stripe_payouts_enabled: false,
+        stripe_charges_enabled: false,
+        stripe_onboarding_complete: false,
 
-      uploaded_docs: {},
-      legal_checks: {},
-      documents: [],
+        uploaded_docs: {},
+        legal_checks: {},
+        documents: [],
 
-      created_at: farmerPayload.created_at,
-      updated_at: farmerPayload.updated_at,
-    };
+        created_at: farmerPayload.created_at,
+        updated_at: farmerPayload.updated_at,
+      },
+      { onConflict: "id" }
+    );
 
-    const { error } = await supabase
-      .from("admin_verifications")
-      .upsert(adminPayload, { onConflict: "id" });
-
-    if (error) {
-      console.log("Farmer admin verification save error:", error.message);
-    }
+    if (error) console.log("Farmer admin verification save error:", error.message);
   }
 
   async function notifyAdminFarmer(farmer: any) {
@@ -389,24 +381,52 @@ export default function FarmerRegister() {
     }
   }
 
-  function goToCompliance(
-    farmerId: string,
-    accountId: string,
-    cleanEmail: string,
-    cleanBusinessName: string
-  ) {
-    const path = `/farmer/compliance-upload?farmerId=${encodeURIComponent(
-      farmerId
-    )}&accountId=${encodeURIComponent(accountId)}&email=${encodeURIComponent(
-      cleanEmail
-    )}&businessName=${encodeURIComponent(cleanBusinessName)}`;
+  async function createFarmerCheckout(params: {
+    farmerId: string;
+    accountId: string;
+    email: string;
+    name: string;
+    username: string;
+    businessName: string;
+    farmName: string;
+  }) {
+    const response = await fetch(`${API_BASE_URL}/payments/create-farmer-checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        farmer_id: params.farmerId,
+        farmerId: params.farmerId,
+        account_id: params.accountId,
+        accountId: params.accountId,
+        email: params.email,
+        farmer_email: params.email,
+        name: params.name,
+        username: params.username,
+        businessName: params.businessName,
+        business_name: params.businessName,
+        farmName: params.farmName,
+        farm_name: params.farmName,
+        role: "farmer",
+      }),
+    });
 
-    if (Platform.OS === "web") {
-      window.location.href = path;
-      return;
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(
+        result?.error ||
+          result?.message ||
+          "Unable to create farmer Stripe checkout session."
+      );
     }
 
-    router.replace(path as any);
+    const checkoutUrl = result?.url || result?.checkoutUrl || result?.sessionUrl;
+
+    if (!checkoutUrl) {
+      throw new Error("Stripe checkout URL was not returned from backend.");
+    }
+
+    return checkoutUrl;
   }
 
   async function registerFarmer() {
@@ -504,8 +524,8 @@ export default function FarmerRegister() {
         farmer_membership_paid: false,
         monthly_membership_started: false,
 
-        membership_status: "not_started",
-        subscription_status: "not_started",
+        membership_status: "pending_payment",
+        subscription_status: "pending_payment",
 
         stripe_account_id: null,
         farmer_stripe_account_id: null,
@@ -591,8 +611,8 @@ export default function FarmerRegister() {
         farmerMembershipPaid: false,
         monthlyMembershipStarted: false,
 
-        membershipStatus: "not_started",
-        subscriptionStatus: "not_started",
+        membershipStatus: "pending_payment",
+        subscriptionStatus: "pending_payment",
 
         stripeAccountId: "",
         farmerStripeAccountId: "",
@@ -617,12 +637,22 @@ export default function FarmerRegister() {
       await saveLocalFarmerSession(localFarmer);
       await notifyAdminFarmer(localFarmer);
 
-      goToCompliance(farmerId, accountId, cleanEmail, cleanBusinessName);
+      const checkoutUrl = await createFarmerCheckout({
+        farmerId,
+        accountId,
+        email: cleanEmail,
+        name: cleanOwnerName,
+        username: cleanUsername,
+        businessName: cleanBusinessName,
+        farmName: cleanFarmName,
+      });
+
+      openExternalUrl(checkoutUrl);
     } catch (error: any) {
       console.log("Farmer registration error:", error);
       Alert.alert(
         "Registration Error",
-        error?.message || "Unable to continue to farmer setup."
+        error?.message || "Unable to continue to farmer payment."
       );
     } finally {
       setLoading(false);
@@ -647,9 +677,9 @@ export default function FarmerRegister() {
           <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
           <Text style={styles.heroTitle}>Create Your Farmer Account</Text>
           <Text style={styles.heroSub}>
-            Create your farm profile. Your permanent farmer account ID is saved separately
-            from your Supabase Auth UUID. Stripe IDs are permanently saved as payments and
-            payout setup are completed.
+            Create your farm profile first. Then Stripe Checkout will open with
+            your farmer ID, email, name, and username attached for automatic
+            Supabase subscription syncing.
           </Text>
         </View>
 
@@ -660,162 +690,41 @@ export default function FarmerRegister() {
           <Text style={styles.priceLine}>Marketplace Service Fee: 4%</Text>
         </View>
 
-        <SectionCard
-          icon="business-outline"
-          title="Farm Business Info"
-          subtitle="Basic farm and owner details."
-          done={businessComplete}
-        >
-          <TextInput
-            style={styles.input}
-            placeholder="Owner Name"
-            value={ownerName}
-            onChangeText={setOwnerName}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Farm Name"
-            value={farmName}
-            onChangeText={setFarmName}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Business Name"
-            value={businessName}
-            onChangeText={setBusinessName}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email Address"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Phone Number"
-            keyboardType="phone-pad"
-            value={phone}
-            onChangeText={setPhone}
-          />
+        <SectionCard icon="business-outline" title="Farm Business Info" subtitle="Basic farm and owner details." done={businessComplete}>
+          <TextInput style={styles.input} placeholder="Owner Name" value={ownerName} onChangeText={setOwnerName} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Farm Name" value={farmName} onChangeText={setFarmName} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Business Name" value={businessName} onChangeText={setBusinessName} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Email Address" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
         </SectionCard>
 
-        <SectionCard
-          icon="lock-closed-outline"
-          title="Create Farmer Login"
-          subtitle="Credentials used for future farmer login."
-          done={loginComplete}
-        >
-          <TextInput
-            style={styles.input}
-            placeholder="Create Username"
-            autoCapitalize="none"
-            value={username}
-            onChangeText={setUsername}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Create Password"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Confirm Password"
-            secureTextEntry
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            autoCorrect={false}
-          />
+        <SectionCard icon="lock-closed-outline" title="Create Farmer Login" subtitle="Credentials used for future farmer login." done={loginComplete}>
+          <TextInput style={styles.input} placeholder="Create Username" autoCapitalize="none" value={username} onChangeText={setUsername} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Create Password" secureTextEntry value={password} onChangeText={setPassword} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} autoCorrect={false} />
         </SectionCard>
 
-        <SectionCard
-          icon="location-outline"
-          title="Farm Location"
-          subtitle="Used for local customer discovery."
-          done={locationComplete}
-        >
-          <TextInput
-            style={styles.input}
-            placeholder="Business Address"
-            value={businessAddress}
-            onChangeText={setBusinessAddress}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="City"
-            value={city}
-            onChangeText={setCity}
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="State"
-            value={stateValue}
-            onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))}
-            maxLength={2}
-            autoCapitalize="characters"
-            autoCorrect={false}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Zip Code"
-            keyboardType="numeric"
-            value={zipCode}
-            onChangeText={setZipCode}
-          />
+        <SectionCard icon="location-outline" title="Farm Location" subtitle="Used for local customer discovery." done={locationComplete}>
+          <TextInput style={styles.input} placeholder="Business Address" value={businessAddress} onChangeText={setBusinessAddress} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="City" value={city} onChangeText={setCity} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="State" value={stateValue} onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))} maxLength={2} autoCapitalize="characters" autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Zip Code" keyboardType="numeric" value={zipCode} onChangeText={setZipCode} />
         </SectionCard>
 
-        <SectionCard
-          icon="leaf-outline"
-          title="Products You Sell"
-          subtitle="Select at least one category."
-          done={productsComplete}
-        >
+        <SectionCard icon="leaf-outline" title="Products You Sell" subtitle="Select at least one category." done={productsComplete}>
           <View style={styles.grid}>
             {productOptions.map((product) => {
               const active = selectedProducts.includes(product);
-
               return (
-                <TouchableOpacity
-                  key={product}
-                  style={[styles.productChip, active && styles.productChipActive]}
-                  onPress={() => toggleProduct(product)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[styles.productText, active && styles.productTextActive]}>
-                    {product}
-                  </Text>
+                <TouchableOpacity key={product} style={[styles.productChip, active && styles.productChipActive]} onPress={() => toggleProduct(product)} activeOpacity={0.85}>
+                  <Text style={[styles.productText, active && styles.productTextActive]}>{product}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
         </SectionCard>
 
-        <SectionCard
-          icon="shield-checkmark-outline"
-          title="Farmer Seller Agreement"
-          subtitle="Accept all items before continuing."
-          done={legalComplete}
-        >
+        <SectionCard icon="shield-checkmark-outline" title="Farmer Seller Agreement" subtitle="Accept all items before continuing." done={legalComplete}>
           {agreements.map((item, index) => {
             const checked = Boolean(accepted[index]);
 
@@ -841,27 +750,18 @@ export default function FarmerRegister() {
           })}
         </SectionCard>
 
-        <TouchableOpacity
-          style={[styles.submitBtn, loading && styles.disabled]}
-          onPress={registerFarmer}
-          disabled={loading}
-          activeOpacity={0.85}
-        >
+        <TouchableOpacity style={[styles.submitBtn, loading && styles.disabled]} onPress={registerFarmer} disabled={loading} activeOpacity={0.85}>
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <>
-              <Ionicons name="arrow-forward-circle-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.submitText}>Continue to Farmer Setup</Text>
+              <Ionicons name="card-outline" size={20} color="#FFFFFF" />
+              <Text style={styles.submitText}>Continue to Secure Payment</Text>
             </>
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.loginBtn}
-          onPress={() => router.push("/farmer/login" as any)}
-          activeOpacity={0.85}
-        >
+        <TouchableOpacity style={styles.loginBtn} onPress={() => router.push("/farmer/login" as any)} activeOpacity={0.85}>
           <Text style={styles.loginText}>Already have account? Farmer Login</Text>
         </TouchableOpacity>
       </ScrollView>

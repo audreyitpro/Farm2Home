@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -17,7 +18,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
@@ -26,6 +27,10 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   "https://farm2home-production-e4bd.up.railway.app";
+
+const APP_URL =
+  process.env.EXPO_PUBLIC_APP_URL ||
+  "https://farm2home-rho.vercel.app";
 
 const COLORS = {
   bg: "#F3F4F6",
@@ -85,8 +90,11 @@ async function saveFreightSession(carrier: any) {
 }
 
 export default function FreightRegister() {
+  const params = useLocalSearchParams();
+
   const [saving, setSaving] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
+  const [processingReturn, setProcessingReturn] = useState(false);
 
   const [savedCarrierId, setSavedCarrierId] = useState("");
   const [freightId, setFreightId] = useState("");
@@ -144,6 +152,48 @@ export default function FreightRegister() {
   useEffect(() => {
     loadSavedFreight();
   }, []);
+
+  useEffect(() => {
+    const stripeStatus = String(params?.stripe || params?.payment || "");
+    const returnedFreightId = String(params?.freightId || params?.freight_id || "");
+
+    if (stripeStatus === "success") {
+      handleStripeSuccessReturn(returnedFreightId);
+    }
+  }, [params?.stripe, params?.payment, params?.freightId, params?.freight_id]);
+
+  async function handleStripeSuccessReturn(returnedFreightId?: string) {
+    if (processingReturn) return;
+
+    try {
+      setProcessingReturn(true);
+
+      if (returnedFreightId && !savedCarrierId && !freightId) {
+        setSavedCarrierId(returnedFreightId);
+        setFreightId(returnedFreightId);
+      }
+
+      await loadSavedFreight();
+
+      const synced = await forceSyncFreightSubscription(true);
+
+      if (!synced?.stripeSubscriptionId && !synced?.stripe_customer_id) {
+        Alert.alert(
+          "Payment Processing",
+          "Stripe payment was completed. If the subscription ID is not visible yet, wait a few seconds and tap Retrieve Missing Stripe Info."
+        );
+        return;
+      }
+
+      await markApplicationSubmittedAndOpenDashboard(
+        returnedFreightId || savedCarrierId || freightId
+      );
+    } catch (error: any) {
+      Alert.alert("Stripe Return Error", error?.message || "Unable to complete freight registration.");
+    } finally {
+      setProcessingReturn(false);
+    }
+  }
 
   async function loadSavedFreight() {
     try {
@@ -478,14 +528,14 @@ export default function FreightRegister() {
     }
   }
 
-  async function forceSyncFreightSubscription() {
+  async function forceSyncFreightSubscription(silent = false) {
     const finalEmail = normalize(email);
     const finalBusinessName = companyName.trim();
     const finalUsername = normalize(username);
     const finalId = savedCarrierId || freightId;
 
     if (!finalEmail && !finalBusinessName && !finalUsername && !finalId) {
-      Alert.alert("Missing Info", "Enter your email, business name, or username first.");
+      if (!silent) Alert.alert("Missing Info", "Enter your email, business name, or username first.");
       return null;
     }
 
@@ -517,7 +567,9 @@ export default function FreightRegister() {
       }
 
       if (!response.ok || !json.success) {
-        Alert.alert("Stripe Sync Failed", json.error || "No paid freight subscription was found.");
+        if (!silent) {
+          Alert.alert("Stripe Sync Failed", json.error || "No paid freight subscription was found.");
+        }
         return null;
       }
 
@@ -532,10 +584,13 @@ export default function FreightRegister() {
         await saveHydratedSession(preserved);
       }
 
-      Alert.alert("Subscription Restored", "Your paid freight subscription was saved to Supabase.");
+      if (!silent) {
+        Alert.alert("Subscription Restored", "Your paid freight subscription was saved to Supabase.");
+      }
+
       return json;
     } catch (error: any) {
-      Alert.alert("Force Sync Error", error?.message || "Unable to restore subscription.");
+      if (!silent) Alert.alert("Force Sync Error", error?.message || "Unable to restore subscription.");
       return null;
     } finally {
       setSyncingStripe(false);
@@ -590,7 +645,7 @@ export default function FreightRegister() {
     const finalSubscriptionStatus =
       subscriptionStatus ||
       existingFreightUser?.subscription_status ||
-      (finalSubscriptionId ? "active" : "not_started");
+      (finalSubscriptionId ? "active" : "pending_payment");
 
     const freightPayload: any = {
       id: carrierId,
@@ -646,13 +701,16 @@ export default function FreightRegister() {
       licensed_refrigerated_food: licensedRefrigeratedFood,
 
       approved: true,
-      verification_status: "REGISTERED",
-      compliance_status: "PENDING_REVIEW",
-      admin_review_status: "pending",
+      verification_status: finalSubscriptionId ? "SUBMITTED" : "REGISTERED",
+      compliance_status: finalSubscriptionId ? "SUBMITTED" : "PENDING_PAYMENT",
+      admin_review_status: finalSubscriptionId ? "submitted" : "pending_payment",
 
-      membership_status: finalSubscriptionId ? "active" : "registration_saved",
+      membership_status: finalSubscriptionId ? "active" : "pending_payment",
       subscription_status: finalSubscriptionStatus,
       freight_membership_paid: Boolean(finalSubscriptionId),
+
+      application_submitted: Boolean(finalSubscriptionId),
+      submitted_at: finalSubscriptionId ? now : existingFreightUser?.submitted_at || null,
 
       push_notifications: true,
       new_load_alerts: true,
@@ -693,7 +751,7 @@ export default function FreightRegister() {
         stripe_account_id: finalStripeAccountId || null,
         stripe_subscription_id: finalSubscriptionId || null,
         subscription_id: finalSubscriptionId || null,
-        membership_status: finalSubscriptionId ? "active" : "registration_saved",
+        membership_status: finalSubscriptionId ? "active" : "pending_payment",
         subscription_status: finalSubscriptionStatus,
         account_active: true,
         updated_at: now,
@@ -729,10 +787,31 @@ export default function FreightRegister() {
     if (saveError) throw saveError;
     if (!savedFreightUser?.id) throw new Error("Freight registration did not save.");
 
+    await upsertAdminVerification(carrierId, savedFreightUser, finalSubscriptionId, finalSubscriptionStatus);
+
+    await saveHydratedSession(savedFreightUser);
+    hydrateForm(savedFreightUser);
+
+    return savedFreightUser;
+  }
+
+  async function upsertAdminVerification(
+    carrierId: string,
+    savedFreightUser: any,
+    finalSubscriptionId?: string,
+    finalSubscriptionStatus?: string
+  ) {
+    const now = new Date().toISOString();
+    const cleanCompanyName = companyName.trim();
+    const cleanContactName = contactName.trim();
+    const cleanEmailValue = normalize(email);
+    const finalAccountId = savedFreightUser.account_id || accountId;
+    const paid = Boolean(finalSubscriptionId || subscriptionId);
+
     await supabase.from("admin_verifications").upsert(
       {
         id: carrierId,
-        account_id: savedFreightUser.account_id || finalAccountId,
+        account_id: finalAccountId,
         carrier_id: carrierId,
         freight_id: carrierId,
         profile_id: carrierId,
@@ -744,8 +823,8 @@ export default function FreightRegister() {
         contact_name: cleanContactName,
         owner_name: cleanContactName,
         email: cleanEmailValue,
-        phone: cleanPhone,
-        username: cleanUsername,
+        phone: phone.trim(),
+        username: normalize(username),
         business_address: businessAddress.trim(),
         city: city.trim(),
         state: stateValue.trim().toUpperCase(),
@@ -759,33 +838,30 @@ export default function FreightRegister() {
         insurance_active: insuranceActive,
         licensed_livestock: licensedLivestock,
         licensed_refrigerated_food: licensedRefrigeratedFood,
-        status: "PENDING_REVIEW",
-        compliance_status: "PENDING_REVIEW",
-        admin_review_status: "pending",
-        review_decision: "pending",
+        status: paid ? "SUBMITTED" : "PENDING_PAYMENT",
+        compliance_status: paid ? "SUBMITTED" : "PENDING_PAYMENT",
+        admin_review_status: paid ? "submitted" : "pending_payment",
+        review_decision: paid ? "submitted" : "pending_payment",
         approved: true,
         rejected: false,
         reviewed: false,
         needs_more_info: false,
         account_active: true,
-        membership_status: finalSubscriptionId ? "active" : "registration_saved",
-        subscription_status: finalSubscriptionStatus,
-        freight_membership_paid: Boolean(finalSubscriptionId),
-        stripe_id: finalStripeId || null,
-        stripe_customer_id: finalStripeCustomerId || null,
-        stripe_account_id: finalStripeAccountId || null,
-        stripe_subscription_id: finalSubscriptionId || null,
-        subscription_id: finalSubscriptionId || null,
+        membership_status: paid ? "active" : "pending_payment",
+        subscription_status: finalSubscriptionStatus || subscriptionStatus || (paid ? "active" : "pending_payment"),
+        freight_membership_paid: paid,
+        application_submitted: paid,
+        submitted_at: paid ? now : null,
+        stripe_id: stripeId || stripeCustomerId || null,
+        stripe_customer_id: stripeCustomerId || stripeId || null,
+        stripe_account_id: stripeAccountId || null,
+        stripe_subscription_id: finalSubscriptionId || subscriptionId || null,
+        subscription_id: finalSubscriptionId || subscriptionId || null,
         updated_at: now,
-        created_at: existingFreightUser?.created_at || now,
+        created_at: savedFreightUser?.created_at || now,
       },
       { onConflict: "id" }
     );
-
-    await saveHydratedSession(savedFreightUser);
-    hydrateForm(savedFreightUser);
-
-    return savedFreightUser;
   }
 
   async function saveRegistration() {
@@ -806,9 +882,8 @@ export default function FreightRegister() {
         setAccountId(duplicate.account_id || accountId);
 
         const saved = await saveFreightUserRow(duplicate.id, duplicate.account_id || undefined);
-        await forceSyncFreightSubscription();
 
-        Alert.alert("Updated", "Existing freight registration was updated and Stripe IDs were checked.");
+        Alert.alert("Updated", "Existing freight registration was updated.");
         return saved;
       }
 
@@ -845,12 +920,8 @@ export default function FreightRegister() {
       setAccountId(generatedAccountId);
 
       const saved = await saveFreightUserRow(carrierId, generatedAccountId);
-      await forceSyncFreightSubscription();
 
-      Alert.alert("Registration Saved", "Freight registration was saved to Supabase.", [
-        { text: "Dashboard", onPress: () => submitToDashboard() },
-        { text: "Stay Here", style: "cancel" },
-      ]);
+      Alert.alert("Registration Saved", "Now continue to Stripe checkout to activate the freight dashboard.");
 
       return saved;
     } catch (error: any) {
@@ -863,11 +934,13 @@ export default function FreightRegister() {
 
   async function startSubscriptionCheckout() {
     let finalId = savedCarrierId || freightId;
+    let finalAccountId = accountId;
     const finalEmail = normalize(email);
 
     if (!finalId || !finalEmail) {
       const saved = await saveRegistration();
       finalId = saved?.id || savedCarrierId || freightId;
+      finalAccountId = saved?.account_id || accountId;
     }
 
     if (!finalId || !finalEmail) {
@@ -876,23 +949,15 @@ export default function FreightRegister() {
     }
 
     if (hasActiveSubscription) {
-      Alert.alert("Subscription Already Active", "This freight account already has an active Stripe subscription.", [
-        { text: "Go to Dashboard", onPress: () => submitToDashboard() },
-      ]);
-      return;
-    }
-
-    const synced = await forceSyncFreightSubscription();
-
-    if (synced?.stripeSubscriptionId) {
-      Alert.alert("Subscription Found", "Your existing Stripe subscription was restored.", [
-        { text: "Go to Dashboard", onPress: () => submitToDashboard() },
-      ]);
+      await markApplicationSubmittedAndOpenDashboard(finalId);
       return;
     }
 
     try {
       setSaving(true);
+
+      const successUrl = `${APP_URL}/freight/register?stripe=success&freightId=${encodeURIComponent(finalId)}`;
+      const cancelUrl = `${APP_URL}/freight/register?stripe=cancelled&freightId=${encodeURIComponent(finalId)}`;
 
       const response = await fetch(`${API_BASE_URL}/payments/create-freight-subscription-checkout`, {
         method: "POST",
@@ -903,14 +968,33 @@ export default function FreightRegister() {
           userId: finalId,
           freightId: finalId,
           freight_id: finalId,
-          accountId,
-          account_id: accountId,
+          accountId: finalAccountId,
+          account_id: finalAccountId,
           email: finalEmail,
           customerEmail: finalEmail,
+          freight_email: finalEmail,
           companyName: companyName.trim(),
           businessName: companyName.trim(),
+          business_name: companyName.trim(),
           name: companyName.trim(),
+          contactName: contactName.trim(),
+          contact_name: contactName.trim(),
           username: normalize(username),
+          successUrl,
+          success_url: successUrl,
+          cancelUrl,
+          cancel_url: cancelUrl,
+          metadata: {
+            role: "freight",
+            freight_id: finalId,
+            account_id: finalAccountId,
+            freight_email: finalEmail,
+            email: finalEmail,
+            company_name: companyName.trim(),
+            business_name: companyName.trim(),
+            contact_name: contactName.trim(),
+            username: normalize(username),
+          },
         }),
       });
 
@@ -934,11 +1018,7 @@ export default function FreightRegister() {
         setSubscriptionId(json.stripeSubscriptionId || "");
         setSubscriptionStatus(json.subscriptionStatus || "active");
 
-        await loadSavedFreight();
-
-        Alert.alert("Subscription Already Active", "Existing Stripe subscription was found.", [
-          { text: "Go to Dashboard", onPress: () => submitToDashboard() },
-        ]);
+        await markApplicationSubmittedAndOpenDashboard(finalId);
         return;
       }
 
@@ -957,7 +1037,7 @@ export default function FreightRegister() {
         return;
       }
 
-      router.push(json.url as any);
+      await Linking.openURL(json.url);
     } catch (error: any) {
       Alert.alert("Checkout Error", error?.message || "Backend checkout failed.");
     } finally {
@@ -965,16 +1045,68 @@ export default function FreightRegister() {
     }
   }
 
-  async function submitToDashboard() {
-    const finalId = savedCarrierId || freightId;
+  async function markApplicationSubmittedAndOpenDashboard(targetId?: string) {
+    const finalId = targetId || savedCarrierId || freightId;
 
     if (!finalId) {
       Alert.alert("Save Required", "Save your freight registration first.");
       return;
     }
 
+    const now = new Date().toISOString();
+
+    const sync = await forceSyncFreightSubscription(true);
+    const finalStripeCustomerId = sync?.stripeCustomerId || stripeCustomerId || stripeId || null;
+    const finalSubscriptionId = sync?.stripeSubscriptionId || subscriptionId || null;
+    const finalStatus = sync?.subscriptionStatus || subscriptionStatus || (finalSubscriptionId ? "active" : "pending");
+
+    await supabase
+      .from("freight_users")
+      .update({
+        application_submitted: true,
+        submitted_at: now,
+        verification_status: "SUBMITTED",
+        compliance_status: "SUBMITTED",
+        admin_review_status: "submitted",
+        membership_status: finalSubscriptionId ? "active" : "pending",
+        subscription_status: finalStatus,
+        freight_membership_paid: Boolean(finalSubscriptionId),
+        stripe_customer_id: finalStripeCustomerId,
+        stripe_id: finalStripeCustomerId,
+        stripe_subscription_id: finalSubscriptionId,
+        subscription_id: finalSubscriptionId,
+        account_active: true,
+        updated_at: now,
+      })
+      .eq("id", finalId);
+
+    await supabase
+      .from("admin_verifications")
+      .update({
+        application_submitted: true,
+        submitted_at: now,
+        status: "SUBMITTED",
+        compliance_status: "SUBMITTED",
+        admin_review_status: "submitted",
+        review_decision: "submitted",
+        membership_status: finalSubscriptionId ? "active" : "pending",
+        subscription_status: finalStatus,
+        freight_membership_paid: Boolean(finalSubscriptionId),
+        stripe_customer_id: finalStripeCustomerId,
+        stripe_id: finalStripeCustomerId,
+        stripe_subscription_id: finalSubscriptionId,
+        subscription_id: finalSubscriptionId,
+        account_active: true,
+        updated_at: now,
+      })
+      .eq("id", finalId);
+
     await loadSavedFreight();
     router.replace("/freight/dashboard" as any);
+  }
+
+  async function submitToDashboard() {
+    await markApplicationSubmittedAndOpenDashboard(savedCarrierId || freightId);
   }
 
   function renderQuestionPicker(
@@ -1067,19 +1199,31 @@ export default function FreightRegister() {
             <Text style={styles.kicker}>Farm2Home Freight</Text>
             <Text style={styles.title}>Carrier Registration</Text>
             <Text style={styles.subtitle}>
-              Save registration first, restore existing Stripe subscriptions, and prevent duplicate freight payments.
+              Save registration, start Stripe checkout, and after Stripe confirms payment your application is submitted and the freight dashboard opens.
             </Text>
           </View>
 
-          <View style={styles.noticeBox}>
-            <View style={styles.noticeHeader}>
-              <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
-              <Text style={styles.noticeTitle}>Do Not Purchase Again</Text>
+          {processingReturn ? (
+            <View style={styles.noticeBox}>
+              <View style={styles.noticeHeader}>
+                <ActivityIndicator color={COLORS.amber} />
+                <Text style={styles.noticeTitle}>Completing Stripe Registration</Text>
+              </View>
+              <Text style={styles.noticeText}>
+                Please wait while we sync your Stripe subscription and submit your freight application.
+              </Text>
             </View>
-            <Text style={styles.noticeText}>
-              If you already paid, tap Find / Retrieve Missing Stripe Info. Stripe sync will only update Stripe IDs and will not erase your registration form.
-            </Text>
-          </View>
+          ) : (
+            <View style={styles.noticeBox}>
+              <View style={styles.noticeHeader}>
+                <Ionicons name="alert-circle-outline" size={22} color={COLORS.amber} />
+                <Text style={styles.noticeTitle}>Use Secure Checkout</Text>
+              </View>
+              <Text style={styles.noticeText}>
+                Do not use a static Stripe payment link. This page creates a unique Stripe Checkout session with your freight ID, email, company name, and username attached.
+              </Text>
+            </View>
+          )}
 
           <View style={styles.card}>
             <SectionHeader icon="key-outline" title="System IDs" />
@@ -1196,7 +1340,7 @@ export default function FreightRegister() {
           <TouchableOpacity style={[styles.darkButton, saving && styles.disabledButton]} onPress={startSubscriptionCheckout} disabled={saving}>
             <Ionicons name="card-outline" size={18} color="#FFFFFF" />
             <Text style={styles.buttonText}>
-              {hasActiveSubscription ? "Subscription Active" : "Start Freight Subscription"}
+              {hasActiveSubscription ? "Submit & Open Dashboard" : "Start Stripe Subscription"}
             </Text>
           </TouchableOpacity>
 

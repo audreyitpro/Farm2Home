@@ -1,10 +1,11 @@
 // app/customer/register.tsx
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -16,7 +17,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -75,6 +76,8 @@ async function saveCurrentCustomer(customerAccount: any) {
 }
 
 export default function CustomerRegister() {
+  const params = useLocalSearchParams();
+
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -91,11 +94,56 @@ export default function CustomerRegister() {
   const [securityAnswer3, setSecurityAnswer3] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [processingReturn, setProcessingReturn] = useState(false);
 
   const selectedQuestions = useMemo(
     () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
+
+  useEffect(() => {
+    const stripeStatus = String(params?.stripe || params?.payment || "");
+    const returnedCustomerId = String(params?.customerId || params?.customer_id || "");
+
+    if (stripeStatus === "success") {
+      handleStripeSuccessReturn(returnedCustomerId);
+    }
+  }, [params?.stripe, params?.payment, params?.customerId, params?.customer_id]);
+
+  async function handleStripeSuccessReturn(returnedCustomerId?: string) {
+    if (processingReturn) return;
+
+    try {
+      setProcessingReturn(true);
+
+      const saved =
+        (await AsyncStorage.getItem("currentCustomer")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentCustomer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      const localCustomer = saved ? JSON.parse(saved) : null;
+      const finalCustomerId =
+        returnedCustomerId || localCustomer?.id || localCustomer?.customerId;
+
+      if (!finalCustomerId) {
+        Alert.alert(
+          "Customer Not Found",
+          "Stripe payment completed, but the customer profile could not be found."
+        );
+        return;
+      }
+
+      await forceSyncCustomerSubscription(finalCustomerId, localCustomer);
+      await markCustomerApplicationCompleteAndOpenMarketplace(finalCustomerId);
+    } catch (error: any) {
+      Alert.alert(
+        "Stripe Return Error",
+        error?.message || "Unable to complete customer registration."
+      );
+    } finally {
+      setProcessingReturn(false);
+    }
+  }
 
   function validateForm() {
     if (!fullName.trim() || !email.trim() || !phone.trim()) {
@@ -234,7 +282,158 @@ export default function CustomerRegister() {
       return;
     }
 
-    await WebBrowser.openBrowserAsync(url);
+    await Linking.openURL(url).catch(async () => {
+      await WebBrowser.openBrowserAsync(url);
+    });
+  }
+
+  async function forceSyncCustomerSubscription(customerId: string, localCustomer?: any) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "customer",
+          email: normalize(localCustomer?.email || email),
+          name: localCustomer?.name || localCustomer?.fullName || fullName,
+          username: normalize(localCustomer?.username || username),
+          userId: customerId,
+          customerId,
+          customer_id: customerId,
+        }),
+      });
+
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
+
+      if (!response.ok || !json.success) return null;
+
+      const stripeCustomerId = json.stripeCustomerId || json.stripe_customer_id || "";
+      const stripeSubscriptionId = json.stripeSubscriptionId || json.stripe_subscription_id || "";
+      const subscriptionStatus = json.subscriptionStatus || json.subscription_status || "active";
+
+      if (stripeCustomerId || stripeSubscriptionId) {
+        const updatePayload = {
+          stripe_id: stripeCustomerId || null,
+          stripe_customer_id: stripeCustomerId || null,
+          stripe_subscription_id: stripeSubscriptionId || null,
+          subscription_id: stripeSubscriptionId || null,
+          subscription_status: subscriptionStatus,
+          membership_status: stripeSubscriptionId ? "active" : "pending",
+          customer_membership_paid: Boolean(stripeSubscriptionId),
+          account_active: true,
+          updated_at: new Date().toISOString(),
+        };
+
+        await supabase.from("customers").update(updatePayload).eq("id", customerId);
+        await supabase.from("profiles").update(updatePayload).eq("id", customerId);
+      }
+
+      return json;
+    } catch {
+      return null;
+    }
+  }
+
+  async function markCustomerApplicationCompleteAndOpenMarketplace(customerId: string) {
+    const now = new Date().toISOString();
+
+    const { data: customerRow } = await supabase
+      .from("customers")
+      .select("*")
+      .eq("id", customerId)
+      .maybeSingle();
+
+    const paid = Boolean(customerRow?.stripe_subscription_id || customerRow?.subscription_id);
+
+    const completePayload = {
+      application_complete: true,
+      application_submitted: true,
+      submitted_at: now,
+      account_active: true,
+      customer_membership_paid: paid,
+      membership_status: paid ? "active" : "pending",
+      subscription_status: customerRow?.subscription_status || (paid ? "active" : "pending"),
+      updated_at: now,
+    };
+
+    await supabase.from("customers").update(completePayload).eq("id", customerId);
+    await supabase
+      .from("profiles")
+      .update({
+        account_active: true,
+        membership_status: completePayload.membership_status,
+        subscription_status: completePayload.subscription_status,
+        updated_at: now,
+      })
+      .eq("id", customerId);
+
+    await supabase.from("admin_verifications").upsert(
+      {
+        id: customerId,
+        customer_id: customerId,
+        profile_id: customerId,
+        account_id: customerRow?.account_id || "",
+        account_type: "CUSTOMER",
+        role: "customer",
+        type: "CUSTOMER",
+        full_name: customerRow?.full_name || customerRow?.name || "",
+        name: customerRow?.name || customerRow?.full_name || "",
+        email: customerRow?.email || "",
+        phone: customerRow?.phone || "",
+        username: customerRow?.username || "",
+        status: "COMPLETE",
+        compliance_status: "COMPLETE",
+        admin_review_status: "complete",
+        review_decision: "complete",
+        approved: true,
+        rejected: false,
+        reviewed: true,
+        needs_more_info: false,
+        account_active: true,
+        application_complete: true,
+        application_submitted: true,
+        submitted_at: now,
+        membership_status: completePayload.membership_status,
+        subscription_status: completePayload.subscription_status,
+        customer_membership_paid: paid,
+        stripe_customer_id: customerRow?.stripe_customer_id || customerRow?.stripe_id || null,
+        stripe_id: customerRow?.stripe_customer_id || customerRow?.stripe_id || null,
+        stripe_subscription_id:
+          customerRow?.stripe_subscription_id || customerRow?.subscription_id || null,
+        subscription_id:
+          customerRow?.stripe_subscription_id || customerRow?.subscription_id || null,
+        updated_at: now,
+        created_at: customerRow?.created_at || now,
+      },
+      { onConflict: "id" }
+    );
+
+    const { data: updatedCustomer } = await supabase
+      .from("customers")
+      .select("*")
+      .eq("id", customerId)
+      .maybeSingle();
+
+    if (updatedCustomer) {
+      await saveCurrentCustomer({
+        ...updatedCustomer,
+        role: "customer",
+        customerId: updatedCustomer.id,
+        accountId: updatedCustomer.account_id,
+        accountActive: true,
+        applicationComplete: true,
+        applicationSubmitted: true,
+      });
+    }
+
+    router.replace("/customer/marketplace" as any);
   }
 
   async function startCustomerCheckout(customerRow: any, localCustomer: any) {
@@ -243,6 +442,13 @@ export default function CustomerRegister() {
     const cleanEmail = normalize(customerRow.email);
     const cleanFullName = clean(customerRow.full_name || customerRow.name);
     const cleanUsername = normalize(customerRow.username);
+
+    const successUrl = `${APP_URL}/customer/register?stripe=success&customerId=${encodeURIComponent(
+      customerId
+    )}`;
+    const cancelUrl = `${APP_URL}/customer/register?stripe=cancelled&customerId=${encodeURIComponent(
+      customerId
+    )}`;
 
     const response = await fetch(`${API_BASE_URL}/payments/create-customer-subscription-checkout`, {
       method: "POST",
@@ -263,6 +469,7 @@ export default function CustomerRegister() {
         account_id: accountId,
 
         customerEmail: cleanEmail,
+        customer_email: cleanEmail,
         email: cleanEmail,
 
         name: cleanFullName,
@@ -271,8 +478,20 @@ export default function CustomerRegister() {
         businessName: cleanFullName,
         username: cleanUsername,
 
-        successUrl: `${APP_URL}/customer/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
-        cancelUrl: `${APP_URL}/customer/register`,
+        successUrl,
+        success_url: successUrl,
+        cancelUrl,
+        cancel_url: cancelUrl,
+
+        metadata: {
+          role: "customer",
+          customer_id: customerId,
+          account_id: accountId,
+          customer_email: cleanEmail,
+          email: cleanEmail,
+          name: cleanFullName,
+          username: cleanUsername,
+        },
       }),
     });
 
@@ -285,7 +504,7 @@ export default function CustomerRegister() {
       data = { success: false, error: text };
     }
 
-    if (!response.ok || !data.success) {
+    if (!response.ok || (!data.success && !data.url && !data.alreadySubscribed)) {
       throw new Error(data.error || data.message || "Stripe checkout failed.");
     }
 
@@ -301,6 +520,9 @@ export default function CustomerRegister() {
         membership_status: "active",
         subscription_status: data.subscriptionStatus || "active",
         customer_membership_paid: true,
+        application_complete: true,
+        application_submitted: true,
+        submitted_at: new Date().toISOString(),
         account_active: true,
         updated_at: new Date().toISOString(),
       };
@@ -308,7 +530,7 @@ export default function CustomerRegister() {
       await supabase.from("customers").update(updatePayload).eq("id", customerId);
       await supabase.from("profiles").update(updatePayload).eq("id", customerId);
 
-      const activeCustomer = {
+      await saveCurrentCustomer({
         ...localCustomer,
         stripeId: stripeCustomerId,
         stripeCustomerId,
@@ -317,16 +539,13 @@ export default function CustomerRegister() {
         membershipStatus: "active",
         subscriptionStatus: data.subscriptionStatus || "active",
         customerMembershipPaid: true,
+        applicationComplete: true,
+        applicationSubmitted: true,
         accountActive: true,
         updatedAt: new Date().toISOString(),
-      };
+      });
 
-      await saveCurrentCustomer(activeCustomer);
-
-      Alert.alert("Subscription Active", "Your customer subscription is already active.", [
-        { text: "Continue", onPress: () => router.replace("/customer/marketplace" as any) },
-      ]);
-
+      await markCustomerApplicationCompleteAndOpenMarketplace(customerId);
       return;
     }
 
@@ -341,7 +560,7 @@ export default function CustomerRegister() {
       data.customer_id ||
       "";
 
-    const stripeCheckoutSessionId = data.id || data.sessionId || "";
+    const stripeCheckoutSessionId = data.id || data.sessionId || data.session_id || "";
 
     const pendingPayload = {
       stripe_id: stripeCustomerId || null,
@@ -349,6 +568,8 @@ export default function CustomerRegister() {
       stripe_checkout_session_id: stripeCheckoutSessionId || null,
       membership_status: "pending_payment",
       subscription_status: "pending_payment",
+      application_complete: false,
+      application_submitted: false,
       updated_at: new Date().toISOString(),
     };
 
@@ -362,6 +583,8 @@ export default function CustomerRegister() {
       stripeCheckoutSessionId,
       membershipStatus: "pending_payment",
       subscriptionStatus: "pending_payment",
+      applicationComplete: false,
+      applicationSubmitted: false,
       updatedAt: new Date().toISOString(),
     });
 
@@ -468,8 +691,11 @@ export default function CustomerRegister() {
 
         account_active: true,
         customer_membership_paid: false,
-        subscription_status: "not_started",
-        membership_status: "not_started",
+        subscription_status: "pending_payment",
+        membership_status: "pending_payment",
+        application_complete: false,
+        application_submitted: false,
+        submitted_at: null,
 
         stripe_id: null,
         stripe_customer_id: null,
@@ -512,8 +738,10 @@ export default function CustomerRegister() {
 
         accountActive: true,
         customerMembershipPaid: false,
-        subscriptionStatus: "not_started",
-        membershipStatus: "not_started",
+        subscriptionStatus: "pending_payment",
+        membershipStatus: "pending_payment",
+        applicationComplete: false,
+        applicationSubmitted: false,
 
         stripeId: "",
         stripeCustomerId: "",
@@ -650,12 +878,15 @@ export default function CustomerRegister() {
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
               <Ionicons name="shield-checkmark-outline" size={22} color={COLORS.red} />
-              <Text style={styles.noticeTitle}>Permanent Profile Setup</Text>
+              <Text style={styles.noticeTitle}>
+                {processingReturn ? "Completing Customer Registration" : "Permanent Profile Setup"}
+              </Text>
             </View>
 
             <Text style={styles.noticeText}>
-              Your customer profile is saved to Supabase first. Stripe Checkout is then created
-              from the backend so your customer ID and subscription are linked correctly.
+              {processingReturn
+                ? "Please wait while Stripe syncs, your account is completed, and the marketplace opens."
+                : "Your customer profile is saved to Supabase first. Stripe Checkout is then created from the backend so your customer ID and subscription are linked correctly."}
             </Text>
           </View>
 
@@ -679,33 +910,9 @@ export default function CustomerRegister() {
               subtitle="Your shopping account and contact details."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Full Name"
-              placeholderTextColor="#94A3B8"
-              value={fullName}
-              onChangeText={setFullName}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Email Address"
-              placeholderTextColor="#94A3B8"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Phone Number"
-              placeholderTextColor="#94A3B8"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
+            <TextInput style={styles.input} placeholder="Full Name" placeholderTextColor="#94A3B8" value={fullName} onChangeText={setFullName} />
+            <TextInput style={styles.input} placeholder="Email Address" placeholderTextColor="#94A3B8" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} />
+            <TextInput style={styles.input} placeholder="Phone Number" placeholderTextColor="#94A3B8" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
           </View>
 
           <View style={styles.card}>
@@ -715,37 +922,9 @@ export default function CustomerRegister() {
               subtitle="Create credentials for customer marketplace access."
             />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Create Username"
-              placeholderTextColor="#94A3B8"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Create Password"
-              placeholderTextColor="#94A3B8"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm Password"
-              placeholderTextColor="#94A3B8"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            <TextInput style={styles.input} placeholder="Create Username" placeholderTextColor="#94A3B8" value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
+            <TextInput style={styles.input} placeholder="Create Password" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} />
+            <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} />
           </View>
 
           <View style={styles.card}>
@@ -755,38 +934,18 @@ export default function CustomerRegister() {
               subtitle="Choose 3 different questions for account recovery."
             />
 
-            {renderQuestionPicker(
-              "Security Question 1",
-              securityQuestion1,
-              setSecurityQuestion1,
-              securityAnswer1,
-              setSecurityAnswer1
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 2",
-              securityQuestion2,
-              setSecurityQuestion2,
-              securityAnswer2,
-              setSecurityAnswer2
-            )}
-
-            {renderQuestionPicker(
-              "Security Question 3",
-              securityQuestion3,
-              setSecurityQuestion3,
-              securityAnswer3,
-              setSecurityAnswer3
-            )}
+            {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
+            {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
+            {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
           </View>
 
           <TouchableOpacity
             onPress={createAccountAndSubscribe}
-            disabled={loading}
-            style={[styles.createButton, loading && styles.disabledButton]}
+            disabled={loading || processingReturn}
+            style={[styles.createButton, (loading || processingReturn) && styles.disabledButton]}
             activeOpacity={0.85}
           >
-            {loading ? (
+            {loading || processingReturn ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
               <>
