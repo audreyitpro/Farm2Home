@@ -54,6 +54,29 @@ function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
 }
 
+function getCarrierId(carrier: any) {
+  return (
+    carrier?.id ||
+    carrier?.freightId ||
+    carrier?.freight_id ||
+    carrier?.profile_id ||
+    carrier?.auth_user_id ||
+    ""
+  );
+}
+
+function getAccountId(carrier: any) {
+  return carrier?.accountId || carrier?.account_id || "";
+}
+
+function getStripeAccountId(carrier: any) {
+  return carrier?.stripeAccountId || carrier?.stripe_account_id || "";
+}
+
+function boolValue(...values: any[]) {
+  return values.some((value) => value === true || value === "true" || value === 1);
+}
+
 function goTo(route: FreightRoute) {
   router.push(route as any);
 }
@@ -69,6 +92,55 @@ function formatDate(value?: string | null) {
   return date.toLocaleDateString();
 }
 
+function getLoadAmount(load: any) {
+  return Number(
+    load?.payout_amount ||
+      load?.carrier_payout ||
+      load?.freight_payout ||
+      load?.driver_payout ||
+      load?.rate ||
+      load?.freight_total ||
+      load?.total_due ||
+      load?.delivery_fee ||
+      0
+  );
+}
+
+function isCompletedLoad(load: any) {
+  return ["delivered", "completed", "complete"].includes(normalize(load?.status));
+}
+
+function isPaidLoad(load: any) {
+  return ["paid", "settled", "complete", "completed"].includes(
+    normalize(load?.payout_status || load?.settlement_status || load?.payment_status)
+  );
+}
+
+async function getStoredCarrier() {
+  const raw =
+    (await AsyncStorage.getItem("currentFreightCarrier")) ||
+    (await AsyncStorage.getItem("currentFreight")) ||
+    (await AsyncStorage.getItem("currentFreightUser")) ||
+    (await AsyncStorage.getItem("currentUser"));
+
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function saveFreightSession(carrier: any) {
+  await AsyncStorage.setItem("currentFreight", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentFreightUser", JSON.stringify(carrier));
+  await AsyncStorage.setItem("currentUser", JSON.stringify(carrier));
+  await AsyncStorage.setItem("userRole", "freight");
+  await AsyncStorage.setItem("currentUserRole", "freight");
+}
+
 export default function FreightPayoutCenterScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -82,63 +154,34 @@ export default function FreightPayoutCenterScreen() {
   );
 
   const stats = useMemo(() => {
-    const completed = loads.filter((x) =>
-      ["delivered", "completed"].includes(normalize(x.status))
-    );
-
-    const paid = completed.filter((x) =>
-      ["paid", "settled"].includes(normalize(x.payout_status || x.settlement_status))
-    );
-
-    const pending = completed.filter(
-      (x) =>
-        !["paid", "settled"].includes(
-          normalize(x.payout_status || x.settlement_status)
-        )
-    );
+    const completed = loads.filter(isCompletedLoad);
+    const paid = completed.filter(isPaidLoad);
+    const pending = completed.filter((load) => !isPaidLoad(load));
 
     return {
       completedCount: completed.length,
       paidCount: paid.length,
       pendingCount: pending.length,
-      paidValue: paid.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
-      pendingValue: pending.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
-      totalValue: completed.reduce(
-        (sum, x) => sum + Number(x.rate || x.freight_total || x.total_due || x.payout_amount || 0),
-        0
-      ),
+      paidValue: paid.reduce((sum, load) => sum + getLoadAmount(load), 0),
+      pendingValue: pending.reduce((sum, load) => sum + getLoadAmount(load), 0),
+      totalValue: completed.reduce((sum, load) => sum + getLoadAmount(load), 0),
     };
   }, [loads]);
 
-  async function getStoredCarrier() {
-    const raw =
-      (await AsyncStorage.getItem("currentFreightCarrier")) ||
-      (await AsyncStorage.getItem("currentFreight")) ||
-      (await AsyncStorage.getItem("currentFreightUser")) ||
-      (await AsyncStorage.getItem("currentUser"));
-
-    if (!raw) return null;
-
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }
-
   async function persistCarrier(nextCarrier: any) {
+    const realId = getCarrierId(nextCarrier);
+
     const normalizedCarrier = {
       ...nextCarrier,
-      id: nextCarrier.id || nextCarrier.freightId,
-      freightId: nextCarrier.freightId || nextCarrier.id,
+      id: realId,
+      freightId: realId,
+      freight_id: nextCarrier.freight_id || realId,
+      profile_id: nextCarrier.profile_id || realId,
+      auth_user_id: nextCarrier.auth_user_id || realId,
       role: "freight",
       email: normalize(nextCarrier.email),
+      accountId: nextCarrier.accountId || nextCarrier.account_id || "",
+      account_id: nextCarrier.account_id || nextCarrier.accountId || "",
       companyName:
         nextCarrier.companyName ||
         nextCarrier.businessName ||
@@ -151,23 +194,145 @@ export default function FreightPayoutCenterScreen() {
         nextCarrier.business_name ||
         nextCarrier.company_name ||
         "Freight Connect Carrier",
-      stripeAccountId: nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
-      stripe_account_id: nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
-      payoutsEnabled: nextCarrier.payoutsEnabled ?? nextCarrier.payouts_enabled ?? false,
-      chargesEnabled: nextCarrier.chargesEnabled ?? nextCarrier.charges_enabled ?? false,
-      onboardingComplete:
-        nextCarrier.onboardingComplete ?? nextCarrier.stripe_onboarding_complete ?? false,
+      stripeAccountId: getStripeAccountId(nextCarrier),
+      stripe_account_id: getStripeAccountId(nextCarrier),
+      stripeConnectStatus:
+        nextCarrier.stripeConnectStatus ||
+        nextCarrier.stripe_connect_status ||
+        (getStripeAccountId(nextCarrier) ? "created" : "not_started"),
+      stripe_connect_status:
+        nextCarrier.stripe_connect_status ||
+        nextCarrier.stripeConnectStatus ||
+        (getStripeAccountId(nextCarrier) ? "created" : "not_started"),
+      payoutsEnabled: boolValue(
+        nextCarrier.payoutsEnabled,
+        nextCarrier.payouts_enabled,
+        nextCarrier.stripe_payouts_enabled
+      ),
+      payouts_enabled: boolValue(
+        nextCarrier.payouts_enabled,
+        nextCarrier.payoutsEnabled,
+        nextCarrier.stripe_payouts_enabled
+      ),
+      stripe_payouts_enabled: boolValue(
+        nextCarrier.stripe_payouts_enabled,
+        nextCarrier.payouts_enabled,
+        nextCarrier.payoutsEnabled
+      ),
+      chargesEnabled: boolValue(
+        nextCarrier.chargesEnabled,
+        nextCarrier.charges_enabled,
+        nextCarrier.stripe_charges_enabled
+      ),
+      charges_enabled: boolValue(
+        nextCarrier.charges_enabled,
+        nextCarrier.chargesEnabled,
+        nextCarrier.stripe_charges_enabled
+      ),
+      stripe_charges_enabled: boolValue(
+        nextCarrier.stripe_charges_enabled,
+        nextCarrier.charges_enabled,
+        nextCarrier.chargesEnabled
+      ),
+      onboardingComplete: boolValue(
+        nextCarrier.onboardingComplete,
+        nextCarrier.stripe_onboarding_complete
+      ),
+      stripe_onboarding_complete: boolValue(
+        nextCarrier.stripe_onboarding_complete,
+        nextCarrier.onboardingComplete
+      ),
     };
 
-    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("userRole", "freight");
-    await AsyncStorage.setItem("currentUserRole", "freight");
-
+    await saveFreightSession(normalizedCarrier);
     setCarrier(normalizedCarrier);
     return normalizedCarrier;
+  }
+
+  async function findFreightCarrier(stored: any, authUser: any) {
+    const storedId = getCarrierId(stored);
+    const authId = authUser?.id || "";
+    const email = normalize(stored?.email || authUser?.email || "");
+
+    let query = supabase.from("freight_users").select("*");
+
+    if (storedId || authId || email) {
+      const filters = [
+        storedId ? `id.eq.${storedId}` : "",
+        storedId ? `freight_id.eq.${storedId}` : "",
+        storedId ? `profile_id.eq.${storedId}` : "",
+        storedId ? `auth_user_id.eq.${storedId}` : "",
+        authId ? `id.eq.${authId}` : "",
+        authId ? `freight_id.eq.${authId}` : "",
+        authId ? `profile_id.eq.${authId}` : "",
+        authId ? `auth_user_id.eq.${authId}` : "",
+        email ? `email.eq.${email}` : "",
+      ]
+        .filter(Boolean)
+        .join(",");
+
+      query = query.or(filters);
+    }
+
+    const { data, error } = await query.limit(1);
+
+    if (error) throw error;
+
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  }
+
+  async function loadFreightLoads(mergedCarrier: any) {
+    const carrierId = getCarrierId(mergedCarrier);
+    const accountId = getAccountId(mergedCarrier);
+    const email = normalize(mergedCarrier?.email);
+
+    if (!carrierId && !accountId && !email) {
+      setLoads([]);
+      return;
+    }
+
+    const filters = [
+      carrierId ? `carrier_id.eq.${carrierId}` : "",
+      carrierId ? `freight_id.eq.${carrierId}` : "",
+      carrierId ? `driver_id.eq.${carrierId}` : "",
+      carrierId ? `accepted_by.eq.${carrierId}` : "",
+      carrierId ? `assigned_to.eq.${carrierId}` : "",
+      accountId ? `account_id.eq.${accountId}` : "",
+      email ? `carrier_email.eq.${email}` : "",
+      email ? `freight_email.eq.${email}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    try {
+      const { data, error } = await supabase
+        .from("freight_loads")
+        .select("*")
+        .or(filters)
+        .in("status", ["delivered", "completed", "complete"])
+        .order("delivered_at", { ascending: false });
+
+      if (error) throw error;
+      setLoads(Array.isArray(data) ? data : []);
+    } catch (firstError: any) {
+      console.log("Payout center freight_loads primary query error:", firstError?.message);
+
+      try {
+        const { data, error } = await supabase
+          .from("freight_loads")
+          .select("*")
+          .or(filters)
+          .order("updated_at", { ascending: false });
+
+        if (error) throw error;
+
+        const completedOnly = Array.isArray(data) ? data.filter(isCompletedLoad) : [];
+        setLoads(completedOnly);
+      } catch (fallbackError: any) {
+        console.log("Payout center freight_loads fallback query error:", fallbackError?.message);
+        setLoads([]);
+      }
+    }
   }
 
   async function loadPayoutCenter() {
@@ -176,25 +341,22 @@ export default function FreightPayoutCenterScreen() {
 
       const stored = await getStoredCarrier();
       const { data: authData } = await supabase.auth.getUser();
-      const email = normalize(stored?.email || authData?.user?.email || "");
+      const authUser = authData?.user;
 
-      if (!email) {
+      const email = normalize(stored?.email || authUser?.email || "");
+
+      if (!email && !authUser?.id && !getCarrierId(stored)) {
         router.replace(FREIGHT_ROUTES.login as any);
         return;
       }
 
-      const { data: dbCarrier, error: carrierError } = await supabase
-        .from("freight_users")
-        .select("*")
-        .eq("email", email)
-        .maybeSingle();
-
-      if (carrierError) {
-        console.log("Payout center carrier error:", carrierError.message);
-      }
+      const dbCarrier = await findFreightCarrier(stored, authUser);
 
       if (!dbCarrier) {
-        Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
+        Alert.alert(
+          "Freight Profile Missing",
+          "Please complete freight registration before opening the payout center."
+        );
         router.replace(FREIGHT_ROUTES.register as any);
         return;
       }
@@ -202,10 +364,15 @@ export default function FreightPayoutCenterScreen() {
       const mergedCarrier = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
-        id: dbCarrier.id,
-        freightId: dbCarrier.id,
+        id: dbCarrier.id || getCarrierId(stored) || authUser?.id,
+        freightId: dbCarrier.freight_id || dbCarrier.id || getCarrierId(stored) || authUser?.id,
+        freight_id: dbCarrier.freight_id || dbCarrier.id || getCarrierId(stored) || authUser?.id,
+        profile_id: dbCarrier.profile_id || dbCarrier.id || authUser?.id,
+        auth_user_id: dbCarrier.auth_user_id || authUser?.id || dbCarrier.id,
         email: normalize(dbCarrier.email || email),
         role: "freight",
+        accountId: dbCarrier.account_id || stored?.accountId || stored?.account_id || "",
+        account_id: dbCarrier.account_id || stored?.account_id || stored?.accountId || "",
         companyName:
           dbCarrier.company_name ||
           dbCarrier.business_name ||
@@ -219,39 +386,76 @@ export default function FreightPayoutCenterScreen() {
           stored?.companyName ||
           "Freight Connect Carrier",
         stripeAccountId:
-          dbCarrier.stripe_account_id || stored?.stripeAccountId || stored?.stripe_account_id || "",
+          dbCarrier.stripe_account_id ||
+          stored?.stripeAccountId ||
+          stored?.stripe_account_id ||
+          "",
         stripe_account_id:
-          dbCarrier.stripe_account_id || stored?.stripe_account_id || stored?.stripeAccountId || "",
+          dbCarrier.stripe_account_id ||
+          stored?.stripe_account_id ||
+          stored?.stripeAccountId ||
+          "",
+        stripeConnectStatus:
+          dbCarrier.stripe_connect_status ||
+          stored?.stripeConnectStatus ||
+          stored?.stripe_connect_status ||
+          "not_started",
+        stripe_connect_status:
+          dbCarrier.stripe_connect_status ||
+          stored?.stripe_connect_status ||
+          stored?.stripeConnectStatus ||
+          "not_started",
         payoutsEnabled:
           dbCarrier.payouts_enabled ??
           dbCarrier.stripe_payouts_enabled ??
           stored?.payoutsEnabled ??
+          stored?.payouts_enabled ??
+          false,
+        payouts_enabled:
+          dbCarrier.payouts_enabled ??
+          dbCarrier.stripe_payouts_enabled ??
+          stored?.payouts_enabled ??
+          stored?.payoutsEnabled ??
+          false,
+        stripe_payouts_enabled:
+          dbCarrier.stripe_payouts_enabled ??
+          dbCarrier.payouts_enabled ??
+          stored?.stripe_payouts_enabled ??
+          stored?.payouts_enabled ??
           false,
         chargesEnabled:
           dbCarrier.charges_enabled ??
           dbCarrier.stripe_charges_enabled ??
           stored?.chargesEnabled ??
+          stored?.charges_enabled ??
+          false,
+        charges_enabled:
+          dbCarrier.charges_enabled ??
+          dbCarrier.stripe_charges_enabled ??
+          stored?.charges_enabled ??
+          stored?.chargesEnabled ??
+          false,
+        stripe_charges_enabled:
+          dbCarrier.stripe_charges_enabled ??
+          dbCarrier.charges_enabled ??
+          stored?.stripe_charges_enabled ??
+          stored?.charges_enabled ??
           false,
         onboardingComplete:
-          dbCarrier.stripe_onboarding_complete ?? stored?.onboardingComplete ?? false,
+          dbCarrier.stripe_onboarding_complete ??
+          stored?.onboardingComplete ??
+          stored?.stripe_onboarding_complete ??
+          false,
+        stripe_onboarding_complete:
+          dbCarrier.stripe_onboarding_complete ??
+          stored?.stripe_onboarding_complete ??
+          stored?.onboardingComplete ??
+          false,
       });
 
-      const { data, error } = await supabase
-        .from("freight_loads")
-        .select("*")
-        .or(
-          `carrier_id.eq.${mergedCarrier.id},driver_id.eq.${mergedCarrier.id},accepted_by.eq.${mergedCarrier.id}`
-        )
-        .in("status", ["delivered", "completed"])
-        .order("delivered_at", { ascending: false });
-
-      if (error) {
-        console.log("Payout center loads error:", error.message);
-        setLoads([]);
-      } else {
-        setLoads(Array.isArray(data) ? data : []);
-      }
+      await loadFreightLoads(mergedCarrier);
     } catch (error: any) {
+      console.log("Payout center load error:", error);
       Alert.alert("Payout Error", error?.message || "Unable to load payout center.");
     } finally {
       setLoading(false);
@@ -266,47 +470,50 @@ export default function FreightPayoutCenterScreen() {
 
   function stripeReady() {
     return Boolean(
-      (carrier?.stripeAccountId || carrier?.stripe_account_id) &&
-        (carrier?.payoutsEnabled || carrier?.payouts_enabled) &&
-        (carrier?.chargesEnabled || carrier?.charges_enabled) &&
-        (carrier?.onboardingComplete || carrier?.stripe_onboarding_complete)
+      getStripeAccountId(carrier) &&
+        boolValue(carrier?.payoutsEnabled, carrier?.payouts_enabled, carrier?.stripe_payouts_enabled) &&
+        boolValue(carrier?.chargesEnabled, carrier?.charges_enabled, carrier?.stripe_charges_enabled) &&
+        boolValue(carrier?.onboardingComplete, carrier?.stripe_onboarding_complete)
     );
   }
 
   function stripeStatusText() {
     if (stripeReady()) return "Payout Ready";
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) return "Onboarding Incomplete";
+    if (getStripeAccountId(carrier)) return "Onboarding Incomplete";
     return "Bank Not Connected";
   }
 
   function stripeStatusColor() {
     if (stripeReady()) return COLORS.green;
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) return COLORS.amber;
+    if (getStripeAccountId(carrier)) return COLORS.amber;
     return COLORS.red;
   }
 
   function payoutStatus(load: any) {
-    return load.payout_status || load.settlement_status || "pending";
+    return load?.payout_status || load?.settlement_status || load?.payment_status || "pending";
   }
 
   function renderLoad({ item }: { item: any }) {
-    const amount = Number(item.rate || item.freight_total || item.total_due || item.payout_amount || 0);
-    const paid = ["paid", "settled"].includes(normalize(payoutStatus(item)));
+    const amount = getLoadAmount(item);
+    const paid = isPaidLoad(item);
 
     return (
       <View style={styles.loadCard}>
         <View style={styles.loadTop}>
           <View style={{ flex: 1 }}>
             <Text style={styles.loadTitle}>
-              {item.title || item.commodity || "Completed Freight Load"}
+              {item.title || item.commodity || item.load_name || "Completed Freight Load"}
             </Text>
             <Text style={styles.loadSub}>
-              {item.pickup_location || "Pickup"} → {item.dropoff_location || "Dropoff"}
+              {item.pickup_location || item.pickup_address || "Pickup"} →{" "}
+              {item.dropoff_location || item.delivery_location || item.dropoff_address || "Dropoff"}
             </Text>
           </View>
 
           <View style={[styles.badge, { backgroundColor: paid ? COLORS.green : COLORS.amber }]}>
-            <Text style={styles.badgeText}>{String(payoutStatus(item)).replace(/_/g, " ")}</Text>
+            <Text style={styles.badgeText}>
+              {String(payoutStatus(item)).replace(/_/g, " ")}
+            </Text>
           </View>
         </View>
 
@@ -318,14 +525,14 @@ export default function FreightPayoutCenterScreen() {
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Delivered</Text>
           <Text style={styles.infoValue}>
-            {formatDate(item.delivered_at || item.updated_at)}
+            {formatDate(item.delivered_at || item.completed_at || item.updated_at)}
           </Text>
         </View>
 
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Payout Reference</Text>
           <Text style={styles.infoValue}>
-            {item.stripe_payout_id || item.payout_id || "Pending"}
+            {item.stripe_payout_id || item.payout_id || item.transfer_id || "Pending"}
           </Text>
         </View>
       </View>
@@ -360,7 +567,11 @@ export default function FreightPayoutCenterScreen() {
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
+          <TouchableOpacity
+            style={styles.heroIcon}
+            onPress={() => goTo(FREIGHT_ROUTES.connectBank)}
+            activeOpacity={0.85}
+          >
             <Ionicons name="wallet-outline" size={34} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
@@ -379,8 +590,32 @@ export default function FreightPayoutCenterScreen() {
             <View style={[styles.stripePill, { backgroundColor: stripeStatusColor() }]}>
               <Text style={styles.stripePillText}>Stripe Connect: {stripeStatusText()}</Text>
             </View>
+
+            <Text style={styles.smallMeta}>
+              Stripe Account: {getStripeAccountId(carrier) || "Not connected"}
+            </Text>
           </View>
         </View>
+
+        {!stripeReady() ? (
+          <View style={styles.warningCard}>
+            <View style={styles.warningTop}>
+              <Ionicons name="alert-circle-outline" size={24} color={COLORS.amber} />
+              <Text style={styles.warningTitle}>Connect Bank Required</Text>
+            </View>
+            <Text style={styles.warningText}>
+              Payouts will stay pending until Stripe Express onboarding is complete and Stripe marks charges and payouts as enabled.
+            </Text>
+            <TouchableOpacity
+              style={styles.warningButton}
+              onPress={() => goTo(FREIGHT_ROUTES.connectBank)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.warningButtonText}>Open Connect Bank / Payouts</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         <View style={styles.statsGrid}>
           <StatCard label="Total Earned" value={money(stats.totalValue)} icon="cash-outline" />
@@ -408,7 +643,7 @@ export default function FreightPayoutCenterScreen() {
 
         <FlatList
           data={loads}
-          keyExtractor={(item, index) => String(item.id || index)}
+          keyExtractor={(item, index) => String(item.id || item.load_id || index)}
           scrollEnabled={false}
           renderItem={renderLoad}
           ListEmptyComponent={
@@ -422,12 +657,20 @@ export default function FreightPayoutCenterScreen() {
           }
         />
 
-        <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(FREIGHT_ROUTES.connectBank)}>
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => goTo(FREIGHT_ROUTES.connectBank)}
+          activeOpacity={0.85}
+        >
           <Ionicons name="business-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryText}>Open Connect Bank</Text>
+          <Text style={styles.primaryText}>Open Connect Bank / Payouts</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.darkButton} onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}>
+        <TouchableOpacity
+          style={styles.darkButton}
+          onPress={() => goTo(FREIGHT_ROUTES.managementCenter)}
+          activeOpacity={0.85}
+        >
           <Ionicons name="apps-outline" size={18} color="#FFFFFF" />
           <Text style={styles.primaryText}>Back to Management Center</Text>
         </TouchableOpacity>
@@ -464,7 +707,7 @@ function QuickLink({
   route: FreightRoute;
 }) {
   return (
-    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
+    <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)} activeOpacity={0.85}>
       <Ionicons name={icon} size={22} color={COLORS.red} />
       <Text style={styles.quickText}>{label}</Text>
     </TouchableOpacity>
@@ -532,6 +775,12 @@ const styles = StyleSheet.create({
   },
   carrierName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
   carrierEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  smallMeta: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 8,
+    fontSize: 12,
+  },
   stripePill: {
     alignSelf: "flex-start",
     borderRadius: 999,
@@ -540,6 +789,34 @@ const styles = StyleSheet.create({
     marginTop: 9,
   },
   stripePillText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
+  warningCard: {
+    backgroundColor: "#FFFBEB",
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  warningTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  warningTitle: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
+  warningText: { color: "#92400E", fontWeight: "700", lineHeight: 21 },
+  warningButton: {
+    backgroundColor: COLORS.red,
+    borderRadius: 15,
+    padding: 14,
+    marginTop: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  warningButtonText: { color: "#FFFFFF", fontWeight: "900" },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",

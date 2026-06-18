@@ -120,6 +120,9 @@ export default function FreightRegister() {
   const [securityAnswer2, setSecurityAnswer2] = useState("");
   const [securityQuestion3, setSecurityQuestion3] = useState("");
   const [securityAnswer3, setSecurityAnswer3] = useState("");
+  const [hasSavedSecurityAnswer1, setHasSavedSecurityAnswer1] = useState(false);
+  const [hasSavedSecurityAnswer2, setHasSavedSecurityAnswer2] = useState(false);
+  const [hasSavedSecurityAnswer3, setHasSavedSecurityAnswer3] = useState(false);
 
   const [businessAddress, setBusinessAddress] = useState("");
   const [city, setCity] = useState("");
@@ -383,6 +386,16 @@ export default function FreightRegister() {
     setSecurityQuestion3(
       carrier.security_question_3 || carrier.securityQuestion3 || ""
     );
+
+    setHasSavedSecurityAnswer1(
+      Boolean(carrier.security_answer_1 || carrier.securityAnswer1)
+    );
+    setHasSavedSecurityAnswer2(
+      Boolean(carrier.security_answer_2 || carrier.securityAnswer2)
+    );
+    setHasSavedSecurityAnswer3(
+      Boolean(carrier.security_answer_3 || carrier.securityAnswer3)
+    );
   }
 
   function buildPreservedCarrier(row: any) {
@@ -434,6 +447,15 @@ export default function FreightRegister() {
         securityQuestion3,
         row.security_question_3
       ),
+      security_answer_1: securityAnswer1
+        ? normalizeAnswer(securityAnswer1)
+        : row.security_answer_1,
+      security_answer_2: securityAnswer2
+        ? normalizeAnswer(securityAnswer2)
+        : row.security_answer_2,
+      security_answer_3: securityAnswer3
+        ? normalizeAnswer(securityAnswer3)
+        : row.security_answer_3,
       stripe_id:
         row.stripe_id ||
         row.stripe_customer_id ||
@@ -505,15 +527,15 @@ export default function FreightRegister() {
       return false;
     }
 
-    if (
-      !savedCarrierId &&
-      (!securityAnswer1.trim() ||
-        !securityAnswer2.trim() ||
-        !securityAnswer3.trim())
-    ) {
+    const missingSecurityAnswers =
+      (!securityAnswer1.trim() && !hasSavedSecurityAnswer1) ||
+      (!securityAnswer2.trim() && !hasSavedSecurityAnswer2) ||
+      (!securityAnswer3.trim() && !hasSavedSecurityAnswer3);
+
+    if (missingSecurityAnswers) {
       Alert.alert(
         "Security Answers Required",
-        "Please answer all 3 security questions."
+        "Please answer all 3 security questions. Saved accounts may leave an answer blank only when an answer is already on file."
       );
       return false;
     }
@@ -862,6 +884,15 @@ export default function FreightRegister() {
       security_question_1: securityQuestion1,
       security_question_2: securityQuestion2,
       security_question_3: securityQuestion3,
+      security_answer_1: securityAnswer1.trim()
+        ? normalizeAnswer(securityAnswer1)
+        : existingFreightUser?.security_answer_1 || null,
+      security_answer_2: securityAnswer2.trim()
+        ? normalizeAnswer(securityAnswer2)
+        : existingFreightUser?.security_answer_2 || null,
+      security_answer_3: securityAnswer3.trim()
+        ? normalizeAnswer(securityAnswer3)
+        : existingFreightUser?.security_answer_3 || null,
 
       service_area: serviceArea.trim(),
       business_address: businessAddress.trim(),
@@ -908,15 +939,6 @@ export default function FreightRegister() {
       updated_at: now,
     };
 
-    if (securityAnswer1) {
-      freightPayload.security_answer_1 = normalizeAnswer(securityAnswer1);
-    }
-    if (securityAnswer2) {
-      freightPayload.security_answer_2 = normalizeAnswer(securityAnswer2);
-    }
-    if (securityAnswer3) {
-      freightPayload.security_answer_3 = normalizeAnswer(securityAnswer3);
-    }
 
     await supabase.from("profiles").upsert(
       {
@@ -970,6 +992,12 @@ export default function FreightRegister() {
 
     await saveHydratedSession(savedFreightUser);
     hydrateForm(savedFreightUser);
+    setHasSavedSecurityAnswer1(Boolean(savedFreightUser.security_answer_1));
+    setHasSavedSecurityAnswer2(Boolean(savedFreightUser.security_answer_2));
+    setHasSavedSecurityAnswer3(Boolean(savedFreightUser.security_answer_3));
+    setSecurityAnswer1("");
+    setSecurityAnswer2("");
+    setSecurityAnswer3("");
 
     return savedFreightUser;
   }

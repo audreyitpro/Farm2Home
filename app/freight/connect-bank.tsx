@@ -18,8 +18,12 @@ import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
+
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  "https://farm2home-production-e4bd.up.railway.app";
 
 const ROUTES = {
   dashboard: "/freight/dashboard",
@@ -52,6 +56,16 @@ const COLORS = {
 
 function normalize(value: any) {
   return String(value || "").trim().toLowerCase();
+}
+
+async function parseApiResponse(response: Response) {
+  const text = await response.text();
+
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { success: false, error: text || "Invalid backend response." };
+  }
 }
 
 function goTo(route: FreightRoute) {
@@ -173,18 +187,34 @@ export default function FreightConnectBankScreen() {
       const stored = await getStoredCarrier();
       const { data: authData } = await supabase.auth.getUser();
 
+      const authId = authData?.user?.id || "";
+      const storedId = stored?.id || stored?.freightId || stored?.freight_id || "";
       const email = normalize(stored?.email || authData?.user?.email || "");
+      const staticAccountId = stored?.accountId || stored?.account_id || "";
 
-      if (!email) {
+      if (!email && !authId && !storedId && !staticAccountId) {
         router.replace(ROUTES.login as any);
         return;
       }
 
-      const { data: dbCarrier, error } = await supabase
+      const filters = [
+        storedId ? `id.eq.${storedId}` : "",
+        storedId ? `freight_id.eq.${storedId}` : "",
+        authId ? `id.eq.${authId}` : "",
+        authId ? `auth_user_id.eq.${authId}` : "",
+        email ? `email.eq.${email}` : "",
+        staticAccountId ? `account_id.eq.${staticAccountId}` : "",
+      ]
+        .filter(Boolean)
+        .join(",");
+
+      const { data: dbRows, error } = await supabase
         .from("freight_users")
         .select("*")
-        .eq("email", email)
-        .maybeSingle();
+        .or(filters)
+        .limit(1);
+
+      const dbCarrier = Array.isArray(dbRows) && dbRows.length > 0 ? dbRows[0] : null;
 
       if (error) {
         console.log("Freight connect bank profile load error:", error.message);
@@ -301,10 +331,12 @@ export default function FreightConnectBankScreen() {
           name: carrier.companyName || carrier.businessName,
           stripeAccountId: existingStripeAccountId,
           stripe_account_id: existingStripeAccountId,
+          returnUrl: `${API_BASE_URL}/payments/stripe-connect-return?role=freight&freightId=${encodeURIComponent(freightId)}`,
+          refreshUrl: `${API_BASE_URL}/payments/stripe-connect-refresh?role=freight&freightId=${encodeURIComponent(freightId)}`,
         }),
       });
 
-      const data = await response.json();
+      const data = await parseApiResponse(response);
 
       if (!response.ok || !data.success) {
         Alert.alert("Stripe Error", data.error || "Unable to open Stripe onboarding.");
@@ -369,6 +401,23 @@ export default function FreightConnectBankScreen() {
 
     try {
       setChecking(true);
+
+      try {
+        await fetch(`${API_BASE_URL}/payments/refresh-connect-account`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: "freight",
+            freightId: carrier.id || carrier.freightId || carrier.freight_id,
+            freight_id: carrier.id || carrier.freightId || carrier.freight_id,
+            userId: carrier.id || carrier.freightId || carrier.freight_id,
+            stripeAccountId: accountId,
+            stripe_account_id: accountId,
+          }),
+        });
+      } catch (refreshError) {
+        console.log("Refresh connect account skipped:", refreshError);
+      }
 
       await loadCarrier();
 
