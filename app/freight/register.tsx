@@ -1810,83 +1810,191 @@ export default function FreightRegister() {
             style={[styles.outlineButton, saving && styles.disabledButton]}
             disabled={saving}
             onPress={async () => {
-              const currentCarrier = {
-                id: savedCarrierId || freightId,
-                freightId: savedCarrierId || freightId,
-                freight_id: savedCarrierId || freightId,
-                accountId,
-                account_id: accountId,
-                role: "freight",
+              if (saving) return;
 
-                companyName,
-                company_name: companyName,
-                businessName: companyName,
-                business_name: companyName,
-                contactName,
-                contact_name: contactName,
-                email: normalize(email),
-                phone,
-                username,
+              const finalFreightId = savedCarrierId || freightId;
+              const finalEmail = normalize(email);
 
-                serviceArea,
-                service_area: serviceArea,
-
-                businessAddress,
-                business_address: businessAddress,
-                city,
-                state: stateValue,
-                zipCode,
-                zip_code: zipCode,
-
-                mdotNumber,
-                mdot_number: mdotNumber,
-                dotNumber: mdotNumber,
-                dot_number: mdotNumber,
-                mcNumber,
-                mc_number: mcNumber,
-
-                insuranceProvider,
-                insurance_provider: insuranceProvider,
-                insurancePolicyNumber,
-                insurance_policy_number: insurancePolicyNumber,
-
-                authorityActive,
-                authority_active: authorityActive,
-                insuranceActive,
-                insurance_active: insuranceActive,
-                licensedLivestock,
-                licensed_livestock: licensedLivestock,
-                licensedRefrigeratedFood,
-                licensed_refrigerated_food: licensedRefrigeratedFood,
-
-                securityQuestion1,
-                security_question_1: securityQuestion1,
-                securityQuestion2,
-                security_question_2: securityQuestion2,
-                securityQuestion3,
-                security_question_3: securityQuestion3,
-
-                stripeId,
-                stripe_id: stripeId,
-                stripeCustomerId,
-                stripe_customer_id: stripeCustomerId,
-                stripeSubscriptionId: subscriptionId,
-                stripe_subscription_id: subscriptionId,
-                subscriptionId,
-                subscription_id: subscriptionId,
-                subscriptionStatus,
-                subscription_status: subscriptionStatus,
-                stripeAccountId,
-                stripe_account_id: stripeAccountId,
-              };
-
-              await saveFreightSession(currentCarrier);
-
-              if (savedCarrierId || freightId) {
-                await saveFreightUserRow(savedCarrierId || freightId, accountId);
+              if (!finalFreightId || !finalEmail) {
+                Alert.alert(
+                  "Save Required",
+                  "Save the freight registration before connecting bank payouts."
+                );
+                return;
               }
 
-              router.push("/freight/connect-bank" as any);
+              try {
+                setSaving(true);
+
+                const currentCarrier = {
+                  id: finalFreightId,
+                  freightId: finalFreightId,
+                  freight_id: finalFreightId,
+                  accountId,
+                  account_id: accountId,
+                  role: "freight",
+
+                  companyName,
+                  company_name: companyName,
+                  businessName: companyName,
+                  business_name: companyName,
+                  contactName,
+                  contact_name: contactName,
+                  email: finalEmail,
+                  phone,
+                  username,
+
+                  serviceArea,
+                  service_area: serviceArea,
+
+                  businessAddress,
+                  business_address: businessAddress,
+                  city,
+                  state: stateValue,
+                  zipCode,
+                  zip_code: zipCode,
+
+                  mdotNumber,
+                  mdot_number: mdotNumber,
+                  dotNumber: mdotNumber,
+                  dot_number: mdotNumber,
+                  mcNumber,
+                  mc_number: mcNumber,
+
+                  insuranceProvider,
+                  insurance_provider: insuranceProvider,
+                  insurancePolicyNumber,
+                  insurance_policy_number: insurancePolicyNumber,
+
+                  authorityActive,
+                  authority_active: authorityActive,
+                  insuranceActive,
+                  insurance_active: insuranceActive,
+                  licensedLivestock,
+                  licensed_livestock: licensedLivestock,
+                  licensedRefrigeratedFood,
+                  licensed_refrigerated_food: licensedRefrigeratedFood,
+
+                  securityQuestion1,
+                  security_question_1: securityQuestion1,
+                  securityQuestion2,
+                  security_question_2: securityQuestion2,
+                  securityQuestion3,
+                  security_question_3: securityQuestion3,
+
+                  stripeId,
+                  stripe_id: stripeId,
+                  stripeCustomerId,
+                  stripe_customer_id: stripeCustomerId,
+                  stripeSubscriptionId: subscriptionId,
+                  stripe_subscription_id: subscriptionId,
+                  subscriptionId,
+                  subscription_id: subscriptionId,
+                  subscriptionStatus,
+                  subscription_status: subscriptionStatus,
+                  stripeAccountId,
+                  stripe_account_id: stripeAccountId,
+                };
+
+                await saveFreightSession(currentCarrier);
+                await saveFreightUserRow(finalFreightId, accountId);
+
+                const response = await fetch(
+                  `${API_BASE_URL}/payments/create-connect-account`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      role: "freight",
+                      freightId: finalFreightId,
+                      freight_id: finalFreightId,
+                      userId: finalFreightId,
+                      accountId,
+                      account_id: accountId,
+                      email: finalEmail,
+                      freight_email: finalEmail,
+                      companyName: companyName.trim(),
+                      businessName: companyName.trim(),
+                      contactName: contactName.trim(),
+                    }),
+                  }
+                );
+
+                const text = await response.text();
+                let json: any = {};
+
+                try {
+                  json = text ? JSON.parse(text) : {};
+                } catch {
+                  json = { success: false, error: text };
+                }
+
+                if (!response.ok || !json.success) {
+                  Alert.alert(
+                    "Connect Bank Error",
+                    json.error || "Unable to create Stripe Connect onboarding link."
+                  );
+                  return;
+                }
+
+                const returnedStripeAccountId =
+                  json.stripeAccountId ||
+                  json.stripe_account_id ||
+                  json.account ||
+                  "";
+
+                if (returnedStripeAccountId) {
+                  setStripeAccountId(returnedStripeAccountId);
+
+                  await supabase
+                    .from("freight_users")
+                    .update({
+                      stripe_account_id: returnedStripeAccountId,
+                      stripe_connect_status: "started",
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", finalFreightId);
+
+                  await supabase
+                    .from("profiles")
+                    .update({
+                      stripe_account_id: returnedStripeAccountId,
+                      stripe_connect_status: "started",
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", finalFreightId);
+
+                  await saveFreightSession({
+                    ...currentCarrier,
+                    stripeAccountId: returnedStripeAccountId,
+                    stripe_account_id: returnedStripeAccountId,
+                    stripeConnectStatus: "started",
+                    stripe_connect_status: "started",
+                  });
+                }
+
+                if (!json.url) {
+                  Alert.alert(
+                    "Connect Bank Error",
+                    "Stripe Connect did not return an onboarding URL."
+                  );
+                  return;
+                }
+
+                if (Platform.OS === "web") {
+                  window.location.href = json.url;
+                  return;
+                }
+
+                await Linking.openURL(json.url);
+              } catch (error: any) {
+                Alert.alert(
+                  "Connect Bank Error",
+                  error?.message || "Unable to start Stripe Connect onboarding."
+                );
+              } finally {
+                setSaving(false);
+              }
             }}
           >
             <Ionicons name="business-outline" size={18} color={COLORS.red} />
