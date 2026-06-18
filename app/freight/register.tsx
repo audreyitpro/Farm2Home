@@ -69,6 +69,33 @@ function normalizeAnswer(value: any) {
   return normalize(value);
 }
 
+function isStripeCustomerId(value: any) {
+  return String(value || "").trim().startsWith("cus_");
+}
+
+function isStripeSubscriptionId(value: any) {
+  return String(value || "").trim().startsWith("sub_");
+}
+
+function isStripeConnectAccountId(value: any) {
+  return String(value || "").trim().startsWith("acct_");
+}
+
+function pickStripeCustomerId(...values: any[]) {
+  const found = values.find((value) => isStripeCustomerId(value));
+  return found ? String(found).trim() : "";
+}
+
+function pickStripeSubscriptionId(...values: any[]) {
+  const found = values.find((value) => isStripeSubscriptionId(value));
+  return found ? String(found).trim() : "";
+}
+
+function pickStripeConnectAccountId(...values: any[]) {
+  const found = values.find((value) => isStripeConnectAccountId(value));
+  return found ? String(found).trim() : "";
+}
+
 function keepValue(newValue: any, oldValue: any) {
   const cleaned = String(newValue ?? "").trim();
   return cleaned.length > 0 ? newValue : oldValue;
@@ -287,9 +314,9 @@ export default function FreightRegister() {
       business_name: carrier.business_name || carrier.company_name || "",
       contactName: carrier.contact_name || carrier.name || "",
       contact_name: carrier.contact_name || carrier.name || "",
-      stripeId: carrier.stripe_id || carrier.stripe_customer_id || "",
-      stripeCustomerId: carrier.stripe_customer_id || carrier.stripe_id || "",
-      stripeAccountId: carrier.stripe_account_id || "",
+      stripeId: pickStripeCustomerId(carrier.stripe_customer_id, carrier.stripeId, carrier.stripe_id),
+      stripeCustomerId: pickStripeCustomerId(carrier.stripe_customer_id, carrier.stripeCustomerId, carrier.stripe_id),
+      stripeAccountId: pickStripeConnectAccountId(carrier.stripe_account_id, carrier.stripeAccountId),
       stripeSubscriptionId:
         carrier.stripe_subscription_id || carrier.subscription_id || "",
       subscriptionId:
@@ -300,15 +327,14 @@ export default function FreightRegister() {
   }
 
   function hydrateStripeOnly(row: any) {
-    setStripeId(row.stripe_id || row.stripe_customer_id || stripeId || "");
-    setStripeCustomerId(
-      row.stripe_customer_id || row.stripe_id || stripeCustomerId || ""
-    );
+    const rowCustomerId = pickStripeCustomerId(row.stripe_customer_id, row.stripeCustomerId, row.stripe_id, stripeCustomerId, stripeId);
+    setStripeId(rowCustomerId);
+    setStripeCustomerId(rowCustomerId);
     setSubscriptionId(
       row.stripe_subscription_id || row.subscription_id || subscriptionId || ""
     );
     setSubscriptionStatus(row.subscription_status || subscriptionStatus || "");
-    setStripeAccountId(row.stripe_account_id || stripeAccountId || "");
+    setStripeAccountId(pickStripeConnectAccountId(row.stripe_account_id, row.stripeAccountId, stripeAccountId));
 
     if (row.account_id) setAccountId(row.account_id);
 
@@ -321,19 +347,19 @@ export default function FreightRegister() {
   function hydrateForm(carrier: any) {
     const dbFreightId =
       carrier.id || carrier.freightId || carrier.freight_id || "";
-    const dbStripeCustomerId =
-      carrier.stripeCustomerId ||
-      carrier.stripe_customer_id ||
-      carrier.stripeId ||
-      carrier.stripe_id ||
-      "";
+    const dbStripeCustomerId = pickStripeCustomerId(
+      carrier.stripe_customer_id,
+      carrier.stripeCustomerId,
+      carrier.stripeId,
+      carrier.stripe_id
+    );
 
     setFreightId(dbFreightId);
     setSavedCarrierId(dbFreightId);
     setAccountId(carrier.accountId || carrier.account_id || "");
-    setStripeId(carrier.stripeId || carrier.stripe_id || dbStripeCustomerId || "");
+    setStripeId(dbStripeCustomerId);
     setStripeCustomerId(dbStripeCustomerId);
-    setStripeAccountId(carrier.stripeAccountId || carrier.stripe_account_id || "");
+    setStripeAccountId(pickStripeConnectAccountId(carrier.stripe_account_id, carrier.stripeAccountId));
     setSubscriptionId(
       carrier.subscriptionId ||
         carrier.subscription_id ||
@@ -464,23 +490,25 @@ export default function FreightRegister() {
       security_answer_3: securityAnswer3
         ? normalizeAnswer(securityAnswer3)
         : row.security_answer_3,
-      stripe_id:
-        row.stripe_id ||
-        row.stripe_customer_id ||
-        stripeId ||
-        stripeCustomerId ||
-        "",
-      stripe_customer_id:
-        row.stripe_customer_id ||
-        row.stripe_id ||
-        stripeCustomerId ||
-        stripeId ||
-        "",
+      stripeCustomerId: pickStripeCustomerId(
+        row.stripe_customer_id,
+        row.stripeCustomerId,
+        row.stripe_id,
+        stripeCustomerId,
+        stripeId
+      ),
+      stripe_customer_id: pickStripeCustomerId(
+        row.stripe_customer_id,
+        row.stripeCustomerId,
+        row.stripe_id,
+        stripeCustomerId,
+        stripeId
+      ),
       stripe_subscription_id:
         row.stripe_subscription_id || row.subscription_id || subscriptionId || "",
       subscription_id:
         row.subscription_id || row.stripe_subscription_id || subscriptionId || "",
-      stripe_account_id: row.stripe_account_id || stripeAccountId || "",
+      stripe_account_id: pickStripeConnectAccountId(row.stripe_account_id, row.stripeAccountId, stripeAccountId),
       subscription_status: row.subscription_status || subscriptionStatus || "",
     };
   }
@@ -611,9 +639,7 @@ export default function FreightRegister() {
       `email.eq.${cleanEmailValue}`,
       `username.eq.${cleanUsername}`,
       stripeCustomerId ? `stripe_customer_id.eq.${stripeCustomerId}` : "",
-      stripeCustomerId ? `stripe_id.eq.${stripeCustomerId}` : "",
-      stripeId ? `stripe_customer_id.eq.${stripeId}` : "",
-      stripeId ? `stripe_id.eq.${stripeId}` : "",
+      stripeId && isStripeCustomerId(stripeId) ? `stripe_customer_id.eq.${stripeId}` : "",
     ]
       .filter(Boolean)
       .join(",");
@@ -827,19 +853,12 @@ export default function FreightRegister() {
       accountId ||
       (await generateFreightAccountId());
 
-    const finalStripeCustomerId =
-      stripeCustomerId ||
-      stripeId ||
-      existingFreightUser?.stripe_customer_id ||
-      existingFreightUser?.stripe_id ||
-      "";
-
-    const finalStripeId =
-      stripeId ||
-      stripeCustomerId ||
-      existingFreightUser?.stripe_id ||
-      existingFreightUser?.stripe_customer_id ||
-      "";
+    const finalStripeCustomerId = pickStripeCustomerId(
+      stripeCustomerId,
+      stripeId,
+      existingFreightUser?.stripe_customer_id,
+      existingFreightUser?.stripe_id
+    );
 
     const finalSubscriptionId =
       subscriptionId ||
@@ -875,7 +894,6 @@ export default function FreightRegister() {
 
       account_active: true,
 
-      stripe_id: finalStripeId || null,
       stripe_customer_id: finalStripeCustomerId || null,
       stripe_account_id: finalStripeAccountId || null,
       stripe_subscription_id: finalSubscriptionId || null,
@@ -961,7 +979,6 @@ export default function FreightRegister() {
         phone: cleanPhone,
         username: cleanUsername,
         company_name: cleanCompanyName,
-        stripe_id: finalStripeId || null,
         stripe_customer_id: finalStripeCustomerId || null,
         stripe_account_id: finalStripeAccountId || null,
         stripe_subscription_id: finalSubscriptionId || null,
@@ -1070,8 +1087,7 @@ export default function FreightRegister() {
         freight_membership_paid: paid,
         application_submitted: paid,
         submitted_at: paid ? now : null,
-        stripe_id: stripeId || stripeCustomerId || null,
-        stripe_customer_id: stripeCustomerId || stripeId || null,
+        stripe_customer_id: pickStripeCustomerId(stripeCustomerId, stripeId) || null,
         stripe_account_id: stripeAccountId || null,
         stripe_subscription_id: finalSubscriptionId || subscriptionId || null,
         subscription_id: finalSubscriptionId || subscriptionId || null,
@@ -1158,6 +1174,14 @@ export default function FreightRegister() {
 
   async function startSubscriptionCheckout() {
     if (saving) return;
+
+    if (hasActiveSubscription) {
+      Alert.alert(
+        "Membership Already Active",
+        "This freight account already has an active Stripe subscription. No new membership charge will be created. Use Open / Update Stripe Banking to update bank payout details."
+      );
+      return;
+    }
 
     let finalId = savedCarrierId || freightId;
     let finalAccountId = accountId;
@@ -1349,7 +1373,6 @@ export default function FreightRegister() {
       subscription_status: finalStatus,
       freight_membership_paid: Boolean(finalSubscriptionId),
       stripe_customer_id: finalStripeCustomerId,
-      stripe_id: finalStripeCustomerId,
       stripe_subscription_id: finalSubscriptionId,
       subscription_id: finalSubscriptionId,
       account_active: true,
@@ -1414,7 +1437,7 @@ export default function FreightRegister() {
     if (!hasActiveSubscription) {
       Alert.alert(
         "Subscription Required",
-        "Start Stripe Subscription first so the Stripe Customer ID and Subscription ID are saved."
+        "Start Stripe Membership first so the Stripe Customer ID and Subscription ID are saved."
       );
       return;
     }
@@ -1510,8 +1533,7 @@ export default function FreightRegister() {
         securityQuestion3,
         security_question_3: securityQuestion3,
 
-        stripeId,
-        stripe_id: stripeId,
+        stripeId: stripeCustomerId,
         stripeCustomerId,
         stripe_customer_id: stripeCustomerId,
         stripeSubscriptionId: subscriptionId,
@@ -1567,18 +1589,19 @@ export default function FreightRegister() {
         return;
       }
 
-      const returnedStripeAccountId =
-        json.stripeAccountId ||
-        json.stripe_account_id ||
-        json.accountId ||
-        json.account ||
-        stripeAccountId ||
-        "";
+      const returnedStripeAccountId = pickStripeConnectAccountId(
+        json.stripeAccountId,
+        json.stripe_account_id,
+        json.stripeConnectAccountId,
+        json.connectedAccountId,
+        json.account,
+        stripeAccountId
+      );
 
       if (!returnedStripeAccountId) {
         Alert.alert(
           "Connect Stripe Error",
-          "Stripe did not return a Connect Account ID that starts with acct_."
+          "Stripe did not return a real Connect Account ID that starts with acct_. The static Freight account ID was not saved as a Stripe account."
         );
         return;
       }
@@ -1602,6 +1625,21 @@ export default function FreightRegister() {
         .from("admin_verifications")
         .update(connectUpdate)
         .or(`id.eq.${finalFreightId},freight_id.eq.${finalFreightId},profile_id.eq.${finalFreightId}`);
+
+      const { error: subscriptionConnectError } = await supabase
+        .from("freight_subscriptions")
+        .update({
+          stripe_account_id: returnedStripeAccountId,
+          updated_at: new Date().toISOString(),
+        })
+        .or(`freight_id.eq.${finalFreightId},freight_email.eq.${finalEmail}`);
+
+      if (subscriptionConnectError) {
+        console.log(
+          "Freight subscription stripe_account_id update skipped:",
+          subscriptionConnectError.message
+        );
+      }
 
       await saveFreightSession({
         ...currentCarrier,
@@ -1789,11 +1827,6 @@ export default function FreightRegister() {
               label="Static Account ID"
               value={accountId}
               fallback="Assigned after save"
-            />
-            <ReadOnlyIdBox
-              label="Stripe ID"
-              value={stripeId}
-              fallback="Assigned by Stripe"
             />
             <ReadOnlyIdBox
               label="Stripe Customer ID"
@@ -2076,7 +2109,7 @@ export default function FreightRegister() {
                     ? registrationReadyForDashboard
                       ? "Submit & Open Dashboard"
                       : "Finish Stripe Connect Before Submit"
-                    : "Start Stripe Subscription"}
+                    : "Start Stripe Membership"}
                 </Text>
               </>
             )}
@@ -2094,7 +2127,7 @@ export default function FreightRegister() {
                 <Ionicons name="business-outline" size={18} color={COLORS.red} />
                 <Text style={styles.outlineButtonText}>
                   {hasStripeConnectAccount
-                    ? "Continue Stripe Connect / Payouts"
+                    ? "Open / Update Stripe Banking"
                     : "Connect Stripe Payouts"}
                 </Text>
               </>
