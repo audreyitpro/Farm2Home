@@ -157,6 +157,14 @@ export default function FreightRegister() {
     );
   }, [subscriptionId, subscriptionStatus]);
 
+  const hasStripeConnectAccount = useMemo(() => {
+    return Boolean(String(stripeAccountId || "").trim().startsWith("acct_"));
+  }, [stripeAccountId]);
+
+  const registrationReadyForDashboard = useMemo(() => {
+    return Boolean(hasActiveSubscription && hasStripeConnectAccount);
+  }, [hasActiveSubscription, hasStripeConnectAccount]);
+
   useEffect(() => {
     loadSavedFreight();
   }, []);
@@ -1396,7 +1404,235 @@ export default function FreightRegister() {
   }
 
   async function submitToDashboard() {
-    await markApplicationSubmittedAndOpenDashboard(savedCarrierId || freightId);
+    const finalId = savedCarrierId || freightId;
+
+    if (!finalId) {
+      Alert.alert("Save Required", "Save the freight registration first.");
+      return;
+    }
+
+    if (!hasActiveSubscription) {
+      Alert.alert(
+        "Subscription Required",
+        "Start Stripe Subscription first so the Stripe Customer ID and Subscription ID are saved."
+      );
+      return;
+    }
+
+    if (!hasStripeConnectAccount) {
+      Alert.alert(
+        "Stripe Connect Required",
+        "Tap Connect Stripe Payouts first so the Stripe Connect Account ID is created and saved."
+      );
+      return;
+    }
+
+    await markApplicationSubmittedAndOpenDashboard(finalId);
+  }
+
+  async function startStripeConnectOnboarding() {
+    if (saving) return;
+
+    let finalFreightId = savedCarrierId || freightId;
+    let finalAccountId = accountId;
+    const finalEmail = normalize(email);
+
+    if (!finalFreightId || !finalEmail) {
+      const saved = await saveRegistration();
+      finalFreightId = saved?.id || savedCarrierId || freightId;
+      finalAccountId = saved?.account_id || accountId;
+    }
+
+    if (!finalFreightId || !finalEmail) {
+      Alert.alert(
+        "Save Required",
+        "Save the freight registration before connecting Stripe payouts."
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const currentCarrier = {
+        id: finalFreightId,
+        freightId: finalFreightId,
+        freight_id: finalFreightId,
+        accountId: finalAccountId,
+        account_id: finalAccountId,
+        role: "freight",
+
+        companyName: companyName.trim(),
+        company_name: companyName.trim(),
+        businessName: companyName.trim(),
+        business_name: companyName.trim(),
+        contactName: contactName.trim(),
+        contact_name: contactName.trim(),
+        email: finalEmail,
+        phone: phone.trim(),
+        username: normalize(username),
+
+        serviceArea,
+        service_area: serviceArea,
+
+        businessAddress,
+        business_address: businessAddress,
+        city,
+        state: stateValue,
+        zipCode,
+        zip_code: zipCode,
+
+        mdotNumber,
+        mdot_number: mdotNumber,
+        dotNumber: mdotNumber,
+        dot_number: mdotNumber,
+        mcNumber,
+        mc_number: mcNumber,
+
+        insuranceProvider,
+        insurance_provider: insuranceProvider,
+        insurancePolicyNumber,
+        insurance_policy_number: insurancePolicyNumber,
+
+        authorityActive,
+        authority_active: authorityActive,
+        insuranceActive,
+        insurance_active: insuranceActive,
+        licensedLivestock,
+        licensed_livestock: licensedLivestock,
+        licensedRefrigeratedFood,
+        licensed_refrigerated_food: licensedRefrigeratedFood,
+
+        securityQuestion1,
+        security_question_1: securityQuestion1,
+        securityQuestion2,
+        security_question_2: securityQuestion2,
+        securityQuestion3,
+        security_question_3: securityQuestion3,
+
+        stripeId,
+        stripe_id: stripeId,
+        stripeCustomerId,
+        stripe_customer_id: stripeCustomerId,
+        stripeSubscriptionId: subscriptionId,
+        stripe_subscription_id: subscriptionId,
+        subscriptionId,
+        subscription_id: subscriptionId,
+        subscriptionStatus,
+        subscription_status: subscriptionStatus,
+        stripeAccountId,
+        stripe_account_id: stripeAccountId,
+      };
+
+      await saveFreightSession(currentCarrier);
+      await saveFreightUserRow(finalFreightId, finalAccountId);
+
+      const response = await fetch(
+        `${API_BASE_URL}/payments/create-connect-account`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: "freight",
+            freightId: finalFreightId,
+            freight_id: finalFreightId,
+            userId: finalFreightId,
+            accountId: finalAccountId,
+            account_id: finalAccountId,
+            email: finalEmail,
+            freight_email: finalEmail,
+            companyName: companyName.trim(),
+            businessName: companyName.trim(),
+            contactName: contactName.trim(),
+            stripeAccountId,
+            stripe_account_id: stripeAccountId,
+          }),
+        }
+      );
+
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { success: false, error: text };
+      }
+
+      if (!response.ok || !json.success) {
+        Alert.alert(
+          "Connect Stripe Error",
+          json.error || "Unable to create Stripe Connect onboarding link."
+        );
+        return;
+      }
+
+      const returnedStripeAccountId =
+        json.stripeAccountId ||
+        json.stripe_account_id ||
+        json.accountId ||
+        json.account ||
+        stripeAccountId ||
+        "";
+
+      if (!returnedStripeAccountId) {
+        Alert.alert(
+          "Connect Stripe Error",
+          "Stripe did not return a Connect Account ID that starts with acct_."
+        );
+        return;
+      }
+
+      setStripeAccountId(returnedStripeAccountId);
+
+      const connectUpdate = {
+        stripe_account_id: returnedStripeAccountId,
+        stripe_connect_status: "started",
+        payouts_enabled: false,
+        charges_enabled: false,
+        stripe_payouts_enabled: false,
+        stripe_charges_enabled: false,
+        stripe_onboarding_complete: false,
+        updated_at: new Date().toISOString(),
+      };
+
+      await supabase.from("freight_users").update(connectUpdate).eq("id", finalFreightId);
+      await supabase.from("profiles").update(connectUpdate).eq("id", finalFreightId);
+      await supabase
+        .from("admin_verifications")
+        .update(connectUpdate)
+        .or(`id.eq.${finalFreightId},freight_id.eq.${finalFreightId},profile_id.eq.${finalFreightId}`);
+
+      await saveFreightSession({
+        ...currentCarrier,
+        stripeAccountId: returnedStripeAccountId,
+        stripe_account_id: returnedStripeAccountId,
+        stripeConnectStatus: "started",
+        stripe_connect_status: "started",
+      });
+
+      if (!json.url && !json.onboardingUrl) {
+        Alert.alert(
+          "Stripe Connect Account Saved",
+          "The Stripe Connect Account ID was saved. Open Connect Bank / Payouts to finish onboarding if needed."
+        );
+        return;
+      }
+
+      if (Platform.OS === "web") {
+        window.location.href = json.url || json.onboardingUrl;
+        return;
+      }
+
+      await Linking.openURL(json.url || json.onboardingUrl);
+    } catch (error: any) {
+      Alert.alert(
+        "Connect Stripe Error",
+        error?.message || "Unable to start Stripe Connect onboarding."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   function renderQuestionPicker(
@@ -1823,210 +2059,46 @@ export default function FreightRegister() {
 
           <TouchableOpacity
             style={[styles.darkButton, saving && styles.disabledButton]}
-            onPress={startSubscriptionCheckout}
+            onPress={hasActiveSubscription ? submitToDashboard : startSubscriptionCheckout}
             disabled={saving}
           >
-            <Ionicons name="card-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.buttonText}>
-              {hasActiveSubscription
-                ? "Submit & Open Dashboard"
-                : "Start Stripe Subscription"}
-            </Text>
+            {saving ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons
+                  name={hasActiveSubscription ? "grid-outline" : "card-outline"}
+                  size={18}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.buttonText}>
+                  {hasActiveSubscription
+                    ? registrationReadyForDashboard
+                      ? "Submit & Open Dashboard"
+                      : "Finish Stripe Connect Before Submit"
+                    : "Start Stripe Subscription"}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.outlineButton, saving && styles.disabledButton]}
             disabled={saving}
-            onPress={async () => {
-              if (saving) return;
-
-              const finalFreightId = savedCarrierId || freightId;
-              const finalEmail = normalize(email);
-
-              if (!finalFreightId || !finalEmail) {
-                Alert.alert(
-                  "Save Required",
-                  "Save the freight registration before connecting bank payouts."
-                );
-                return;
-              }
-
-              try {
-                setSaving(true);
-
-                const currentCarrier = {
-                  id: finalFreightId,
-                  freightId: finalFreightId,
-                  freight_id: finalFreightId,
-                  accountId,
-                  account_id: accountId,
-                  role: "freight",
-
-                  companyName,
-                  company_name: companyName,
-                  businessName: companyName,
-                  business_name: companyName,
-                  contactName,
-                  contact_name: contactName,
-                  email: finalEmail,
-                  phone,
-                  username,
-
-                  serviceArea,
-                  service_area: serviceArea,
-
-                  businessAddress,
-                  business_address: businessAddress,
-                  city,
-                  state: stateValue,
-                  zipCode,
-                  zip_code: zipCode,
-
-                  mdotNumber,
-                  mdot_number: mdotNumber,
-                  dotNumber: mdotNumber,
-                  dot_number: mdotNumber,
-                  mcNumber,
-                  mc_number: mcNumber,
-
-                  insuranceProvider,
-                  insurance_provider: insuranceProvider,
-                  insurancePolicyNumber,
-                  insurance_policy_number: insurancePolicyNumber,
-
-                  authorityActive,
-                  authority_active: authorityActive,
-                  insuranceActive,
-                  insurance_active: insuranceActive,
-                  licensedLivestock,
-                  licensed_livestock: licensedLivestock,
-                  licensedRefrigeratedFood,
-                  licensed_refrigerated_food: licensedRefrigeratedFood,
-
-                  securityQuestion1,
-                  security_question_1: securityQuestion1,
-                  securityQuestion2,
-                  security_question_2: securityQuestion2,
-                  securityQuestion3,
-                  security_question_3: securityQuestion3,
-
-                  stripeId,
-                  stripe_id: stripeId,
-                  stripeCustomerId,
-                  stripe_customer_id: stripeCustomerId,
-                  stripeSubscriptionId: subscriptionId,
-                  stripe_subscription_id: subscriptionId,
-                  subscriptionId,
-                  subscription_id: subscriptionId,
-                  subscriptionStatus,
-                  subscription_status: subscriptionStatus,
-                  stripeAccountId,
-                  stripe_account_id: stripeAccountId,
-                };
-
-                await saveFreightSession(currentCarrier);
-                await saveFreightUserRow(finalFreightId, accountId);
-
-                const response = await fetch(
-                  `${API_BASE_URL}/payments/create-connect-account`,
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      role: "freight",
-                      freightId: finalFreightId,
-                      freight_id: finalFreightId,
-                      userId: finalFreightId,
-                      accountId,
-                      account_id: accountId,
-                      email: finalEmail,
-                      freight_email: finalEmail,
-                      companyName: companyName.trim(),
-                      businessName: companyName.trim(),
-                      contactName: contactName.trim(),
-                    }),
-                  }
-                );
-
-                const text = await response.text();
-                let json: any = {};
-
-                try {
-                  json = text ? JSON.parse(text) : {};
-                } catch {
-                  json = { success: false, error: text };
-                }
-
-                if (!response.ok || !json.success) {
-                  Alert.alert(
-                    "Connect Bank Error",
-                    json.error || "Unable to create Stripe Connect onboarding link."
-                  );
-                  return;
-                }
-
-                const returnedStripeAccountId =
-                  json.stripeAccountId ||
-                  json.stripe_account_id ||
-                  json.account ||
-                  "";
-
-                if (returnedStripeAccountId) {
-                  setStripeAccountId(returnedStripeAccountId);
-
-                  await supabase
-                    .from("freight_users")
-                    .update({
-                      stripe_account_id: returnedStripeAccountId,
-                      stripe_connect_status: "started",
-                      updated_at: new Date().toISOString(),
-                    })
-                    .eq("id", finalFreightId);
-
-                  await supabase
-                    .from("profiles")
-                    .update({
-                      stripe_account_id: returnedStripeAccountId,
-                      stripe_connect_status: "started",
-                      updated_at: new Date().toISOString(),
-                    })
-                    .eq("id", finalFreightId);
-
-                  await saveFreightSession({
-                    ...currentCarrier,
-                    stripeAccountId: returnedStripeAccountId,
-                    stripe_account_id: returnedStripeAccountId,
-                    stripeConnectStatus: "started",
-                    stripe_connect_status: "started",
-                  });
-                }
-
-                if (!json.url) {
-                  Alert.alert(
-                    "Connect Bank Error",
-                    "Stripe Connect did not return an onboarding URL."
-                  );
-                  return;
-                }
-
-                if (Platform.OS === "web") {
-                  window.location.href = json.url;
-                  return;
-                }
-
-                await Linking.openURL(json.url);
-              } catch (error: any) {
-                Alert.alert(
-                  "Connect Bank Error",
-                  error?.message || "Unable to start Stripe Connect onboarding."
-                );
-              } finally {
-                setSaving(false);
-              }
-            }}
+            onPress={startStripeConnectOnboarding}
           >
-            <Ionicons name="business-outline" size={18} color={COLORS.red} />
-            <Text style={styles.outlineButtonText}>Connect Bank / Payouts</Text>
+            {saving ? (
+              <ActivityIndicator color={COLORS.red} />
+            ) : (
+              <>
+                <Ionicons name="business-outline" size={18} color={COLORS.red} />
+                <Text style={styles.outlineButtonText}>
+                  {hasStripeConnectAccount
+                    ? "Continue Stripe Connect / Payouts"
+                    : "Connect Stripe Payouts"}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => router.push("/freight/login" as any)}>
