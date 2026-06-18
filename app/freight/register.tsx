@@ -577,10 +577,21 @@ export default function FreightRegister() {
     cleanEmailValue: string,
     cleanUsername: string
   ) {
+    const filters = [
+      `email.eq.${cleanEmailValue}`,
+      `username.eq.${cleanUsername}`,
+      stripeCustomerId ? `stripe_customer_id.eq.${stripeCustomerId}` : "",
+      stripeCustomerId ? `stripe_id.eq.${stripeCustomerId}` : "",
+      stripeId ? `stripe_customer_id.eq.${stripeId}` : "",
+      stripeId ? `stripe_id.eq.${stripeId}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
     const { data, error } = await supabase
       .from("freight_users")
       .select("*")
-      .or(`email.eq.${cleanEmailValue},username.eq.${cleanUsername}`)
+      .or(filters)
       .limit(1);
 
     if (error) return null;
@@ -1795,14 +1806,88 @@ export default function FreightRegister() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.successButton} onPress={submitToDashboard}>
-            <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.buttonText}>Submit & Go to Freight Dashboard</Text>
-          </TouchableOpacity>
-
           <TouchableOpacity
-            style={styles.outlineButton}
-            onPress={() => router.push("/freight/connect-bank" as any)}
+            style={[styles.outlineButton, saving && styles.disabledButton]}
+            disabled={saving}
+            onPress={async () => {
+              const currentCarrier = {
+                id: savedCarrierId || freightId,
+                freightId: savedCarrierId || freightId,
+                freight_id: savedCarrierId || freightId,
+                accountId,
+                account_id: accountId,
+                role: "freight",
+
+                companyName,
+                company_name: companyName,
+                businessName: companyName,
+                business_name: companyName,
+                contactName,
+                contact_name: contactName,
+                email: normalize(email),
+                phone,
+                username,
+
+                serviceArea,
+                service_area: serviceArea,
+
+                businessAddress,
+                business_address: businessAddress,
+                city,
+                state: stateValue,
+                zipCode,
+                zip_code: zipCode,
+
+                mdotNumber,
+                mdot_number: mdotNumber,
+                dotNumber: mdotNumber,
+                dot_number: mdotNumber,
+                mcNumber,
+                mc_number: mcNumber,
+
+                insuranceProvider,
+                insurance_provider: insuranceProvider,
+                insurancePolicyNumber,
+                insurance_policy_number: insurancePolicyNumber,
+
+                authorityActive,
+                authority_active: authorityActive,
+                insuranceActive,
+                insurance_active: insuranceActive,
+                licensedLivestock,
+                licensed_livestock: licensedLivestock,
+                licensedRefrigeratedFood,
+                licensed_refrigerated_food: licensedRefrigeratedFood,
+
+                securityQuestion1,
+                security_question_1: securityQuestion1,
+                securityQuestion2,
+                security_question_2: securityQuestion2,
+                securityQuestion3,
+                security_question_3: securityQuestion3,
+
+                stripeId,
+                stripe_id: stripeId,
+                stripeCustomerId,
+                stripe_customer_id: stripeCustomerId,
+                stripeSubscriptionId: subscriptionId,
+                stripe_subscription_id: subscriptionId,
+                subscriptionId,
+                subscription_id: subscriptionId,
+                subscriptionStatus,
+                subscription_status: subscriptionStatus,
+                stripeAccountId,
+                stripe_account_id: stripeAccountId,
+              };
+
+              await saveFreightSession(currentCarrier);
+
+              if (savedCarrierId || freightId) {
+                await saveFreightUserRow(savedCarrierId || freightId, accountId);
+              }
+
+              router.push("/freight/connect-bank" as any);
+            }}
           >
             <Ionicons name="business-outline" size={18} color={COLORS.red} />
             <Text style={styles.outlineButtonText}>Connect Bank / Payouts</Text>
@@ -2007,17 +2092,6 @@ const styles = StyleSheet.create({
   },
   darkButton: {
     backgroundColor: COLORS.black,
-    padding: 16,
-    borderRadius: 16,
-    marginHorizontal: 18,
-    marginTop: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  successButton: {
-    backgroundColor: COLORS.green,
     padding: 16,
     borderRadius: 16,
     marginHorizontal: 18,
