@@ -4,6 +4,7 @@ import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -24,6 +25,9 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   "https://farm2home-production-e4bd.up.railway.app";
+
+const APP_URL =
+  process.env.EXPO_PUBLIC_APP_URL || "https://farm2home-rho.vercel.app";
 
 const ROUTES = {
   dashboard: "/freight/dashboard",
@@ -54,8 +58,21 @@ const COLORS = {
   amber: "#D97706",
 };
 
+function clean(value: any) {
+  return String(value || "").trim();
+}
+
 function normalize(value: any) {
-  return String(value || "").trim().toLowerCase();
+  return clean(value).toLowerCase();
+}
+
+function isAcct(value: any) {
+  return clean(value).startsWith("acct_");
+}
+
+function pickAcct(...values: any[]) {
+  const found = values.find((value) => isAcct(value));
+  return found ? clean(found) : "";
 }
 
 async function parseApiResponse(response: Response) {
@@ -111,6 +128,12 @@ export default function FreightConnectBankScreen() {
 
   async function persistCarrier(nextCarrier: any) {
     const realId = nextCarrier.id || nextCarrier.freightId || nextCarrier.freight_id;
+    const freightAccount = pickAcct(
+      nextCarrier.freight_account,
+      nextCarrier.freightAccount,
+      nextCarrier.stripe_account_id,
+      nextCarrier.stripeAccountId
+    );
 
     const normalized = {
       ...nextCarrier,
@@ -133,18 +156,18 @@ export default function FreightConnectBankScreen() {
         "Farm2Home Freight Carrier",
       accountId: nextCarrier.accountId || nextCarrier.account_id || "",
       account_id: nextCarrier.account_id || nextCarrier.accountId || "",
-      stripeAccountId:
-        nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
-      stripe_account_id:
-        nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
+      freightAccount,
+      freight_account: freightAccount,
+      stripeAccountId: freightAccount,
+      stripe_account_id: freightAccount,
       stripeConnectStatus:
         nextCarrier.stripeConnectStatus ||
         nextCarrier.stripe_connect_status ||
-        "not_started",
+        (freightAccount ? "started" : "not_started"),
       stripe_connect_status:
         nextCarrier.stripe_connect_status ||
         nextCarrier.stripeConnectStatus ||
-        "not_started",
+        (freightAccount ? "started" : "not_started"),
       payoutsEnabled:
         nextCarrier.payoutsEnabled ??
         nextCarrier.payouts_enabled ??
@@ -214,11 +237,12 @@ export default function FreightConnectBankScreen() {
         .or(filters)
         .limit(1);
 
-      const dbCarrier = Array.isArray(dbRows) && dbRows.length > 0 ? dbRows[0] : null;
-
       if (error) {
         console.log("Freight connect bank profile load error:", error.message);
       }
+
+      const dbCarrier =
+        Array.isArray(dbRows) && dbRows.length > 0 ? dbRows[0] : null;
 
       if (!dbCarrier) {
         Alert.alert(
@@ -279,21 +303,42 @@ export default function FreightConnectBankScreen() {
         .from("admin_verifications")
         .update(updatePayload)
         .or(`id.eq.${freightId},freight_id.eq.${freightId},profile_id.eq.${freightId}`);
+
+      await supabase
+        .from("freight_subscriptions")
+        .update({
+          freight_account: updatePayload.freight_account,
+          updated_at: new Date().toISOString(),
+        })
+        .or(`freight_id.eq.${freightId},freight_email.eq.${email}`);
     }
   }
 
-  async function openUrl(url: string) {
-    if (!url || !url.startsWith("http")) {
-      Alert.alert("Stripe Error", "Invalid Stripe onboarding URL.");
+  async function openStripeUrl(url: string) {
+    const finalUrl = clean(url);
+
+    if (!finalUrl || !finalUrl.startsWith("https://connect.stripe.com/")) {
+      Alert.alert("Stripe Error", "No valid Stripe Connect onboarding URL was returned.");
       return;
     }
 
     if (Platform.OS === "web") {
-      window.location.href = url;
+      window.location.assign(finalUrl);
       return;
     }
 
-    await WebBrowser.openBrowserAsync(url);
+    try {
+      const supported = await Linking.canOpenURL(finalUrl);
+
+      if (supported) {
+        await Linking.openURL(finalUrl);
+        return;
+      }
+
+      await WebBrowser.openBrowserAsync(finalUrl);
+    } catch {
+      await WebBrowser.openBrowserAsync(finalUrl);
+    }
   }
 
   async function startConnectBank() {
@@ -307,8 +352,12 @@ export default function FreightConnectBankScreen() {
 
       const freightId = carrier.id || carrier.freightId || carrier.freight_id;
       const staticAccountId = carrier.accountId || carrier.account_id || "";
-      const existingStripeAccountId =
-        carrier.stripeAccountId || carrier.stripe_account_id || "";
+      const existingFreightAccount = pickAcct(
+        carrier.freight_account,
+        carrier.freightAccount,
+        carrier.stripe_account_id,
+        carrier.stripeAccountId
+      );
 
       if (!freightId) {
         Alert.alert("Profile ID Error", "Missing freight Supabase UUID.");
@@ -326,13 +375,17 @@ export default function FreightConnectBankScreen() {
           accountId: staticAccountId,
           account_id: staticAccountId,
           email: carrier.email,
+          freight_email: carrier.email,
           companyName: carrier.companyName || carrier.businessName,
           businessName: carrier.businessName || carrier.companyName,
           name: carrier.companyName || carrier.businessName,
-          stripeAccountId: existingStripeAccountId,
-          stripe_account_id: existingStripeAccountId,
-          returnUrl: `${API_BASE_URL}/payments/stripe-connect-return?role=freight&freightId=${encodeURIComponent(freightId)}`,
-          refreshUrl: `${API_BASE_URL}/payments/stripe-connect-refresh?role=freight&freightId=${encodeURIComponent(freightId)}`,
+          freight_account: existingFreightAccount,
+          returnUrl: `${APP_URL}/freight/connect-bank?connected=true&freightId=${encodeURIComponent(
+            freightId
+          )}`,
+          refreshUrl: `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(
+            freightId
+          )}`,
         }),
       });
 
@@ -343,44 +396,56 @@ export default function FreightConnectBankScreen() {
         return;
       }
 
-      const accountId =
-        data.stripeAccountId ||
-        data.stripe_account_id ||
-        data.accountId ||
-        existingStripeAccountId;
+      const freightAccount = pickAcct(
+        data.freight_account,
+        data.account,
+        data.connectedAccountId,
+        data.stripeAccountId,
+        data.stripe_account_id,
+        existingFreightAccount
+      );
 
-      if (!accountId) {
+      if (!freightAccount) {
         Alert.alert("Stripe Error", "Stripe did not return an acct_ account ID.");
         return;
       }
 
+      const onboardingUrl = data.url || data.onboardingUrl;
+
+      if (!onboardingUrl) {
+        Alert.alert("Stripe Error", "Backend did not return a Stripe onboarding URL.");
+        return;
+      }
+
       await updateSupabaseConnectStatus({
-        stripe_account_id: accountId,
-        stripe_connect_status: "created",
-        payouts_enabled: false,
-        charges_enabled: false,
-        stripe_payouts_enabled: false,
-        stripe_charges_enabled: false,
-        stripe_onboarding_complete: false,
+        freight_account: freightAccount,
+        stripe_connect_status: "started",
+        payouts_enabled: Boolean(data.payoutsEnabled),
+        charges_enabled: Boolean(data.chargesEnabled),
+        stripe_payouts_enabled: Boolean(data.payoutsEnabled),
+        stripe_charges_enabled: Boolean(data.chargesEnabled),
+        stripe_onboarding_complete: Boolean(data.onboardingComplete),
       });
 
       const updated = await persistCarrier({
         ...carrier,
-        stripeAccountId: accountId,
-        stripe_account_id: accountId,
-        stripeConnectStatus: "created",
-        stripe_connect_status: "created",
-        payoutsEnabled: false,
-        payouts_enabled: false,
-        chargesEnabled: false,
-        charges_enabled: false,
-        onboardingComplete: false,
-        stripe_onboarding_complete: false,
+        freightAccount,
+        freight_account: freightAccount,
+        stripeAccountId: freightAccount,
+        stripe_account_id: freightAccount,
+        stripeConnectStatus: "started",
+        stripe_connect_status: "started",
+        payoutsEnabled: Boolean(data.payoutsEnabled),
+        payouts_enabled: Boolean(data.payoutsEnabled),
+        chargesEnabled: Boolean(data.chargesEnabled),
+        charges_enabled: Boolean(data.chargesEnabled),
+        onboardingComplete: Boolean(data.onboardingComplete),
+        stripe_onboarding_complete: Boolean(data.onboardingComplete),
       });
 
       setCarrier(updated);
 
-      await openUrl(data.url || data.onboardingUrl);
+      await openStripeUrl(onboardingUrl);
     } catch (error: any) {
       console.log("Connect bank error:", error);
       Alert.alert("Connect Bank Error", error?.message || "Unable to start payout setup.");
@@ -392,36 +457,24 @@ export default function FreightConnectBankScreen() {
   async function checkConnectStatus() {
     if (!carrier) return;
 
-    const accountId = carrier.stripeAccountId || carrier.stripe_account_id || "";
+    const freightAccount = pickAcct(
+      carrier.freight_account,
+      carrier.freightAccount,
+      carrier.stripe_account_id,
+      carrier.stripeAccountId
+    );
 
-    if (!accountId) {
+    if (!freightAccount) {
       Alert.alert("No Stripe Account", "Start payout setup first.");
       return;
     }
 
     try {
       setChecking(true);
-
-      try {
-        await fetch(`${API_BASE_URL}/payments/refresh-connect-account`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            role: "freight",
-            freightId: carrier.id || carrier.freightId || carrier.freight_id,
-            freight_id: carrier.id || carrier.freightId || carrier.freight_id,
-            userId: carrier.id || carrier.freightId || carrier.freight_id,
-            stripeAccountId: accountId,
-            stripe_account_id: accountId,
-          }),
-        });
-      } catch (refreshError) {
-        console.log("Refresh connect account skipped:", refreshError);
-      }
-
       await loadCarrier();
 
       const refreshed = await getStoredCarrier();
+
       const payoutsEnabled = Boolean(refreshed?.payouts_enabled || refreshed?.payoutsEnabled);
       const chargesEnabled = Boolean(refreshed?.charges_enabled || refreshed?.chargesEnabled);
       const onboardingComplete = Boolean(
@@ -433,7 +486,7 @@ export default function FreightConnectBankScreen() {
       } else {
         Alert.alert(
           "Stripe Setup Pending",
-          "If you just finished Stripe onboarding, wait a moment and tap Check Payout Status again."
+          "If you just finished Stripe onboarding, wait a moment and tap Reload Payout Status again."
         );
       }
     } catch (error: any) {
@@ -443,12 +496,21 @@ export default function FreightConnectBankScreen() {
     }
   }
 
+  function currentFreightAccount() {
+    return pickAcct(
+      carrier?.freight_account,
+      carrier?.freightAccount,
+      carrier?.stripe_account_id,
+      carrier?.stripeAccountId
+    );
+  }
+
   function statusColor() {
     if (carrier?.payoutsEnabled && carrier?.chargesEnabled && carrier?.onboardingComplete) {
       return COLORS.green;
     }
 
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) {
+    if (currentFreightAccount()) {
       return COLORS.amber;
     }
 
@@ -460,7 +522,7 @@ export default function FreightConnectBankScreen() {
       return "Payout Ready";
     }
 
-    if (carrier?.stripeAccountId || carrier?.stripe_account_id) {
+    if (currentFreightAccount()) {
       return "Setup Incomplete";
     }
 
@@ -478,6 +540,8 @@ export default function FreightConnectBankScreen() {
       </SafeAreaView>
     );
   }
+
+  const freightAccount = currentFreightAccount();
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -526,7 +590,7 @@ export default function FreightConnectBankScreen() {
           </View>
 
           <Text style={styles.statusNote}>
-            Stripe Account ID: {carrier?.stripeAccountId || carrier?.stripe_account_id || "Not created yet"}
+            Stripe Connect Account ID: {freightAccount || "Not created yet"}
           </Text>
         </View>
 
@@ -537,29 +601,10 @@ export default function FreightConnectBankScreen() {
             subtitle="One freight profile uses one saved Stripe Connect acct_ account."
           />
 
-          <InfoRow
-            label="Stripe Account"
-            value={carrier?.stripeAccountId || carrier?.stripe_account_id ? "Saved" : "Missing"}
-            good={Boolean(carrier?.stripeAccountId || carrier?.stripe_account_id)}
-          />
-
-          <InfoRow
-            label="Onboarding"
-            value={carrier?.onboardingComplete ? "Complete" : "Required"}
-            good={Boolean(carrier?.onboardingComplete)}
-          />
-
-          <InfoRow
-            label="Charges Enabled"
-            value={carrier?.chargesEnabled ? "Enabled" : "Pending"}
-            good={Boolean(carrier?.chargesEnabled)}
-          />
-
-          <InfoRow
-            label="Payouts Enabled"
-            value={carrier?.payoutsEnabled ? "Enabled" : "Pending"}
-            good={Boolean(carrier?.payoutsEnabled)}
-          />
+          <InfoRow label="Stripe Connect Account" value={freightAccount ? "Saved" : "Missing"} good={Boolean(freightAccount)} />
+          <InfoRow label="Onboarding" value={carrier?.onboardingComplete ? "Complete" : "Required"} good={Boolean(carrier?.onboardingComplete)} />
+          <InfoRow label="Charges Enabled" value={carrier?.chargesEnabled ? "Enabled" : "Pending"} good={Boolean(carrier?.chargesEnabled)} />
+          <InfoRow label="Payouts Enabled" value={carrier?.payoutsEnabled ? "Enabled" : "Pending"} good={Boolean(carrier?.payoutsEnabled)} />
         </View>
 
         <TouchableOpacity
@@ -573,9 +618,7 @@ export default function FreightConnectBankScreen() {
             <>
               <Ionicons name="open-outline" size={18} color="#FFFFFF" />
               <Text style={styles.buttonText}>
-                {carrier?.stripeAccountId || carrier?.stripe_account_id
-                  ? "Continue Stripe Setup"
-                  : "Start Stripe Payout Setup"}
+                {freightAccount ? "Continue Stripe Setup" : "Start Stripe Payout Setup"}
               </Text>
             </>
           )}

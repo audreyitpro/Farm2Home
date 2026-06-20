@@ -1441,13 +1441,18 @@ export default function FreightRegister() {
       if (json.stripeCustomerId) {
         setStripeCustomerId(pickStripeCustomerId(json.stripeCustomerId));
       }
-
-      if (Platform.OS === "web") {
-        window.location.href = json.url;
+      const url: string = String(json.url || json.onboardingUrl || "").trim();
+      if (!url || !String(url).startsWith("https://connect.stripe.com/")) {
+        Alert.alert("Stripe Connect Error", "No valid Stripe onboarding URL was returned.");
         return;
-      }
+        }
 
-      await Linking.openURL(json.url);
+        if (Platform.OS === "web") {
+          window.location.assign(url);
+          return;
+        }
+
+        await Linking.openURL(url);
     } catch (error: any) {
       Alert.alert("Checkout Error", error?.message || "Backend checkout failed.");
     } finally {
@@ -2477,7 +2482,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   link: {
-    color: COLORS.red,
+    color: COLORS.red, 
     textAlign: "center",
     fontWeight: "900",
     marginTop: 18,
