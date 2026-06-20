@@ -26,23 +26,48 @@ import freightTheme from "../styles/freightTheme";
 type FreightUser = {
   id: string;
   freightId: string;
+  freight_id: string;
   profileId: string;
+  profile_id: string;
   authUserId: string;
+  auth_user_id: string;
   role: "freight";
 
+  accountId: string;
+  account_id: string;
+
   companyName: string;
+  company_name: string;
   businessName: string;
+  business_name: string;
   contactName: string;
+  contact_name: string;
   fullName: string;
+  full_name: string;
   email: string;
   phone: string;
   username: string;
 
+  stripeCustomerId: string;
+  stripe_customer_id: string;
+  stripeSubscriptionId: string;
+  stripe_subscription_id: string;
+  subscriptionId: string;
+  subscription_id: string;
+  freightAccount: string;
+  freight_account: string;
+  stripeAccountId: string;
+  stripe_account_id: string;
+
   accountActive: boolean;
+  account_active: boolean;
   membershipStatus: string;
+  membership_status: string;
   subscriptionStatus: string;
+  subscription_status: string;
   approved: boolean;
   verificationStatus: string;
+  verification_status: string;
 };
 
 function clean(value: any) {
@@ -53,78 +78,157 @@ function normalize(value: any) {
   return clean(value).toLowerCase();
 }
 
+function isCus(value: any) {
+  return clean(value).startsWith("cus_");
+}
+
+function isSub(value: any) {
+  return clean(value).startsWith("sub_");
+}
+
+function isAcct(value: any) {
+  return clean(value).startsWith("acct_");
+}
+
+function pickCus(...values: any[]) {
+  const found = values.find(isCus);
+  return found ? clean(found) : "";
+}
+
+function pickSub(...values: any[]) {
+  const found = values.find(isSub);
+  return found ? clean(found) : "";
+}
+
+function pickAcct(...values: any[]) {
+  const found = values.find(isAcct);
+  return found ? clean(found) : "";
+}
+
 function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
-  const id = item?.id || item?.freight_id || profile?.auth_user_id || "";
+  const id = clean(
+    item?.id ||
+      item?.freight_id ||
+      item?.auth_user_id ||
+      profile?.auth_user_id ||
+      profile?.id ||
+      ""
+  );
+
+  const accountId = clean(item?.account_id || profile?.account_id || "");
+
+  const stripeCustomerId = pickCus(
+    item?.stripe_customer_id,
+    item?.stripeCustomerId,
+    profile?.stripe_customer_id,
+    profile?.stripeCustomerId
+  );
+
+  const stripeSubscriptionId = pickSub(
+    item?.stripe_subscription_id,
+    item?.subscription_id,
+    item?.stripeSubscriptionId,
+    item?.subscriptionId,
+    profile?.stripe_subscription_id,
+    profile?.subscription_id
+  );
+
+  const freightAccount = pickAcct(
+    item?.freight_account,
+    item?.freightAccount,
+    item?.stripe_account_id,
+    item?.stripeAccountId,
+    profile?.freight_account,
+    profile?.stripe_account_id
+  );
+
+  const companyName =
+    item?.company_name ||
+    item?.business_name ||
+    profile?.company_name ||
+    "Freight Carrier";
+
+  const contactName =
+    item?.contact_name ||
+    item?.full_name ||
+    item?.name ||
+    profile?.full_name ||
+    profile?.name ||
+    "";
+
+  const accountActive =
+    item?.account_active === undefined
+      ? profile?.account_active !== false
+      : item?.account_active !== false;
+
+  const membershipStatus = clean(item?.membership_status || profile?.membership_status || "");
+  const subscriptionStatus = clean(item?.subscription_status || profile?.subscription_status || "");
 
   return {
     id,
     freightId: id,
-    profileId: item?.profile_id || profile?.id || "",
-    authUserId: item?.auth_user_id || profile?.auth_user_id || id,
+    freight_id: id,
+    profileId: clean(item?.profile_id || profile?.id || ""),
+    profile_id: clean(item?.profile_id || profile?.id || ""),
+    authUserId: clean(item?.auth_user_id || profile?.auth_user_id || id),
+    auth_user_id: clean(item?.auth_user_id || profile?.auth_user_id || id),
     role: "freight",
 
-    companyName:
-      item?.company_name ||
-      item?.business_name ||
-      profile?.company_name ||
-      "Freight Carrier",
+    accountId,
+    account_id: accountId,
 
-    businessName:
-      item?.business_name ||
-      item?.company_name ||
-      profile?.company_name ||
-      "Freight Carrier",
-
-    contactName:
-      item?.contact_name ||
-      item?.full_name ||
-      item?.name ||
-      profile?.full_name ||
-      profile?.name ||
-      "",
-
-    fullName:
-      item?.full_name ||
-      item?.contact_name ||
-      item?.name ||
-      profile?.full_name ||
-      profile?.name ||
-      "",
-
+    companyName,
+    company_name: companyName,
+    businessName: item?.business_name || companyName,
+    business_name: item?.business_name || companyName,
+    contactName,
+    contact_name: contactName,
+    fullName: item?.full_name || contactName,
+    full_name: item?.full_name || contactName,
     email: normalize(item?.email || profile?.email),
-    phone: item?.phone || profile?.phone || "",
-    username: normalize(item?.username),
+    phone: clean(item?.phone || profile?.phone || ""),
+    username: normalize(item?.username || profile?.username || ""),
 
-    accountActive:
-      item?.account_active === undefined
-        ? profile?.account_active !== false
-        : item?.account_active !== false,
+    stripeCustomerId,
+    stripe_customer_id: stripeCustomerId,
+    stripeSubscriptionId,
+    stripe_subscription_id: stripeSubscriptionId,
+    subscriptionId: stripeSubscriptionId,
+    subscription_id: stripeSubscriptionId,
+    freightAccount,
+    freight_account: freightAccount,
+    stripeAccountId: freightAccount,
+    stripe_account_id: freightAccount,
 
-    membershipStatus: item?.membership_status || "Pending",
-    subscriptionStatus: item?.subscription_status || "pending",
+    accountActive,
+    account_active: accountActive,
+    membershipStatus: membershipStatus || (stripeSubscriptionId ? "active" : "pending"),
+    membership_status: membershipStatus || (stripeSubscriptionId ? "active" : "pending"),
+    subscriptionStatus: subscriptionStatus || (stripeSubscriptionId ? "active" : "pending"),
+    subscription_status: subscriptionStatus || (stripeSubscriptionId ? "active" : "pending"),
 
-    approved:
-      item?.approved === true ||
-      normalize(item?.status) === "approved" ||
-      normalize(item?.verification_status) === "approved" ||
-      normalize(item?.admin_review_status) === "approved",
-
-    verificationStatus:
-      item?.verification_status ||
-      item?.admin_review_status ||
-      "PENDING_VERIFICATION",
+    approved: true,
+    verificationStatus: item?.verification_status || item?.admin_review_status || "SUBMITTED",
+    verification_status: item?.verification_status || item?.admin_review_status || "SUBMITTED",
   };
 }
 
-function isFreightActive(user: FreightUser) {
-  if (user.accountActive === false) return false;
+function hasDashboardAccess(user: FreightUser) {
+  return Boolean(
+    isCus(user.stripe_customer_id || user.stripeCustomerId) &&
+      isSub(user.stripe_subscription_id || user.subscription_id || user.stripeSubscriptionId) &&
+      isAcct(user.freight_account || user.freightAccount || user.stripe_account_id || user.stripeAccountId)
+  );
+}
 
-  const membershipStatus = normalize(user.membershipStatus);
-  const subscriptionStatus = normalize(user.subscriptionStatus);
+function isFreightActive(user: FreightUser) {
+  if (user.accountActive === false || user.account_active === false) return false;
+
+  const membershipStatus = normalize(user.membershipStatus || user.membership_status);
+  const subscriptionStatus = normalize(user.subscriptionStatus || user.subscription_status);
 
   if (membershipStatus === "canceled") return false;
   if (subscriptionStatus === "canceled") return false;
-  if (subscriptionStatus === "past_due") return false;
   if (subscriptionStatus === "unpaid") return false;
 
   return true;
@@ -145,9 +249,9 @@ export default function FreightLoginScreen() {
       ...user,
       role: "freight" as const,
       accountActive: user.accountActive !== false,
-      membershipStatus: user.membershipStatus || "Pending",
-      subscriptionStatus: user.subscriptionStatus || "pending",
+      account_active: user.account_active !== false,
       updatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(sessionUser));
@@ -166,7 +270,7 @@ export default function FreightLoginScreen() {
       const byAuth = await supabase
         .from("profiles")
         .select("*")
-        .eq("auth_user_id", userId)
+        .or(`id.eq.${userId},auth_user_id.eq.${userId},profile_id.eq.${userId}`)
         .eq("role", "freight")
         .maybeSingle();
 
@@ -189,38 +293,16 @@ export default function FreightLoginScreen() {
 
   async function findFreightProfile(userId: string, cleanEmail: string) {
     let freightUser: any = null;
-    let profile: any = null;
+    const profile = await findProfile(userId, cleanEmail);
 
     if (userId) {
-      const carrierById = await supabase
-        .from("freight_carriers")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (!carrierById.error && carrierById.data) freightUser = carrierById.data;
-    }
-
-    if (!freightUser && userId) {
       const userById = await supabase
         .from("freight_users")
         .select("*")
-        .eq("id", userId)
+        .or(`id.eq.${userId},freight_id.eq.${userId},auth_user_id.eq.${userId},profile_id.eq.${userId}`)
         .maybeSingle();
 
       if (!userById.error && userById.data) freightUser = userById.data;
-    }
-
-    if (!freightUser && cleanEmail) {
-      const carrierByEmail = await supabase
-        .from("freight_carriers")
-        .select("*")
-        .eq("email", cleanEmail)
-        .maybeSingle();
-
-      if (!carrierByEmail.error && carrierByEmail.data) {
-        freightUser = carrierByEmail.data;
-      }
     }
 
     if (!freightUser && cleanEmail) {
@@ -230,30 +312,52 @@ export default function FreightLoginScreen() {
         .eq("email", cleanEmail)
         .maybeSingle();
 
-      if (!userByEmail.error && userByEmail.data) {
-        freightUser = userByEmail.data;
-      }
+      if (!userByEmail.error && userByEmail.data) freightUser = userByEmail.data;
     }
 
-    profile = await findProfile(userId, cleanEmail);
+    if (!freightUser && userId) {
+      const carrierById = await supabase
+        .from("freight_carriers")
+        .select("*")
+        .or(`id.eq.${userId},freight_id.eq.${userId},auth_user_id.eq.${userId},profile_id.eq.${userId}`)
+        .maybeSingle();
+
+      if (!carrierById.error && carrierById.data) freightUser = carrierById.data;
+    }
+
+    if (!freightUser && cleanEmail) {
+      const carrierByEmail = await supabase
+        .from("freight_carriers")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+
+      if (!carrierByEmail.error && carrierByEmail.data) freightUser = carrierByEmail.data;
+    }
 
     if (!freightUser && profile) {
       freightUser = {
-        id: userId || profile.auth_user_id,
-        auth_user_id: userId || profile.auth_user_id,
+        id: userId || profile.auth_user_id || profile.id,
+        freight_id: userId || profile.auth_user_id || profile.id,
+        auth_user_id: userId || profile.auth_user_id || profile.id,
         profile_id: profile.id,
         role: "freight",
+        account_id: profile.account_id,
         company_name: profile.company_name || "Freight Carrier",
+        business_name: profile.company_name || "Freight Carrier",
         contact_name: profile.full_name || profile.name || "",
         full_name: profile.full_name || profile.name || "",
         email: profile.email,
         phone: profile.phone,
-        username: "",
+        username: profile.username || "",
         account_active: profile.account_active ?? true,
-        approved: false,
-        verification_status: "PENDING_VERIFICATION",
-        membership_status: "Pending",
-        subscription_status: "pending",
+        stripe_customer_id: profile.stripe_customer_id,
+        stripe_subscription_id: profile.stripe_subscription_id || profile.subscription_id,
+        subscription_id: profile.subscription_id || profile.stripe_subscription_id,
+        freight_account: profile.freight_account,
+        stripe_account_id: profile.stripe_account_id,
+        membership_status: profile.membership_status,
+        subscription_status: profile.subscription_status,
       };
     }
 
@@ -309,16 +413,17 @@ export default function FreightLoginScreen() {
 
       await saveFreightSession(mappedUser);
 
-      if (mappedUser.approved !== true) {
-        Alert.alert(
-          "Pending Review",
-          "Your freight account is saved and pending Farm2Home admin approval."
-        );
-        router.replace("/freight/register" as any);
+      if (hasDashboardAccess(mappedUser)) {
+        router.replace("/freight/dashboard" as any);
         return;
       }
 
-      router.replace("/freight/dashboard" as any);
+      Alert.alert(
+        "Finish Setup",
+        "Your freight profile was found, but Stripe Customer ID, Subscription ID, or Connect Account ID is missing."
+      );
+
+      router.replace("/freight/register" as any);
     } catch (error: any) {
       console.log("Freight login error:", error);
       Alert.alert("Login Error", error?.message || "Unable to login to freight account.");
