@@ -52,7 +52,10 @@ function roleName(role) {
 
 function requireStripe(res) {
   if (!stripe) {
-    res.status(500).json({ success: false, error: "STRIPE_SECRET_KEY missing." });
+    res.status(500).json({
+      success: false,
+      error: "STRIPE_SECRET_KEY missing.",
+    });
     return false;
   }
   return true;
@@ -107,29 +110,117 @@ function getRoleAccountColumn(role) {
 
 function getRoleIdFromBody(body, role) {
   const r = roleName(role);
-  if (r === "freight") return clean(body.freightId || body.freight_id || body.userId || body.profileId || body.authUserId);
-  if (r === "driver") return clean(body.driverId || body.driver_id || body.userId || body.profileId || body.authUserId);
-  if (r === "farmer") return clean(body.farmerId || body.farmer_id || body.userId || body.profileId || body.authUserId);
-  if (r === "customer") return clean(body.customerId || body.customer_id || body.userId || body.profileId || body.authUserId);
+
+  if (r === "freight") {
+    return clean(
+      body.freightId ||
+        body.freight_id ||
+        body.userId ||
+        body.profileId ||
+        body.authUserId
+    );
+  }
+
+  if (r === "driver") {
+    return clean(
+      body.driverId ||
+        body.driver_id ||
+        body.userId ||
+        body.profileId ||
+        body.authUserId
+    );
+  }
+
+  if (r === "farmer") {
+    return clean(
+      body.farmerId ||
+        body.farmer_id ||
+        body.userId ||
+        body.profileId ||
+        body.authUserId
+    );
+  }
+
+  if (r === "customer") {
+    return clean(
+      body.customerId ||
+        body.customer_id ||
+        body.userId ||
+        body.profileId ||
+        body.authUserId
+    );
+  }
+
   return clean(body.userId || body.profileId || body.authUserId);
 }
 
 function getRoleIdFromMetadata(metadata, role) {
   const r = roleName(role);
-  if (r === "freight") return clean(metadata.freightId || metadata.freight_id || metadata.userId || metadata.profileId || metadata.authUserId);
-  if (r === "driver") return clean(metadata.driverId || metadata.driver_id || metadata.userId || metadata.profileId || metadata.authUserId);
-  if (r === "farmer") return clean(metadata.farmerId || metadata.farmer_id || metadata.userId || metadata.profileId || metadata.authUserId);
-  if (r === "customer") return clean(metadata.customerId || metadata.customer_id || metadata.userId || metadata.profileId || metadata.authUserId);
+
+  if (r === "freight") {
+    return clean(
+      metadata.freightId ||
+        metadata.freight_id ||
+        metadata.userId ||
+        metadata.profileId ||
+        metadata.authUserId
+    );
+  }
+
+  if (r === "driver") {
+    return clean(
+      metadata.driverId ||
+        metadata.driver_id ||
+        metadata.userId ||
+        metadata.profileId ||
+        metadata.authUserId
+    );
+  }
+
+  if (r === "farmer") {
+    return clean(
+      metadata.farmerId ||
+        metadata.farmer_id ||
+        metadata.userId ||
+        metadata.profileId ||
+        metadata.authUserId
+    );
+  }
+
+  if (r === "customer") {
+    return clean(
+      metadata.customerId ||
+        metadata.customer_id ||
+        metadata.userId ||
+        metadata.profileId ||
+        metadata.authUserId
+    );
+  }
+
   return clean(metadata.userId || metadata.profileId || metadata.authUserId);
 }
 
 function getIdFilter(role, idValue) {
   const r = roleName(role);
-  if (r === "freight") return `id.eq.${idValue},freight_id.eq.${idValue},profile_id.eq.${idValue},auth_user_id.eq.${idValue}`;
-  if (r === "driver") return `id.eq.${idValue},driver_id.eq.${idValue},profile_id.eq.${idValue},auth_user_id.eq.${idValue}`;
-  if (r === "farmer") return `id.eq.${idValue},farmer_id.eq.${idValue},profile_id.eq.${idValue},auth_user_id.eq.${idValue}`;
-  if (r === "customer") return `id.eq.${idValue},customer_id.eq.${idValue},profile_id.eq.${idValue},auth_user_id.eq.${idValue}`;
-  return `id.eq.${idValue},profile_id.eq.${idValue},auth_user_id.eq.${idValue}`;
+  const id = clean(idValue);
+
+  if (r === "freight") {
+    return `id.eq.${id},freight_id.eq.${id},profile_id.eq.${id},auth_user_id.eq.${id}`;
+  }
+
+  if (r === "driver") {
+    return `id.eq.${id},driver_id.eq.${id},profile_id.eq.${id},auth_user_id.eq.${id}`;
+  }
+
+  if (r === "farmer") {
+    return `id.eq.${id},farmer_id.eq.${id},profile_id.eq.${id},auth_user_id.eq.${id}`;
+  }
+
+  if (r === "customer") {
+    return `id.eq.${id},customer_id.eq.${id},profile_id.eq.${id},auth_user_id.eq.${id}`;
+  }
+
+  return `id.eq.${id},profile_id.eq.${id},auth_user_id.eq.${id}`;
 }
 
 function getPriceId(role, planType) {
@@ -137,7 +228,14 @@ function getPriceId(role, planType) {
   const p = roleName(planType);
 
   if (r === "freight") return process.env.STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID;
-  if (r === "driver") return process.env.STRIPE_DRIVER_MEMBERSHIP_PRICE_ID || process.env.STRIPE_DRIVER_BOARD_PRICE_ID;
+
+  if (r === "driver") {
+    return (
+      process.env.STRIPE_DRIVER_MEMBERSHIP_PRICE_ID ||
+      process.env.STRIPE_DRIVER_BOARD_PRICE_ID
+    );
+  }
+
   if (r === "customer") return process.env.STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID;
 
   if (r === "farmer" && p.includes("application")) {
@@ -158,6 +256,7 @@ function getPriceId(role, planType) {
 function getCheckoutMode(role, planType) {
   const r = roleName(role);
   const p = roleName(planType);
+
   if (r === "farmer" && p.includes("application")) return "payment";
   return "subscription";
 }
@@ -177,9 +276,13 @@ async function updateMainRoleRow(role, idValue, emailValue, payload) {
 
   let query = supabase.from(table).update(payload);
 
-  if (idValue) query = query.or(getIdFilter(role, idValue));
-  else if (emailValue) query = query.eq("email", emailValue);
-  else return { data: null, error: new Error("Missing id or email.") };
+  if (idValue) {
+    query = query.or(getIdFilter(role, idValue));
+  } else if (emailValue) {
+    query = query.eq("email", emailValue);
+  } else {
+    return { data: null, error: new Error("Missing id or email.") };
+  }
 
   return await query.select();
 }
@@ -221,17 +324,23 @@ async function updateSubscriptionRoleAccount(role, idValue, emailValue, customer
   };
 
   const filters = [];
+
   if (idValue) filters.push(`${idColumn}.eq.${idValue}`);
+
   if (emailValue) {
     if (roleName(role) === "freight") filters.push(`freight_email.eq.${emailValue}`);
     else filters.push(`email.eq.${emailValue}`);
   }
+
   if (customerId) filters.push(`stripe_customer_id.eq.${customerId}`);
 
   if (!filters.length) return;
 
   const { error } = await supabase.from(table).update(payload).or(filters.join(","));
-  if (error) console.log(`${table} ${accountColumn} update skipped:`, error.message);
+
+  if (error) {
+    console.log(`${table} ${accountColumn} update skipped:`, error.message);
+  }
 }
 
 async function upsertSubscriptionRow({
@@ -250,7 +359,9 @@ async function upsertSubscriptionRow({
   const idColumn = getRoleIdColumn(role);
   const accountColumn = getRoleAccountColumn(role);
 
-  if (!table || !idColumn || !isCus(stripeCustomerId) || !isSub(stripeSubscriptionId)) return null;
+  if (!table || !idColumn || !isCus(stripeCustomerId) || !isSub(stripeSubscriptionId)) {
+    return null;
+  }
 
   const now = nowIso();
 
@@ -262,7 +373,9 @@ async function upsertSubscriptionRow({
     stripe_subscription_id: stripeSubscriptionId,
     subscription_status: clean(subscriptionStatus || "active"),
     current_period_end:
-      typeof currentPeriodEnd === "number" ? stripeDate(currentPeriodEnd) : currentPeriodEnd || null,
+      typeof currentPeriodEnd === "number"
+        ? stripeDate(currentPeriodEnd)
+        : currentPeriodEnd || null,
     updated_at: now,
   };
 
@@ -280,7 +393,13 @@ async function upsertSubscriptionRow({
   if (bySubError) throw bySubError;
 
   if (bySub?.id) {
-    const { data, error } = await supabase.from(table).update(payload).eq("id", bySub.id).select().single();
+    const { data, error } = await supabase
+      .from(table)
+      .update(payload)
+      .eq("id", bySub.id)
+      .select()
+      .single();
+
     if (error) throw error;
     return data;
   }
@@ -294,7 +413,13 @@ async function upsertSubscriptionRow({
   if (byRoleError) throw byRoleError;
 
   if (byRole?.id) {
-    const { data, error } = await supabase.from(table).update(payload).eq("id", byRole.id).select().single();
+    const { data, error } = await supabase
+      .from(table)
+      .update(payload)
+      .eq("id", byRole.id)
+      .select()
+      .single();
+
     if (error) throw error;
     return data;
   }
@@ -364,13 +489,20 @@ async function findCustomerByEmail(emailValue) {
       query: `email:'${finalEmail.replace(/'/g, "\\'")}'`,
       limit: 1,
     });
+
     return searched?.data?.[0] || null;
   } catch {
     return null;
   }
 }
 
-async function findCustomerSmart({ emailValue, businessName, username, role, stripeCustomerId }) {
+async function findCustomerSmart({
+  emailValue,
+  businessName,
+  username,
+  role,
+  stripeCustomerId,
+}) {
   if (isCus(stripeCustomerId)) {
     try {
       const customer = await stripe.customers.retrieve(stripeCustomerId);
@@ -409,11 +541,13 @@ async function findCustomerSmart({ emailValue, businessName, username, role, str
 
 async function listCustomerSubscriptions(customerId) {
   if (!isCus(customerId)) return [];
+
   const listed = await stripe.subscriptions.list({
     customer: customerId,
     status: "all",
     limit: 100,
   });
+
   return listed?.data || [];
 }
 
@@ -446,6 +580,7 @@ async function getOrCreateCustomer({ finalEmail, finalName, metadata }) {
         company_name: finalName,
       },
     });
+
     return existing.id;
   }
 
@@ -478,17 +613,26 @@ function subscriptionPayload(role, customerId, subscription) {
 
   if (roleName(role) === "freight") payload.freight_membership_paid = active;
   if (roleName(role) === "driver") payload.driver_membership_paid = active;
+
   if (roleName(role) === "farmer") {
     payload.farmer_membership_paid = active;
     payload.monthly_membership_started = active;
   }
+
   if (roleName(role) === "customer") payload.customer_membership_paid = active;
 
   return payload;
 }
 
-async function syncSubscriptionToSupabase({ role, roleId, emailValue, customer, subscription }) {
+async function syncSubscriptionToSupabase({
+  role,
+  roleId,
+  emailValue,
+  customer,
+  subscription,
+}) {
   const customerId = typeof customer === "string" ? customer : customer?.id;
+
   if (!isCus(customerId) || !isSub(subscription?.id)) return null;
 
   const payload = subscriptionPayload(role, customerId, subscription);
@@ -520,14 +664,21 @@ async function syncSubscriptionToSupabase({ role, roleId, emailValue, customer, 
 async function updateFromCheckoutSession(session) {
   const metadata = session.metadata || {};
   const role = roleName(metadata.role);
+
   if (!getRoleTable(role)) return;
 
   const roleId = getRoleIdFromMetadata(metadata, role);
-  const emailValue = email(metadata.email || session.customer_details?.email || session.customer_email || "");
-  const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id || "";
+  const emailValue = email(
+    metadata.email || session.customer_details?.email || session.customer_email || ""
+  );
+
+  const customerId =
+    typeof session.customer === "string" ? session.customer : session.customer?.id || "";
 
   const subscriptionId =
-    typeof session.subscription === "string" ? session.subscription : session.subscription?.id || "";
+    typeof session.subscription === "string"
+      ? session.subscription
+      : session.subscription?.id || "";
 
   const paymentType = roleName(metadata.paymentType || metadata.planType);
 
@@ -549,13 +700,19 @@ async function updateFromCheckoutSession(session) {
   if (!isCus(customerId) || !isSub(subscriptionId)) return;
 
   let subscription;
+
   try {
     subscription =
       typeof session.subscription === "string"
         ? await stripe.subscriptions.retrieve(subscriptionId)
         : session.subscription;
   } catch {
-    subscription = { id: subscriptionId, status: "active", current_period_end: null, metadata };
+    subscription = {
+      id: subscriptionId,
+      status: "active",
+      current_period_end: null,
+      metadata,
+    };
   }
 
   const payload = {
@@ -586,10 +743,15 @@ async function updateFromCheckoutSession(session) {
 async function updateFromSubscription(subscription) {
   const metadata = subscription.metadata || {};
   const role = roleName(metadata.role);
+
   if (!getRoleTable(role)) return;
 
   const roleId = getRoleIdFromMetadata(metadata, role);
-  const customerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id || "";
+
+  const customerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : subscription.customer?.id || "";
 
   let emailValue = email(metadata.email || "");
   let customer = null;
@@ -663,14 +825,33 @@ async function createSubscriptionCheckout(req, res) {
     const roleId = getRoleIdFromBody(body, role);
     const finalEmail = email(body.customerEmail || body.email || body.freight_email);
     const accountId = clean(body.accountId || body.account_id);
-    const finalName = clean(body.companyName || body.businessName || body.fullName || body.name || `${role} User`);
+    const finalName = clean(
+      body.companyName ||
+        body.businessName ||
+        body.fullName ||
+        body.name ||
+        `${role} User`
+    );
     const username = clean(body.username);
 
     if (!role) return res.status(400).json({ success: false, error: "role is required." });
-    if (!roleId) return res.status(400).json({ success: false, error: "userId/profile ID is required." });
-    if (!finalEmail) return res.status(400).json({ success: false, error: "email is required." });
+
+    if (!roleId) {
+      return res.status(400).json({
+        success: false,
+        error: "userId/profile ID is required.",
+      });
+    }
+
+    if (!finalEmail) {
+      return res.status(400).json({
+        success: false,
+        error: "email is required.",
+      });
+    }
 
     const priceId = getPriceId(role, planType);
+
     if (!priceId) {
       return res.status(500).json({
         success: false,
@@ -703,14 +884,17 @@ async function createSubscriptionCheckout(req, res) {
       metadata.freightId = roleId;
       metadata.freight_id = roleId;
     }
+
     if (role === "driver") {
       metadata.driverId = roleId;
       metadata.driver_id = roleId;
     }
+
     if (role === "farmer") {
       metadata.farmerId = roleId;
       metadata.farmer_id = roleId;
     }
+
     if (role === "customer") {
       metadata.customerId = roleId;
       metadata.customer_id = roleId;
@@ -782,7 +966,8 @@ async function createSubscriptionCheckout(req, res) {
     const pendingPayload = {
       stripe_customer_id: customerId,
       stripe_checkout_session_id: session.id,
-      membership_status: mode === "payment" ? "pending_application_fee" : "pending_payment",
+      membership_status:
+        mode === "payment" ? "pending_application_fee" : "pending_payment",
       subscription_status: mode === "payment" ? "not_started" : "pending_payment",
       updated_at: nowIso(),
     };
@@ -808,6 +993,7 @@ async function createSubscriptionCheckout(req, res) {
     });
   } catch (error) {
     console.error("create-subscription-checkout error:", error);
+
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to create subscription checkout.",
@@ -824,13 +1010,18 @@ router.get("/health", (req, res) => {
     webhookSecretConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
     supabaseConfigured: Boolean(supabase),
     freightPriceConfigured: Boolean(process.env.STRIPE_FREIGHT_MEMBERSHIP_PRICE_ID),
-    driverPriceConfigured: Boolean(process.env.STRIPE_DRIVER_MEMBERSHIP_PRICE_ID || process.env.STRIPE_DRIVER_BOARD_PRICE_ID),
+    driverPriceConfigured: Boolean(
+      process.env.STRIPE_DRIVER_MEMBERSHIP_PRICE_ID ||
+        process.env.STRIPE_DRIVER_BOARD_PRICE_ID
+    ),
     farmerMembershipPriceConfigured: Boolean(
       process.env.STRIPE_FARMER_MEMBERSHIP_PRICE_ID ||
         process.env.STRIPE_FARMER_MONTHLY_SUBSCRIPTION_PRICE_ID ||
         process.env.STRIPE_FARMER_SUBSCRIPTION_PRICE_ID
     ),
-    farmerApplicationPriceConfigured: Boolean(process.env.STRIPE_FARMER_APPLICATION_FEE_PRICE_ID),
+    farmerApplicationPriceConfigured: Boolean(
+      process.env.STRIPE_FARMER_APPLICATION_FEE_PRICE_ID
+    ),
     customerPriceConfigured: Boolean(process.env.STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID),
   });
 });
@@ -873,28 +1064,74 @@ router.post("/create-connect-account", async (req, res) => {
     const accountColumn = getRoleAccountColumn(role);
 
     if (!table || !accountColumn) {
-      return res.status(400).json({ success: false, error: "Valid role is required." });
-    }
-
-    const requestedId = getRoleIdFromBody(body, role);
-    const requestedEmail = email(body.email || body.customerEmail || body.freight_email);
-    const requestedBusinessName = clean(body.companyName || body.businessName || body.name || "Farm2Home Carrier");
-    const requestedAccountId = clean(body.accountId || body.account_id);
-    const requestedAcct = clean(body[accountColumn] || body.stripeAccountId || body.stripe_account_id);
-
-    if (!requestedId && !requestedEmail) {
       return res.status(400).json({
         success: false,
-        error: "userId/profile ID or email is required.",
+        error: "Valid role is required.",
       });
     }
 
-    let profileQuery = supabase.from(table).select("*");
-    if (requestedId) profileQuery = profileQuery.or(getIdFilter(role, requestedId));
-    else profileQuery = profileQuery.eq("email", requestedEmail);
+    const requestedId = getRoleIdFromBody(body, role);
+    const requestedEmail = email(
+      body.email || body.customerEmail || body.freight_email
+    );
+    const requestedBusinessName = clean(
+      body.companyName ||
+        body.businessName ||
+        body.name ||
+        "Farm2Home Carrier"
+    );
+    const requestedAccountId = clean(body.accountId || body.account_id);
+    const requestedAcct = clean(
+      body[accountColumn] ||
+        body.freight_account ||
+        body.driver_account ||
+        body.farmer_account ||
+        body.customer_account ||
+        body.stripeAccountId ||
+        body.stripe_account_id
+    );
 
-    const { data: row, error: rowError } = await profileQuery.maybeSingle();
-    if (rowError) throw rowError;
+    if (!requestedId && !requestedEmail && !requestedAccountId) {
+      return res.status(400).json({
+        success: false,
+        error: "userId/profile ID, email, or accountId is required.",
+      });
+    }
+
+    let row = null;
+
+    if (requestedId) {
+      const result = await supabase
+        .from(table)
+        .select("*")
+        .or(getIdFilter(role, requestedId))
+        .maybeSingle();
+
+      if (result.error) throw result.error;
+      row = result.data;
+    }
+
+    if (!row && requestedEmail) {
+      const result = await supabase
+        .from(table)
+        .select("*")
+        .eq("email", requestedEmail)
+        .maybeSingle();
+
+      if (result.error) throw result.error;
+      row = result.data;
+    }
+
+    if (!row && requestedAccountId) {
+      const result = await supabase
+        .from(table)
+        .select("*")
+        .eq("account_id", requestedAccountId)
+        .maybeSingle();
+
+      if (result.error) throw result.error;
+      row = result.data;
+    }
 
     if (!row?.id) {
       return res.status(404).json({
@@ -906,17 +1143,25 @@ router.post("/create-connect-account", async (req, res) => {
     const finalId = row.id;
     const finalEmail = email(row.email || requestedEmail);
     const finalAccountId = clean(row.account_id || requestedAccountId);
-    const finalName = clean(requestedBusinessName || row.company_name || row.business_name || row.name || "Farm2Home Carrier");
+    const finalName = clean(
+      requestedBusinessName ||
+        row.company_name ||
+        row.business_name ||
+        row.name ||
+        "Farm2Home Carrier"
+    );
+
     const customerId = clean(row.stripe_customer_id);
 
     let existingAcct = clean(row[accountColumn]);
-    if (!isAcct(existingAcct) && isAcct(requestedAcct)) existingAcct = requestedAcct;
+
+    if (!isAcct(existingAcct) && isAcct(requestedAcct)) {
+      existingAcct = requestedAcct;
+    }
 
     if (!isAcct(existingAcct)) {
       existingAcct = await getSavedRoleAccount(role, finalId, finalEmail);
     }
-
-    let account;
 
     const metadata = {
       role,
@@ -937,38 +1182,44 @@ router.post("/create-connect-account", async (req, res) => {
       metadata.freightId = finalId;
       metadata.freight_id = finalId;
     }
+
     if (role === "driver") {
       metadata.driverId = finalId;
       metadata.driver_id = finalId;
     }
+
     if (role === "farmer") {
       metadata.farmerId = finalId;
       metadata.farmer_id = finalId;
     }
+
     if (role === "customer") {
       metadata.customerId = finalId;
       metadata.customer_id = finalId;
     }
+
+    let account;
 
     if (isAcct(existingAcct)) {
       account = await stripe.accounts.retrieve(existingAcct);
 
       try {
         account = await stripe.accounts.update(existingAcct, {
-          email: finalEmail,
-          business_profile: { name: finalName },
-          capabilities: {
-            transfers: { requested: true },
-            card_payments: { requested: true },
+          business_profile: {
+            name: finalName,
           },
-          metadata: { ...(account.metadata || {}), ...metadata },
+          metadata: {
+            ...(account.metadata || {}),
+            ...metadata,
+          },
         });
-      } catch (err) {
-        console.log("Existing Connect capability update skipped:", err.message);
-        account = await stripe.accounts.update(existingAcct, {
-          email: finalEmail,
-          metadata: { ...(account.metadata || {}), ...metadata },
-        });
+      } catch (updateError) {
+        console.log(
+          "Existing Connect account update skipped:",
+          updateError.message
+        );
+
+        account = await stripe.accounts.retrieve(existingAcct);
       }
     } else {
       account = await stripe.accounts.create({
@@ -980,7 +1231,9 @@ router.post("/create-connect-account", async (req, res) => {
           transfers: { requested: true },
           card_payments: { requested: true },
         },
-        business_profile: { name: finalName },
+        business_profile: {
+          name: finalName,
+        },
         metadata,
       });
     }
@@ -1016,6 +1269,7 @@ router.post("/create-connect-account", async (req, res) => {
     });
   } catch (error) {
     console.error("create-connect-account error:", error);
+
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to create Stripe Connect onboarding link.",
@@ -1029,7 +1283,13 @@ router.post("/verify-checkout-session", async (req, res) => {
     if (!requireSupabase(res)) return;
 
     const sessionId = clean(req.body?.sessionId || req.body?.session_id);
-    if (!sessionId) return res.status(400).json({ success: false, error: "sessionId is required." });
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionId is required.",
+      });
+    }
 
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
       expand: ["subscription", "customer"],
@@ -1049,6 +1309,7 @@ router.post("/verify-checkout-session", async (req, res) => {
     });
   } catch (error) {
     console.error("verify-checkout-session error:", error);
+
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to verify checkout session.",
@@ -1064,7 +1325,9 @@ router.post("/force-sync-role-subscription", async (req, res) => {
     const role = roleName(req.body?.role || "freight");
     const roleId = getRoleIdFromBody(req.body || {}, role);
     const emailValue = email(req.body?.email);
-    const businessName = clean(req.body?.businessName || req.body?.companyName || req.body?.name);
+    const businessName = clean(
+      req.body?.businessName || req.body?.companyName || req.body?.name
+    );
     const username = clean(req.body?.username);
     const customerId = clean(req.body?.stripeCustomerId || req.body?.stripe_customer_id);
 
@@ -1077,7 +1340,10 @@ router.post("/force-sync-role-subscription", async (req, res) => {
     });
 
     if (!customer?.id) {
-      return res.status(404).json({ success: false, error: "No Stripe customer found." });
+      return res.status(404).json({
+        success: false,
+        error: "No Stripe customer found.",
+      });
     }
 
     const subs = await listCustomerSubscriptions(customer.id);
@@ -1111,6 +1377,7 @@ router.post("/force-sync-role-subscription", async (req, res) => {
     });
   } catch (error) {
     console.error("force-sync-role-subscription error:", error);
+
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to force sync subscription.",
@@ -1118,9 +1385,74 @@ router.post("/force-sync-role-subscription", async (req, res) => {
   }
 });
 
-router.post("/force-sync-freight-subscription", (req, res) => {
+router.post("/force-sync-freight-subscription", async (req, res) => {
   req.body = { ...(req.body || {}), role: "freight" };
-  return router.handle({ ...req, url: "/force-sync-role-subscription", originalUrl: "/payments/force-sync-role-subscription" }, res);
+
+  const role = roleName(req.body?.role || "freight");
+  const roleId = getRoleIdFromBody(req.body || {}, role);
+  const emailValue = email(req.body?.email);
+  const businessName = clean(
+    req.body?.businessName || req.body?.companyName || req.body?.name
+  );
+  const username = clean(req.body?.username);
+  const customerId = clean(req.body?.stripeCustomerId || req.body?.stripe_customer_id);
+
+  try {
+    if (!requireStripe(res)) return;
+    if (!requireSupabase(res)) return;
+
+    const customer = await findCustomerSmart({
+      emailValue,
+      businessName,
+      username,
+      role,
+      stripeCustomerId: customerId,
+    });
+
+    if (!customer?.id) {
+      return res.status(404).json({
+        success: false,
+        error: "No Stripe customer found.",
+      });
+    }
+
+    const subs = await listCustomerSubscriptions(customer.id);
+    const sub = bestSubscription(subs);
+
+    if (!sub?.id) {
+      return res.status(404).json({
+        success: false,
+        error: "Stripe customer found, but no subscription was found.",
+        stripeCustomerId: customer.id,
+      });
+    }
+
+    const resolvedEmail = email(customer.email || emailValue);
+
+    const synced = await syncSubscriptionToSupabase({
+      role,
+      roleId,
+      emailValue: resolvedEmail,
+      customer,
+      subscription: sub,
+    });
+
+    return res.json({
+      success: true,
+      message: "Freight subscription synced.",
+      stripeCustomerId: customer.id,
+      stripeSubscriptionId: sub.id,
+      subscriptionStatus: sub.status,
+      updatedRows: synced?.updatedRows || [],
+    });
+  } catch (error) {
+    console.error("force-sync-freight-subscription error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to force sync freight subscription.",
+    });
+  }
 });
 
 router.post("/sync-stripe-by-email", async (req, res) => {
@@ -1131,7 +1463,9 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     const role = roleName(req.body?.role || "freight");
     const roleId = getRoleIdFromBody(req.body || {}, role);
     const emailValue = email(req.body?.email);
-    const businessName = clean(req.body?.businessName || req.body?.companyName || req.body?.name);
+    const businessName = clean(
+      req.body?.businessName || req.body?.companyName || req.body?.name
+    );
     const username = clean(req.body?.username);
     const customerId = clean(req.body?.stripeCustomerId || req.body?.stripe_customer_id);
 
@@ -1144,7 +1478,10 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     });
 
     if (!customer?.id) {
-      return res.status(404).json({ success: false, error: "No Stripe customer found." });
+      return res.status(404).json({
+        success: false,
+        error: "No Stripe customer found.",
+      });
     }
 
     const subs = await listCustomerSubscriptions(customer.id);
@@ -1194,6 +1531,7 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     });
   } catch (error) {
     console.error("sync-stripe-by-email error:", error);
+
     return res.status(500).json({
       success: false,
       error: error.message || "Unable to sync Stripe by email.",
@@ -1240,9 +1578,13 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
         console.log(`Stripe webhook ignored event: ${event.type}`);
     }
 
-    return res.status(200).json({ received: true, type: event.type });
+    return res.status(200).json({
+      received: true,
+      type: event.type,
+    });
   } catch (error) {
     console.error("Webhook handler error:", error);
+
     return res.status(200).json({
       received: true,
       handled: false,
