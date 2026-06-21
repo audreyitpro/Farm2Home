@@ -1,4 +1,5 @@
 // app/freight/my-loads.tsx
+// Fully updated replacement for Farm2Home Freight My Loads
 
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -177,8 +178,50 @@ export default function FreightMyLoadsScreen() {
         nextCarrier.business_name ||
         nextCarrier.company_name ||
         "Farm2Home Freight Carrier",
-      stripeAccountId: nextCarrier.stripeAccountId || nextCarrier.stripe_account_id || "",
-      stripe_account_id: nextCarrier.stripe_account_id || nextCarrier.stripeAccountId || "",
+      accountId: nextCarrier.accountId || nextCarrier.account_id || "",
+      account_id: nextCarrier.account_id || nextCarrier.accountId || "",
+      stripeCustomerId: nextCarrier.stripeCustomerId || nextCarrier.stripe_customer_id || "",
+      stripe_customer_id: nextCarrier.stripe_customer_id || nextCarrier.stripeCustomerId || "",
+      stripeSubscriptionId:
+        nextCarrier.stripeSubscriptionId ||
+        nextCarrier.stripe_subscription_id ||
+        nextCarrier.subscription_id ||
+        "",
+      stripe_subscription_id:
+        nextCarrier.stripe_subscription_id ||
+        nextCarrier.stripeSubscriptionId ||
+        nextCarrier.subscription_id ||
+        "",
+      subscriptionId:
+        nextCarrier.subscriptionId ||
+        nextCarrier.subscription_id ||
+        nextCarrier.stripe_subscription_id ||
+        "",
+      subscription_id:
+        nextCarrier.subscription_id ||
+        nextCarrier.subscriptionId ||
+        nextCarrier.stripe_subscription_id ||
+        "",
+      freightAccount:
+        nextCarrier.freightAccount ||
+        nextCarrier.freight_account ||
+        nextCarrier.stripe_account_id ||
+        "",
+      freight_account:
+        nextCarrier.freight_account ||
+        nextCarrier.freightAccount ||
+        nextCarrier.stripe_account_id ||
+        "",
+      stripeAccountId:
+        nextCarrier.stripeAccountId ||
+        nextCarrier.stripe_account_id ||
+        nextCarrier.freight_account ||
+        "",
+      stripe_account_id:
+        nextCarrier.stripe_account_id ||
+        nextCarrier.stripeAccountId ||
+        nextCarrier.freight_account ||
+        "",
     };
 
     await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
@@ -205,13 +248,33 @@ export default function FreightMyLoadsScreen() {
         return;
       }
 
-      const { data: dbCarrier, error: carrierError } = await supabase
+      const authId = authData?.user?.id || "";
+      const storedId = stored?.id || stored?.freightId || stored?.freight_id || "";
+      const accountId = stored?.accountId || stored?.account_id || "";
+
+      const profileFilters = [
+        authId ? `id.eq.${authId}` : "",
+        authId ? `auth_user_id.eq.${authId}` : "",
+        authId ? `profile_id.eq.${authId}` : "",
+        authId ? `freight_id.eq.${authId}` : "",
+        storedId ? `id.eq.${storedId}` : "",
+        storedId ? `freight_id.eq.${storedId}` : "",
+        storedId ? `auth_user_id.eq.${storedId}` : "",
+        email ? `email.eq.${email}` : "",
+        accountId ? `account_id.eq.${accountId}` : "",
+      ]
+        .filter(Boolean)
+        .join(",");
+
+      const { data: dbCarrierRows, error: carrierError } = await supabase
         .from("freight_users")
         .select("*")
-        .eq("email", email)
-        .maybeSingle();
+        .or(profileFilters)
+        .limit(1);
 
       if (carrierError) console.log("My freight loads profile error:", carrierError.message);
+
+      const dbCarrier = Array.isArray(dbCarrierRows) && dbCarrierRows.length > 0 ? dbCarrierRows[0] : null;
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
@@ -230,12 +293,21 @@ export default function FreightMyLoadsScreen() {
 
       const carrierId = mergedCarrier.id;
 
+      const loadFilters = [
+        `carrier_id.eq.${carrierId}`,
+        `freight_user_id.eq.${carrierId}`,
+        `driver_id.eq.${carrierId}`,
+        `accepted_by.eq.${carrierId}`,
+        mergedCarrier.account_id ? `account_id.eq.${mergedCarrier.account_id}` : "",
+        mergedCarrier.email ? `carrier_email.eq.${mergedCarrier.email}` : "",
+      ]
+        .filter(Boolean)
+        .join(",");
+
       const { data, error } = await supabase
         .from("freight_loads")
         .select("*")
-        .or(
-          `carrier_id.eq.${carrierId},freight_user_id.eq.${carrierId},driver_id.eq.${carrierId},accepted_by.eq.${carrierId}`
-        )
+        .or(loadFilters)
         .order("updated_at", { ascending: false });
 
       if (error) {

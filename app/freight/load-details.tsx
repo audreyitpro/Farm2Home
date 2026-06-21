@@ -27,6 +27,11 @@ const ROUTES = {
   liveLoads: "/freight/live-loads",
   myLoads: "/freight/my-loads",
   loadChat: "/freight/load-chat",
+  liveRoute: "/freight/live-route",
+  routeDetails: "/freight/route-details",
+  proofOfPickup: "/freight/proof-of-pickup",
+  proofOfDelivery: "/freight/proof-of-delivery",
+  routeExceptions: "/freight/route-exceptions",
   connectBank: "/freight/connect-bank",
   paymentSuccess: "/freight/payment-success",
   rateOptimizer: "/freight/rate-optimizer",
@@ -34,6 +39,8 @@ const ROUTES = {
   login: "/freight/login",
   register: "/freight/register",
 } as const;
+
+type FreightRoute = (typeof ROUTES)[keyof typeof ROUTES];
 
 const COLORS = {
   bg: "#F3F4F6",
@@ -62,7 +69,39 @@ function money(value: any) {
 }
 
 function formatStatus(value: any) {
-  return String(value || "available").replace(/_/g, " ");
+  return String(value || "available")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function isAvailableStatus(value: any) {
+  return ["available", "open"].includes(normalize(value));
+}
+
+function isCarrierAssigned(load: any, carrier: any) {
+  const carrierId = String(carrier?.id || carrier?.freightId || carrier?.freight_id || "");
+  if (!carrierId) return false;
+
+  return [
+    load?.carrier_id,
+    load?.freight_user_id,
+    load?.driver_id,
+    load?.accepted_by,
+  ]
+    .filter(Boolean)
+    .map((x) => String(x))
+    .includes(carrierId);
+}
+
+function goTo(route: FreightRoute) {
+  router.push(route as any);
+}
+
+function openWithLoad(route: FreightRoute, loadId: string) {
+  router.push({
+    pathname: route as any,
+    params: { loadId },
+  });
 }
 
 function ratePerMile(load: any) {
@@ -74,7 +113,17 @@ function ratePerMile(load: any) {
 
 export default function FreightLoadDetailScreen() {
   const params = useLocalSearchParams();
-  const loadId = Array.isArray(params.loadId) ? params.loadId[0] : String(params.loadId || "");
+
+  const loadId = useMemo(() => {
+    const raw =
+      params.loadId ||
+      params.load_id ||
+      params.id ||
+      params.freightLoadId ||
+      params.freight_load_id ||
+      "";
+    return Array.isArray(raw) ? String(raw[0] || "") : String(raw || "");
+  }, [params.loadId, params.load_id, params.id, params.freightLoadId, params.freight_load_id]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -161,11 +210,29 @@ export default function FreightLoadDetailScreen() {
         return;
       }
 
-      const { data: dbCarrier } = await supabase
+      const authId = authData?.user?.id || "";
+      const storedId = stored?.id || stored?.freightId || stored?.freight_id || "";
+
+      const identityFilters = [
+        authId ? `id.eq.${authId}` : "",
+        authId ? `auth_user_id.eq.${authId}` : "",
+        storedId ? `id.eq.${storedId}` : "",
+        storedId ? `freight_id.eq.${storedId}` : "",
+        storedId ? `profile_id.eq.${storedId}` : "",
+        email ? `email.eq.${email}` : "",
+      ]
+        .filter(Boolean)
+        .join(",");
+
+      const { data: dbRows, error: dbCarrierError } = await supabase
         .from("freight_users")
         .select("*")
-        .eq("email", email)
-        .maybeSingle();
+        .or(identityFilters)
+        .limit(1);
+
+      if (dbCarrierError) throw dbCarrierError;
+
+      const dbCarrier = Array.isArray(dbRows) && dbRows.length > 0 ? dbRows[0] : null;
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
@@ -239,8 +306,10 @@ export default function FreightLoadDetailScreen() {
         payload.carrier_email = carrier.email;
       }
 
+      if (nextStatus === "arrived_pickup") payload.arrived_pickup_at = now;
       if (nextStatus === "picked_up") payload.picked_up_at = now;
       if (nextStatus === "in_transit") payload.in_transit_at = now;
+      if (nextStatus === "arrived_dropoff") payload.arrived_dropoff_at = now;
 
       if (nextStatus === "delivered") {
         payload.delivered_at = now;
@@ -345,7 +414,7 @@ export default function FreightLoadDetailScreen() {
   }
 
   const status = normalize(load.status);
-  const isAvailable = ["available", "open"].includes(status);
+  const isAvailable = isAvailableStatus(status);
   const isBooked = ["accepted", "booked"].includes(status);
   const isPickedUp = ["picked_up", "arrived_pickup"].includes(status);
   const isInTransit = ["in_transit", "arrived_dropoff"].includes(status);
@@ -509,9 +578,18 @@ export default function FreightLoadDetailScreen() {
 
           {isBooked ? (
             <ActionButton
-              label="Confirm Pickup"
-              icon="archive-outline"
-              onPress={() => updateLoadStatus("picked_up")}
+              label="Arrived Pickup"
+              icon="location-outline"
+              onPress={() => updateLoadStatus("arrived_pickup")}
+              disabled={updating}
+            />
+          ) : null}
+
+          {status === "arrived_pickup" ? (
+            <ActionButton
+              label="Proof Pickup"
+              icon="camera-outline"
+              onPress={() => openWithLoad(ROUTES.proofOfPickup, load.id)}
               disabled={updating}
             />
           ) : null}
@@ -525,11 +603,20 @@ export default function FreightLoadDetailScreen() {
             />
           ) : null}
 
-          {isInTransit ? (
+          {status === "in_transit" ? (
             <ActionButton
-              label="Complete Delivery"
+              label="Arrived Dropoff"
+              icon="flag-outline"
+              onPress={() => updateLoadStatus("arrived_dropoff")}
+              disabled={updating}
+            />
+          ) : null}
+
+          {status === "arrived_dropoff" ? (
+            <ActionButton
+              label="Proof Delivery"
               icon="checkmark-done-outline"
-              onPress={() => updateLoadStatus("delivered")}
+              onPress={() => openWithLoad(ROUTES.proofOfDelivery, load.id)}
               disabled={updating}
             />
           ) : null}
@@ -537,12 +624,13 @@ export default function FreightLoadDetailScreen() {
           <ActionButton
             label="Live Tracking"
             icon="map-outline"
-            onPress={() =>
-              router.push({
-                pathname: ROUTES.tracking as any,
-                params: { loadId: load.id },
-              })
-            }
+            onPress={() => openWithLoad(ROUTES.tracking, load.id)}
+          />
+
+          <ActionButton
+            label="Live Route"
+            icon="navigate-circle-outline"
+            onPress={() => openWithLoad(ROUTES.liveRoute, load.id)}
           />
 
           <ActionButton

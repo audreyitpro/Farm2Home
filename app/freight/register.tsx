@@ -1441,18 +1441,18 @@ export default function FreightRegister() {
       if (json.stripeCustomerId) {
         setStripeCustomerId(pickStripeCustomerId(json.stripeCustomerId));
       }
-      const url: string = String(json.url || json.onboardingUrl || "").trim();
-      if (!url || !String(url).startsWith("https://connect.stripe.com/")) {
-        Alert.alert("Stripe Connect Error", "No valid Stripe onboarding URL was returned.");
+      const url: string = String(json.url || json.checkoutUrl || "").trim();
+      if (!url || !url.startsWith("https://")) {
+        Alert.alert("Checkout Error", "No valid Stripe Checkout URL was returned.");
         return;
-        }
+      }
 
-        if (Platform.OS === "web") {
-          window.location.assign(url);
-          return;
-        }
+      if (Platform.OS === "web") {
+        window.location.assign(url);
+        return;
+      }
 
-        await Linking.openURL(url);
+      await Linking.openURL(url);
     } catch (error: any) {
       Alert.alert("Checkout Error", error?.message || "Backend checkout failed.");
     } finally {
