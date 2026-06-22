@@ -237,12 +237,25 @@ export default function FreightRegister() {
 
   useEffect(() => {
     const stripeStatus = String(params?.stripe || params?.payment || "");
+    const connectStatus = String(params?.connect || params?.connected || "");
     const returnedFreightId = String(params?.freightId || params?.freight_id || "");
 
     if (stripeStatus === "success") {
       handleStripeSuccessReturn(returnedFreightId);
+      return;
     }
-  }, [params?.stripe, params?.payment, params?.freightId, params?.freight_id]);
+
+    if (connectStatus === "success" || connectStatus === "true") {
+      handleConnectSuccessReturn(returnedFreightId);
+    }
+  }, [
+    params?.stripe,
+    params?.payment,
+    params?.connect,
+    params?.connected,
+    params?.freightId,
+    params?.freight_id,
+  ]);
 
   function toggleEquipment(key: string) {
     setSelectedEquipment((prev) =>
@@ -318,6 +331,131 @@ export default function FreightRegister() {
       });
     } catch (error: any) {
       Alert.alert("Stripe Return Error", error?.message || "Unable to complete freight registration.");
+    } finally {
+      setProcessingReturn(false);
+    }
+  }
+
+  async function handleConnectSuccessReturn(returnedFreightId?: string) {
+    if (processingReturn) return;
+
+    try {
+      setProcessingReturn(true);
+
+      const targetId = returnedFreightId || savedCarrierId || freightId;
+
+      if (targetId) {
+        setSavedCarrierId(targetId);
+        setFreightId(targetId);
+      }
+
+      const pendingRaw =
+        (await AsyncStorage.getItem("pendingFreightCarrier")) ||
+        (await AsyncStorage.getItem("currentFreightCarrier")) ||
+        (await AsyncStorage.getItem("currentFreight")) ||
+        (await AsyncStorage.getItem("currentFreightUser")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentFreight")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      let pendingCarrier: any = null;
+
+      if (pendingRaw) {
+        try {
+          pendingCarrier = JSON.parse(pendingRaw);
+          hydrateForm(pendingCarrier);
+        } catch {
+          pendingCarrier = null;
+        }
+      }
+
+      const lookupId =
+        targetId ||
+        pendingCarrier?.id ||
+        pendingCarrier?.freightId ||
+        pendingCarrier?.freight_id ||
+        "";
+
+      const lookupEmail = normalize(pendingCarrier?.email || email);
+
+      let dbCarrier: any = null;
+
+      if (lookupId) {
+        const { data } = await supabase
+          .from("freight_users")
+          .select("*")
+          .or(`id.eq.${lookupId},freight_id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+          .limit(1);
+
+        dbCarrier = Array.isArray(data) && data.length > 0 ? data[0] : null;
+      }
+
+      if (!dbCarrier && lookupEmail) {
+        const { data } = await supabase
+          .from("freight_users")
+          .select("*")
+          .eq("email", lookupEmail)
+          .limit(1);
+
+        dbCarrier = Array.isArray(data) && data.length > 0 ? data[0] : null;
+      }
+
+      if (!dbCarrier?.id) {
+        Alert.alert(
+          "Connect Returned",
+          "Stripe Connect returned, but the freight profile could not be found. Your form data was kept. Tap Find / Retrieve Missing Stripe Info."
+        );
+        return;
+      }
+
+      const { data: subRow } = await supabase
+        .from("freight_subscriptions")
+        .select("*")
+        .or(`freight_id.eq.${dbCarrier.id},freight_email.eq.${normalize(dbCarrier.email || lookupEmail)}`)
+        .maybeSingle();
+
+      const merged = mergeCarrierAndSubscription(dbCarrier, subRow);
+      hydrateForm(merged);
+      await saveHydratedSession(merged);
+
+      const mergedSubscriptionId = pickStripeSubscriptionId(
+        merged.stripe_subscription_id,
+        merged.subscription_id,
+        subRow?.stripe_subscription_id,
+        subscriptionId
+      );
+
+      const mergedConnectAccount = pickStripeConnectAccountId(
+        merged.freight_account,
+        merged.stripe_account_id,
+        subRow?.freight_account,
+        subRow?.stripe_account_id,
+        freightAccount
+      );
+
+      if (mergedConnectAccount) setFreightAccount(mergedConnectAccount);
+      if (mergedSubscriptionId) setSubscriptionId(mergedSubscriptionId);
+      if (merged.subscription_status || subRow?.subscription_status) {
+        setSubscriptionStatus(merged.subscription_status || subRow?.subscription_status || "active");
+      }
+
+      if (mergedSubscriptionId && mergedConnectAccount) {
+        await markApplicationSubmittedAndOpenDashboard(dbCarrier.id, {
+          stripeCustomerId: pickStripeCustomerId(merged.stripe_customer_id, subRow?.stripe_customer_id, stripeCustomerId),
+          stripeSubscriptionId: mergedSubscriptionId,
+          subscriptionStatus: merged.subscription_status || subRow?.subscription_status || "active",
+        });
+        return;
+      }
+
+      setStep(4);
+      Alert.alert(
+        "Stripe Connect Saved",
+        mergedSubscriptionId
+          ? "Stripe Connect is saved. Complete any remaining setup, then submit to dashboard."
+          : "Stripe Connect is saved. Start or restore the Stripe Membership, then submit to dashboard."
+      );
+    } catch (error: any) {
+      Alert.alert("Connect Return Error", error?.message || "Unable to complete Stripe Connect return.");
     } finally {
       setProcessingReturn(false);
     }
@@ -1629,8 +1767,8 @@ export default function FreightRegister() {
 
       await saveFreightSnapshot(connectSnapshot);
 
-      const returnUrl = `${APP_URL}/freight/connect-bank?connected=true&freightId=${encodeURIComponent(finalFreightId)}`;
-      const refreshUrl = `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(finalFreightId)}`;
+      const returnUrl = `${APP_URL}/freight/register?connect=success&freightId=${encodeURIComponent(finalFreightId)}`;
+      const refreshUrl = `${APP_URL}/freight/register?connect=refresh&freightId=${encodeURIComponent(finalFreightId)}`;
 
       const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
         method: "POST",
