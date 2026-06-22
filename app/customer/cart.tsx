@@ -2,15 +2,22 @@
 
 import React, { useCallback, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
 
 import {
   CartItem,
@@ -20,21 +27,46 @@ import {
   increaseCartItem,
   removeCartItem,
 } from "../data/cartStore";
-import farmTheme from "../styles/farmTheme";
+import { supabase } from "../data/supabaseClient";
+
+/**
+ * app/customer/cart.tsx
+ *
+ * Full corrected Customer Cart workflow.
+ *
+ * Fixes/updates:
+ * - Grocerly/Farm2Home UI update.
+ * - Groups items by farmer/farm.
+ * - Quantity + / - buttons work.
+ * - Remove item works.
+ * - Clear cart works.
+ * - Checkout button saves checkout session data before routing.
+ * - Farmer payout fields are preserved:
+ *   farmerStripeAccountId / farmer_stripe_account_id / stripe_account_id.
+ * - Customer session is checked before checkout.
+ * - Cart summary includes subtotal, 4% platform/service fee, estimated delivery, estimated total.
+ */
 
 const COLORS = {
-  primary: "#2E7D32",
-  primaryDark: "#14532D",
-  secondary: "#F9A825",
-  background: "#F8FAF5",
+  bg: "#F4F5F7",
   card: "#FFFFFF",
-  text: "#172017",
-  muted: "#75806F",
-  border: "#E2E8DA",
-  softGreen: "#EAF5E6",
-  lightGreen: "#F1FAED",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  greenDark: "#14532D",
+  greenSoft: "#DCFCE7",
+  amber: "#F59E0B",
+  amberSoft: "#FEF3C7",
+  blue: "#2563EB",
+  blueSoft: "#DBEAFE",
   danger: "#DC2626",
-  dark: "#111827",
+  dangerSoft: "#FEE2E2",
+  white: "#FFFFFF",
 };
 
 type CartGroup = {
@@ -43,36 +75,150 @@ type CartGroup = {
   farmerId: string;
   farmerStripeAccountId: string;
   items: CartItem[];
+  subtotal: number;
+  itemCount: number;
 };
 
+type CustomerSession = {
+  id?: string;
+  customerId?: string;
+  customer_id?: string;
+  account_id?: string;
+  accountId?: string;
+  email?: string;
+  full_name?: string;
+  fullName?: string;
+  name?: string;
+  stripe_customer_id?: string;
+  stripeCustomerId?: string;
+  subscription_id?: string;
+  subscriptionId?: string;
+  stripe_subscription_id?: string;
+  stripeSubscriptionId?: string;
+  membership_status?: string;
+  membershipStatus?: string;
+  subscription_status?: string;
+  subscriptionStatus?: string;
+  account_active?: boolean;
+  accountActive?: boolean;
+};
+
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
+
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function isCus(value: any) {
+  return clean(value).startsWith("cus_");
+}
+
+function isSub(value: any) {
+  return clean(value).startsWith("sub_");
+}
+
+function getCustomerId(customer: CustomerSession | null) {
+  return clean(customer?.id || customer?.customer_id || customer?.customerId);
+}
+
+function getCustomerName(customer: CustomerSession | null) {
+  return clean(customer?.full_name || customer?.fullName || customer?.name || "Customer");
+}
+
+function getStripeCustomer(customer: CustomerSession | null) {
+  return clean(customer?.stripe_customer_id || customer?.stripeCustomerId);
+}
+
+function getStripeSubscription(customer: CustomerSession | null) {
+  return clean(
+    customer?.subscription_id ||
+      customer?.subscriptionId ||
+      customer?.stripe_subscription_id ||
+      customer?.stripeSubscriptionId
+  );
+}
+
+function statusBlocked(value: any) {
+  return ["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(
+    normalize(value)
+  );
+}
+
+function customerReady(customer: CustomerSession | null) {
+  const membershipStatus = normalize(
+    customer?.membership_status ||
+      customer?.membershipStatus ||
+      customer?.subscription_status ||
+      customer?.subscriptionStatus
+  );
+
+  const hasActiveStatus =
+    ["active", "trialing", "past_due"].includes(membershipStatus) ||
+    customer?.account_active === true ||
+    customer?.accountActive === true;
+
+  return Boolean(
+    getCustomerId(customer) &&
+      isCus(getStripeCustomer(customer)) &&
+      isSub(getStripeSubscription(customer)) &&
+      hasActiveStatus &&
+      !statusBlocked(customer?.membership_status || customer?.membershipStatus) &&
+      !statusBlocked(customer?.subscription_status || customer?.subscriptionStatus)
+  );
+}
+
 function getItemId(item: any) {
-  return String(item.id || item.cartItemId || item.productId || "");
+  return clean(item.id || item.cartItemId || item.productId || "");
+}
+
+function getProductId(item: any) {
+  return clean(item.productId || item.product_id || item.id || "");
 }
 
 function getItemName(item: any) {
-  return item.name || item.productName || "Farm Product";
+  return clean(item.name || item.productName || item.product_name || "Farm Product");
 }
 
 function getItemImage(item: any) {
-  return item.image || item.imageUrl || item.image_url || "";
+  return clean(item.image || item.imageUrl || item.image_url || "");
 }
 
 function getFarmName(item: any) {
-  return item.farmName || item.farmerName || item.farm_name || "Farm2Home Farm";
+  return clean(item.farmName || item.farmerName || item.farm_name || "Farm2Home Farm");
 }
 
 function getFarmerId(item: any) {
-  return String(item.farmerId || item.farmer_id || "");
+  return clean(item.farmerId || item.farmer_id || "");
 }
 
 function getFarmerStripeAccountId(item: any) {
-  return (
+  return clean(
     item.farmerStripeAccountId ||
-    item.stripeAccountId ||
-    item.farmer_stripe_account_id ||
-    item.stripe_account_id ||
-    ""
+      item.stripeAccountId ||
+      item.farmer_stripe_account_id ||
+      item.stripe_account_id ||
+      ""
   );
+}
+
+function getQuantity(item: any) {
+  const qty = Number(item.quantity || 0);
+  return Number.isFinite(qty) && qty > 0 ? qty : 0;
+}
+
+function getPrice(item: any) {
+  const price = Number(item.price || item.unit_price || 0);
+  return Number.isFinite(price) ? price : 0;
+}
+
+function getLineTotal(item: any) {
+  return getPrice(item) * getQuantity(item);
+}
+
+function money(value: number) {
+  return `$${Number(value || 0).toFixed(2)}`;
 }
 
 function groupCartByFarm(cart: CartItem[]): CartGroup[] {
@@ -91,47 +237,236 @@ function groupCartByFarm(cart: CartItem[]): CartGroup[] {
         farmerId,
         farmerStripeAccountId,
         items: [],
+        subtotal: 0,
+        itemCount: 0,
       };
     }
 
     grouped[farmKey].items.push(item);
+    grouped[farmKey].subtotal += getLineTotal(item);
+    grouped[farmKey].itemCount += getQuantity(item);
   });
 
   return Object.values(grouped);
 }
 
+function normalizeCartItemForCheckout(item: any) {
+  const farmerStripeAccountId = getFarmerStripeAccountId(item);
+
+  return {
+    ...item,
+    id: getItemId(item),
+    cartItemId: getItemId(item),
+    productId: getProductId(item),
+    product_id: getProductId(item),
+    name: getItemName(item),
+    productName: getItemName(item),
+    product_name: getItemName(item),
+    price: getPrice(item),
+    quantity: getQuantity(item),
+    lineTotal: getLineTotal(item),
+    line_total: getLineTotal(item),
+    image: getItemImage(item),
+    imageUrl: getItemImage(item),
+    image_url: getItemImage(item),
+    farmName: getFarmName(item),
+    farm_name: getFarmName(item),
+    farmerName: getFarmName(item),
+    farmerId: getFarmerId(item),
+    farmer_id: getFarmerId(item),
+    farmerStripeAccountId,
+    farmer_stripe_account_id: farmerStripeAccountId,
+    stripeAccountId: farmerStripeAccountId,
+    stripe_account_id: farmerStripeAccountId,
+    unit: clean(item.unit || "each"),
+    category: clean(item.category || ""),
+    stock: Number(item.stock || 0),
+  };
+}
+
 export default function CustomerCart() {
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [customer, setCustomer] = useState<CustomerSession | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
-      loadCart();
+      loadCartScreen();
     }, [])
   );
+
+  async function loadCartScreen() {
+    try {
+      setLoading(true);
+      await Promise.all([loadCustomer(), loadCart()]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadCustomer() {
+    try {
+      const stored =
+        (await AsyncStorage.getItem("currentCustomer")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentCustomer")) ||
+        (await AsyncStorage.getItem("pendingCustomer")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      let localCustomer: CustomerSession | null = null;
+
+      if (stored) {
+        try {
+          localCustomer = JSON.parse(stored);
+          setCustomer(localCustomer);
+        } catch {
+          localCustomer = null;
+        }
+      }
+
+      const { data: authData } = await supabase.auth.getUser();
+      const authId = clean(authData?.user?.id || "");
+      const authEmail = normalize(authData?.user?.email || localCustomer?.email || "");
+
+      if (!authId && !authEmail) return;
+
+      const dbCustomer = await fetchCustomer(authId, authEmail);
+
+      if (dbCustomer) {
+        const sub = await fetchCustomerSubscription(dbCustomer.id, dbCustomer.email);
+
+        const merged = {
+          ...dbCustomer,
+          customerId: dbCustomer.id,
+          accountId: dbCustomer.account_id,
+          stripe_customer_id: dbCustomer.stripe_customer_id || dbCustomer.stripe_id || sub?.stripe_customer_id,
+          stripeCustomerId: dbCustomer.stripe_customer_id || dbCustomer.stripe_id || sub?.stripe_customer_id,
+          stripe_subscription_id:
+            dbCustomer.stripe_subscription_id || dbCustomer.subscription_id || sub?.stripe_subscription_id,
+          subscription_id:
+            dbCustomer.subscription_id || dbCustomer.stripe_subscription_id || sub?.stripe_subscription_id,
+          subscriptionId:
+            dbCustomer.subscription_id || dbCustomer.stripe_subscription_id || sub?.stripe_subscription_id,
+          subscription_status: dbCustomer.subscription_status || sub?.subscription_status,
+        };
+
+        setCustomer(merged);
+
+        await AsyncStorage.multiSet([
+          ["currentCustomer", JSON.stringify(merged)],
+          ["farm2homeCurrentCustomer", JSON.stringify(merged)],
+          ["currentUser", JSON.stringify({ ...merged, role: "customer" })],
+        ]);
+      }
+    } catch (error) {
+      console.log("Load customer cart session error:", error);
+    }
+  }
+
+  async function fetchCustomer(id?: string, email?: string) {
+    const lookupId = clean(id);
+    const lookupEmail = normalize(email);
+
+    if (lookupId) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+    }
+
+    if (lookupEmail) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("email", lookupEmail)
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+    }
+
+    return null;
+  }
+
+  async function fetchCustomerSubscription(id?: string, email?: string) {
+    const lookupId = clean(id);
+    const lookupEmail = normalize(email);
+
+    const filters = [
+      lookupId ? `customer_id.eq.${lookupId}` : "",
+      lookupEmail ? `customer_email.eq.${lookupEmail}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from("customer_subscriptions")
+        .select("*")
+        .or(filters)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
 
   async function loadCart() {
     try {
       const cartData = await getCart();
-      setCart(Array.isArray(cartData) ? cartData : []);
+      const normalized = Array.isArray(cartData)
+        ? cartData.map((item: any) => normalizeCartItemForCheckout(item)).filter((item) => getQuantity(item) > 0)
+        : [];
+      setCart(normalized as any);
     } catch (error) {
       console.log("Load cart error:", error);
       Alert.alert("Cart Error", "Unable to load your cart.");
+      setCart([]);
     }
   }
 
   async function handleIncrease(id: string) {
-    const updatedCart = await increaseCartItem(id);
-    setCart(updatedCart);
+    try {
+      const updatedCart = await increaseCartItem(id);
+      setCart((Array.isArray(updatedCart) ? updatedCart : []).map((item: any) => normalizeCartItemForCheckout(item)) as any);
+    } catch (error: any) {
+      Alert.alert("Quantity Error", error?.message || "Unable to increase quantity.");
+    }
   }
 
   async function handleDecrease(id: string) {
-    const updatedCart = await decreaseCartItem(id);
-    setCart(updatedCart);
+    try {
+      const updatedCart = await decreaseCartItem(id);
+      setCart((Array.isArray(updatedCart) ? updatedCart : []).map((item: any) => normalizeCartItemForCheckout(item)) as any);
+    } catch (error: any) {
+      Alert.alert("Quantity Error", error?.message || "Unable to decrease quantity.");
+    }
   }
 
   async function handleRemove(id: string) {
-    const updatedCart = await removeCartItem(id);
-    setCart(updatedCart);
+    Alert.alert("Remove Item", "Remove this item from your cart?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            const updatedCart = await removeCartItem(id);
+            setCart((Array.isArray(updatedCart) ? updatedCart : []).map((item: any) => normalizeCartItemForCheckout(item)) as any);
+          } catch (error: any) {
+            Alert.alert("Remove Error", error?.message || "Unable to remove item.");
+          }
+        },
+      },
+    ]);
   }
 
   async function handleClear() {
@@ -145,49 +480,177 @@ export default function CustomerCart() {
         onPress: async () => {
           await clearCart();
           setCart([]);
+          await AsyncStorage.multiRemove([
+            "currentCheckoutCart",
+            "currentCheckoutSummary",
+            "pendingCustomerCheckout",
+          ]);
         },
       },
     ]);
   }
 
-  function goToCheckout() {
+  const cartGroups = useMemo(() => groupCartByFarm(cart), [cart]);
+
+  const subtotal = useMemo(() => {
+    return cart.reduce((sum: number, item: any) => sum + getLineTotal(item), 0);
+  }, [cart]);
+
+  const itemCount = useMemo(() => {
+    return cart.reduce((sum: number, item: any) => sum + getQuantity(item), 0);
+  }, [cart]);
+
+  const serviceFee = useMemo(() => subtotal * 0.04, [subtotal]);
+  const estimatedDelivery = useMemo(() => (subtotal > 0 ? 5.99 : 0), [subtotal]);
+  const estimatedTotal = useMemo(
+    () => subtotal + serviceFee + estimatedDelivery,
+    [subtotal, serviceFee, estimatedDelivery]
+  );
+
+  const farmsMissingPayout = useMemo(
+    () => cartGroups.filter((group) => !group.farmerStripeAccountId),
+    [cartGroups]
+  );
+
+  async function saveCheckoutSnapshot() {
+    const checkoutItems = cart.map((item: any) => normalizeCartItemForCheckout(item));
+    const checkoutGroups = groupCartByFarm(checkoutItems as any);
+
+    const summary = {
+      customerId: getCustomerId(customer),
+      customer_id: getCustomerId(customer),
+      customerName: getCustomerName(customer),
+      customer_name: getCustomerName(customer),
+      customerEmail: customer?.email || "",
+      customer_email: customer?.email || "",
+      stripeCustomerId: getStripeCustomer(customer),
+      stripe_customer_id: getStripeCustomer(customer),
+      stripeSubscriptionId: getStripeSubscription(customer),
+      stripe_subscription_id: getStripeSubscription(customer),
+
+      itemCount,
+      item_count: itemCount,
+      farmCount: checkoutGroups.length,
+      farm_count: checkoutGroups.length,
+
+      subtotal,
+      serviceFee,
+      service_fee: serviceFee,
+      platformFee: serviceFee,
+      platform_fee: serviceFee,
+      estimatedDelivery,
+      estimated_delivery: estimatedDelivery,
+      estimatedTotal,
+      estimated_total: estimatedTotal,
+
+      groups: checkoutGroups,
+      items: checkoutItems,
+      createdAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    await AsyncStorage.multiSet([
+      ["currentCheckoutCart", JSON.stringify(checkoutItems)],
+      ["currentCheckoutSummary", JSON.stringify(summary)],
+      ["pendingCustomerCheckout", JSON.stringify(summary)],
+    ]);
+
+    return summary;
+  }
+
+  async function goToCheckout() {
+    if (checkoutLoading) return;
+
     if (cart.length === 0) {
       Alert.alert("Cart Empty", "Add items before checkout.");
       return;
     }
 
-    router.push("/customer/checkout" as any);
+    if (!customer) {
+      Alert.alert("Login Required", "Please login as a customer before checkout.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Login", onPress: () => router.replace("/customer/login" as any) },
+      ]);
+      return;
+    }
+
+    if (!customerReady(customer)) {
+      Alert.alert(
+        "Membership Required",
+        "Complete customer membership before checkout.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Fix Membership",
+            onPress: () =>
+              router.push({
+                pathname: "/customer/register" as any,
+                params: {
+                  customerId: getCustomerId(customer),
+                  email: customer.email || "",
+                },
+              }),
+          },
+        ]
+      );
+      return;
+    }
+
+    if (farmsMissingPayout.length > 0) {
+      Alert.alert(
+        "Farmer Payout Warning",
+        `${farmsMissingPayout.length} farm${farmsMissingPayout.length === 1 ? "" : "s"} in your cart do not have payout account data saved. Checkout can continue, but payouts may need admin review.`,
+        [
+          { text: "Review", style: "cancel" },
+          {
+            text: "Continue",
+            onPress: async () => {
+              await completeCheckoutRoute();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    await completeCheckoutRoute();
   }
 
-  const cartGroups = useMemo(() => groupCartByFarm(cart), [cart]);
+  async function completeCheckoutRoute() {
+    try {
+      setCheckoutLoading(true);
+      await saveCheckoutSnapshot();
+      router.push("/customer/checkout" as any);
+    } catch (error: any) {
+      Alert.alert("Checkout Error", error?.message || "Unable to start checkout.");
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }
 
-  const subtotal = useMemo(() => {
-    return cart.reduce(
-      (sum: number, item: any) =>
-        sum + Number(item.price || 0) * Number(item.quantity || 0),
-      0
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <View style={styles.center}>
+          <ActivityIndicator color={COLORS.red} size="large" />
+          <Text style={styles.centerText}>Loading cart...</Text>
+        </View>
+      </SafeAreaView>
     );
-  }, [cart]);
-
-  const itemCount = useMemo(() => {
-    return cart.reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0);
-  }, [cart]);
-
-  const serviceFee = subtotal * 0.04;
-  const estimatedTotal = subtotal + serviceFee;
+  }
 
   return (
-    <View style={styles.page}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
             onPress={() => router.push("/customer/marketplace" as any)}
           >
-            <Text style={styles.backCircleText}>‹</Text>
+            <Ionicons name="arrow-back-outline" size={20} color={COLORS.text} />
           </Pressable>
 
           <View style={styles.topTitleBlock}>
@@ -207,17 +670,28 @@ export default function CustomerCart() {
         </View>
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroBadge}>Fresh Checkout</Text>
-          <Text style={styles.heroTitle}>Review your farm order</Text>
-          <Text style={styles.heroText}>
-            Items stay grouped by farm for inventory, pickup, delivery, and farmer payouts.
-          </Text>
+          <View style={styles.heroIcon}>
+            <Ionicons name="basket-outline" size={28} color={COLORS.white} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.heroBadge}>Fresh Checkout</Text>
+            <Text style={styles.heroTitle}>Review your farm order</Text>
+            <Text style={styles.heroText}>
+              Items stay grouped by farm for inventory, pickup, delivery, and farmer payouts.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.metricsRow}>
+          <Metric icon="cube-outline" label="Items" value={`${itemCount}`} tone="green" />
+          <Metric icon="storefront-outline" label="Farms" value={`${cartGroups.length}`} tone="blue" />
+          <Metric icon="cash-outline" label="Subtotal" value={money(subtotal)} tone="amber" />
         </View>
 
         {cart.length === 0 ? (
           <View style={styles.emptyCard}>
             <View style={styles.emptyIconBox}>
-              <Text style={styles.emptyIconText}>0</Text>
+              <Ionicons name="cart-outline" size={34} color={COLORS.red} />
             </View>
 
             <Text style={styles.emptyTitle}>Your cart is empty</Text>
@@ -234,12 +708,6 @@ export default function CustomerCart() {
           </View>
         ) : (
           cartGroups.map((group) => {
-            const farmSubtotal = group.items.reduce(
-              (sum: number, item: any) =>
-                sum + Number(item.price || 0) * Number(item.quantity || 0),
-              0
-            );
-
             return (
               <View key={group.farmKey} style={styles.farmCard}>
                 <View style={styles.farmHeader}>
@@ -255,21 +723,38 @@ export default function CustomerCart() {
                       <Text style={styles.farmMeta}>
                         {group.farmerId ? `Farmer ID: ${group.farmerId}` : "Local Farm2Home seller"}
                       </Text>
-                      <Text style={styles.farmMeta}>
-                        {group.farmerStripeAccountId
-                          ? "Payout account connected"
-                          : "Payout account pending"}
-                      </Text>
+
+                      <View
+                        style={[
+                          styles.payoutBadge,
+                          group.farmerStripeAccountId ? styles.payoutGood : styles.payoutWarn,
+                        ]}
+                      >
+                        <Ionicons
+                          name={group.farmerStripeAccountId ? "checkmark-circle-outline" : "warning-outline"}
+                          size={14}
+                          color={group.farmerStripeAccountId ? "#166534" : "#92400E"}
+                        />
+                        <Text
+                          style={[
+                            styles.payoutText,
+                            group.farmerStripeAccountId ? styles.payoutTextGood : styles.payoutTextWarn,
+                          ]}
+                        >
+                          {group.farmerStripeAccountId ? "Payout connected" : "Payout pending"}
+                        </Text>
+                      </View>
                     </View>
                   </View>
 
-                  <Text style={styles.farmSubtotal}>${farmSubtotal.toFixed(2)}</Text>
+                  <Text style={styles.farmSubtotal}>{money(group.subtotal)}</Text>
                 </View>
 
                 {group.items.map((item: any) => {
                   const id = getItemId(item);
                   const image = getItemImage(item);
-                  const lineTotal = Number(item.price || 0) * Number(item.quantity || 0);
+                  const lineTotal = getLineTotal(item);
+                  const qty = getQuantity(item);
 
                   return (
                     <View key={id} style={styles.itemCard}>
@@ -289,23 +774,22 @@ export default function CustomerCart() {
                         </Text>
 
                         <Text style={styles.itemMeta}>
-                          ${Number(item.price || 0).toFixed(2)}
+                          {money(getPrice(item))}
                           {item.unit ? ` / ${item.unit}` : " each"}
                         </Text>
 
                         <Text style={styles.itemMeta}>
                           {item.category ? `${item.category} · ` : ""}
-                          Quantity {Number(item.quantity || 0)}
+                          Qty {qty}
                         </Text>
 
-                        <Text style={styles.lineTotal}>
-                          Line total: ${lineTotal.toFixed(2)}
-                        </Text>
+                        <Text style={styles.lineTotal}>Line total: {money(lineTotal)}</Text>
 
                         <Pressable
                           style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}
                           onPress={() => handleRemove(id)}
                         >
+                          <Ionicons name="trash-outline" size={13} color={COLORS.danger} />
                           <Text style={styles.removeText}>Remove</Text>
                         </Pressable>
                       </View>
@@ -318,7 +802,7 @@ export default function CustomerCart() {
                           <Text style={styles.qtyButtonText}>−</Text>
                         </Pressable>
 
-                        <Text style={styles.qtyText}>{item.quantity}</Text>
+                        <Text style={styles.qtyText}>{qty}</Text>
 
                         <Pressable
                           style={({ pressed }) => [styles.qtyButton, pressed && styles.pressed]}
@@ -338,59 +822,108 @@ export default function CustomerCart() {
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Order Summary</Text>
 
-          <View style={styles.summaryLine}>
-            <Text style={styles.summaryLabel}>Subtotal</Text>
-            <Text style={styles.summaryValue}>${subtotal.toFixed(2)}</Text>
-          </View>
-
-          <View style={styles.summaryLine}>
-            <Text style={styles.summaryLabel}>Marketplace Service Fee</Text>
-            <Text style={styles.summaryValue}>${serviceFee.toFixed(2)}</Text>
-          </View>
+          <SummaryLine label="Subtotal" value={money(subtotal)} />
+          <SummaryLine label="Marketplace Service Fee 4%" value={money(serviceFee)} />
+          <SummaryLine label="Estimated Delivery" value={money(estimatedDelivery)} />
 
           <View style={styles.divider} />
 
           <View style={styles.totalLine}>
             <Text style={styles.totalLabel}>Estimated Total</Text>
-            <Text style={styles.totalValue}>${estimatedTotal.toFixed(2)}</Text>
+            <Text style={styles.totalValue}>{money(estimatedTotal)}</Text>
           </View>
 
           <Text style={styles.summaryNote}>
-            Delivery fee, pickup options, and final payment details are confirmed on the next screen.
+            Final delivery fee, pickup options, Stripe payment, farmer payout split, and order confirmation are completed on checkout.
           </Text>
         </View>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.checkoutButton,
-            cart.length === 0 && styles.disabledButton,
-            pressed && cart.length > 0 && styles.pressed,
-          ]}
+        <TouchableOpacity
+          style={[styles.checkoutButton, cart.length === 0 && styles.disabledButton]}
           onPress={goToCheckout}
+          disabled={checkoutLoading || cart.length === 0}
+          activeOpacity={0.88}
         >
-          <Text style={styles.checkoutButtonText}>Continue to Checkout</Text>
-          <Text style={styles.checkoutAmount}>${estimatedTotal.toFixed(2)}</Text>
-        </Pressable>
+          {checkoutLoading ? (
+            <ActivityIndicator color={COLORS.white} />
+          ) : (
+            <>
+              <View>
+                <Text style={styles.checkoutButtonText}>Continue to Checkout</Text>
+                <Text style={styles.checkoutSubText}>{itemCount} item{itemCount === 1 ? "" : "s"} ready</Text>
+              </View>
+              <Text style={styles.checkoutAmount}>{money(estimatedTotal)}</Text>
+            </>
+          )}
+        </TouchableOpacity>
 
         <Pressable
           style={({ pressed }) => [styles.backToMarketButton, pressed && styles.pressed]}
           onPress={() => router.push("/customer/marketplace" as any)}
         >
+          <Ionicons name="storefront-outline" size={18} color={COLORS.red} />
           <Text style={styles.backToMarketText}>Back to Marketplace</Text>
         </Pressable>
       </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function Metric({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  tone: "green" | "blue" | "amber";
+}) {
+  const bg = tone === "green" ? COLORS.greenSoft : tone === "blue" ? COLORS.blueSoft : COLORS.amberSoft;
+  const color = tone === "green" ? COLORS.green : tone === "blue" ? COLORS.blue : "#92400E";
+
+  return (
+    <View style={styles.metricCard}>
+      <View style={[styles.metricIcon, { backgroundColor: bg }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+      <View>
+        <Text style={styles.metricLabel}>{label}</Text>
+        <Text style={styles.metricValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function SummaryLine({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.summaryLine}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue}>{value}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: {
+  safe: {
     flex: 1,
-    backgroundColor: COLORS.background || farmTheme.colors.background,
+    backgroundColor: COLORS.bg,
+  },
+  center: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+  },
+  centerText: {
+    color: COLORS.muted,
+    fontWeight: "800",
   },
   scrollContent: {
     padding: 18,
-    paddingBottom: 44,
+    paddingBottom: 50,
   },
   topBar: {
     flexDirection: "row",
@@ -399,26 +932,20 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 46,
+    height: 46,
+    borderRadius: 16,
     backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  backCircleText: {
-    fontSize: 32,
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: -4,
-  },
   topTitleBlock: {
     flex: 1,
   },
   title: {
-    fontSize: 30,
+    fontSize: 31,
     fontWeight: "900",
     color: COLORS.text,
   },
@@ -428,67 +955,101 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   clearTopButton: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.dangerSoft,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 11,
+    borderRadius: 14,
   },
   clearTopText: {
     color: COLORS.danger,
     fontWeight: "900",
   },
   heroCard: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 18,
+    backgroundColor: COLORS.black,
+    borderRadius: 26,
     padding: 18,
-    marginBottom: 18,
+    marginBottom: 14,
+    flexDirection: "row",
+    gap: 14,
+  },
+  heroIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 20,
+    backgroundColor: COLORS.red,
+    alignItems: "center",
+    justifyContent: "center",
   },
   heroBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(255,255,255,0.18)",
-    color: "#FFFFFF",
+    color: "#FCA5A5",
     fontWeight: "900",
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 999,
-    overflow: "hidden",
-    marginBottom: 10,
     fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   heroTitle: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontSize: 24,
     fontWeight: "900",
+    marginTop: 5,
   },
   heroText: {
-    color: "#EAF7E6",
+    color: "#CBD5E1",
     fontWeight: "700",
     lineHeight: 20,
-    marginTop: 8,
+    marginTop: 6,
+  },
+  metricsRow: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 10,
+    marginBottom: 14,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  metricIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  metricLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 2,
   },
   emptyCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 18,
+    borderRadius: 24,
     padding: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: "center",
     marginBottom: 18,
-    ...farmTheme.shadow,
   },
   emptyIconBox: {
-    width: 54,
-    height: 54,
-    borderRadius: 16,
-    backgroundColor: COLORS.softGreen,
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    backgroundColor: COLORS.dangerSoft,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 10,
-  },
-  emptyIconText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 24,
+    marginBottom: 12,
   },
   emptyTitle: {
     fontSize: 22,
@@ -505,23 +1066,22 @@ const styles = StyleSheet.create({
   },
   shopButton: {
     marginTop: 18,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.red,
     paddingHorizontal: 22,
     paddingVertical: 14,
-    borderRadius: 13,
+    borderRadius: 15,
   },
   shopButtonText: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontWeight: "900",
   },
   farmCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 18,
+    borderRadius: 24,
     padding: 15,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    ...farmTheme.shadow,
   },
   farmHeader: {
     marginBottom: 12,
@@ -532,15 +1092,15 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   farmIconBox: {
-    width: 52,
-    height: 52,
-    borderRadius: 15,
-    backgroundColor: COLORS.primaryDark,
+    width: 54,
+    height: 54,
+    borderRadius: 19,
+    backgroundColor: COLORS.black,
     justifyContent: "center",
     alignItems: "center",
   },
   farmInitial: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontWeight: "900",
     fontSize: 22,
   },
@@ -559,9 +1119,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
   },
+  payoutBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    marginTop: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  payoutGood: {
+    backgroundColor: COLORS.greenSoft,
+  },
+  payoutWarn: {
+    backgroundColor: COLORS.amberSoft,
+  },
+  payoutText: {
+    fontWeight: "900",
+    fontSize: 11,
+  },
+  payoutTextGood: {
+    color: "#166534",
+  },
+  payoutTextWarn: {
+    color: "#92400E",
+  },
   farmSubtotal: {
-    color: COLORS.primary,
-    fontSize: 20,
+    color: COLORS.red,
+    fontSize: 21,
     fontWeight: "900",
     marginTop: 10,
     alignSelf: "flex-end",
@@ -569,8 +1155,8 @@ const styles = StyleSheet.create({
   itemCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.lightGreen,
-    borderRadius: 16,
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
     padding: 11,
     marginTop: 10,
     borderWidth: 1,
@@ -578,21 +1164,21 @@ const styles = StyleSheet.create({
     gap: 11,
   },
   productImage: {
-    width: 58,
-    height: 58,
-    borderRadius: 14,
+    width: 62,
+    height: 62,
+    borderRadius: 16,
     backgroundColor: COLORS.card,
   },
   productInitialBox: {
-    width: 58,
-    height: 58,
-    borderRadius: 14,
-    backgroundColor: COLORS.card,
+    width: 62,
+    height: 62,
+    borderRadius: 16,
+    backgroundColor: COLORS.greenSoft,
     justifyContent: "center",
     alignItems: "center",
   },
   productInitialText: {
-    color: COLORS.primaryDark,
+    color: COLORS.greenDark,
     fontSize: 23,
     fontWeight: "900",
   },
@@ -611,7 +1197,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   lineTotal: {
-    color: COLORS.primary,
+    color: COLORS.red,
     fontWeight: "900",
     marginTop: 5,
     fontSize: 13,
@@ -619,10 +1205,13 @@ const styles = StyleSheet.create({
   removeButton: {
     alignSelf: "flex-start",
     marginTop: 7,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.dangerSoft,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   removeText: {
     color: COLORS.danger,
@@ -641,12 +1230,12 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 999,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.red,
     justifyContent: "center",
     alignItems: "center",
   },
   qtyButtonText: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontSize: 20,
     fontWeight: "900",
     marginTop: -2,
@@ -659,13 +1248,12 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 18,
+    borderRadius: 24,
     padding: 18,
     marginTop: 2,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    ...farmTheme.shadow,
   },
   summaryTitle: {
     color: COLORS.text,
@@ -705,7 +1293,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   totalValue: {
-    color: COLORS.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 22,
   },
@@ -717,8 +1305,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   checkoutButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 15,
+    backgroundColor: COLORS.red,
+    borderRadius: 18,
     paddingHorizontal: 18,
     paddingVertical: 17,
     flexDirection: "row",
@@ -726,24 +1314,33 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   disabledButton: {
-    backgroundColor: "#A7B8A2",
+    backgroundColor: "#9CA3AF",
   },
   checkoutButtonText: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontWeight: "900",
     fontSize: 16,
   },
+  checkoutSubText: {
+    color: "#FFE4E6",
+    fontWeight: "800",
+    fontSize: 12,
+    marginTop: 3,
+  },
   checkoutAmount: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontWeight: "900",
-    fontSize: 17,
+    fontSize: 18,
   },
   backToMarketButton: {
     alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 18,
+    flexDirection: "row",
+    gap: 7,
   },
   backToMarketText: {
-    color: COLORS.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 15,
   },

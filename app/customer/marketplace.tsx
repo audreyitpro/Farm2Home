@@ -6,35 +6,63 @@ import {
   Alert,
   FlatList,
   Image,
+  Platform,
   Pressable,
+  RefreshControl,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { addToCart, getCartItemCount } from "../data/cartStore";
 import { getApprovedFarmers } from "../data/farmerStore";
 import { supabase } from "../data/supabaseClient";
-import { useAuth } from "../providers/AuthProvider";
-import { enforceSubscriptionAccess } from "../services/lockoutGuard";
+
+/**
+ * app/customer/marketplace.tsx
+ *
+ * Grocerly / Agri style customer marketplace.
+ *
+ * Main UI flow:
+ * - Each farmer has its own row/section.
+ * - Farmer card on left/top.
+ * - Farmer products scroll horizontally like a grocery app row.
+ * - Products have image, category, price, stock, Add button.
+ * - Cart, search, filters, farmer store, and product add all work.
+ *
+ * Customer access:
+ * - Requires saved currentCustomer with id/account_id/cus_/sub_.
+ * - If not ready, redirects to customer register to fix membership.
+ */
 
 const COLORS = {
-  primary: "#2E7D32",
-  primaryDark: "#14532D",
-  secondary: "#F9A825",
-  background: "#F8FAF5",
+  bg: "#F4F5F7",
   card: "#FFFFFF",
-  text: "#172017",
-  muted: "#75806F",
-  border: "#E2E8DA",
-  softGreen: "#EAF5E6",
-  lightGreen: "#F1FAED",
-  danger: "#B91C1C",
-  dark: "#111827",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  greenDark: "#14532D",
+  greenSoft: "#DCFCE7",
+  amber: "#F59E0B",
+  amberSoft: "#FEF3C7",
+  blue: "#2563EB",
+  blueSoft: "#DBEAFE",
+  purple: "#7C3AED",
+  purpleSoft: "#EDE9FE",
+  white: "#FFFFFF",
 };
 
 const DEFAULT_CATEGORIES = [
@@ -118,18 +146,102 @@ type Farmer = {
   products?: Product[];
 };
 
+type CustomerSession = {
+  id?: string;
+  customerId?: string;
+  customer_id?: string;
+  account_id?: string;
+  accountId?: string;
+  email?: string;
+  full_name?: string;
+  fullName?: string;
+  name?: string;
+  stripe_customer_id?: string;
+  stripeCustomerId?: string;
+  subscription_id?: string;
+  subscriptionId?: string;
+  stripe_subscription_id?: string;
+  stripeSubscriptionId?: string;
+  membership_status?: string;
+  membershipStatus?: string;
+  subscription_status?: string;
+  subscriptionStatus?: string;
+  account_active?: boolean;
+  accountActive?: boolean;
+};
+
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
+
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
 function normalizeId(value: any) {
-  return String(value || "").trim();
+  return clean(value);
+}
+
+function isCus(value: any) {
+  return clean(value).startsWith("cus_");
+}
+
+function isSub(value: any) {
+  return clean(value).startsWith("sub_");
+}
+
+function isAcct(value: any) {
+  return clean(value).startsWith("acct_");
+}
+
+function getCustomerId(customer: CustomerSession | null) {
+  return clean(customer?.id || customer?.customer_id || customer?.customerId);
+}
+
+function getCustomerName(customer: CustomerSession | null) {
+  return clean(customer?.full_name || customer?.fullName || customer?.name || "Customer");
+}
+
+function getStripeCustomer(customer: CustomerSession | null) {
+  return clean(customer?.stripe_customer_id || customer?.stripeCustomerId);
+}
+
+function getStripeSubscription(customer: CustomerSession | null) {
+  return clean(
+    customer?.subscription_id ||
+      customer?.subscriptionId ||
+      customer?.stripe_subscription_id ||
+      customer?.stripeSubscriptionId
+  );
+}
+
+function statusBlocked(value: any) {
+  return ["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(
+    normalize(value)
+  );
+}
+
+function customerReady(customer: CustomerSession | null) {
+  return Boolean(
+    getCustomerId(customer) &&
+      clean(customer?.account_id || customer?.accountId) &&
+      isCus(getStripeCustomer(customer)) &&
+      isSub(getStripeSubscription(customer)) &&
+      customer?.account_active !== false &&
+      customer?.accountActive !== false &&
+      !statusBlocked(customer?.membership_status || customer?.membershipStatus) &&
+      !statusBlocked(customer?.subscription_status || customer?.subscriptionStatus)
+  );
 }
 
 function getFarmerName(farmer: Farmer) {
-  return (
+  return clean(
     farmer.farmName ||
-    farmer.farm_name ||
-    farmer.name ||
-    farmer.businessName ||
-    farmer.business_name ||
-    "Farm2Home Farm"
+      farmer.farm_name ||
+      farmer.name ||
+      farmer.businessName ||
+      farmer.business_name ||
+      "Farm2Home Farm"
   );
 }
 
@@ -143,17 +255,17 @@ function getFarmerLocation(farmer: Farmer) {
 }
 
 function getFarmerLogo(farmer: Farmer) {
-  return (
+  return clean(
     farmer.logoUrl ||
-    farmer.farmLogoUrl ||
-    farmer.logo_url ||
-    farmer.farm_logo_url ||
-    ""
+      farmer.farmLogoUrl ||
+      farmer.logo_url ||
+      farmer.farm_logo_url ||
+      ""
   );
 }
 
 function getProductImage(product: Product) {
-  return product.image || product.imageUrl || product.image_url || "";
+  return clean(product.image || product.imageUrl || product.image_url || "");
 }
 
 function getProductStock(product: Product) {
@@ -162,7 +274,7 @@ function getProductStock(product: Product) {
 }
 
 function isProductAvailable(product: Product) {
-  if (!product.name) return false;
+  if (!clean(product.name)) return false;
   if (product.available === false) return false;
   if (product.active === false) return false;
   if (product.marketplace_visible === false) return false;
@@ -171,21 +283,21 @@ function isProductAvailable(product: Product) {
 }
 
 function getFarmerStripeAccountId(farmer: Farmer, product?: Product) {
-  return (
+  return clean(
     product?.farmerStripeAccountId ||
-    product?.stripeAccountId ||
-    product?.farmer_stripe_account_id ||
-    product?.stripe_account_id ||
-    farmer.farmerStripeAccountId ||
-    farmer.stripeAccountId ||
-    farmer.farmer_stripe_account_id ||
-    farmer.stripe_account_id ||
-    ""
+      product?.stripeAccountId ||
+      product?.farmer_stripe_account_id ||
+      product?.stripe_account_id ||
+      farmer.farmerStripeAccountId ||
+      farmer.stripeAccountId ||
+      farmer.farmer_stripe_account_id ||
+      farmer.stripe_account_id ||
+      ""
   );
 }
 
 function normalizeCategory(category?: string) {
-  const value = String(category || "").trim();
+  const value = clean(category);
   if (!value) return "Farm Goods";
   if (value === "Fish Farm / Aquaculture") return "Fish & Aquaculture";
   if (value === "Bale of Hay" || value === "Hay") return "Hay & Feed";
@@ -194,26 +306,33 @@ function normalizeCategory(category?: string) {
   return value;
 }
 
+function formatPrice(value: any) {
+  const amount = Number(value || 0);
+  return `$${amount.toFixed(2)}`;
+}
+
 function normalizeProduct(product: any, farmer: Farmer): Product {
-  const farmerId = normalizeId(product.farmerId || product.farmer_id || farmer.id);
+  const farmerId = normalizeId(product.farmerId || product.farmer_id || farmer.id || farmer.farmerId);
   const farmName = getFarmerName(farmer);
-  const image = product.image_url || product.imageUrl || product.image || "";
+  const image = clean(product.image_url || product.imageUrl || product.image || "");
 
   return {
     ...product,
-    id: String(product.id || `${farmerId}_${product.name || "product"}`),
-    name: String(product.name || product.product_name || "Farm Product"),
+    id: clean(product.id || `${farmerId}_${product.name || product.product_name || "product"}`),
+    name: clean(product.name || product.product_name || "Farm Product"),
     category: normalizeCategory(product.category || product.product_category),
     price: Number(product.price || product.unit_price || product.amount || 0),
-    unit: product.unit || product.sell_by || "each",
-    description: product.description || "",
+    unit: clean(product.unit || product.sell_by || "each"),
+    description: clean(product.description || ""),
     image,
     imageUrl: image,
     image_url: image,
     farmerId,
     farmer_id: farmerId,
-    farmName: product.farmName || product.farm_name || farmName,
-    farm_name: product.farmName || product.farm_name || farmName,
+    farmName: clean(product.farmName || product.farm_name || farmName),
+    farm_name: clean(product.farmName || product.farm_name || farmName),
+    farmerEmail: clean(product.farmerEmail || product.farmer_email || ""),
+    farmer_email: clean(product.farmerEmail || product.farmer_email || ""),
     farmerStripeAccountId:
       product.farmerStripeAccountId ||
       product.stripeAccountId ||
@@ -243,19 +362,21 @@ function normalizeProduct(product: any, farmer: Farmer): Product {
 
 function normalizeFarmers(inputFarmers: Farmer[]): Farmer[] {
   return inputFarmers.map((farmer) => {
-    const stripeAccountId =
+    const stripeAccountId = clean(
       farmer.stripeAccountId ||
-      farmer.farmerStripeAccountId ||
-      farmer.stripe_account_id ||
-      farmer.farmer_stripe_account_id ||
-      "";
+        farmer.farmerStripeAccountId ||
+        farmer.stripe_account_id ||
+        farmer.farmer_stripe_account_id ||
+        ""
+    );
 
     const farmName = getFarmerName(farmer);
+    const id = normalizeId(farmer.id || farmer.farmerId);
 
     return {
       ...farmer,
-      id: normalizeId(farmer.id || farmer.farmerId),
-      farmerId: normalizeId(farmer.id || farmer.farmerId),
+      id,
+      farmerId: id,
       farmName,
       name: farmName,
       location: getFarmerLocation(farmer),
@@ -263,45 +384,45 @@ function normalizeFarmers(inputFarmers: Farmer[]): Farmer[] {
       stripeAccountId,
       farmerStripeAccountId: stripeAccountId,
       products: (farmer.products || [])
-        .map((product) => normalizeProduct(product, farmer))
+        .map((product) => normalizeProduct(product, { ...farmer, id, farmerId: id }))
         .filter(isProductAvailable),
     };
   });
 }
 
 function mapProductRow(row: any): Product {
-  const farmerId = String(row.farmer_id || row.farmerId || "");
-  const image = row.image_url || row.image || row.imageUrl || "";
+  const farmerId = clean(row.farmer_id || row.farmerId || row.owner_id || "");
+  const image = clean(row.image_url || row.image || row.imageUrl || "");
 
   return {
-    id: String(row.id || `product_${Date.now()}_${Math.random()}`),
-    name: String(row.name || row.product_name || "Farm Product"),
-    description: row.description || "",
+    id: clean(row.id || `product_${Date.now()}_${Math.random()}`),
+    name: clean(row.name || row.product_name || row.title || "Farm Product"),
+    description: clean(row.description || ""),
     category: normalizeCategory(row.category || row.product_category),
     price: Number(row.price || row.unit_price || row.amount || 0),
-    unit: row.unit || row.sell_by || "each",
+    unit: clean(row.unit || row.sell_by || row.unit_type || "each"),
     image,
     imageUrl: image,
     image_url: image,
     farmerId,
     farmer_id: farmerId,
-    farmName: row.farm_name || row.farmName || "Local Farm",
-    farm_name: row.farm_name || row.farmName || "Local Farm",
-    farmerEmail: row.farmer_email || "",
-    farmer_email: row.farmer_email || "",
-    farmerStripeAccountId: row.farmer_stripe_account_id || row.stripe_account_id || "",
-    farmer_stripe_account_id: row.farmer_stripe_account_id || row.stripe_account_id || "",
-    stripeAccountId: row.stripe_account_id || "",
-    stripe_account_id: row.stripe_account_id || "",
-    stock: Number(row.stock ?? row.quantity ?? row.inventory ?? 0),
-    quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? 0),
-    inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? 0),
+    farmName: clean(row.farm_name || row.farmName || row.business_name || "Local Farm"),
+    farm_name: clean(row.farm_name || row.farmName || row.business_name || "Local Farm"),
+    farmerEmail: clean(row.farmer_email || row.email || ""),
+    farmer_email: clean(row.farmer_email || row.email || ""),
+    farmerStripeAccountId: clean(row.farmer_stripe_account_id || row.stripe_account_id || ""),
+    farmer_stripe_account_id: clean(row.farmer_stripe_account_id || row.stripe_account_id || ""),
+    stripeAccountId: clean(row.stripe_account_id || ""),
+    stripe_account_id: clean(row.stripe_account_id || ""),
+    stock: Number(row.stock ?? row.quantity ?? row.inventory ?? row.stock_qty ?? 0),
+    quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? row.stock_qty ?? 0),
+    inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? row.stock_qty ?? 0),
     available: row.available !== false,
     active: row.active !== false,
     marketplace_visible: row.marketplace_visible !== false,
     removed_from_inventory: row.removed_from_inventory === true,
     organic: Boolean(row.organic),
-    local: Boolean(row.local),
+    local: Boolean(row.local ?? true),
     seasonal: Boolean(row.seasonal),
     featured: Boolean(row.featured),
     tags: Array.isArray(row.tags) ? row.tags : [],
@@ -309,42 +430,44 @@ function mapProductRow(row: any): Product {
 }
 
 function mapFarmerRow(row: any, fallbackId = ""): Farmer {
-  const id = String(row?.id || row?.farmer_id || fallbackId);
-  const farmName =
+  const id = clean(row?.id || row?.farmer_id || row?.farmerId || fallbackId);
+  const farmName = clean(
     row?.farm_name ||
-    row?.business_name ||
-    row?.farmName ||
-    row?.businessName ||
-    row?.name ||
-    "Local Farm";
+      row?.business_name ||
+      row?.farmName ||
+      row?.businessName ||
+      row?.name ||
+      "Local Farm"
+  );
 
-  const logo =
+  const logo = clean(
     row?.logo_url ||
-    row?.farm_logo_url ||
-    row?.logoUrl ||
-    row?.farmLogoUrl ||
-    "";
+      row?.farm_logo_url ||
+      row?.logoUrl ||
+      row?.farmLogoUrl ||
+      ""
+  );
 
   return {
     id,
     farmerId: id,
     farmName,
     name: farmName,
-    businessName: row?.business_name || farmName,
-    business_name: row?.business_name || farmName,
+    businessName: clean(row?.business_name || farmName),
+    business_name: clean(row?.business_name || farmName),
     location:
       row?.city && row?.state
         ? `${row.city}, ${row.state}`
-        : row?.location || row?.farm_location || row?.state || "Local Farm Market",
-    city: row?.city || "",
-    state: row?.state || "",
-    about: row?.about || row?.description || "",
+        : clean(row?.location || row?.farm_location || row?.state || "Local Farm Market"),
+    city: clean(row?.city || ""),
+    state: clean(row?.state || ""),
+    about: clean(row?.about || row?.description || ""),
     logoUrl: logo,
     farmLogoUrl: logo,
     rating: Number(row?.rating || 4.8),
     distanceMiles: Number(row?.distance_miles || row?.distanceMiles || 5),
-    stripeAccountId: row?.stripe_account_id || row?.farmer_stripe_account_id || "",
-    farmerStripeAccountId: row?.farmer_stripe_account_id || row?.stripe_account_id || "",
+    stripeAccountId: clean(row?.stripe_account_id || row?.farmer_stripe_account_id || ""),
+    farmerStripeAccountId: clean(row?.farmer_stripe_account_id || row?.stripe_account_id || ""),
     products: Array.isArray(row?.products) ? row.products : [],
   };
 }
@@ -354,7 +477,6 @@ async function queryProductTable(tableName: string): Promise<Product[]> {
     const { data, error } = await supabase
       .from(tableName)
       .select("*")
-      .or("marketplace_visible.is.true,active.is.true,available.is.true")
       .order("created_at", { ascending: false });
 
     if (error || !Array.isArray(data)) return [];
@@ -385,23 +507,27 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
   );
 
   const farmerIds = Array.from(
-    new Set(products.map((product) => product.farmerId || product.farmer_id || "").filter(Boolean))
+    new Set(products.map((product) => clean(product.farmerId || product.farmer_id)).filter(Boolean))
   );
 
   let farmerRows: any[] = [];
 
   if (farmerIds.length > 0) {
-    const { data } = await supabase.from("farmers").select("*").in("id", farmerIds);
-    if (Array.isArray(data)) farmerRows = data;
+    try {
+      const { data } = await supabase.from("farmers").select("*").in("id", farmerIds);
+      if (Array.isArray(data)) farmerRows = data;
+    } catch {
+      farmerRows = [];
+    }
   }
 
   const farmerInfoMap = new Map<string, any>();
-  farmerRows.forEach((farmer) => farmerInfoMap.set(String(farmer.id), farmer));
+  farmerRows.forEach((farmer) => farmerInfoMap.set(clean(farmer.id), farmer));
 
   const grouped = new Map<string, Farmer>();
 
   products.forEach((product) => {
-    const farmerId = product.farmerId || product.farmer_id || "";
+    const farmerId = clean(product.farmerId || product.farmer_id);
     const farmerInfo = farmerInfoMap.get(farmerId);
 
     const farmerBase = farmerInfo
@@ -443,8 +569,7 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
 }
 
 export default function MarketplaceScreen() {
-  const { user, profile } = useAuth();
-
+  const [customer, setCustomer] = useState<CustomerSession | null>(null);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [loading, setLoading] = useState(false);
   const [accessChecking, setAccessChecking] = useState(true);
@@ -461,24 +586,152 @@ export default function MarketplaceScreen() {
     }
   }, []);
 
+  async function loadCustomerSession() {
+    const saved =
+      (await AsyncStorage.getItem("currentCustomer")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentCustomer")) ||
+      (await AsyncStorage.getItem("pendingCustomer")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    let localCustomer: CustomerSession | null = null;
+
+    if (saved) {
+      try {
+        localCustomer = JSON.parse(saved);
+      } catch {
+        localCustomer = null;
+      }
+    }
+
+    const { data: authData } = await supabase.auth.getUser();
+    const authId = clean(authData?.user?.id || "");
+    const authEmail = normalize(authData?.user?.email || localCustomer?.email || "");
+
+    if (authId || authEmail) {
+      const dbCustomer = await fetchCustomer(authId, authEmail);
+      if (dbCustomer) {
+        const sub = await fetchCustomerSubscription(dbCustomer.id, dbCustomer.email);
+        const merged = {
+          ...dbCustomer,
+          stripe_customer_id: dbCustomer.stripe_customer_id || dbCustomer.stripe_id || sub?.stripe_customer_id,
+          stripe_subscription_id: dbCustomer.stripe_subscription_id || dbCustomer.subscription_id || sub?.stripe_subscription_id,
+          subscription_id: dbCustomer.subscription_id || dbCustomer.stripe_subscription_id || sub?.stripe_subscription_id,
+          subscription_status: dbCustomer.subscription_status || sub?.subscription_status,
+        };
+
+        const session = {
+          ...merged,
+          customerId: merged.id,
+          accountId: merged.account_id,
+          stripeCustomerId: merged.stripe_customer_id,
+          subscriptionId: merged.subscription_id || merged.stripe_subscription_id,
+        };
+
+        setCustomer(session);
+        await AsyncStorage.multiSet([
+          ["currentCustomer", JSON.stringify(session)],
+          ["farm2homeCurrentCustomer", JSON.stringify(session)],
+          ["currentUser", JSON.stringify({ ...session, role: "customer" })],
+        ]);
+        return session;
+      }
+    }
+
+    setCustomer(localCustomer);
+    return localCustomer;
+  }
+
+  async function fetchCustomer(id?: string, email?: string) {
+    const lookupId = clean(id);
+    const lookupEmail = normalize(email);
+
+    if (lookupId) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+    }
+
+    if (lookupEmail) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("email", lookupEmail)
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+    }
+
+    return null;
+  }
+
+  async function fetchCustomerSubscription(id?: string, email?: string) {
+    const lookupId = clean(id);
+    const lookupEmail = normalize(email);
+
+    const filters = [
+      lookupId ? `customer_id.eq.${lookupId}` : "",
+      lookupEmail ? `customer_email.eq.${lookupEmail}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from("customer_subscriptions")
+        .select("*")
+        .or(filters)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
   const verifyAccess = useCallback(async () => {
     try {
       setAccessChecking(true);
+      const activeCustomer = await loadCustomerSession();
 
-      const result = await enforceSubscriptionAccess({
-        role: "customer",
-        userId: user?.id || "",
-        email: profile?.email || user?.email || "",
-        redirectTo: "/subscription/subscription-locked",
-      });
+      if (!customerReady(activeCustomer)) {
+        setAccessAllowed(false);
+        Alert.alert(
+          "Membership Required",
+          "Complete customer membership before shopping the marketplace.",
+          [
+            {
+              text: "Go to Registration",
+              onPress: () =>
+                router.replace({
+                  pathname: "/customer/register" as any,
+                  params: {
+                    customerId: getCustomerId(activeCustomer),
+                    email: activeCustomer?.email || "",
+                  },
+                }),
+            },
+          ]
+        );
+        return;
+      }
 
-      setAccessAllowed(result.allowed);
-    } catch {
       setAccessAllowed(true);
+    } catch (error) {
+      console.log("Marketplace access check error:", error);
+      setAccessAllowed(false);
     } finally {
       setAccessChecking(false);
     }
-  }, [user?.id, user?.email, profile?.email]);
+  }, []);
 
   const loadMarketplace = useCallback(async () => {
     try {
@@ -538,7 +791,7 @@ export default function MarketplaceScreen() {
         const productMap = new Map<string, Product>();
 
         [...(existing?.products || []), ...(farmer.products || [])].forEach((product) => {
-          productMap.set(String(product.id), product);
+          productMap.set(clean(product.id), product);
         });
 
         farmerMap.set(farmerId, {
@@ -546,16 +799,21 @@ export default function MarketplaceScreen() {
           ...farmer,
           id: farmerId,
           farmerId,
+          farmName: getFarmerName(existing || farmer),
           logoUrl: getFarmerLogo(farmer) || getFarmerLogo(existing || farmer),
-          products: Array.from(productMap.values()),
+          products: Array.from(productMap.values()).filter(isProductAvailable),
         });
       });
 
-      setFarmers(Array.from(farmerMap.values()));
+      const nextFarmers = Array.from(farmerMap.values()).sort(
+        (a, b) => (b.products?.length || 0) - (a.products?.length || 0)
+      );
+
+      setFarmers(nextFarmers);
     } catch (error) {
       console.log("Marketplace load error:", error);
       setFarmers([]);
-      Alert.alert("Marketplace Error", "Unable to load active farms.");
+      Alert.alert("Marketplace Error", "Unable to load active farm rows.");
     } finally {
       setLoading(false);
     }
@@ -609,23 +867,23 @@ export default function MarketplaceScreen() {
   }, [farmers]);
 
   const filteredFarmers = useMemo(() => {
-    const search = searchText.trim().toLowerCase();
+    const search = normalize(searchText);
 
     return farmers
       .map((farmer) => {
         const filteredProducts = (farmer.products || []).filter((product) => {
           const category = normalizeCategory(product.category);
 
-          const matchesCategory =
-            selectedCategory === "All" || category === selectedCategory;
+          const matchesCategory = selectedCategory === "All" || category === selectedCategory;
 
           const matchesSearch =
             !search ||
-            product.name?.toLowerCase().includes(search) ||
-            category.toLowerCase().includes(search) ||
-            product.unit?.toLowerCase().includes(search) ||
-            product.description?.toLowerCase().includes(search) ||
-            getFarmerName(farmer).toLowerCase().includes(search);
+            normalize(product.name).includes(search) ||
+            normalize(category).includes(search) ||
+            normalize(product.unit).includes(search) ||
+            normalize(product.description).includes(search) ||
+            normalize(getFarmerName(farmer)).includes(search) ||
+            normalize(getFarmerLocation(farmer)).includes(search);
 
           return matchesCategory && matchesSearch && isProductAvailable(product);
         });
@@ -637,6 +895,11 @@ export default function MarketplaceScreen() {
 
   async function handleAddToCart(farmer: Farmer, product: Product) {
     try {
+      if (!accessAllowed || !customerReady(customer)) {
+        Alert.alert("Membership Required", "Complete customer membership before adding items.");
+        return;
+      }
+
       const farmerStripeAccountId = getFarmerStripeAccountId(farmer, product);
 
       await addToCart({
@@ -668,9 +931,11 @@ export default function MarketplaceScreen() {
 
       Alert.alert(
         "Added to Cart",
-        `${product.name} added to cart at $${Number(product.price || 0).toFixed(2)}${
-          product.unit ? ` / ${product.unit}` : ""
-        }.`
+        `${product.name} added to cart for ${formatPrice(product.price)}${product.unit ? ` / ${product.unit}` : ""}.`,
+        [
+          { text: "Keep Shopping", style: "cancel" },
+          { text: "View Cart", onPress: () => router.push("/customer/cart" as any) },
+        ]
       );
     } catch (error: any) {
       console.log("Add cart error:", error);
@@ -682,13 +947,17 @@ export default function MarketplaceScreen() {
     const id = normalizeId(farmer.id || farmer.farmerId);
 
     router.push({
-      pathname: "/customer/farmer-shop",
+      pathname: "/customer/farmer-shop" as any,
       params: {
         farmerId: id,
         id,
         farmName: getFarmerName(farmer),
       },
-    } as any);
+    });
+  }
+
+  function openCart() {
+    router.push("/customer/cart" as any);
   }
 
   function renderProductCard(farmer: Farmer, product: Product, compact = false) {
@@ -712,7 +981,7 @@ export default function MarketplaceScreen() {
             <Image source={{ uri: imageSource }} style={styles.productImage} />
           ) : (
             <View style={styles.productPlaceholder}>
-              <Text style={styles.productInitial}>{product.name.slice(0, 1)}</Text>
+              <Text style={styles.productInitial}>{clean(product.name).slice(0, 1)}</Text>
             </View>
           )}
 
@@ -722,9 +991,11 @@ export default function MarketplaceScreen() {
             </Text>
           </View>
 
-          {product.featured ? (
+          {product.featured || product.seasonal ? (
             <View style={styles.featuredBadge}>
-              <Text style={styles.featuredBadgeText}>Featured</Text>
+              <Text style={styles.featuredBadgeText}>
+                {product.featured ? "Featured" : "Seasonal"}
+              </Text>
             </View>
           ) : null}
         </Pressable>
@@ -745,9 +1016,7 @@ export default function MarketplaceScreen() {
 
         <View style={styles.priceRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.productPrice}>
-              ${Number(product.price || 0).toFixed(2)}
-            </Text>
+            <Text style={styles.productPrice}>{formatPrice(product.price)}</Text>
             <Text style={styles.productUnit}>
               {product.unit ? `per ${product.unit}` : "each"} · {stock} left
             </Text>
@@ -755,12 +1024,13 @@ export default function MarketplaceScreen() {
 
           <Pressable
             style={({ pressed }) => [
-              styles.addCircleButton,
+              styles.addButton,
               pressed && styles.pressedButton,
             ]}
             onPress={() => handleAddToCart(farmer, product)}
           >
-            <Text style={styles.addCircleButtonText}>Add</Text>
+            <Ionicons name="add-outline" size={16} color={COLORS.white} />
+            <Text style={styles.addButtonText}>Add</Text>
           </Pressable>
         </View>
       </View>
@@ -769,50 +1039,59 @@ export default function MarketplaceScreen() {
 
   function renderFarmerRow({ item }: { item: Farmer }) {
     const logo = getFarmerLogo(item);
+    const products = item.products || [];
 
     return (
       <View style={styles.farmSection}>
-        <View style={styles.farmMarketRow}>
+        <View style={styles.farmHeader}>
           <Pressable
-            style={({ pressed }) => [
-              styles.farmSideCard,
-              pressed && styles.pressedButton,
-            ]}
+            style={({ pressed }) => [styles.farmHeaderLeft, pressed && styles.pressedButton]}
             onPress={() => openFarmerShop(item)}
           >
             {logo ? (
-              <Image source={{ uri: logo }} style={styles.farmLogoLarge} />
+              <Image source={{ uri: logo }} style={styles.farmLogo} />
             ) : (
-              <View style={styles.logoPlaceholderLarge}>
+              <View style={styles.logoPlaceholder}>
                 <Text style={styles.logoPlaceholderText}>
                   {getFarmerName(item).slice(0, 1)}
                 </Text>
               </View>
             )}
 
-            <Text style={styles.farmNameSide} numberOfLines={2}>
-              {getFarmerName(item)}
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.farmName} numberOfLines={1}>
+                {getFarmerName(item)}
+              </Text>
 
-            <Text style={styles.farmLocationSide} numberOfLines={1}>
-              {getFarmerLocation(item)}
-            </Text>
+              <Text style={styles.farmLocation} numberOfLines={1}>
+                {getFarmerLocation(item)}
+              </Text>
 
-            <Text style={styles.farmMetaSide}>
-              {Number(item.rating || 4.8).toFixed(1)} rating
-            </Text>
-
-            <Text style={styles.viewFarmText}>View Store</Text>
+              <View style={styles.farmMetaRow}>
+                <Text style={styles.farmMeta}>⭐ {Number(item.rating || 4.8).toFixed(1)}</Text>
+                <Text style={styles.farmMeta}>•</Text>
+                <Text style={styles.farmMeta}>{products.length} items</Text>
+              </View>
+            </View>
           </Pressable>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.productsRowSide}
+          <TouchableOpacity
+            style={styles.viewStoreButton}
+            onPress={() => openFarmerShop(item)}
+            activeOpacity={0.85}
           >
-            {(item.products || []).map((product) => renderProductCard(item, product))}
-          </ScrollView>
+            <Text style={styles.viewStoreText}>Store</Text>
+            <Ionicons name="chevron-forward-outline" size={15} color={COLORS.red} />
+          </TouchableOpacity>
         </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.productsRow}
+        >
+          {products.map((product) => renderProductCard(item, product))}
+        </ScrollView>
       </View>
     );
   }
@@ -821,18 +1100,18 @@ export default function MarketplaceScreen() {
     return (
       <View>
         <View style={styles.topBar}>
-          <View>
-            <Text style={styles.greeting}>Farm2Home Market</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.greeting}>Hello, {getCustomerName(customer)}</Text>
             <Text style={styles.locationLine}>
-              {allProductCount} local farm goods available
+              {allProductCount} local farm goods from {farmers.length} farms
             </Text>
           </View>
 
           <Pressable
             style={({ pressed }) => [styles.cartTopButton, pressed && styles.pressedButton]}
-            onPress={() => router.push("/customer/cart" as any)}
+            onPress={openCart}
           >
-            <Text style={styles.cartTopText}>Cart</Text>
+            <Ionicons name="cart-outline" size={21} color={COLORS.white} />
             {cartCount > 0 && (
               <View style={styles.cartBadge}>
                 <Text style={styles.cartBadgeText}>{cartCount}</Text>
@@ -842,18 +1121,29 @@ export default function MarketplaceScreen() {
         </View>
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroBadge}>Fresh Harvest</Text>
-          <Text style={styles.heroTitle}>Shop directly from local farmers</Text>
-          <Text style={styles.heroSubtitle}>
-            Produce, eggs, honey, meat, fish, hay, flowers, seasonal goods, and farm supplies.
-          </Text>
+          <View style={styles.heroContent}>
+            <Text style={styles.heroBadge}>Fresh Harvest</Text>
+            <Text style={styles.heroTitle}>Groceries directly from local farmers</Text>
+            <Text style={styles.heroSubtitle}>
+              Browse each farm row like a grocery aisle. Add produce, eggs, honey, meat, hay, flowers, and seasonal goods.
+            </Text>
 
-          <Pressable
-            style={({ pressed }) => [styles.heroButton, pressed && styles.pressedButton]}
-            onPress={() => router.push("/customer/cart" as any)}
-          >
-            <Text style={styles.heroButtonText}>View Cart ({cartCount})</Text>
-          </Pressable>
+            <View style={styles.heroButtons}>
+              <Pressable
+                style={({ pressed }) => [styles.heroButton, pressed && styles.pressedButton]}
+                onPress={openCart}
+              >
+                <Text style={styles.heroButtonText}>Cart ({cartCount})</Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [styles.heroButtonLight, pressed && styles.pressedButton]}
+                onPress={() => router.push("/customer/my-orders" as any)}
+              >
+                <Text style={styles.heroButtonLightText}>Orders</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
 
         <View style={styles.quickStatsRow}>
@@ -874,13 +1164,19 @@ export default function MarketplaceScreen() {
         </View>
 
         <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={19} color={COLORS.muted} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search farms, products, categories..."
-            placeholderTextColor="#8A9482"
+            placeholderTextColor="#94A3B8"
             value={searchText}
             onChangeText={setSearchText}
           />
+          {searchText ? (
+            <Pressable onPress={() => setSearchText("")}>
+              <Ionicons name="close-circle-outline" size={19} color={COLORS.muted} />
+            </Pressable>
+          ) : null}
         </View>
 
         <ScrollView
@@ -916,7 +1212,7 @@ export default function MarketplaceScreen() {
               <View>
                 <Text style={styles.sectionTitle}>Featured Fresh Picks</Text>
                 <Text style={styles.sectionSubtitle}>
-                  New and popular products from nearby farms
+                  Popular items across nearby farms
                 </Text>
               </View>
             </View>
@@ -935,13 +1231,13 @@ export default function MarketplaceScreen() {
 
         <View style={styles.sectionTitleRowMain}>
           <View>
-            <Text style={styles.sectionTitle}>Nearby Farms</Text>
+            <Text style={styles.sectionTitle}>Shop by Farm</Text>
             <Text style={styles.sectionSubtitle}>
-              {filteredFarmers.length} farm{filteredFarmers.length === 1 ? "" : "s"} available
+              {filteredFarmers.length} farm row{filteredFarmers.length === 1 ? "" : "s"} available
             </Text>
           </View>
 
-          {loading && <ActivityIndicator size="small" color={COLORS.primary} />}
+          {loading && <ActivityIndicator size="small" color={COLORS.red} />}
         </View>
       </View>
     );
@@ -949,59 +1245,88 @@ export default function MarketplaceScreen() {
 
   if (accessChecking) {
     return (
-      <View style={styles.loadingPage}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Checking marketplace access...</Text>
-      </View>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <View style={styles.loadingPage}>
+          <ActivityIndicator size="large" color={COLORS.red} />
+          <Text style={styles.loadingText}>Checking marketplace access...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (!accessAllowed) {
     return (
-      <View style={styles.loadingPage}>
-        <Text style={styles.lockedTitle}>Subscription Required</Text>
-        <Text style={styles.loadingText}>Redirecting to subscription page...</Text>
-      </View>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <View style={styles.loadingPage}>
+          <Text style={styles.lockedTitle}>Membership Required</Text>
+          <Text style={styles.loadingText}>Complete customer membership to shop local farms.</Text>
+
+          <TouchableOpacity
+            style={styles.lockedButton}
+            onPress={() =>
+              router.replace({
+                pathname: "/customer/register" as any,
+                params: {
+                  customerId: getCustomerId(customer),
+                  email: customer?.email || "",
+                },
+              })
+            }
+          >
+            <Text style={styles.lockedButtonText}>Fix Membership</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.page}>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+
       <FlatList
         data={filteredFarmers}
-        keyExtractor={(item) => String(item.id || item.farmerId)}
+        keyExtractor={(item) => clean(item.id || item.farmerId)}
         renderItem={renderFarmerRow}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={renderHeader}
-        refreshing={loading}
-        onRefresh={loadMarketplace}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={loadMarketplace} tintColor={COLORS.red} />
+        }
         ListEmptyComponent={
           <View style={styles.emptyBox}>
             <Text style={styles.emptyTitle}>
-              {loading ? "Loading marketplace..." : "No active farms found"}
+              {loading ? "Loading marketplace..." : "No farm rows found"}
             </Text>
             <Text style={styles.emptySubtitle}>
-              Active farms with posted marketplace products will appear here.
+              Active farms with available marketplace products will appear here by farmer row.
             </Text>
+
+            <TouchableOpacity style={styles.emptyButton} onPress={loadMarketplace}>
+              <Text style={styles.emptyButtonText}>Refresh Marketplace</Text>
+            </TouchableOpacity>
           </View>
         }
       />
 
       <Pressable
         style={({ pressed }) => [styles.cartFloating, pressed && styles.pressedButton]}
-        onPress={() => router.push("/customer/cart" as any)}
+        onPress={openCart}
       >
+        <Ionicons name="cart-outline" size={18} color={COLORS.white} />
         <Text style={styles.cartFloatingText}>Cart ({cartCount})</Text>
       </Pressable>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: COLORS.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
   loadingPage: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: COLORS.bg,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
@@ -1011,44 +1336,56 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontWeight: "800",
     textAlign: "center",
+    lineHeight: 21,
   },
   lockedTitle: {
-    color: COLORS.danger,
+    color: COLORS.red,
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
+  lockedButton: {
+    backgroundColor: COLORS.red,
+    paddingHorizontal: 18,
+    paddingVertical: 13,
+    borderRadius: 16,
+    marginTop: 18,
+  },
+  lockedButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
   listContent: { paddingBottom: 120 },
   topBar: {
+    backgroundColor: COLORS.black,
     paddingTop: 18,
     paddingHorizontal: 18,
-    paddingBottom: 12,
+    paddingBottom: 14,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 14,
   },
-  greeting: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
+  greeting: { color: COLORS.white, fontSize: 22, fontWeight: "900" },
   locationLine: {
-    color: COLORS.muted,
-    fontSize: 14,
+    color: "#CBD5E1",
+    fontSize: 13,
     fontWeight: "700",
     marginTop: 4,
   },
   cartTopButton: {
-    minWidth: 64,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: COLORS.dark,
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    backgroundColor: COLORS.red,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 12,
   },
-  cartTopText: { color: "#FFFFFF", fontWeight: "900" },
   cartBadge: {
     position: "absolute",
     top: -7,
     right: -7,
-    backgroundColor: COLORS.secondary,
+    backgroundColor: COLORS.amber,
     minWidth: 23,
     height: 23,
     borderRadius: 999,
@@ -1056,20 +1393,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 6,
     borderWidth: 2,
-    borderColor: COLORS.card,
+    borderColor: COLORS.black,
   },
-  cartBadgeText: { color: COLORS.dark, fontWeight: "900", fontSize: 12 },
+  cartBadgeText: { color: COLORS.black, fontWeight: "900", fontSize: 12 },
   heroCard: {
-    marginHorizontal: 18,
-    marginTop: 8,
-    borderRadius: 20,
-    padding: 18,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.black,
+    paddingHorizontal: 18,
+    paddingBottom: 20,
+  },
+  heroContent: {
+    backgroundColor: COLORS.red,
+    borderRadius: 26,
+    padding: 20,
   },
   heroBadge: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(255,255,255,0.18)",
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontWeight: "900",
     paddingHorizontal: 11,
     paddingVertical: 6,
@@ -1079,42 +1419,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   heroTitle: {
-    color: "#FFFFFF",
-    fontSize: 25,
-    lineHeight: 31,
+    color: COLORS.white,
+    fontSize: 28,
+    lineHeight: 34,
     fontWeight: "900",
   },
   heroSubtitle: {
-    color: "#EAF7E6",
-    marginTop: 7,
-    fontSize: 13,
-    lineHeight: 20,
+    color: "#FFE4E6",
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 21,
     fontWeight: "700",
   },
+  heroButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
   heroButton: {
-    backgroundColor: COLORS.secondary,
+    backgroundColor: COLORS.black,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 13,
-    alignSelf: "flex-start",
-    marginTop: 14,
+    borderRadius: 14,
   },
-  heroButtonText: { color: COLORS.dark, fontWeight: "900", fontSize: 13 },
+  heroButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 13 },
+  heroButtonLight: {
+    backgroundColor: COLORS.white,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+  },
+  heroButtonLightText: { color: COLORS.red, fontWeight: "900", fontSize: 13 },
   quickStatsRow: {
     flexDirection: "row",
     gap: 10,
     marginHorizontal: 18,
-    marginTop: 14,
+    marginTop: 16,
   },
   quickStat: {
     flex: 1,
     backgroundColor: COLORS.card,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 13,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  quickStatValue: { color: COLORS.primary, fontWeight: "900", fontSize: 21 },
+  quickStatValue: { color: COLORS.red, fontWeight: "900", fontSize: 22 },
   quickStatLabel: {
     color: COLORS.muted,
     fontWeight: "800",
@@ -1125,10 +1475,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginTop: 16,
     backgroundColor: COLORS.card,
-    borderRadius: 16,
+    borderRadius: 18,
     paddingHorizontal: 14,
-    height: 52,
-    justifyContent: "center",
+    height: 54,
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
@@ -1137,6 +1489,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
     color: COLORS.text,
+    height: "100%",
   },
   categoryRow: {
     paddingHorizontal: 18,
@@ -1153,15 +1506,15 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   categoryChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
   },
   categoryChipText: {
-    color: COLORS.primary,
+    color: COLORS.red,
     fontWeight: "900",
     fontSize: 13,
   },
-  categoryChipTextActive: { color: "#FFFFFF" },
+  categoryChipTextActive: { color: COLORS.white },
   featuredSection: { marginTop: 8 },
   sectionTitleRow: {
     paddingHorizontal: 18,
@@ -1188,79 +1541,83 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginBottom: 16,
-    borderRadius: 18,
-    padding: 13,
+    borderRadius: 24,
+    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  farmMarketRow: {
+  farmHeader: {
     flexDirection: "row",
-    alignItems: "stretch",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 13,
+  },
+  farmHeaderLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
   },
-  farmSideCard: {
-    width: 116,
-    backgroundColor: COLORS.lightGreen,
-    borderRadius: 16,
-    padding: 11,
-    alignItems: "center",
-    justifyContent: "flex-start",
-    borderWidth: 1,
-    borderColor: COLORS.border,
+  farmLogo: {
+    width: 56,
+    height: 56,
+    borderRadius: 19,
+    backgroundColor: COLORS.greenSoft,
   },
-  farmLogoLarge: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: COLORS.softGreen,
-    marginBottom: 9,
-  },
-  logoPlaceholderLarge: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: COLORS.primaryDark,
+  logoPlaceholder: {
+    width: 56,
+    height: 56,
+    borderRadius: 19,
+    backgroundColor: COLORS.black,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 9,
   },
   logoPlaceholderText: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontSize: 24,
     fontWeight: "900",
   },
-  farmNameSide: {
+  farmName: {
     color: COLORS.text,
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: "900",
-    textAlign: "center",
-    lineHeight: 18,
   },
-  farmLocationSide: {
+  farmLocation: {
     color: COLORS.muted,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "800",
-    marginTop: 4,
-    textAlign: "center",
+    marginTop: 3,
   },
-  farmMetaSide: {
-    color: COLORS.primaryDark,
+  farmMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 5,
+  },
+  farmMeta: {
+    color: COLORS.redDark,
     fontSize: 12,
     fontWeight: "900",
-    marginTop: 7,
   },
-  viewFarmText: {
-    color: COLORS.primary,
-    fontSize: 12,
+  viewStoreButton: {
+    backgroundColor: "#FEE2E2",
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  viewStoreText: {
+    color: COLORS.red,
     fontWeight: "900",
-    marginTop: 8,
-    textAlign: "center",
+    fontSize: 12,
   },
-  productsRowSide: { gap: 12, paddingRight: 6 },
+  productsRow: { gap: 12, paddingRight: 6 },
   productCard: {
     width: 178,
-    backgroundColor: COLORS.lightGreen,
-    borderRadius: 16,
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
     padding: 11,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -1270,21 +1627,21 @@ const styles = StyleSheet.create({
   productImage: {
     width: "100%",
     height: 116,
-    borderRadius: 14,
+    borderRadius: 15,
     marginBottom: 10,
-    backgroundColor: COLORS.softGreen,
+    backgroundColor: COLORS.greenSoft,
   },
   productPlaceholder: {
     width: "100%",
     height: 116,
-    borderRadius: 14,
-    backgroundColor: COLORS.softGreen,
+    borderRadius: 15,
+    backgroundColor: COLORS.greenSoft,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 10,
   },
   productInitial: {
-    color: COLORS.primaryDark,
+    color: COLORS.greenDark,
     fontSize: 34,
     fontWeight: "900",
   },
@@ -1299,7 +1656,7 @@ const styles = StyleSheet.create({
     maxWidth: 130,
   },
   categoryBadgeText: {
-    color: COLORS.primary,
+    color: COLORS.red,
     fontSize: 10,
     fontWeight: "900",
   },
@@ -1307,12 +1664,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 8,
     right: 8,
-    backgroundColor: COLORS.secondary,
+    backgroundColor: COLORS.amber,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
   },
-  featuredBadgeText: { color: COLORS.dark, fontSize: 10, fontWeight: "900" },
+  featuredBadgeText: { color: COLORS.black, fontSize: 10, fontWeight: "900" },
   productName: { fontWeight: "900", fontSize: 15, color: COLORS.text },
   productFarmName: {
     color: COLORS.muted,
@@ -1328,8 +1685,8 @@ const styles = StyleSheet.create({
     minHeight: 20,
   },
   miniTag: {
-    backgroundColor: "#DCFCE7",
-    color: COLORS.primaryDark,
+    backgroundColor: COLORS.greenSoft,
+    color: COLORS.greenDark,
     fontSize: 10,
     fontWeight: "900",
     paddingHorizontal: 7,
@@ -1341,21 +1698,24 @@ const styles = StyleSheet.create({
     marginTop: 10,
     gap: 8,
   },
-  productPrice: { fontWeight: "900", fontSize: 17, color: COLORS.primary },
+  productPrice: { fontWeight: "900", fontSize: 18, color: COLORS.red },
   productUnit: {
     color: COLORS.muted,
     marginTop: 2,
     fontSize: 11,
     fontWeight: "700",
   },
-  addCircleButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 11,
+  addButton: {
+    backgroundColor: COLORS.red,
+    borderRadius: 12,
     paddingVertical: 9,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 4,
   },
-  addCircleButtonText: {
-    color: "#FFFFFF",
+  addButtonText: {
+    color: COLORS.white,
     fontWeight: "900",
     fontSize: 12,
   },
@@ -1364,7 +1724,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
     marginTop: 10,
-    borderRadius: 18,
+    borderRadius: 22,
     padding: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -1384,14 +1744,33 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 21,
   },
+  emptyButton: {
+    backgroundColor: COLORS.red,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 14,
+    marginTop: 16,
+  },
+  emptyButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
   cartFloating: {
     position: "absolute",
     bottom: 20,
     right: 20,
-    backgroundColor: COLORS.dark,
-    paddingHorizontal: 21,
-    paddingVertical: 15,
+    backgroundColor: COLORS.black,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    shadowColor: COLORS.black,
+    shadowOpacity: Platform.OS === "ios" ? 0.25 : 0,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 6,
   },
-  cartFloatingText: { color: "#FFFFFF", fontWeight: "900", fontSize: 14 },
+  cartFloatingText: { color: COLORS.white, fontWeight: "900", fontSize: 14 },
 });

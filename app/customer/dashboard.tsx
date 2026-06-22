@@ -1,7 +1,13 @@
-import React, { useEffect, useState } from "react";
+// app/customer/dashboard.tsx
+
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
+  Platform,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -11,289 +17,946 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
+import { supabase } from "../data/supabaseClient";
+
+const COLORS = {
+  bg: "#F4F5F7",
+  card: "#FFFFFF",
+  surface: "#F9FAFB",
+  black: "#050505",
+  red: "#D71920",
+  redDark: "#9F1117",
+  text: "#111827",
+  muted: "#6B7280",
+  border: "#E5E7EB",
+  green: "#16A34A",
+  greenSoft: "#DCFCE7",
+  amber: "#F59E0B",
+  amberSoft: "#FEF3C7",
+  blue: "#2563EB",
+  blueSoft: "#DBEAFE",
+  purple: "#7C3AED",
+  purpleSoft: "#EDE9FE",
+  white: "#FFFFFF",
+};
+
+type CustomerSession = {
+  id?: string;
+  customerId?: string;
+  customer_id?: string;
+  account_id?: string;
+  accountId?: string;
+  full_name?: string;
+  fullName?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  username?: string;
+  stripe_customer_id?: string;
+  stripeCustomerId?: string;
+  stripe_subscription_id?: string;
+  stripeSubscriptionId?: string;
+  subscription_id?: string;
+  subscriptionId?: string;
+  membership_status?: string;
+  membershipStatus?: string;
+  subscription_status?: string;
+  subscriptionStatus?: string;
+  account_active?: boolean;
+  accountActive?: boolean;
+};
+
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
+
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function isCus(value: any) {
+  return clean(value).startsWith("cus_");
+}
+
+function isSub(value: any) {
+  return clean(value).startsWith("sub_");
+}
+
+function getCustomerId(customer: CustomerSession | null) {
+  return clean(customer?.id || customer?.customer_id || customer?.customerId);
+}
+
+function getAccountId(customer: CustomerSession | null) {
+  return clean(customer?.account_id || customer?.accountId);
+}
+
+function getCustomerName(customer: CustomerSession | null) {
+  return clean(customer?.full_name || customer?.fullName || customer?.name || "Customer");
+}
+
+function getStripeCustomer(customer: CustomerSession | null) {
+  return clean(customer?.stripe_customer_id || customer?.stripeCustomerId);
+}
+
+function getStripeSubscription(customer: CustomerSession | null) {
+  return clean(
+    customer?.subscription_id ||
+      customer?.subscriptionId ||
+      customer?.stripe_subscription_id ||
+      customer?.stripeSubscriptionId
+  );
+}
+
+function statusIsBlocked(value: any) {
+  const status = normalize(value);
+  return ["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(status);
+}
+
+function hasMarketplaceAccess(customer: CustomerSession | null) {
+  if (!customer) return false;
+
+  return Boolean(
+    getCustomerId(customer) &&
+      getAccountId(customer) &&
+      isCus(getStripeCustomer(customer)) &&
+      isSub(getStripeSubscription(customer)) &&
+      customer.account_active !== false &&
+      customer.accountActive !== false &&
+      !statusIsBlocked(customer.membership_status || customer.membershipStatus) &&
+      !statusIsBlocked(customer.subscription_status || customer.subscriptionStatus)
+  );
+}
+
+function buildSession(row: any): CustomerSession {
+  const id = clean(row?.id || row?.customer_id || row?.customerId);
+  const accountId = clean(row?.account_id || row?.accountId);
+  const stripeCustomer = clean(row?.stripe_customer_id || row?.stripeCustomerId || row?.stripe_id);
+  const stripeSubscription = clean(
+    row?.subscription_id ||
+      row?.subscriptionId ||
+      row?.stripe_subscription_id ||
+      row?.stripeSubscriptionId
+  );
+
+  return {
+    ...row,
+    id,
+    customerId: id,
+    customer_id: id,
+    role: "customer",
+    account_id: accountId,
+    accountId,
+    full_name: clean(row?.full_name || row?.fullName || row?.name || "Customer"),
+    fullName: clean(row?.full_name || row?.fullName || row?.name || "Customer"),
+    name: clean(row?.name || row?.full_name || row?.fullName || "Customer"),
+    email: normalize(row?.email || row?.customer_email),
+    stripe_customer_id: isCus(stripeCustomer) ? stripeCustomer : "",
+    stripeCustomerId: isCus(stripeCustomer) ? stripeCustomer : "",
+    subscription_id: isSub(stripeSubscription) ? stripeSubscription : "",
+    subscriptionId: isSub(stripeSubscription) ? stripeSubscription : "",
+    stripe_subscription_id: isSub(stripeSubscription) ? stripeSubscription : "",
+    stripeSubscriptionId: isSub(stripeSubscription) ? stripeSubscription : "",
+    membership_status: clean(row?.membership_status || row?.membershipStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
+    membershipStatus: clean(row?.membership_status || row?.membershipStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
+    subscription_status: clean(row?.subscription_status || row?.subscriptionStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
+    subscriptionStatus: clean(row?.subscription_status || row?.subscriptionStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
+    account_active: row?.account_active !== false,
+    accountActive: row?.account_active !== false,
+  };
+}
+
 export default function CustomerDashboard() {
-  const [customerName, setCustomerName] = useState("Customer");
+  const [customer, setCustomer] = useState<CustomerSession | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [cartCount, setCartCount] = useState(0);
+  const [ordersCount, setOrdersCount] = useState(0);
+  const [activeOrdersCount, setActiveOrdersCount] = useState(0);
+
+  const customerName = useMemo(() => getCustomerName(customer), [customer]);
+  const ready = useMemo(() => hasMarketplaceAccess(customer), [customer]);
 
   useEffect(() => {
-    loadCustomer();
+    loadDashboard();
   }, []);
 
-  async function loadCustomer() {
+  async function saveCustomerSession(nextCustomer: CustomerSession) {
+    const session = buildSession(nextCustomer);
+
+    await AsyncStorage.multiSet([
+      ["currentCustomer", JSON.stringify(session)],
+      ["farm2homeCurrentCustomer", JSON.stringify(session)],
+      ["currentUser", JSON.stringify(session)],
+      ["userRole", "customer"],
+      ["currentUserRole", "customer"],
+      ["lastLoginRole", "customer"],
+      ["lastCustomerDashboardReady", hasMarketplaceAccess(session) ? "true" : "false"],
+    ]);
+
+    setCustomer(session);
+    return session;
+  }
+
+  async function loadDashboard() {
     try {
-      const stored = await AsyncStorage.getItem("currentCustomer");
+      setLoading(true);
 
-      if (!stored) return;
+      const stored =
+        (await AsyncStorage.getItem("currentCustomer")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentCustomer")) ||
+        (await AsyncStorage.getItem("pendingCustomer")) ||
+        (await AsyncStorage.getItem("currentUser"));
 
-      const customer = JSON.parse(stored);
+      let localCustomer: CustomerSession | null = null;
 
-      setCustomerName(
-        customer?.fullName ||
-          customer?.full_name ||
-          customer?.name ||
-          "Customer"
-      );
+      if (stored) {
+        try {
+          localCustomer = buildSession(JSON.parse(stored));
+          setCustomer(localCustomer);
+        } catch {
+          localCustomer = null;
+        }
+      }
+
+      const { data: authData } = await supabase.auth.getUser();
+      const authId = clean(authData?.user?.id);
+      const authEmail = normalize(authData?.user?.email || localCustomer?.email);
+
+      const dbCustomer = await fetchCustomer(authId || getCustomerId(localCustomer), authEmail);
+
+      if (dbCustomer) {
+        const sub = await fetchCustomerSubscription(dbCustomer.id, dbCustomer.email);
+        const merged = buildSession({
+          ...dbCustomer,
+          stripe_customer_id: dbCustomer.stripe_customer_id || dbCustomer.stripe_id || sub?.stripe_customer_id,
+          stripe_subscription_id: dbCustomer.stripe_subscription_id || dbCustomer.subscription_id || sub?.stripe_subscription_id,
+          subscription_id: dbCustomer.subscription_id || dbCustomer.stripe_subscription_id || sub?.stripe_subscription_id,
+          subscription_status: dbCustomer.subscription_status || sub?.subscription_status,
+        });
+
+        await saveCustomerSession(merged);
+        await loadCounts(merged);
+        return;
+      }
+
+      if (localCustomer) {
+        await loadCounts(localCustomer);
+      }
     } catch (error) {
-      console.log(error);
+      console.log("Customer dashboard load error:", error);
+    } finally {
+      setLoading(false);
     }
+  }
+
+  async function fetchCustomer(id?: string, email?: string) {
+    const lookupId = clean(id);
+    const lookupEmail = normalize(email);
+
+    if (lookupId) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+      if (error) console.log("dashboard customer id lookup:", error.message);
+    }
+
+    if (lookupEmail) {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("email", lookupEmail)
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+      if (error) console.log("dashboard customer email lookup:", error.message);
+    }
+
+    return null;
+  }
+
+  async function fetchCustomerSubscription(id?: string, email?: string) {
+    const lookupId = clean(id);
+    const lookupEmail = normalize(email);
+
+    const filters = [
+      lookupId ? `customer_id.eq.${lookupId}` : "",
+      lookupEmail ? `customer_email.eq.${lookupEmail}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from("customer_subscriptions")
+        .select("*")
+        .or(filters)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      if (!error && Array.isArray(data) && data[0]) return data[0];
+      if (error) console.log("dashboard customer subscription lookup:", error.message);
+    } catch (error) {
+      console.log("dashboard subscription skipped:", error);
+    }
+
+    return null;
+  }
+
+  async function loadCounts(activeCustomer: CustomerSession) {
+    const id = getCustomerId(activeCustomer);
+
+    await loadCartCount();
+
+    if (!id) return;
+
+    const orderTables = ["orders", "customer_orders", "farm_orders"];
+
+    for (const table of orderTables) {
+      try {
+        const { data, error } = await supabase
+          .from(table)
+          .select("id,status")
+          .or(`customer_id.eq.${id},customerId.eq.${id}`)
+          .limit(100);
+
+        if (!error && Array.isArray(data)) {
+          setOrdersCount(data.length);
+          setActiveOrdersCount(
+            data.filter((order) => {
+              const status = normalize(order?.status);
+              return !["delivered", "complete", "completed", "cancelled", "canceled"].includes(status);
+            }).length
+          );
+          return;
+        }
+      } catch (error) {
+        console.log(`${table} count skipped:`, error);
+      }
+    }
+  }
+
+  async function loadCartCount() {
+    try {
+      const savedCart =
+        (await AsyncStorage.getItem("customerCart")) ||
+        (await AsyncStorage.getItem("cart")) ||
+        (await AsyncStorage.getItem("farm2homeCart"));
+
+      if (!savedCart) {
+        setCartCount(0);
+        return;
+      }
+
+      const parsed = JSON.parse(savedCart);
+      if (Array.isArray(parsed)) {
+        setCartCount(parsed.length);
+        return;
+      }
+
+      if (Array.isArray(parsed?.items)) {
+        setCartCount(parsed.items.length);
+        return;
+      }
+
+      setCartCount(0);
+    } catch {
+      setCartCount(0);
+    }
+  }
+
+  function requireAccess(route: string, label: string) {
+    if (!customer) {
+      Alert.alert("Login Required", "Please login as a customer first.");
+      router.replace("/customer/login" as any);
+      return;
+    }
+
+    if (!ready && route !== "/customer/profile") {
+      Alert.alert(
+        "Membership Required",
+        "Your customer membership is not complete. Register or retrieve your Stripe subscription before using this section.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Fix Membership",
+            onPress: () =>
+              router.push({
+                pathname: "/customer/register" as any,
+                params: {
+                  customerId: getCustomerId(customer),
+                  email: customer.email || "",
+                },
+              }),
+          },
+        ]
+      );
+      return;
+    }
+
+    router.push(route as any);
+  }
+
+  async function logout() {
+    Alert.alert("Log Out", "Log out of your customer account?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Log Out",
+        style: "destructive",
+        onPress: async () => {
+          await supabase.auth.signOut();
+          await AsyncStorage.multiRemove([
+            "currentCustomer",
+            "farm2homeCurrentCustomer",
+            "pendingCustomer",
+            "currentUser",
+            "userRole",
+            "currentUserRole",
+            "lastLoginRole",
+            "lastCustomerDashboardReady",
+          ]);
+          router.replace("/customer/login" as any);
+        },
+      },
+    ]);
+  }
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <View style={styles.center}>
+          <ActivityIndicator color={COLORS.red} size="large" />
+          <Text style={styles.centerText}>Loading customer dashboard...</Text>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+
       <ScrollView
         style={styles.page}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
-          <View style={styles.heroIcon}>
-            <Ionicons
-              name="basket-outline"
-              size={36}
-              color="#FFFFFF"
-            />
+          <View style={styles.heroTop}>
+            <View style={styles.heroIcon}>
+              <Ionicons name="basket-outline" size={36} color="#FFFFFF" />
+            </View>
+
+            <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.85}>
+              <Ionicons name="log-out-outline" size={18} color={COLORS.white} />
+              <Text style={styles.logoutText}>Logout</Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.title}>
-            Welcome Back
-          </Text>
-
-          <Text style={styles.customerName}>
-            {customerName}
-          </Text>
+          <Text style={styles.kicker}>Farm2Home Customer</Text>
+          <Text style={styles.title}>Welcome Back</Text>
+          <Text style={styles.customerName}>{customerName}</Text>
 
           <Text style={styles.subtitle}>
-            Shop local farms, track orders,
-            manage subscriptions, and support
-            your local farming community.
+            Shop local farms, track orders, manage cart, chat with farmers and drivers, and support your local farming community.
           </Text>
+
+          <View style={styles.heroStatus}>
+            <View style={[styles.statusPill, ready ? styles.statusPillGood : styles.statusPillWarn]}>
+              <Ionicons
+                name={ready ? "checkmark-circle-outline" : "warning-outline"}
+                size={17}
+                color={ready ? "#166534" : "#92400E"}
+              />
+              <Text style={[styles.statusPillText, ready ? styles.statusPillTextGood : styles.statusPillTextWarn]}>
+                {ready ? "Marketplace Ready" : "Membership Needs Attention"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.metricsRow}>
+          <MetricCard icon="cart-outline" label="Cart" value={`${cartCount} items`} tone="green" />
+          <MetricCard icon="receipt-outline" label="Orders" value={`${ordersCount}`} tone="blue" />
+          <MetricCard icon="navigate-outline" label="Active" value={`${activeOrdersCount}`} tone="purple" />
+        </View>
+
+        <View style={styles.accessCard}>
+          <View style={styles.accessHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>Account Access</Text>
+              <Text style={styles.sectionSubtitle}>Customer Marketplace requirements.</Text>
+            </View>
+            <Text style={styles.accessScore}>
+              {[
+                getCustomerId(customer),
+                getAccountId(customer),
+                isCus(getStripeCustomer(customer)),
+                isSub(getStripeSubscription(customer)),
+              ].filter(Boolean).length}
+              /4
+            </Text>
+          </View>
+
+          <ChecklistRow label="Customer Profile" value={getCustomerId(customer) ? "Found" : "Missing"} complete={Boolean(getCustomerId(customer))} />
+          <ChecklistRow label="Static Account" value={getAccountId(customer) || "Missing"} complete={Boolean(getAccountId(customer))} />
+          <ChecklistRow label="Stripe Customer" value={isCus(getStripeCustomer(customer)) ? "Saved" : "Missing"} complete={isCus(getStripeCustomer(customer))} />
+          <ChecklistRow label="Subscription" value={isSub(getStripeSubscription(customer)) ? "Active/Saved" : "Missing"} complete={isSub(getStripeSubscription(customer))} />
         </View>
 
         <View style={styles.quickActions}>
-          <Text style={styles.sectionTitle}>
-            Quick Actions
-          </Text>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <Text style={styles.sectionSubtitle}>Every button below routes to a real customer workflow.</Text>
 
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() =>
-              router.push("/customer/marketplace" as any)
-            }
-          >
-            <Ionicons
-              name="storefront-outline"
-              size={22}
-              color="#FFFFFF"
+          <ActionButton
+            primary
+            icon="storefront-outline"
+            title="Shop Marketplace"
+            subtitle="Browse farmers, products, produce, and local grocery items."
+            onPress={() => requireAccess("/customer/marketplace", "Marketplace")}
+          />
+
+          <View style={styles.actionGrid}>
+            <ActionButton
+              icon="cart-outline"
+              title="Cart"
+              subtitle={`${cartCount} saved items`}
+              onPress={() => requireAccess("/customer/cart", "Cart")}
             />
-
-            <Text style={styles.primaryButtonText}>
-              Shop Marketplace
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() =>
-              router.push("/customer/cart" as any)
-            }
-          >
-            <Ionicons
-              name="cart-outline"
-              size={22}
-              color="#166534"
+            <ActionButton
+              icon="receipt-outline"
+              title="My Orders"
+              subtitle="View order history"
+              onPress={() => requireAccess("/customer/my-orders", "My Orders")}
             />
-
-            <Text style={styles.secondaryButtonText}>
-              View Cart
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() =>
-              router.push("/customer/orders" as any)
-            }
-          >
-            <Ionicons
-              name="receipt-outline"
-              size={22}
-              color="#166534"
+            <ActionButton
+              icon="navigate-outline"
+              title="Tracking"
+              subtitle="Track active deliveries"
+              onPress={() => requireAccess("/customer/tracking", "Tracking")}
             />
-
-            <Text style={styles.secondaryButtonText}>
-              My Orders
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() =>
-              router.push("/customer/profile" as any)
-            }
-          >
-            <Ionicons
-              name="person-outline"
-              size={22}
-              color="#166534"
+            <ActionButton
+              icon="chatbubbles-outline"
+              title="Chat Center"
+              subtitle="Farmer and driver messages"
+              onPress={() => requireAccess("/customer/chat-center", "Chat Center")}
             />
-
-            <Text style={styles.secondaryButtonText}>
-              My Profile
-            </Text>
-          </TouchableOpacity>
+            <ActionButton
+              icon="person-outline"
+              title="Profile"
+              subtitle="Address, phone, membership"
+              onPress={() => requireAccess("/customer/profile", "Profile")}
+            />
+            <ActionButton
+              icon="card-outline"
+              title="Membership"
+              subtitle="Fix Stripe subscription"
+              onPress={() =>
+                router.push({
+                  pathname: "/customer/register" as any,
+                  params: {
+                    customerId: getCustomerId(customer),
+                    email: customer?.email || "",
+                  },
+                })
+              }
+            />
+          </View>
         </View>
 
         <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>
-            Farm2Home Benefits
-          </Text>
-
-          <Text style={styles.infoText}>
-            • Buy directly from local farmers
-          </Text>
-
-          <Text style={styles.infoText}>
-            • Fresh produce, meat, dairy and baked goods
-          </Text>
-
-          <Text style={styles.infoText}>
-            • Pickup or delivery options
-          </Text>
-
-          <Text style={styles.infoText}>
-            • Support local agriculture
-          </Text>
-
-          <Text style={styles.infoText}>
-            • Secure online ordering
-          </Text>
+          <View style={styles.infoIcon}>
+            <Ionicons name="leaf-outline" size={22} color="#92400E" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.infoTitle}>Farm2Home Benefits</Text>
+            <Text style={styles.infoText}>Buy directly from local farmers, shop fresh produce and farm goods, choose pickup or delivery, and track your order from checkout to delivery.</Text>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function MetricCard({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  tone: "green" | "blue" | "purple";
+}) {
+  const color = tone === "green" ? COLORS.green : tone === "blue" ? COLORS.blue : COLORS.purple;
+  const bg = tone === "green" ? COLORS.greenSoft : tone === "blue" ? COLORS.blueSoft : COLORS.purpleSoft;
+
+  return (
+    <View style={styles.metricCard}>
+      <View style={[styles.metricIcon, { backgroundColor: bg }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.metricLabel}>{label}</Text>
+        <Text style={styles.metricValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ChecklistRow({ label, value, complete }: { label: string; value: string; complete: boolean }) {
+  return (
+    <View style={styles.checkRow}>
+      <View style={[styles.checkIcon, complete ? styles.checkGood : styles.checkMissing]}>
+        <Ionicons
+          name={complete ? "checkmark-outline" : "ellipse-outline"}
+          size={15}
+          color={complete ? COLORS.white : COLORS.muted}
+        />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.checkLabel}>{label}</Text>
+        <Text style={styles.checkValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ActionButton({
+  icon,
+  title,
+  subtitle,
+  onPress,
+  primary,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.actionButton, primary && styles.primaryAction]}
+      onPress={onPress}
+      activeOpacity={0.88}
+    >
+      <View style={[styles.actionIcon, primary && styles.primaryActionIcon]}>
+        <Ionicons name={icon} size={22} color={primary ? COLORS.white : COLORS.red} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.actionTitle, primary && styles.primaryActionTitle]}>{title}</Text>
+        <Text style={[styles.actionSubtitle, primary && styles.primaryActionSubtitle]}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward-outline" size={18} color={primary ? COLORS.white : COLORS.muted} />
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#F7FBF4",
+    backgroundColor: COLORS.bg,
   },
-
   page: {
     flex: 1,
   },
-
   content: {
-    padding: 20,
-    paddingBottom: 60,
+    paddingBottom: 70,
   },
-
-  hero: {
-    backgroundColor: "#14532D",
-    borderRadius: 28,
-    padding: 24,
-    marginBottom: 20,
-  },
-
-  heroIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.18)",
+  center: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    gap: 12,
+    backgroundColor: COLORS.bg,
+  },
+  centerText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+  },
+  hero: {
+    backgroundColor: COLORS.black,
+    paddingTop: 22,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     marginBottom: 14,
   },
-
-  title: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "700",
+  heroIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 24,
+    backgroundColor: COLORS.red,
+    justifyContent: "center",
+    alignItems: "center",
   },
-
-  customerName: {
-    color: "#FFFFFF",
-    fontSize: 32,
+  logoutButton: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  logoutText: {
+    color: COLORS.white,
     fontWeight: "900",
-    marginTop: 4,
+  },
+  kicker: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  title: {
+    color: COLORS.white,
+    fontSize: 18,
+    fontWeight: "800",
+    marginTop: 8,
+  },
+  customerName: {
+    color: COLORS.white,
+    fontSize: 34,
+    fontWeight: "900",
+    marginTop: 2,
     marginBottom: 10,
   },
-
   subtitle: {
-    color: "#DCFCE7",
+    color: "#CBD5E1",
     lineHeight: 22,
     fontWeight: "700",
   },
-
-  quickActions: {
-    backgroundColor: "#FFFFFF",
+  heroStatus: {
+    marginTop: 16,
+    flexDirection: "row",
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  statusPillGood: {
+    backgroundColor: COLORS.greenSoft,
+  },
+  statusPillWarn: {
+    backgroundColor: COLORS.amberSoft,
+  },
+  statusPillText: {
+    fontWeight: "900",
+  },
+  statusPillTextGood: {
+    color: "#166534",
+  },
+  statusPillTextWarn: {
+    color: "#92400E",
+  },
+  metricsRow: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    paddingHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 14,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 20,
+    padding: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  metricIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  metricLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  accessCard: {
+    backgroundColor: COLORS.card,
     borderRadius: 24,
     padding: 18,
-    marginBottom: 20,
+    marginHorizontal: 18,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: "#DDE7D6",
+    borderColor: COLORS.border,
   },
-
+  accessHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 10,
+  },
+  accessScore: {
+    color: COLORS.red,
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  checkRow: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 15,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+  },
+  checkIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkGood: {
+    backgroundColor: COLORS.green,
+  },
+  checkMissing: {
+    backgroundColor: "#E5E7EB",
+  },
+  checkLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  checkValue: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  quickActions: {
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    padding: 18,
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
   sectionTitle: {
     fontSize: 22,
     fontWeight: "900",
-    color: "#102A1C",
+    color: COLORS.text,
+  },
+  sectionSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 3,
     marginBottom: 14,
   },
-
-  primaryButton: {
-    backgroundColor: "#166534",
-    borderRadius: 18,
-    padding: 18,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
+  actionGrid: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    flexWrap: "wrap",
     gap: 10,
-    marginBottom: 12,
   },
-
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-
-  secondaryButton: {
-    backgroundColor: "#F1F8EC",
-    borderRadius: 18,
-    padding: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 12,
+  actionButton: {
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: "#DDE7D6",
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: Platform.OS === "web" ? 0 : 10,
+    flexBasis: Platform.OS === "web" ? "48%" : "auto",
+    flexGrow: 1,
   },
-
-  secondaryButtonText: {
-    color: "#166534",
+  primaryAction: {
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
+    marginBottom: 12,
+  },
+  actionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryActionIcon: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  actionTitle: {
+    color: COLORS.text,
     fontWeight: "900",
     fontSize: 15,
   },
-
-  infoCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#DDE7D6",
+  primaryActionTitle: {
+    color: COLORS.white,
   },
-
-  infoTitle: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#102A1C",
-    marginBottom: 12,
-  },
-
-  infoText: {
-    color: "#647067",
+  actionSubtitle: {
+    color: COLORS.muted,
     fontWeight: "700",
-    marginBottom: 8,
-    lineHeight: 20,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  primaryActionSubtitle: {
+    color: "#FFE4E6",
+  },
+  infoCard: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 22,
+    padding: 16,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    flexDirection: "row",
+    gap: 12,
+  },
+  infoIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: "#FEF3C7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  infoTitle: {
+    color: "#92400E",
+    fontWeight: "900",
+    marginBottom: 6,
+    fontSize: 17,
+  },
+  infoText: {
+    color: "#78350F",
+    fontWeight: "700",
+    lineHeight: 21,
   },
 });
