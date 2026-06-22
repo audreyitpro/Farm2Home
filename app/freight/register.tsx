@@ -158,6 +158,7 @@ export default function FreightRegister() {
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [connectLoading, setConnectLoading] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
+  const [autoRouting, setAutoRouting] = useState(false);
 
   const [savedCarrierId, setSavedCarrierId] = useState("");
   const [freightId, setFreightId] = useState("");
@@ -221,6 +222,17 @@ export default function FreightRegister() {
     [hasActiveSubscription, hasStripeConnectAccount]
   );
 
+  const allFiveRequirementsFound = useMemo(() => {
+    return Boolean(
+      freightId &&
+        accountId &&
+        isStripeCustomerId(stripeCustomerId) &&
+        isStripeSubscriptionId(subscriptionId) &&
+        hasStripeConnectAccount &&
+        ["active", "trialing", "past_due"].includes(normalize(subscriptionStatus || "active"))
+    );
+  }, [freightId, accountId, stripeCustomerId, subscriptionId, subscriptionStatus, hasStripeConnectAccount]);
+
   const setupScore = useMemo(() => {
     let score = 0;
     if (freightId) score += 1;
@@ -234,6 +246,21 @@ export default function FreightRegister() {
   useEffect(() => {
     loadSavedFreight();
   }, []);
+
+  useEffect(() => {
+    if (!allFiveRequirementsFound) return;
+    if (saving || stripeLoading || connectLoading || syncingStripe || processingReturn || autoRouting) return;
+
+    autoOpenDashboardWhenReady();
+  }, [
+    allFiveRequirementsFound,
+    saving,
+    stripeLoading,
+    connectLoading,
+    syncingStripe,
+    processingReturn,
+    autoRouting,
+  ]);
 
   useEffect(() => {
     const stripeStatus = String(params?.stripe || params?.payment || "");
@@ -273,6 +300,43 @@ export default function FreightRegister() {
 
   function goDashboard() {
     router.replace("/freight/dashboard" as any);
+  }
+
+  async function autoOpenDashboardWhenReady() {
+    const finalId = savedCarrierId || freightId;
+
+    if (!finalId) return;
+    if (!allFiveRequirementsFound) return;
+
+    try {
+      setAutoRouting(true);
+
+      const readySnapshot = buildCurrentFreightSnapshot({
+        id: finalId,
+        freight_id: finalId,
+        account_id: accountId,
+        stripe_customer_id: stripeCustomerId,
+        stripe_subscription_id: subscriptionId,
+        subscription_id: subscriptionId,
+        subscription_status: subscriptionStatus || "active",
+        freight_account: freightAccount,
+        stripe_account_id: freightAccount,
+        account_active: true,
+        membership_status: "active",
+        application_submitted: true,
+      });
+
+      await saveFreightSnapshot(readySnapshot);
+
+      await markApplicationSubmittedAndOpenDashboard(finalId, {
+        stripeCustomerId,
+        stripeSubscriptionId: subscriptionId,
+        subscriptionStatus: subscriptionStatus || "active",
+      });
+    } catch (error: any) {
+      console.log("AUTO DASHBOARD ROUTE ERROR:", error?.message || error);
+      setAutoRouting(false);
+    }
   }
 
   async function forceRefreshFreightRegister() {
@@ -438,7 +502,13 @@ export default function FreightRegister() {
         setSubscriptionStatus(merged.subscription_status || subRow?.subscription_status || "active");
       }
 
-      if (mergedSubscriptionId && mergedConnectAccount) {
+      if (
+        dbCarrier.id &&
+        (merged.account_id || accountId) &&
+        pickStripeCustomerId(merged.stripe_customer_id, subRow?.stripe_customer_id, stripeCustomerId) &&
+        mergedSubscriptionId &&
+        mergedConnectAccount
+      ) {
         await markApplicationSubmittedAndOpenDashboard(dbCarrier.id, {
           stripeCustomerId: pickStripeCustomerId(merged.stripe_customer_id, subRow?.stripe_customer_id, stripeCustomerId),
           stripeSubscriptionId: mergedSubscriptionId,
@@ -2131,14 +2201,18 @@ export default function FreightRegister() {
                   <Text style={styles.title}>Freight Registration</Text>
                   <Text style={styles.subtitle}>Fina Admin-style setup for profile, compliance, membership, and payouts.</Text>
                 </View>
-                <TouchableOpacity style={styles.dashboardButton} onPress={registrationReadyForDashboard ? goDashboard : forceRefreshFreightRegister}>
-                  <Ionicons name={registrationReadyForDashboard ? "grid-outline" : "refresh-outline"} size={18} color={COLORS.white} />
-                  <Text style={styles.dashboardButtonText}>{registrationReadyForDashboard ? "Dashboard" : "Refresh"}</Text>
+                <TouchableOpacity style={styles.dashboardButton} onPress={allFiveRequirementsFound ? goDashboard : forceRefreshFreightRegister}>
+                  <Ionicons name={allFiveRequirementsFound ? "grid-outline" : "refresh-outline"} size={18} color={COLORS.white} />
+                  <Text style={styles.dashboardButtonText}>{allFiveRequirementsFound ? "Dashboard" : "Refresh"}</Text>
                 </TouchableOpacity>
               </View>
 
               {processingReturn ? (
                 <InfoBanner icon="sync-outline" title="Completing Stripe Registration" text="Please wait while we sync your Stripe subscription and submit your freight application." tone="warning" />
+              ) : null}
+
+              {autoRouting ? (
+                <InfoBanner icon="grid-outline" title="Opening freight dashboard" text="All 5 requirements were found. You are being logged into the freight dashboard." tone="success" />
               ) : null}
 
               <View style={styles.metricGrid}>
