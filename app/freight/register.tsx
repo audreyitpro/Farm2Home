@@ -243,6 +243,24 @@ export default function FreightRegister() {
     return score;
   }, [freightId, accountId, stripeCustomerId, subscriptionId, freightAccount]);
 
+  function objectHasCompleteFreightSetup(row: any) {
+    return Boolean(
+      clean(row?.id || row?.freightId || row?.freight_id || freightId || savedCarrierId) &&
+        clean(row?.account_id || row?.accountId || accountId) &&
+        pickStripeCustomerId(row?.stripe_customer_id, row?.stripeCustomerId, stripeCustomerId) &&
+        pickStripeSubscriptionId(row?.stripe_subscription_id, row?.subscription_id, row?.stripeSubscriptionId, row?.subscriptionId, subscriptionId) &&
+        pickStripeConnectAccountId(row?.freight_account, row?.stripe_account_id, row?.freightAccount, row?.stripeAccountId, freightAccount)
+    );
+  }
+
+  function objectHasActiveSubscription(row: any) {
+    return Boolean(
+      pickStripeSubscriptionId(row?.stripe_subscription_id, row?.subscription_id, row?.stripeSubscriptionId, row?.subscriptionId, subscriptionId) &&
+        ["active", "trialing", "past_due"].includes(normalize(row?.subscription_status || row?.subscriptionStatus || subscriptionStatus || "active"))
+    );
+  }
+
+
   useEffect(() => {
     loadSavedFreight();
   }, []);
@@ -1728,10 +1746,35 @@ export default function FreightRegister() {
     try {
       setStripeLoading(true);
 
-      const savedProfile = await saveFreightProfile(false);
+      const restoredBeforeCheckout = await retrieveMissingStripeInfo(false);
+
+      if (objectHasCompleteFreightSetup(restoredBeforeCheckout)) {
+        await markApplicationSubmittedAndOpenDashboard(
+          restoredBeforeCheckout?.id || restoredBeforeCheckout?.freight_id || savedCarrierId || freightId,
+          {
+            stripeCustomerId: pickStripeCustomerId(restoredBeforeCheckout?.stripe_customer_id, restoredBeforeCheckout?.stripeCustomerId, stripeCustomerId),
+            stripeSubscriptionId: pickStripeSubscriptionId(restoredBeforeCheckout?.stripe_subscription_id, restoredBeforeCheckout?.subscription_id, subscriptionId),
+            subscriptionStatus: restoredBeforeCheckout?.subscription_status || restoredBeforeCheckout?.subscriptionStatus || subscriptionStatus || "active",
+          }
+        );
+        return;
+      }
+
+      if (objectHasActiveSubscription(restoredBeforeCheckout)) {
+        Alert.alert(
+          "Membership Already Active",
+          "Your membership subscription is already saved. Use Connect Stripe Payouts if banking still needs setup."
+        );
+        setStep(4);
+        return;
+      }
+
+      const savedProfile = restoredBeforeCheckout?.id
+        ? restoredBeforeCheckout
+        : await saveFreightProfile(false);
 
       if (!savedProfile?.id) {
-        Alert.alert("Save Required", "Freight profile could not be saved.");
+        Alert.alert("Save Required", "Freight profile could not be saved. Enter the required registration fields, then try again.");
         return;
       }
 
@@ -1883,6 +1926,28 @@ export default function FreightRegister() {
   }
 
   async function startSubscriptionCheckout() {
+    if (stripeLoading || saving || syncingStripe) return;
+
+    const restored = await retrieveMissingStripeInfo(false);
+
+    if (objectHasCompleteFreightSetup(restored)) {
+      await markApplicationSubmittedAndOpenDashboard(restored?.id || restored?.freight_id || savedCarrierId || freightId, {
+        stripeCustomerId: pickStripeCustomerId(restored?.stripe_customer_id, restored?.stripeCustomerId, stripeCustomerId),
+        stripeSubscriptionId: pickStripeSubscriptionId(restored?.stripe_subscription_id, restored?.subscription_id, subscriptionId),
+        subscriptionStatus: restored?.subscription_status || restored?.subscriptionStatus || subscriptionStatus || "active",
+      });
+      return;
+    }
+
+    if (objectHasActiveSubscription(restored)) {
+      Alert.alert(
+        "Membership Already Active",
+        "Your Stripe membership is already active. Complete or update Stripe Connect banking if needed."
+      );
+      setStep(4);
+      return;
+    }
+
     await handleStripeCheckout();
   }
 
@@ -2050,12 +2115,13 @@ export default function FreightRegister() {
   async function startStripeConnectOnboarding() {
     if (connectLoading || saving) return;
 
-    const preSaveSnapshot = buildCurrentFreightSnapshot();
+    const restoredBeforeConnect = await retrieveMissingStripeInfo(false);
+    const preSaveSnapshot = buildCurrentFreightSnapshot(restoredBeforeConnect || {});
     await saveFreightSnapshot(preSaveSnapshot);
 
-    let finalFreightId = savedCarrierId || freightId || preSaveSnapshot.id;
-    let finalAccountId = accountId || preSaveSnapshot.account_id || preSaveSnapshot.accountId;
-    let finalEmail = normalize(email || preSaveSnapshot.email);
+    let finalFreightId = savedCarrierId || freightId || preSaveSnapshot.id || restoredBeforeConnect?.id || restoredBeforeConnect?.freight_id;
+    let finalAccountId = accountId || preSaveSnapshot.account_id || preSaveSnapshot.accountId || restoredBeforeConnect?.account_id || restoredBeforeConnect?.accountId;
+    let finalEmail = normalize(email || preSaveSnapshot.email || restoredBeforeConnect?.email);
 
     try {
       setConnectLoading(true);
@@ -2372,10 +2438,10 @@ export default function FreightRegister() {
 
           <View style={styles.actionStack}>
             <ActionButton icon="save-outline" label="Save Registration" onPress={saveRegistration} loading={saving} />
-            <ActionButton icon="card-outline" label={hasActiveSubscription ? "Membership Active" : "Start Stripe Membership"} onPress={startSubscriptionCheckout} loading={stripeLoading || saving} variant="dark" disabled={hasActiveSubscription || stripeLoading} />
+            <ActionButton icon="card-outline" label={hasActiveSubscription ? "Membership Active" : "Start Stripe Membership"} onPress={startSubscriptionCheckout} loading={stripeLoading || saving} variant="dark" disabled={stripeLoading} />
             <ActionButton icon="business-outline" label={hasStripeConnectAccount ? "Open / Update Stripe Banking" : "Connect Stripe Payouts"} onPress={startStripeConnectOnboarding} loading={connectLoading || saving} variant="outline" disabled={connectLoading} />
             <ActionButton icon="refresh-outline" label="Find / Retrieve Missing Stripe Info" onPress={async () => {
-              await retrieveMissingStripeInfo(false);
+              await retrieveMissingStripeInfo(true);
             }} loading={syncingStripe} variant="secondary" />
           </View>
         </FinaPanel>
