@@ -200,7 +200,7 @@ function buildFreightUserFromSubscriptionOnly(authUserId: string, cleanEmail: st
     profile_id: profile?.id || id,
     profileId: profile?.id || id,
     role: "freight",
-    account_id: clean(profile?.account_id || subscription?.freight_account || ""),
+    account_id: clean(profile?.account_id || ""),
     company_name: profile?.company_name || profile?.business_name || subscription?.name || "Freight Carrier",
     business_name: profile?.business_name || profile?.company_name || subscription?.name || "Freight Carrier",
     contact_name: profile?.full_name || profile?.name || subscription?.name || "",
@@ -731,26 +731,26 @@ export default function FreightLoginScreen() {
     }
 
     const finalCustomerId = pickCus(
+      subscription?.stripe_customer_id,
       user.stripe_customer_id,
-      user.stripeCustomerId,
-      subscription?.stripe_customer_id
+      user.stripeCustomerId
     );
 
     const finalSubscriptionId = pickSub(
+      subscription?.stripe_subscription_id,
       user.stripe_subscription_id,
       user.subscription_id,
       user.stripeSubscriptionId,
-      user.subscriptionId,
-      subscription?.stripe_subscription_id
+      user.subscriptionId
     );
 
     const finalConnectAccount = pickAcct(
+      subscription?.stripe_account_id,
+      subscription?.freight_account,
       user.freight_account,
       user.stripe_account_id,
       user.freightAccount,
-      user.stripeAccountId,
-      subscription?.freight_account,
-      subscription?.stripe_account_id
+      user.stripeAccountId
     );
 
     const finalSubscriptionStatus =
@@ -1010,13 +1010,17 @@ export default function FreightLoginScreen() {
       })
       .eq("id", user.id);
 
-    await supabase
-      .from("profiles")
-      .update({
-        account_active: true,
-        last_login_at: now,
-      })
-      .eq("id", user.id);
+    try {
+      await supabase
+        .from("profiles")
+        .update({
+          account_active: true,
+          last_login_at: now,
+        })
+        .or(`id.eq.${user.id},auth_user_id.eq.${user.id},profile_id.eq.${user.id}`);
+    } catch (error) {
+      console.log("profiles last login update skipped:", error);
+    }
   }
 
   async function openFreightDashboard(user: FreightUser) {
@@ -1093,6 +1097,57 @@ export default function FreightLoginScreen() {
 
       if (!userId) {
         Alert.alert("Login Error", "Unable to confirm freight account.");
+        return;
+      }
+
+      // CRITICAL FIX:
+      // Stripe completion is stored in freight_subscriptions. Check that table FIRST.
+      // If freight_subscriptions has cus_ + sub_ + acct_, the user is complete and must go to dashboard.
+      const subscriptionFirst = await findSubscription(userId, cleanEmail);
+      const subscriptionCustomerId = pickCus(subscriptionFirst?.stripe_customer_id);
+      const subscriptionSubscriptionId = pickSub(subscriptionFirst?.stripe_subscription_id);
+      const subscriptionConnectAccount = pickAcct(subscriptionFirst?.stripe_account_id, subscriptionFirst?.freight_account);
+
+      if (subscriptionCustomerId && subscriptionSubscriptionId && subscriptionConnectAccount) {
+        const existingProfile = await findProfile(userId, cleanEmail);
+
+        const subscriptionUser = mapCarrierToFreightUser(
+          {
+            id: userId,
+            freight_id: userId,
+            auth_user_id: userId,
+            profile_id: userId,
+            role: "freight",
+            account_id: existingProfile?.account_id || "",
+            company_name: existingProfile?.company_name || existingProfile?.business_name || subscriptionFirst?.name || "Freight Carrier",
+            business_name: existingProfile?.business_name || existingProfile?.company_name || subscriptionFirst?.name || "Freight Carrier",
+            contact_name: existingProfile?.full_name || existingProfile?.name || subscriptionFirst?.name || "",
+            full_name: existingProfile?.full_name || existingProfile?.name || subscriptionFirst?.name || "",
+            email: cleanEmail,
+            phone: existingProfile?.phone || "",
+            username: existingProfile?.username || subscriptionFirst?.username || "",
+            account_active: true,
+            approved: true,
+            registration_complete: true,
+            application_submitted: true,
+            membership_status: "active",
+            subscription_status: subscriptionFirst?.subscription_status || "active",
+            stripe_customer_id: subscriptionCustomerId,
+            stripe_subscription_id: subscriptionSubscriptionId,
+            subscription_id: subscriptionSubscriptionId,
+            freight_account: subscriptionConnectAccount,
+            stripe_account_id: subscriptionConnectAccount,
+          },
+          existingProfile,
+          subscriptionFirst
+        );
+
+        const completedUser = await completeFreightLoginFromSubscription(subscriptionUser, userId, cleanEmail);
+        const activeCompletedUser = await activateCompletedFreightAccount(completedUser);
+
+        setLastCheckedUser(activeCompletedUser);
+        await saveFreightSession(activeCompletedUser);
+        await openFreightDashboard(activeCompletedUser);
         return;
       }
 
