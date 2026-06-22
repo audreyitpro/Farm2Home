@@ -377,6 +377,7 @@ export default function FreightLoginScreen() {
       return [
         { label: "Freight Profile", complete: false, value: "Login to check" },
         { label: "Static Account", complete: false, value: "Login to check" },
+        { label: "Stripe Customer", complete: false, value: "Login to check" },
         { label: "Subscription", complete: false, value: "Login to check" },
         { label: "Stripe Connect", complete: false, value: "Login to check" },
       ];
@@ -416,20 +417,32 @@ export default function FreightLoginScreen() {
     const sessionUser = {
       ...user,
       role: "freight" as const,
+      freightId: user.freightId || user.id,
+      freight_id: user.freight_id || user.id,
+      accountId: user.accountId || user.account_id,
+      account_id: user.account_id || user.accountId,
+      stripeCustomerId: user.stripeCustomerId || user.stripe_customer_id,
+      stripe_customer_id: user.stripe_customer_id || user.stripeCustomerId,
+      stripeSubscriptionId: user.stripeSubscriptionId || user.stripe_subscription_id || user.subscription_id,
+      stripe_subscription_id: user.stripe_subscription_id || user.stripeSubscriptionId || user.subscription_id,
+      subscriptionId: user.subscriptionId || user.subscription_id || user.stripe_subscription_id,
+      subscription_id: user.subscription_id || user.subscriptionId || user.stripe_subscription_id,
+      freightAccount: user.freightAccount || user.freight_account || user.stripe_account_id,
+      freight_account: user.freight_account || user.freightAccount || user.stripe_account_id,
+      stripeAccountId: user.stripeAccountId || user.stripe_account_id || user.freight_account,
+      stripe_account_id: user.stripe_account_id || user.stripeAccountId || user.freight_account,
       accountActive: user.accountActive !== false,
       account_active: user.account_active !== false,
       updatedAt: now,
       updated_at: now,
     };
 
-    await AsyncStorage.multiRemove([
-      "pendingFreightCarrier",
-      "pendingFreightSubscription",
-      "pendingFreightRegister",
-      "pendingFreightProfile",
-    ]);
-
+    // IMPORTANT:
+    // Do NOT remove pendingFreightCarrier/pendingFreightProfile here.
+    // Registration uses those keys to repopulate the form if routing falls back.
     await AsyncStorage.multiSet([
+      ["pendingFreightCarrier", JSON.stringify(sessionUser)],
+      ["pendingFreightProfile", JSON.stringify(sessionUser)],
       ["currentFreight", JSON.stringify(sessionUser)],
       ["currentFreightCarrier", JSON.stringify(sessionUser)],
       ["currentFreightUser", JSON.stringify(sessionUser)],
@@ -438,7 +451,7 @@ export default function FreightLoginScreen() {
       ["userRole", "freight"],
       ["currentUserRole", "freight"],
       ["lastLoginRole", "freight"],
-      ["lastFreightDashboardReady", "true"],
+      ["lastFreightDashboardReady", hasDashboardAccess(sessionUser) ? "true" : "false"],
     ]);
 
     return sessionUser;
@@ -735,6 +748,7 @@ export default function FreightLoginScreen() {
 
     routingLockedRef.current = true;
     setNavigatingToDashboard(true);
+    setLastCheckedUser(user);
 
     const savedUser = await saveFreightSession(user);
     await touchLastLogin(savedUser);
@@ -776,11 +790,26 @@ export default function FreightLoginScreen() {
       const mappedUser = await findFreightProfile(userId, cleanEmail);
 
       if (!mappedUser) {
+        await AsyncStorage.multiSet([
+          ["pendingFreightCarrier", JSON.stringify({
+            id: userId,
+            freightId: userId,
+            freight_id: userId,
+            email: cleanEmail,
+            role: "freight",
+          })],
+          ["currentUserRole", "freight"],
+          ["userRole", "freight"],
+        ]);
+
         Alert.alert(
           "Freight Profile Missing",
           "Your login exists, but no freight profile was found. Please complete freight registration."
         );
-        router.replace(REGISTER_ROUTE as any);
+        router.replace({
+          pathname: REGISTER_ROUTE as any,
+          params: { freightId: userId, email: cleanEmail },
+        });
         return;
       }
 
@@ -827,6 +856,8 @@ export default function FreightLoginScreen() {
         "Finish Freight Setup",
         `Your freight profile was found, but this setup is missing: ${missingItems.join(", ")}. You will be taken to registration to finish setup.`
       );
+
+      await saveFreightSession(activeMappedUser);
 
       router.replace({
         pathname: REGISTER_ROUTE as any,
