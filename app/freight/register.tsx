@@ -174,6 +174,22 @@ async function parseApiResponse(response: Response) {
   }
 }
 
+function getCheckoutUrl(data: any) {
+  return clean(
+    data?.url ||
+      data?.checkoutUrl ||
+      data?.checkout_url ||
+      data?.sessionUrl ||
+      data?.session_url ||
+      data?.checkoutSessionUrl ||
+      data?.checkout_session_url ||
+      data?.accountLink ||
+      data?.account_link ||
+      data?.accountLinkUrl ||
+      data?.account_link_url
+  );
+}
+
 async function openUrl(url: string) {
   if (!url) return;
   if (Platform.OS === "web") {
@@ -1335,15 +1351,16 @@ export default function FreightRegister() {
       });
 
       const json = await parseApiResponse(response);
+      const url = getCheckoutUrl(json);
 
-      if (!response.ok || !json.success) {
-        Alert.alert("Stripe Error", json.error || "Unable to open Stripe membership checkout.");
+      if (!response.ok || (!json.success && !url && !json.alreadySubscribed)) {
+        console.log("FREIGHT STRIPE ERROR RESPONSE:", json);
+        Alert.alert("Stripe Error", json.error || json.message || "Unable to open Stripe membership checkout.");
         return;
       }
 
-      const customer = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id);
-      const sub = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id);
-      const url = clean(json.url || json.checkoutUrl || json.checkout_url);
+      const customer = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id, json.customerId, json.customer_id);
+      const sub = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id, json.subscriptionId, json.subscription_id);
 
       if (customer) setStripeCustomerId(customer);
       if (sub) setSubscriptionId(sub);
@@ -1354,7 +1371,8 @@ export default function FreightRegister() {
       await saveFreightUserRow(saved.id, saved.account_id);
 
       if (!url) {
-        Alert.alert("Stripe Error", "Stripe checkout URL was not returned.");
+        console.log("FREIGHT STRIPE CHECKOUT RESPONSE:", json);
+        Alert.alert("Stripe Error", "Stripe checkout URL was not returned from backend.");
         return;
       }
 
@@ -1420,7 +1438,7 @@ export default function FreightRegister() {
         await saveFreightUserRow(saved.id, saved.account_id);
       }
 
-      const url = clean(json.url || json.accountLink || json.account_link);
+      const url = getCheckoutUrl(json);
       if (!url) {
         Alert.alert("Connect Error", "Stripe Connect URL was not returned.");
         return;
