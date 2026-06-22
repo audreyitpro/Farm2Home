@@ -32,16 +32,21 @@ const APP_URL =
   process.env.EXPO_PUBLIC_APP_URL || "https://farm2home-rho.vercel.app";
 
 const COLORS = {
-  bg: "#F3F4F6",
+  bg: "#F6F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  green: "#16A34A",
-  text: "#111827",
-  muted: "#6B7280",
+  surface: "#F8FAFC",
+  surface2: "#F1F5F9",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  primarySoft: "#EEF2FF",
+  accent: "#10B981",
+  warning: "#F59E0B",
+  danger: "#EF4444",
+  text: "#101828",
+  muted: "#667085",
   border: "#E5E7EB",
-  amber: "#D97706",
+  dark: "#111827",
+  white: "#FFFFFF",
 };
 
 const SECURITY_QUESTIONS = [
@@ -55,6 +60,24 @@ const SECURITY_QUESTIONS = [
   "What street did you grow up on?",
   "What is your favorite teacher’s name?",
   "What was your first delivery vehicle?",
+];
+
+const STEPS = [
+  { key: "account", title: "Account", icon: "person-outline" },
+  { key: "company", title: "Company", icon: "business-outline" },
+  { key: "authority", title: "Authority", icon: "shield-checkmark-outline" },
+  { key: "security", title: "Security", icon: "key-outline" },
+  { key: "stripe", title: "Stripe", icon: "card-outline" },
+  { key: "review", title: "Review", icon: "checkmark-done-outline" },
+] as const;
+
+const EQUIPMENT_OPTIONS = [
+  { key: "dry_van", label: "Dry Van", icon: "cube-outline" },
+  { key: "reefer", label: "Reefer", icon: "snow-outline" },
+  { key: "box_truck", label: "Box Truck", icon: "file-tray-stacked-outline" },
+  { key: "flatbed", label: "Flatbed", icon: "layers-outline" },
+  { key: "livestock", label: "Livestock", icon: "paw-outline" },
+  { key: "produce", label: "Produce", icon: "leaf-outline" },
 ];
 
 function clean(value: any) {
@@ -105,6 +128,15 @@ function makeFallbackAccountId() {
   return `Freight_${Date.now()}`;
 }
 
+async function parseApiResponse(response: Response) {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { success: false, error: text || "Invalid backend response." };
+  }
+}
+
 async function saveFreightSession(carrier: any) {
   await AsyncStorage.setItem("pendingFreightCarrier", JSON.stringify(carrier));
   await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
@@ -118,6 +150,7 @@ async function saveFreightSession(carrier: any) {
 export default function FreightRegister() {
   const params = useLocalSearchParams();
 
+  const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
@@ -163,31 +196,36 @@ export default function FreightRegister() {
   const [authorityActive, setAuthorityActive] = useState(false);
   const [insuranceActive, setInsuranceActive] = useState(false);
   const [licensedLivestock, setLicensedLivestock] = useState(false);
-  const [licensedRefrigeratedFood, setLicensedRefrigeratedFood] =
-    useState(false);
+  const [licensedRefrigeratedFood, setLicensedRefrigeratedFood] = useState(false);
+  const [selectedEquipment, setSelectedEquipment] = useState<string[]>([]);
 
   const selectedQuestions = useMemo(
-    () =>
-      [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
+    () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
   const hasActiveSubscription = useMemo(() => {
     return Boolean(
       isStripeSubscriptionId(subscriptionId) &&
-        ["active", "trialing", "past_due"].includes(
-          normalize(subscriptionStatus || "active")
-        )
+        ["active", "trialing", "past_due"].includes(normalize(subscriptionStatus || "active"))
     );
   }, [subscriptionId, subscriptionStatus]);
 
-  const hasStripeConnectAccount = useMemo(() => {
-    return isStripeConnectAccountId(freightAccount);
-  }, [freightAccount]);
+  const hasStripeConnectAccount = useMemo(() => isStripeConnectAccountId(freightAccount), [freightAccount]);
+  const registrationReadyForDashboard = useMemo(
+    () => Boolean(hasActiveSubscription && hasStripeConnectAccount),
+    [hasActiveSubscription, hasStripeConnectAccount]
+  );
 
-  const registrationReadyForDashboard = useMemo(() => {
-    return Boolean(hasActiveSubscription && hasStripeConnectAccount);
-  }, [hasActiveSubscription, hasStripeConnectAccount]);
+  const setupScore = useMemo(() => {
+    let score = 0;
+    if (freightId) score += 1;
+    if (accountId) score += 1;
+    if (isStripeCustomerId(stripeCustomerId)) score += 1;
+    if (isStripeSubscriptionId(subscriptionId)) score += 1;
+    if (isStripeConnectAccountId(freightAccount)) score += 1;
+    return score;
+  }, [freightId, accountId, stripeCustomerId, subscriptionId, freightAccount]);
 
   useEffect(() => {
     loadSavedFreight();
@@ -195,28 +233,43 @@ export default function FreightRegister() {
 
   useEffect(() => {
     const stripeStatus = String(params?.stripe || params?.payment || "");
-    const returnedFreightId = String(
-      params?.freightId || params?.freight_id || ""
-    );
+    const returnedFreightId = String(params?.freightId || params?.freight_id || "");
 
     if (stripeStatus === "success") {
       handleStripeSuccessReturn(returnedFreightId);
     }
   }, [params?.stripe, params?.payment, params?.freightId, params?.freight_id]);
 
+  function toggleEquipment(key: string) {
+    setSelectedEquipment((prev) =>
+      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
+    );
+  }
+
+  function goNext() {
+    setStep((prev) => Math.min(prev + 1, STEPS.length - 1));
+  }
+
+  function goBack() {
+    setStep((prev) => Math.max(prev - 1, 0));
+  }
+
+  function goDashboard() {
+    router.replace("/freight/dashboard" as any);
+  }
+
   async function forceRefreshFreightRegister() {
     try {
       setSyncingStripe(true);
-
-      await AsyncStorage.removeItem("pendingFreightCarrier");
-      await AsyncStorage.removeItem("currentFreightCarrier");
-      await AsyncStorage.removeItem("currentFreight");
-      await AsyncStorage.removeItem("currentFreightUser");
-      await AsyncStorage.removeItem("currentUser");
-
+      await AsyncStorage.multiRemove([
+        "pendingFreightCarrier",
+        "currentFreightCarrier",
+        "currentFreight",
+        "currentFreightUser",
+        "currentUser",
+      ]);
       await supabase.auth.refreshSession();
       await loadSavedFreight();
-
       Alert.alert("Updated", "Freight registration refreshed from Supabase.");
     } catch (error: any) {
       Alert.alert("Refresh Error", error?.message || "Unable to refresh registration.");
@@ -237,7 +290,6 @@ export default function FreightRegister() {
       }
 
       await loadSavedFreight();
-
       const synced = await forceSyncFreightSubscription(true, returnedFreightId);
 
       const syncedSubscriptionId = pickStripeSubscriptionId(
@@ -250,30 +302,18 @@ export default function FreightRegister() {
       if (!syncedSubscriptionId) {
         Alert.alert(
           "Payment Processing",
-          "Stripe payment completed, but the subscription is still syncing. Tap Find / Retrieve Missing Stripe Info."
+          "Stripe payment completed, but the subscription is still syncing. Tap Find Stripe Info."
         );
         return;
       }
 
-      await markApplicationSubmittedAndOpenDashboard(
-        returnedFreightId || savedCarrierId || freightId,
-        {
-          stripeCustomerId: pickStripeCustomerId(
-            synced?.stripeCustomerId,
-            synced?.stripe_customer_id
-          ),
-          stripeSubscriptionId: syncedSubscriptionId,
-          subscriptionStatus:
-            synced?.subscriptionStatus ||
-            synced?.subscription_status ||
-            "active",
-        }
-      );
+      await markApplicationSubmittedAndOpenDashboard(returnedFreightId || savedCarrierId || freightId, {
+        stripeCustomerId: pickStripeCustomerId(synced?.stripeCustomerId, synced?.stripe_customer_id),
+        stripeSubscriptionId: syncedSubscriptionId,
+        subscriptionStatus: synced?.subscriptionStatus || synced?.subscription_status || "active",
+      });
     } catch (error: any) {
-      Alert.alert(
-        "Stripe Return Error",
-        error?.message || "Unable to complete freight registration."
-      );
+      Alert.alert("Stripe Return Error", error?.message || "Unable to complete freight registration.");
     } finally {
       setProcessingReturn(false);
     }
@@ -287,17 +327,13 @@ export default function FreightRegister() {
         (await AsyncStorage.getItem("currentFreightUser"));
 
       let localCarrier: any = null;
-
       if (saved) {
         localCarrier = JSON.parse(saved);
         hydrateForm(localCarrier);
       }
 
       const { data: authData } = await supabase.auth.getUser();
-      const authEmail = normalize(
-        authData?.user?.email || localCarrier?.email || email
-      );
-
+      const authEmail = normalize(authData?.user?.email || localCarrier?.email || email);
       if (!authEmail) return;
 
       const { data: dbCarrier, error } = await supabase
@@ -312,50 +348,49 @@ export default function FreightRegister() {
       }
 
       if (dbCarrier?.id) {
-        let subscriptionRow: any = null;
-
         const { data: subData } = await supabase
           .from("freight_subscriptions")
           .select("*")
           .or(`freight_id.eq.${dbCarrier.id},freight_email.eq.${normalize(dbCarrier.email)}`)
           .maybeSingle();
 
-        if (subData) subscriptionRow = subData;
-
-        const merged = {
-          ...dbCarrier,
-          stripe_customer_id: pickStripeCustomerId(
-            dbCarrier.stripe_customer_id,
-            subscriptionRow?.stripe_customer_id
-          ),
-          stripe_subscription_id: pickStripeSubscriptionId(
-            dbCarrier.stripe_subscription_id,
-            dbCarrier.subscription_id,
-            subscriptionRow?.stripe_subscription_id
-          ),
-          subscription_id: pickStripeSubscriptionId(
-            dbCarrier.subscription_id,
-            dbCarrier.stripe_subscription_id,
-            subscriptionRow?.stripe_subscription_id
-          ),
-          subscription_status:
-            dbCarrier.subscription_status ||
-            subscriptionRow?.subscription_status ||
-            "",
-          freight_account: pickStripeConnectAccountId(
-            dbCarrier.freight_account,
-            subscriptionRow?.freight_account,
-            dbCarrier.stripe_account_id,
-            subscriptionRow?.stripe_account_id
-          ),
-        };
-
+        const merged = mergeCarrierAndSubscription(dbCarrier, subData);
         hydrateForm(merged);
         await saveHydratedSession(merged);
       }
     } catch (error) {
       console.log("LOAD FREIGHT SESSION ERROR:", error);
     }
+  }
+
+  function mergeCarrierAndSubscription(carrier: any, subscriptionRow?: any) {
+    return {
+      ...carrier,
+      stripe_customer_id: pickStripeCustomerId(carrier?.stripe_customer_id, subscriptionRow?.stripe_customer_id),
+      stripe_subscription_id: pickStripeSubscriptionId(
+        carrier?.stripe_subscription_id,
+        carrier?.subscription_id,
+        subscriptionRow?.stripe_subscription_id
+      ),
+      subscription_id: pickStripeSubscriptionId(
+        carrier?.subscription_id,
+        carrier?.stripe_subscription_id,
+        subscriptionRow?.stripe_subscription_id
+      ),
+      subscription_status: carrier?.subscription_status || subscriptionRow?.subscription_status || "",
+      freight_account: pickStripeConnectAccountId(
+        carrier?.freight_account,
+        carrier?.stripe_account_id,
+        subscriptionRow?.freight_account,
+        subscriptionRow?.stripe_account_id
+      ),
+      stripe_account_id: pickStripeConnectAccountId(
+        carrier?.stripe_account_id,
+        carrier?.freight_account,
+        subscriptionRow?.stripe_account_id,
+        subscriptionRow?.freight_account
+      ),
+    };
   }
 
   async function saveHydratedSession(carrier: any) {
@@ -379,52 +414,24 @@ export default function FreightRegister() {
       business_name: carrier.business_name || carrier.company_name || "",
       contactName: carrier.contact_name || carrier.name || "",
       contact_name: carrier.contact_name || carrier.name || "",
-      stripeCustomerId: pickStripeCustomerId(
-        carrier.stripe_customer_id,
-        carrier.stripeCustomerId
-      ),
-      stripe_customer_id: pickStripeCustomerId(
-        carrier.stripe_customer_id,
-        carrier.stripeCustomerId
-      ),
+      stripeCustomerId: pickStripeCustomerId(carrier.stripe_customer_id, carrier.stripeCustomerId),
+      stripe_customer_id: pickStripeCustomerId(carrier.stripe_customer_id, carrier.stripeCustomerId),
       freightAccount: connectAccount,
       freight_account: connectAccount,
       stripeAccountId: connectAccount,
       stripe_account_id: connectAccount,
-      stripeSubscriptionId: pickStripeSubscriptionId(
-        carrier.stripe_subscription_id,
-        carrier.subscription_id
-      ),
-      stripe_subscription_id: pickStripeSubscriptionId(
-        carrier.stripe_subscription_id,
-        carrier.subscription_id
-      ),
-      subscriptionId: pickStripeSubscriptionId(
-        carrier.subscription_id,
-        carrier.stripe_subscription_id
-      ),
-      subscription_id: pickStripeSubscriptionId(
-        carrier.subscription_id,
-        carrier.stripe_subscription_id
-      ),
+      stripeSubscriptionId: pickStripeSubscriptionId(carrier.stripe_subscription_id, carrier.subscription_id),
+      stripe_subscription_id: pickStripeSubscriptionId(carrier.stripe_subscription_id, carrier.subscription_id),
+      subscriptionId: pickStripeSubscriptionId(carrier.subscription_id, carrier.stripe_subscription_id),
+      subscription_id: pickStripeSubscriptionId(carrier.subscription_id, carrier.stripe_subscription_id),
       subscriptionStatus: carrier.subscription_status || "",
       role: "freight",
     });
   }
 
   function hydrateStripeOnly(row: any) {
-    const rowCustomerId = pickStripeCustomerId(
-      row.stripe_customer_id,
-      row.stripeCustomerId,
-      stripeCustomerId
-    );
-
-    const rowSubscriptionId = pickStripeSubscriptionId(
-      row.stripe_subscription_id,
-      row.subscription_id,
-      subscriptionId
-    );
-
+    const rowCustomerId = pickStripeCustomerId(row.stripe_customer_id, row.stripeCustomerId, stripeCustomerId);
+    const rowSubscriptionId = pickStripeSubscriptionId(row.stripe_subscription_id, row.subscription_id, subscriptionId);
     const rowFreightAccount = pickStripeConnectAccountId(
       row.freight_account,
       row.freightAccount,
@@ -437,9 +444,7 @@ export default function FreightRegister() {
     setSubscriptionId(rowSubscriptionId);
     setSubscriptionStatus(row.subscription_status || subscriptionStatus || "");
     setFreightAccount(rowFreightAccount);
-
     if (row.account_id) setAccountId(row.account_id);
-
     if (row.id) {
       setFreightId(row.id);
       setSavedCarrierId(row.id);
@@ -447,21 +452,14 @@ export default function FreightRegister() {
   }
 
   function hydrateForm(carrier: any) {
-    const dbFreightId =
-      carrier.id || carrier.freightId || carrier.freight_id || "";
-
-    const dbStripeCustomerId = pickStripeCustomerId(
-      carrier.stripe_customer_id,
-      carrier.stripeCustomerId
-    );
-
+    const dbFreightId = carrier.id || carrier.freightId || carrier.freight_id || "";
+    const dbStripeCustomerId = pickStripeCustomerId(carrier.stripe_customer_id, carrier.stripeCustomerId);
     const dbSubscriptionId = pickStripeSubscriptionId(
       carrier.subscriptionId,
       carrier.subscription_id,
       carrier.stripeSubscriptionId,
       carrier.stripe_subscription_id
     );
-
     const dbFreightAccount = pickStripeConnectAccountId(
       carrier.freight_account,
       carrier.freightAccount,
@@ -474,21 +472,11 @@ export default function FreightRegister() {
     setAccountId(carrier.accountId || carrier.account_id || "");
     setStripeCustomerId(dbStripeCustomerId);
     setSubscriptionId(dbSubscriptionId);
-    setSubscriptionStatus(
-      carrier.subscriptionStatus || carrier.subscription_status || ""
-    );
+    setSubscriptionStatus(carrier.subscriptionStatus || carrier.subscription_status || "");
     setFreightAccount(dbFreightAccount);
 
-    setCompanyName(
-      carrier.companyName || carrier.company_name || carrier.business_name || ""
-    );
-    setContactName(
-      carrier.contactName ||
-        carrier.contact_name ||
-        carrier.full_name ||
-        carrier.name ||
-        ""
-    );
+    setCompanyName(carrier.companyName || carrier.company_name || carrier.business_name || "");
+    setContactName(carrier.contactName || carrier.contact_name || carrier.full_name || carrier.name || "");
     setEmail(carrier.email || "");
     setPhone(carrier.phone || "");
     setUsername(carrier.username || "");
@@ -499,62 +487,33 @@ export default function FreightRegister() {
     setStateValue(carrier.state || "");
     setZipCode(carrier.zipCode || carrier.zip_code || "");
 
-    setMdotNumber(
-      carrier.mdotNumber || carrier.mdot_number || carrier.dot_number || ""
-    );
+    setMdotNumber(carrier.mdotNumber || carrier.mdot_number || carrier.dot_number || "");
     setMcNumber(carrier.mcNumber || carrier.mc_number || "");
-    setInsuranceProvider(
-      carrier.insuranceProvider || carrier.insurance_provider || ""
-    );
-    setInsurancePolicyNumber(
-      carrier.insurancePolicyNumber || carrier.insurance_policy_number || ""
-    );
+    setInsuranceProvider(carrier.insuranceProvider || carrier.insurance_provider || "");
+    setInsurancePolicyNumber(carrier.insurancePolicyNumber || carrier.insurance_policy_number || "");
 
     setAuthorityActive(Boolean(carrier.authorityActive || carrier.authority_active));
     setInsuranceActive(Boolean(carrier.insuranceActive || carrier.insurance_active));
-    setLicensedLivestock(
-      Boolean(carrier.licensedLivestock || carrier.licensed_livestock)
-    );
+    setLicensedLivestock(Boolean(carrier.licensedLivestock || carrier.licensed_livestock));
     setLicensedRefrigeratedFood(
-      Boolean(
-        carrier.licensedRefrigeratedFood || carrier.licensed_refrigerated_food
-      )
+      Boolean(carrier.licensedRefrigeratedFood || carrier.licensed_refrigerated_food)
     );
 
-    setSecurityQuestion1(
-      carrier.security_question_1 || carrier.securityQuestion1 || ""
-    );
-    setSecurityQuestion2(
-      carrier.security_question_2 || carrier.securityQuestion2 || ""
-    );
-    setSecurityQuestion3(
-      carrier.security_question_3 || carrier.securityQuestion3 || ""
-    );
+    const equipment = carrier.equipment_types || carrier.equipment_type || carrier.equipment || [];
+    if (Array.isArray(equipment)) setSelectedEquipment(equipment.map(String));
+    else if (equipment) setSelectedEquipment(String(equipment).split(",").map((item) => normalize(item)));
 
-    setHasSavedSecurityAnswer1(
-      Boolean(carrier.security_answer_1 || carrier.securityAnswer1)
-    );
-    setHasSavedSecurityAnswer2(
-      Boolean(carrier.security_answer_2 || carrier.securityAnswer2)
-    );
-    setHasSavedSecurityAnswer3(
-      Boolean(carrier.security_answer_3 || carrier.securityAnswer3)
-    );
+    setSecurityQuestion1(carrier.security_question_1 || carrier.securityQuestion1 || "");
+    setSecurityQuestion2(carrier.security_question_2 || carrier.securityQuestion2 || "");
+    setSecurityQuestion3(carrier.security_question_3 || carrier.securityQuestion3 || "");
+    setHasSavedSecurityAnswer1(Boolean(carrier.security_answer_1 || carrier.securityAnswer1));
+    setHasSavedSecurityAnswer2(Boolean(carrier.security_answer_2 || carrier.securityAnswer2));
+    setHasSavedSecurityAnswer3(Boolean(carrier.security_answer_3 || carrier.securityAnswer3));
   }
 
   function buildPreservedCarrier(row: any) {
-    const pickedCustomerId = pickStripeCustomerId(
-      row.stripe_customer_id,
-      row.stripeCustomerId,
-      stripeCustomerId
-    );
-
-    const pickedSubscriptionId = pickStripeSubscriptionId(
-      row.stripe_subscription_id,
-      row.subscription_id,
-      subscriptionId
-    );
-
+    const pickedCustomerId = pickStripeCustomerId(row.stripe_customer_id, row.stripeCustomerId, stripeCustomerId);
+    const pickedSubscriptionId = pickStripeSubscriptionId(row.stripe_subscription_id, row.subscription_id, subscriptionId);
     const pickedFreightAccount = pickStripeConnectAccountId(
       row.freight_account,
       row.freightAccount,
@@ -585,37 +544,18 @@ export default function FreightRegister() {
       dot_number: keepValue(mdotNumber, row.dot_number),
       mc_number: keepValue(mcNumber, row.mc_number),
       insurance_provider: keepValue(insuranceProvider, row.insurance_provider),
-      insurance_policy_number: keepValue(
-        insurancePolicyNumber,
-        row.insurance_policy_number
-      ),
+      insurance_policy_number: keepValue(insurancePolicyNumber, row.insurance_policy_number),
       authority_active: authorityActive || Boolean(row.authority_active),
       insurance_active: insuranceActive || Boolean(row.insurance_active),
       licensed_livestock: licensedLivestock || Boolean(row.licensed_livestock),
-      licensed_refrigerated_food:
-        licensedRefrigeratedFood ||
-        Boolean(row.licensed_refrigerated_food),
-      security_question_1: keepValue(
-        securityQuestion1,
-        row.security_question_1
-      ),
-      security_question_2: keepValue(
-        securityQuestion2,
-        row.security_question_2
-      ),
-      security_question_3: keepValue(
-        securityQuestion3,
-        row.security_question_3
-      ),
-      security_answer_1: securityAnswer1
-        ? normalizeAnswer(securityAnswer1)
-        : row.security_answer_1,
-      security_answer_2: securityAnswer2
-        ? normalizeAnswer(securityAnswer2)
-        : row.security_answer_2,
-      security_answer_3: securityAnswer3
-        ? normalizeAnswer(securityAnswer3)
-        : row.security_answer_3,
+      licensed_refrigerated_food: licensedRefrigeratedFood || Boolean(row.licensed_refrigerated_food),
+      equipment_types: selectedEquipment.length ? selectedEquipment : row.equipment_types,
+      security_question_1: keepValue(securityQuestion1, row.security_question_1),
+      security_question_2: keepValue(securityQuestion2, row.security_question_2),
+      security_question_3: keepValue(securityQuestion3, row.security_question_3),
+      security_answer_1: securityAnswer1 ? normalizeAnswer(securityAnswer1) : row.security_answer_1,
+      security_answer_2: securityAnswer2 ? normalizeAnswer(securityAnswer2) : row.security_answer_2,
+      security_answer_3: securityAnswer3 ? normalizeAnswer(securityAnswer3) : row.security_answer_3,
       stripe_customer_id: pickedCustomerId,
       stripe_subscription_id: pickedSubscriptionId,
       subscription_id: pickedSubscriptionId,
@@ -625,53 +565,78 @@ export default function FreightRegister() {
     };
   }
 
-  function validateForm() {
-    if (
-      !companyName.trim() ||
-      !contactName.trim() ||
-      !normalize(email) ||
-      !phone.trim()
-    ) {
-      Alert.alert(
-        "Missing Info",
-        "Company, contact, email, and phone are required."
-      );
+  function validateForm({ full = true }: { full?: boolean } = {}) {
+    if (!companyName.trim() || !contactName.trim() || !normalize(email) || !phone.trim()) {
+      Alert.alert("Missing Info", "Company, contact, email, and phone are required.");
+      setStep(0);
       return false;
     }
 
     if (!normalize(email).includes("@")) {
       Alert.alert("Invalid Email", "Please enter a valid email address.");
+      setStep(0);
       return false;
     }
 
-    if (
-      !savedCarrierId &&
-      (!username.trim() || !password.trim() || !confirmPassword.trim())
-    ) {
+    if (!savedCarrierId && (!username.trim() || !password.trim() || !confirmPassword.trim())) {
       Alert.alert("Login Required", "Please create a username and password.");
+      setStep(0);
       return false;
     }
 
     if (normalize(username).length < 4) {
       Alert.alert("Invalid Username", "Username must be at least 4 characters.");
+      setStep(0);
       return false;
     }
 
     if (!savedCarrierId && password.trim().length < 6) {
       Alert.alert("Weak Password", "Password must be at least 6 characters.");
+      setStep(0);
       return false;
     }
 
     if (!savedCarrierId && password.trim() !== confirmPassword.trim()) {
       Alert.alert("Password Mismatch", "Passwords do not match.");
+      setStep(0);
+      return false;
+    }
+
+    if (!businessAddress.trim() || !city.trim() || !stateValue.trim() || !zipCode.trim()) {
+      Alert.alert("Missing Address", "Business address, city, state, and zip code are required.");
+      setStep(1);
+      return false;
+    }
+
+    if (!full) return true;
+
+    if (!mdotNumber.trim() || !mcNumber.trim()) {
+      Alert.alert("Missing Authority", "MDOT number and MC number are required.");
+      setStep(2);
+      return false;
+    }
+
+    if (!insuranceProvider.trim() || !insurancePolicyNumber.trim()) {
+      Alert.alert("Missing Insurance", "Insurance provider and policy number are required.");
+      setStep(2);
+      return false;
+    }
+
+    if (!authorityActive || !insuranceActive) {
+      Alert.alert("Verification Required", "Confirm active authority and insurance.");
+      setStep(2);
+      return false;
+    }
+
+    if (!licensedLivestock && !licensedRefrigeratedFood) {
+      Alert.alert("License Required", "Select livestock, refrigerated food, or both.");
+      setStep(2);
       return false;
     }
 
     if (selectedQuestions.length !== 3 || new Set(selectedQuestions).size !== 3) {
-      Alert.alert(
-        "Security Questions Required",
-        "Please choose 3 different security questions."
-      );
+      Alert.alert("Security Questions Required", "Please choose 3 different security questions.");
+      setStep(3);
       return false;
     }
 
@@ -685,48 +650,7 @@ export default function FreightRegister() {
         "Security Answers Required",
         "Please answer all 3 security questions. Saved accounts may leave an answer blank only when an answer is already on file."
       );
-      return false;
-    }
-
-    if (
-      !businessAddress.trim() ||
-      !city.trim() ||
-      !stateValue.trim() ||
-      !zipCode.trim()
-    ) {
-      Alert.alert(
-        "Missing Address",
-        "Business address, city, state, and zip code are required."
-      );
-      return false;
-    }
-
-    if (!mdotNumber.trim() || !mcNumber.trim()) {
-      Alert.alert("Missing Authority", "MDOT number and MC number are required.");
-      return false;
-    }
-
-    if (!insuranceProvider.trim() || !insurancePolicyNumber.trim()) {
-      Alert.alert(
-        "Missing Insurance",
-        "Insurance provider and policy number are required."
-      );
-      return false;
-    }
-
-    if (!authorityActive || !insuranceActive) {
-      Alert.alert(
-        "Verification Required",
-        "Confirm active authority and insurance."
-      );
-      return false;
-    }
-
-    if (!licensedLivestock && !licensedRefrigeratedFood) {
-      Alert.alert(
-        "License Required",
-        "Select livestock, refrigerated food, or both."
-      );
+      setStep(3);
       return false;
     }
 
@@ -738,15 +662,11 @@ export default function FreightRegister() {
       p_role: "freight",
       p_prefix: "Freight",
     });
-
     if (error) return makeFallbackAccountId();
     return data ? String(data) : makeFallbackAccountId();
   }
 
-  async function checkDuplicateFreight(
-    cleanEmailValue: string,
-    cleanUsername: string
-  ) {
+  async function checkDuplicateFreight(cleanEmailValue: string, cleanUsername: string) {
     const filters = [
       `email.eq.${cleanEmailValue}`,
       `username.eq.${cleanUsername}`,
@@ -755,12 +675,7 @@ export default function FreightRegister() {
       .filter(Boolean)
       .join(",");
 
-    const { data, error } = await supabase
-      .from("freight_users")
-      .select("*")
-      .or(filters)
-      .limit(1);
-
+    const { data, error } = await supabase.from("freight_users").select("*").or(filters).limit(1);
     if (error) return null;
     return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
@@ -772,17 +687,12 @@ export default function FreightRegister() {
     const finalId = savedCarrierId || freightId;
 
     if (!finalEmail && !finalBusinessName && !finalUsername && !finalId) {
-      if (!silent)
-        Alert.alert(
-          "Search Required",
-          "Enter email, business name, or username first."
-        );
+      if (!silent) Alert.alert("Search Required", "Enter email, business name, or username first.");
       return null;
     }
 
     try {
       setSyncingStripe(true);
-
       const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -799,33 +709,14 @@ export default function FreightRegister() {
         }),
       });
 
-      const text = await response.text();
-      let json: any = {};
-
-      try {
-        json = text ? JSON.parse(text) : {};
-      } catch {
-        json = { success: false, error: text };
-      }
-
+      const json = await parseApiResponse(response);
       if (!response.ok || !json.success) {
-        if (!silent) {
-          Alert.alert(
-            "Stripe Sync Not Found",
-            json.error || "No Stripe customer/subscription was found."
-          );
-        }
+        if (!silent) Alert.alert("Stripe Sync Not Found", json.error || "No Stripe customer/subscription was found.");
         return null;
       }
 
-      const syncedCustomerId = pickStripeCustomerId(
-        json.stripeCustomerId,
-        json.stripe_customer_id
-      );
-      const syncedSubscriptionId = pickStripeSubscriptionId(
-        json.stripeSubscriptionId,
-        json.stripe_subscription_id
-      );
+      const syncedCustomerId = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id);
+      const syncedSubscriptionId = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id);
       const syncedFreightAccount = pickStripeConnectAccountId(
         json.freight_account,
         json.stripeAccountId,
@@ -845,97 +736,59 @@ export default function FreightRegister() {
         await saveHydratedSession(preserved);
       }
 
-      if (!silent) {
-        Alert.alert(
-          "Stripe Synced",
-          "Stripe customer/subscription information was saved."
-        );
-      }
-
+      if (!silent) Alert.alert("Stripe Synced", "Stripe customer/subscription information was saved.");
       return json;
     } catch (error: any) {
-      if (!silent)
-        Alert.alert("Stripe Sync Error", error?.message || "Unable to sync Stripe.");
+      if (!silent) Alert.alert("Stripe Sync Error", error?.message || "Unable to sync Stripe.");
       return null;
     } finally {
       setSyncingStripe(false);
     }
   }
 
-  async function forceSyncFreightSubscription(
-    silent = false,
-    overrideId?: string
-  ) {
+  async function forceSyncFreightSubscription(silent = false, overrideId?: string) {
     const finalEmail = normalize(email);
     const finalBusinessName = companyName.trim();
     const finalUsername = normalize(username);
     const finalId = overrideId || savedCarrierId || freightId;
 
     if (!finalEmail && !finalBusinessName && !finalUsername && !finalId) {
-      if (!silent)
-        Alert.alert(
-          "Missing Info",
-          "Enter your email, business name, or username first."
-        );
+      if (!silent) Alert.alert("Missing Info", "Enter your email, business name, or username first.");
       return null;
     }
 
     try {
       setSyncingStripe(true);
+      const response = await fetch(`${API_BASE_URL}/payments/force-sync-freight-subscription`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          email: finalEmail,
+          businessName: finalBusinessName,
+          companyName: finalBusinessName,
+          name: finalBusinessName,
+          username: finalUsername,
+          freightId: finalId,
+          freight_id: finalId,
+          userId: finalId,
+        }),
+      });
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/force-sync-freight-subscription`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            role: "freight",
-            email: finalEmail,
-            businessName: finalBusinessName,
-            companyName: finalBusinessName,
-            name: finalBusinessName,
-            username: finalUsername,
-            freightId: finalId,
-            freight_id: finalId,
-            userId: finalId,
-          }),
-        }
-      );
-
-      const text = await response.text();
-      let json: any = {};
-
-      try {
-        json = text ? JSON.parse(text) : {};
-      } catch {
-        json = { success: false, error: text };
-      }
-
+      const json = await parseApiResponse(response);
       if (!response.ok || !json.success) {
-        if (!silent) {
-          Alert.alert(
-            "Stripe Sync Failed",
-            json.error || "No paid freight subscription was found."
-          );
-        }
+        if (!silent) Alert.alert("Stripe Sync Failed", json.error || "No paid freight subscription was found.");
         return null;
       }
 
-      const syncedCustomerId = pickStripeCustomerId(
-        json.stripeCustomerId,
-        json.stripe_customer_id
-      );
-      const syncedSubscriptionId = pickStripeSubscriptionId(
-        json.stripeSubscriptionId,
-        json.stripe_subscription_id
-      );
+      const syncedCustomerId = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id);
+      const syncedSubscriptionId = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id);
       const syncedFreightAccount = pickStripeConnectAccountId(
         json.freight_account,
         json.stripeAccountId,
         json.stripe_account_id
       );
-      const syncedStatus =
-        json.subscriptionStatus || json.subscription_status || "active";
+      const syncedStatus = json.subscriptionStatus || json.subscription_status || "active";
 
       if (syncedCustomerId) setStripeCustomerId(syncedCustomerId);
       if (syncedSubscriptionId) setSubscriptionId(syncedSubscriptionId);
@@ -948,20 +801,10 @@ export default function FreightRegister() {
         await saveHydratedSession(preserved);
       }
 
-      if (!silent) {
-        Alert.alert(
-          "Subscription Restored",
-          "Your paid freight subscription was saved to Supabase."
-        );
-      }
-
+      if (!silent) Alert.alert("Subscription Restored", "Your paid freight subscription was saved to Supabase.");
       return json;
     } catch (error: any) {
-      if (!silent)
-        Alert.alert(
-          "Force Sync Error",
-          error?.message || "Unable to restore subscription."
-        );
+      if (!silent) Alert.alert("Force Sync Error", error?.message || "Unable to restore subscription.");
       return null;
     } finally {
       setSyncingStripe(false);
@@ -979,39 +822,43 @@ export default function FreightRegister() {
 
     if (existingError) throw existingError;
 
+    const { data: subRow } = await supabase
+      .from("freight_subscriptions")
+      .select("*")
+      .or(`freight_id.eq.${carrierId},freight_email.eq.${normalize(email)}`)
+      .maybeSingle();
+
     const cleanCompanyName = companyName.trim();
     const cleanContactName = contactName.trim();
     const cleanEmailValue = normalize(email);
     const cleanPhone = phone.trim();
     const cleanUsername = normalize(username);
 
-    const finalAccountId =
-      existingFreightUser?.account_id ||
-      savedAccountId ||
-      accountId ||
-      (await generateFreightAccountId());
+    const finalAccountId = existingFreightUser?.account_id || savedAccountId || accountId || (await generateFreightAccountId());
 
     const finalStripeCustomerId = pickStripeCustomerId(
       stripeCustomerId,
-      existingFreightUser?.stripe_customer_id
+      existingFreightUser?.stripe_customer_id,
+      subRow?.stripe_customer_id
     );
 
     const finalSubscriptionId = pickStripeSubscriptionId(
       subscriptionId,
       existingFreightUser?.stripe_subscription_id,
-      existingFreightUser?.subscription_id
+      existingFreightUser?.subscription_id,
+      subRow?.stripe_subscription_id
     );
 
     const finalFreightAccount = pickStripeConnectAccountId(
       freightAccount,
       existingFreightUser?.freight_account,
-      existingFreightUser?.stripe_account_id
+      existingFreightUser?.stripe_account_id,
+      subRow?.freight_account,
+      subRow?.stripe_account_id
     );
 
     const finalSubscriptionStatus =
-      subscriptionStatus ||
-      existingFreightUser?.subscription_status ||
-      (finalSubscriptionId ? "active" : "pending_payment");
+      subscriptionStatus || existingFreightUser?.subscription_status || subRow?.subscription_status || (finalSubscriptionId ? "active" : "pending_payment");
 
     const freightPayload: any = {
       id: carrierId,
@@ -1020,7 +867,6 @@ export default function FreightRegister() {
       profile_id: carrierId,
       auth_user_id: carrierId,
       role: "freight",
-
       company_name: cleanCompanyName,
       business_name: cleanCompanyName,
       contact_name: cleanContactName,
@@ -1030,42 +876,29 @@ export default function FreightRegister() {
       email: cleanEmailValue,
       phone: cleanPhone,
       username: cleanUsername,
-
       account_active: true,
-
       stripe_customer_id: finalStripeCustomerId || null,
       stripe_subscription_id: finalSubscriptionId || null,
       subscription_id: finalSubscriptionId || null,
       freight_account: finalFreightAccount || null,
       stripe_account_id: finalFreightAccount || null,
-
       stripe_connect_status: finalFreightAccount ? "started" : "not_started",
       payouts_enabled: existingFreightUser?.payouts_enabled || false,
       charges_enabled: existingFreightUser?.charges_enabled || false,
       stripe_payouts_enabled: existingFreightUser?.stripe_payouts_enabled || false,
       stripe_charges_enabled: existingFreightUser?.stripe_charges_enabled || false,
-      stripe_onboarding_complete:
-        existingFreightUser?.stripe_onboarding_complete || false,
-
+      stripe_onboarding_complete: existingFreightUser?.stripe_onboarding_complete || false,
       security_question_1: securityQuestion1,
       security_question_2: securityQuestion2,
       security_question_3: securityQuestion3,
-      security_answer_1: securityAnswer1.trim()
-        ? normalizeAnswer(securityAnswer1)
-        : existingFreightUser?.security_answer_1 || null,
-      security_answer_2: securityAnswer2.trim()
-        ? normalizeAnswer(securityAnswer2)
-        : existingFreightUser?.security_answer_2 || null,
-      security_answer_3: securityAnswer3.trim()
-        ? normalizeAnswer(securityAnswer3)
-        : existingFreightUser?.security_answer_3 || null,
-
+      security_answer_1: securityAnswer1.trim() ? normalizeAnswer(securityAnswer1) : existingFreightUser?.security_answer_1 || null,
+      security_answer_2: securityAnswer2.trim() ? normalizeAnswer(securityAnswer2) : existingFreightUser?.security_answer_2 || null,
+      security_answer_3: securityAnswer3.trim() ? normalizeAnswer(securityAnswer3) : existingFreightUser?.security_answer_3 || null,
       service_area: serviceArea.trim(),
       business_address: businessAddress.trim(),
       city: city.trim(),
       state: stateValue.trim().toUpperCase(),
       zip_code: zipCode.trim(),
-
       mdot_number: mdotNumber.trim(),
       dot_number: mdotNumber.trim(),
       mc_number: mcNumber.trim(),
@@ -1075,19 +908,17 @@ export default function FreightRegister() {
       insurance_active: insuranceActive,
       licensed_livestock: licensedLivestock,
       licensed_refrigerated_food: licensedRefrigeratedFood,
-
+      equipment_types: selectedEquipment,
+      equipment_type: selectedEquipment.join(", "),
       approved: true,
       verification_status: finalSubscriptionId ? "SUBMITTED" : "REGISTERED",
       compliance_status: finalSubscriptionId ? "SUBMITTED" : "PENDING_PAYMENT",
       admin_review_status: finalSubscriptionId ? "submitted" : "pending_payment",
-
       membership_status: finalSubscriptionId ? "active" : "pending_payment",
       subscription_status: finalSubscriptionStatus,
       freight_membership_paid: Boolean(finalSubscriptionId),
-
       application_submitted: Boolean(finalSubscriptionId),
       submitted_at: finalSubscriptionId ? now : existingFreightUser?.submitted_at || null,
-
       push_notifications: true,
       new_load_alerts: true,
       route_status_alerts: true,
@@ -1101,60 +932,48 @@ export default function FreightRegister() {
       privacy_mode: false,
       notifications_enabled: true,
       expo_push_token: existingFreightUser?.expo_push_token || "",
-
       updated_at: now,
     };
 
-    await supabase.from("profiles").upsert(
-      {
-        id: carrierId,
-        auth_user_id: carrierId,
-        profile_id: carrierId,
-        account_id: finalAccountId,
-        role: "freight",
-        full_name: cleanContactName,
-        name: cleanContactName,
-        email: cleanEmailValue,
-        phone: cleanPhone,
-        username: cleanUsername,
-        company_name: cleanCompanyName,
-        stripe_customer_id: finalStripeCustomerId || null,
-        stripe_subscription_id: finalSubscriptionId || null,
-        subscription_id: finalSubscriptionId || null,
-        freight_account: finalFreightAccount || null,
-        stripe_account_id: finalFreightAccount || null,
-        membership_status: finalSubscriptionId ? "active" : "pending_payment",
-        subscription_status: finalSubscriptionStatus,
-        account_active: true,
-        updated_at: now,
-        created_at: existingFreightUser?.created_at || now,
-      },
-      { onConflict: "id" }
-    );
+    await safeUpsertProfile(carrierId, {
+      id: carrierId,
+      auth_user_id: carrierId,
+      profile_id: carrierId,
+      account_id: finalAccountId,
+      role: "freight",
+      full_name: cleanContactName,
+      name: cleanContactName,
+      email: cleanEmailValue,
+      phone: cleanPhone,
+      username: cleanUsername,
+      company_name: cleanCompanyName,
+      stripe_customer_id: finalStripeCustomerId || null,
+      stripe_subscription_id: finalSubscriptionId || null,
+      subscription_id: finalSubscriptionId || null,
+      membership_status: finalSubscriptionId ? "active" : "pending_payment",
+      subscription_status: finalSubscriptionStatus,
+      account_active: true,
+    });
 
     const { data: savedFreightUser, error: saveError } = await supabase
       .from("freight_users")
-      .upsert(
-        existingFreightUser?.id
-          ? freightPayload
-          : { ...freightPayload, created_at: now },
-        { onConflict: "id" }
-      )
+      .upsert(existingFreightUser?.id ? freightPayload : { ...freightPayload, created_at: now }, { onConflict: "id" })
       .select()
       .single();
 
     if (saveError) throw saveError;
-    if (!savedFreightUser?.id) {
-      throw new Error("Freight registration did not save.");
-    }
+    if (!savedFreightUser?.id) throw new Error("Freight registration did not save.");
 
-    await upsertAdminVerification(
-      carrierId,
-      savedFreightUser,
-      finalSubscriptionId,
-      finalSubscriptionStatus
-    );
+    await upsertFreightSubscriptionRow({
+      freightId: carrierId,
+      accountId: finalAccountId,
+      stripeCustomerId: finalStripeCustomerId,
+      stripeSubscriptionId: finalSubscriptionId,
+      stripeAccountId: finalFreightAccount,
+      subscriptionStatus: finalSubscriptionStatus,
+    });
 
+    await upsertAdminVerification(carrierId, savedFreightUser, finalSubscriptionId, finalSubscriptionStatus);
     await saveHydratedSession(savedFreightUser);
     hydrateForm(savedFreightUser);
     setHasSavedSecurityAnswer1(Boolean(savedFreightUser.security_answer_1));
@@ -1167,12 +986,49 @@ export default function FreightRegister() {
     return savedFreightUser;
   }
 
-  async function upsertAdminVerification(
-    carrierId: string,
-    savedFreightUser: any,
-    finalSubscriptionId?: string,
-    finalSubscriptionStatus?: string
-  ) {
+  async function safeUpsertProfile(carrierId: string, payload: any) {
+    const { error } = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
+    if (!error) return;
+    console.log("profiles upsert skipped:", error.message);
+  }
+
+  async function upsertFreightSubscriptionRow(values: {
+    freightId: string;
+    accountId?: string;
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string;
+    stripeAccountId?: string;
+    subscriptionStatus?: string;
+  }) {
+    const now = new Date().toISOString();
+    const payload = {
+      freight_id: values.freightId,
+      freight_email: normalize(email),
+      name: companyName.trim(),
+      username: normalize(username),
+      stripe_customer_id: values.stripeCustomerId || null,
+      stripe_subscription_id: values.stripeSubscriptionId || null,
+      subscription_status: values.subscriptionStatus || (values.stripeSubscriptionId ? "active" : "pending_payment"),
+      stripe_account_id: values.stripeAccountId || null,
+      freight_account: values.stripeAccountId || null,
+      updated_at: now,
+    };
+
+    const { data: existing } = await supabase
+      .from("freight_subscriptions")
+      .select("id")
+      .or(`freight_id.eq.${values.freightId},freight_email.eq.${normalize(email)}`)
+      .limit(1);
+
+    if (Array.isArray(existing) && existing[0]?.id) {
+      await supabase.from("freight_subscriptions").update(payload).eq("id", existing[0].id);
+      return;
+    }
+
+    await supabase.from("freight_subscriptions").insert({ ...payload, created_at: now });
+  }
+
+  async function upsertAdminVerification(carrierId: string, savedFreightUser: any, finalSubscriptionId?: string, finalSubscriptionStatus?: string) {
     const now = new Date().toISOString();
     const cleanCompanyName = companyName.trim();
     const cleanContactName = contactName.trim();
@@ -1185,7 +1041,7 @@ export default function FreightRegister() {
       savedFreightUser.stripe_account_id
     );
 
-    await supabase.from("admin_verifications").upsert(
+    const { error } = await supabase.from("admin_verifications").upsert(
       {
         id: carrierId,
         account_id: finalAccountId,
@@ -1225,10 +1081,7 @@ export default function FreightRegister() {
         needs_more_info: false,
         account_active: true,
         membership_status: paid ? "active" : "pending_payment",
-        subscription_status:
-          finalSubscriptionStatus ||
-          subscriptionStatus ||
-          (paid ? "active" : "pending_payment"),
+        subscription_status: finalSubscriptionStatus || subscriptionStatus || (paid ? "active" : "pending_payment"),
         freight_membership_paid: paid,
         application_submitted: paid,
         submitted_at: paid ? now : null,
@@ -1242,33 +1095,24 @@ export default function FreightRegister() {
       },
       { onConflict: "id" }
     );
+    if (error) console.log("admin_verifications upsert skipped:", error.message);
   }
 
   async function saveRegistration() {
     if (saving) return null;
-    if (!validateForm()) return null;
+    if (!validateForm({ full: false })) return null;
 
     try {
       setSaving(true);
-
       const cleanEmailValue = normalize(email);
       const cleanUsername = normalize(username);
 
-      const duplicate = await checkDuplicateFreight(
-        cleanEmailValue,
-        cleanUsername
-      );
-
+      const duplicate = await checkDuplicateFreight(cleanEmailValue, cleanUsername);
       if (duplicate?.id) {
         setFreightId(duplicate.id);
         setSavedCarrierId(duplicate.id);
         setAccountId(duplicate.account_id || accountId);
-
-        const saved = await saveFreightUserRow(
-          duplicate.id,
-          duplicate.account_id || undefined
-        );
-
+        const saved = await saveFreightUserRow(duplicate.id, duplicate.account_id || undefined);
         return saved;
       }
 
@@ -1292,26 +1136,19 @@ export default function FreightRegister() {
       }
 
       const carrierId = authData?.user?.id;
-
       if (!carrierId) {
         Alert.alert("Signup Error", "Unable to create freight auth account.");
         return null;
       }
 
       const generatedAccountId = await generateFreightAccountId();
-
       setFreightId(carrierId);
       setSavedCarrierId(carrierId);
       setAccountId(generatedAccountId);
 
-      const saved = await saveFreightUserRow(carrierId, generatedAccountId);
-
-      return saved;
+      return await saveFreightUserRow(carrierId, generatedAccountId);
     } catch (error: any) {
-      Alert.alert(
-        "Save Error",
-        error?.message || "Unable to save freight registration."
-      );
+      Alert.alert("Save Error", error?.message || "Unable to save freight registration.");
       return null;
     } finally {
       setSaving(false);
@@ -1322,10 +1159,7 @@ export default function FreightRegister() {
     if (saving) return;
 
     if (hasActiveSubscription) {
-      Alert.alert(
-        "Membership Already Active",
-        "This freight account already has an active Stripe subscription. No new membership charge will be created. Use Open / Update Stripe Banking to update bank payout details."
-      );
+      Alert.alert("Membership Already Active", "This freight account already has an active Stripe subscription.");
       return;
     }
 
@@ -1340,88 +1174,67 @@ export default function FreightRegister() {
     }
 
     if (!finalId || !finalEmail) {
-      Alert.alert(
-        "Save Required",
-        "Save registration before starting subscription."
-      );
+      Alert.alert("Save Required", "Save registration before starting subscription.");
       return;
     }
 
     try {
       setSaving(true);
+      const successUrl = `${APP_URL}/freight/register?stripe=success&freightId=${encodeURIComponent(finalId)}`;
+      const cancelUrl = `${APP_URL}/freight/register?stripe=cancelled&freightId=${encodeURIComponent(finalId)}`;
 
-      const successUrl = `${APP_URL}/freight/register?stripe=success&freightId=${encodeURIComponent(
-        finalId
-      )}`;
-      const cancelUrl = `${APP_URL}/freight/register?stripe=cancelled&freightId=${encodeURIComponent(
-        finalId
-      )}`;
-
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-freight-subscription-checkout`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      const response = await fetch(`${API_BASE_URL}/payments/create-freight-subscription-checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          planType: "freight",
+          userId: finalId,
+          freightId: finalId,
+          freight_id: finalId,
+          accountId: finalAccountId,
+          account_id: finalAccountId,
+          email: finalEmail,
+          customerEmail: finalEmail,
+          freight_email: finalEmail,
+          companyName: companyName.trim(),
+          businessName: companyName.trim(),
+          business_name: companyName.trim(),
+          name: companyName.trim(),
+          contactName: contactName.trim(),
+          contact_name: contactName.trim(),
+          username: normalize(username),
+          successUrl,
+          success_url: successUrl,
+          cancelUrl,
+          cancel_url: cancelUrl,
+          metadata: {
             role: "freight",
-            planType: "freight",
-            userId: finalId,
-            freightId: finalId,
             freight_id: finalId,
-            accountId: finalAccountId,
             account_id: finalAccountId,
-            email: finalEmail,
-            customerEmail: finalEmail,
             freight_email: finalEmail,
-            companyName: companyName.trim(),
-            businessName: companyName.trim(),
+            email: finalEmail,
+            company_name: companyName.trim(),
             business_name: companyName.trim(),
-            name: companyName.trim(),
-            contactName: contactName.trim(),
             contact_name: contactName.trim(),
             username: normalize(username),
-            successUrl,
-            success_url: successUrl,
-            cancelUrl,
-            cancel_url: cancelUrl,
-            metadata: {
-              role: "freight",
-              freight_id: finalId,
-              account_id: finalAccountId,
-              freight_email: finalEmail,
-              email: finalEmail,
-              company_name: companyName.trim(),
-              business_name: companyName.trim(),
-              contact_name: contactName.trim(),
-              username: normalize(username),
-            },
-          }),
-        }
-      );
+          },
+        }),
+      });
 
-      const text = await response.text();
-      let json: any = {};
-
-      try {
-        json = text ? JSON.parse(text) : {};
-      } catch {
-        json = { success: false, error: text };
-      }
-
+      const json = await parseApiResponse(response);
       if (!response.ok || !json.success) {
         Alert.alert("Checkout Error", json.error || "Backend checkout failed.");
         return;
       }
 
       if (json.alreadySubscribed) {
-        const customerId = pickStripeCustomerId(json.stripeCustomerId);
-        const subId = pickStripeSubscriptionId(json.stripeSubscriptionId);
-        const status = json.subscriptionStatus || "active";
-
+        const customerId = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id);
+        const subId = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id);
+        const status = json.subscriptionStatus || json.subscription_status || "active";
         setStripeCustomerId(customerId);
         setSubscriptionId(subId);
         setSubscriptionStatus(status);
-
         await markApplicationSubmittedAndOpenDashboard(finalId, {
           stripeCustomerId: customerId,
           stripeSubscriptionId: subId,
@@ -1430,28 +1243,17 @@ export default function FreightRegister() {
         return;
       }
 
-      if (!json.url) {
-        Alert.alert(
-          "Checkout Error",
-          "Backend did not return a Stripe Checkout URL."
-        );
-        return;
-      }
-
-      if (json.stripeCustomerId) {
-        setStripeCustomerId(pickStripeCustomerId(json.stripeCustomerId));
-      }
-      const url: string = String(json.url || json.checkoutUrl || "").trim();
+      const url = String(json.url || json.checkoutUrl || "").trim();
       if (!url || !url.startsWith("https://")) {
         Alert.alert("Checkout Error", "No valid Stripe Checkout URL was returned.");
         return;
       }
 
+      if (json.stripeCustomerId) setStripeCustomerId(pickStripeCustomerId(json.stripeCustomerId));
       if (Platform.OS === "web") {
         window.location.assign(url);
         return;
       }
-
       await Linking.openURL(url);
     } catch (error: any) {
       Alert.alert("Checkout Error", error?.message || "Backend checkout failed.");
@@ -1462,45 +1264,36 @@ export default function FreightRegister() {
 
   async function markApplicationSubmittedAndOpenDashboard(
     targetId?: string,
-    stripeOverride?: {
-      stripeCustomerId?: string;
-      stripeSubscriptionId?: string;
-      subscriptionStatus?: string;
-    }
+    stripeOverride?: { stripeCustomerId?: string; stripeSubscriptionId?: string; subscriptionStatus?: string }
   ) {
     const finalId = targetId || savedCarrierId || freightId;
-
     if (!finalId) {
       Alert.alert("Save Required", "Save your freight registration first.");
       return;
     }
 
     const now = new Date().toISOString();
+    let finalStripeCustomerId = pickStripeCustomerId(stripeOverride?.stripeCustomerId, stripeCustomerId);
+    let finalSubscriptionId = pickStripeSubscriptionId(stripeOverride?.stripeSubscriptionId, subscriptionId);
+    let finalFreightAccount = pickStripeConnectAccountId(freightAccount);
+    let finalStatus = stripeOverride?.subscriptionStatus || subscriptionStatus || (finalSubscriptionId ? "active" : "pending");
 
-    let finalStripeCustomerId = pickStripeCustomerId(
-      stripeOverride?.stripeCustomerId,
-      stripeCustomerId
-    );
+    if (!finalSubscriptionId || !finalFreightAccount) {
+      const { data: subRow } = await supabase
+        .from("freight_subscriptions")
+        .select("*")
+        .or(`freight_id.eq.${finalId},freight_email.eq.${normalize(email)}`)
+        .maybeSingle();
 
-    let finalSubscriptionId = pickStripeSubscriptionId(
-      stripeOverride?.stripeSubscriptionId,
-      subscriptionId
-    );
-
-    let finalStatus =
-      stripeOverride?.subscriptionStatus ||
-      subscriptionStatus ||
-      (finalSubscriptionId ? "active" : "pending");
+      finalStripeCustomerId = pickStripeCustomerId(finalStripeCustomerId, subRow?.stripe_customer_id);
+      finalSubscriptionId = pickStripeSubscriptionId(finalSubscriptionId, subRow?.stripe_subscription_id);
+      finalFreightAccount = pickStripeConnectAccountId(finalFreightAccount, subRow?.stripe_account_id, subRow?.freight_account);
+      finalStatus = finalStatus || subRow?.subscription_status || (finalSubscriptionId ? "active" : "pending");
+    }
 
     if (!finalSubscriptionId) {
       const sync = await forceSyncFreightSubscription(true, finalId);
-
-      finalStripeCustomerId = pickStripeCustomerId(
-        sync?.stripeCustomerId,
-        sync?.stripe_customer_id,
-        finalStripeCustomerId
-      );
-
+      finalStripeCustomerId = pickStripeCustomerId(sync?.stripeCustomerId, sync?.stripe_customer_id, finalStripeCustomerId);
       finalSubscriptionId = pickStripeSubscriptionId(
         sync?.stripeSubscriptionId,
         sync?.stripe_subscription_id,
@@ -1508,15 +1301,11 @@ export default function FreightRegister() {
         sync?.subscription_id,
         finalSubscriptionId
       );
-
-      finalStatus =
-        sync?.subscriptionStatus ||
-        sync?.subscription_status ||
-        finalStatus ||
-        (finalSubscriptionId ? "active" : "pending");
+      finalFreightAccount = pickStripeConnectAccountId(sync?.stripe_account_id, sync?.stripeAccountId, sync?.freight_account, finalFreightAccount);
+      finalStatus = sync?.subscriptionStatus || sync?.subscription_status || finalStatus || (finalSubscriptionId ? "active" : "pending");
     }
 
-    const updatePayload = {
+    const updatePayload: any = {
       application_submitted: true,
       submitted_at: now,
       verification_status: "SUBMITTED",
@@ -1528,14 +1317,37 @@ export default function FreightRegister() {
       stripe_customer_id: finalStripeCustomerId || null,
       stripe_subscription_id: finalSubscriptionId || null,
       subscription_id: finalSubscriptionId || null,
-      freight_account: freightAccount || null,
-      stripe_account_id: freightAccount || null,
+      freight_account: finalFreightAccount || null,
+      stripe_account_id: finalFreightAccount || null,
       account_active: true,
       updated_at: now,
     };
 
     await supabase.from("freight_users").update(updatePayload).eq("id", finalId);
-    await supabase.from("profiles").update(updatePayload).eq("id", finalId);
+    await safeUpsertProfile(finalId, {
+      id: finalId,
+      role: "freight",
+      email: normalize(email),
+      account_id: accountId,
+      full_name: contactName.trim(),
+      name: contactName.trim(),
+      company_name: companyName.trim(),
+      stripe_customer_id: finalStripeCustomerId || null,
+      stripe_subscription_id: finalSubscriptionId || null,
+      subscription_id: finalSubscriptionId || null,
+      membership_status: finalSubscriptionId ? "active" : "pending",
+      subscription_status: finalStatus,
+      account_active: true,
+    });
+
+    await upsertFreightSubscriptionRow({
+      freightId: finalId,
+      accountId,
+      stripeCustomerId: finalStripeCustomerId,
+      stripeSubscriptionId: finalSubscriptionId,
+      stripeAccountId: finalFreightAccount,
+      subscriptionStatus: finalStatus,
+    });
 
     await supabase.from("admin_verifications").upsert(
       {
@@ -1565,43 +1377,27 @@ export default function FreightRegister() {
       { onConflict: "id" }
     );
 
-    const { data: updatedCarrier } = await supabase
-      .from("freight_users")
-      .select("*")
-      .eq("id", finalId)
-      .maybeSingle();
-
-    if (updatedCarrier) {
-      await saveHydratedSession(updatedCarrier);
-    }
-
-    router.replace("/freight/dashboard" as any);
+    const { data: updatedCarrier } = await supabase.from("freight_users").select("*").eq("id", finalId).maybeSingle();
+    if (updatedCarrier) await saveHydratedSession(mergeCarrierAndSubscription(updatedCarrier, null));
+    goDashboard();
   }
 
   async function submitToDashboard() {
     const finalId = savedCarrierId || freightId;
-
     if (!finalId) {
       Alert.alert("Save Required", "Save the freight registration first.");
       return;
     }
-
     if (!hasActiveSubscription) {
-      Alert.alert(
-        "Subscription Required",
-        "Start Stripe Membership first so the Stripe Customer ID and Subscription ID are saved."
-      );
+      Alert.alert("Subscription Required", "Start Stripe Membership first so the Stripe IDs are saved.");
+      setStep(4);
       return;
     }
-
     if (!hasStripeConnectAccount) {
-      Alert.alert(
-        "Stripe Connect Required",
-        "Tap Connect Stripe Payouts first so the Stripe Connect Account ID is created and saved."
-      );
+      Alert.alert("Stripe Connect Required", "Tap Connect Stripe Payouts first so the acct_ ID is saved.");
+      setStep(4);
       return;
     }
-
     await markApplicationSubmittedAndOpenDashboard(finalId);
   }
 
@@ -1615,58 +1411,43 @@ export default function FreightRegister() {
     if (!finalFreightId || !finalEmail) {
       const saved = await saveRegistration();
       finalFreightId = saved?.id || savedCarrierId || freightId;
-      finalAccountId = saved?.account_id || accountId;
+      finalAccountId = saved?.account_id || saved?.accountId || accountId;
     }
 
     if (!finalFreightId || !finalEmail) {
-      Alert.alert(
-        "Save Required",
-        "Save the freight registration before connecting Stripe payouts."
-      );
+      Alert.alert("Save Required", "Save the freight registration before connecting Stripe payouts.");
       return;
     }
 
     try {
       setSaving(true);
-
       await saveFreightUserRow(finalFreightId, finalAccountId);
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/create-connect-account`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            role: "freight",
-            freightId: finalFreightId,
-            freight_id: finalFreightId,
-            userId: finalFreightId,
-            accountId: finalAccountId,
-            account_id: finalAccountId,
-            email: finalEmail,
-            freight_email: finalEmail,
-            companyName: companyName.trim(),
-            businessName: companyName.trim(),
-            contactName: contactName.trim(),
-            freight_account: freightAccount,
-          }),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
+          freightId: finalFreightId,
+          freight_id: finalFreightId,
+          userId: finalFreightId,
+          accountId: finalAccountId,
+          account_id: finalAccountId,
+          email: finalEmail,
+          freight_email: finalEmail,
+          companyName: companyName.trim(),
+          businessName: companyName.trim(),
+          name: companyName.trim(),
+          contactName: contactName.trim(),
+          freight_account: freightAccount,
+          returnUrl: `${APP_URL}/freight/register?connect=success&freightId=${encodeURIComponent(finalFreightId)}`,
+          refreshUrl: `${APP_URL}/freight/register?connect=refresh&freightId=${encodeURIComponent(finalFreightId)}`,
+        }),
+      });
 
-      const text = await response.text();
-      let json: any = {};
-
-      try {
-        json = text ? JSON.parse(text) : {};
-      } catch {
-        json = { success: false, error: text };
-      }
-
+      const json = await parseApiResponse(response);
       if (!response.ok || !json.success) {
-        Alert.alert(
-          "Connect Stripe Error",
-          json.error || "Unable to create Stripe Connect onboarding link."
-        );
+        Alert.alert("Connect Stripe Error", json.error || "Unable to create Stripe Connect onboarding link.");
         return;
       }
 
@@ -1680,34 +1461,30 @@ export default function FreightRegister() {
       );
 
       if (!returnedFreightAccount) {
-        Alert.alert(
-          "Connect Stripe Error",
-          "Stripe did not return a real Account ID that starts with acct_."
-        );
+        Alert.alert("Connect Stripe Error", "Stripe did not return a real Account ID that starts with acct_.");
+        return;
+      }
+
+      const onboardingUrl = String(json.url || json.onboardingUrl || "").trim();
+      if (!onboardingUrl || !onboardingUrl.startsWith("https://connect.stripe.com/")) {
+        Alert.alert("Stripe Connect Error", "No valid Stripe onboarding URL was returned.");
         return;
       }
 
       setFreightAccount(returnedFreightAccount);
-
       const connectUpdate = {
         freight_account: returnedFreightAccount,
         stripe_account_id: returnedFreightAccount,
         stripe_connect_status: "started",
-        payouts_enabled: false,
-        charges_enabled: false,
-        stripe_payouts_enabled: false,
-        stripe_charges_enabled: false,
-        stripe_onboarding_complete: false,
+        payouts_enabled: Boolean(json.payoutsEnabled),
+        charges_enabled: Boolean(json.chargesEnabled),
+        stripe_payouts_enabled: Boolean(json.payoutsEnabled),
+        stripe_charges_enabled: Boolean(json.chargesEnabled),
+        stripe_onboarding_complete: Boolean(json.onboardingComplete),
         updated_at: new Date().toISOString(),
       };
 
       await supabase.from("freight_users").update(connectUpdate).eq("id", finalFreightId);
-      await supabase.from("profiles").update(connectUpdate).eq("id", finalFreightId);
-      await supabase
-        .from("admin_verifications")
-        .update(connectUpdate)
-        .or(`id.eq.${finalFreightId},freight_id.eq.${finalFreightId},profile_id.eq.${finalFreightId}`);
-
       await supabase
         .from("freight_subscriptions")
         .update({
@@ -1716,6 +1493,11 @@ export default function FreightRegister() {
           updated_at: new Date().toISOString(),
         })
         .or(`freight_id.eq.${finalFreightId},freight_email.eq.${finalEmail}`);
+
+      await supabase
+        .from("admin_verifications")
+        .update(connectUpdate)
+        .or(`id.eq.${finalFreightId},freight_id.eq.${finalFreightId},profile_id.eq.${finalFreightId}`);
 
       await saveFreightSession({
         id: finalFreightId,
@@ -1743,29 +1525,17 @@ export default function FreightRegister() {
         subscription_status: subscriptionStatus,
         freightAccount: returnedFreightAccount,
         freight_account: returnedFreightAccount,
+        stripeAccountId: returnedFreightAccount,
+        stripe_account_id: returnedFreightAccount,
       });
 
-      const url = json.url || json.onboardingUrl;
-
-      if (!url) {
-        Alert.alert(
-          "Stripe Connect Account Saved",
-          "The Stripe Connect Account ID was saved, but no onboarding link was returned."
-        );
-        return;
-      }
-
       if (Platform.OS === "web") {
-        window.location.href = url;
+        window.location.assign(onboardingUrl);
         return;
       }
-
-      await Linking.openURL(url);
+      await Linking.openURL(onboardingUrl);
     } catch (error: any) {
-      Alert.alert(
-        "Connect Stripe Error",
-        error?.message || "Unable to start Stripe Connect onboarding."
-      );
+      Alert.alert("Connect Stripe Error", error?.message || "Unable to start Stripe Connect onboarding.");
     } finally {
       setSaving(false);
     }
@@ -1776,16 +1546,15 @@ export default function FreightRegister() {
     selectedQuestion: string,
     setSelectedQuestion: (value: string) => void,
     answer: string,
-    setAnswer: (value: string) => void
+    setAnswer: (value: string) => void,
+    saved: boolean
   ) {
     return (
-      <View style={styles.securityBox}>
-        <Text style={styles.securityLabel}>{label}</Text>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={styles.questionBlock}>
+        <Text style={styles.fieldLabel}>{label}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.questionRow}>
           {SECURITY_QUESTIONS.map((question) => {
             const active = selectedQuestion === question;
-
             return (
               <TouchableOpacity
                 key={question}
@@ -1793,25 +1562,15 @@ export default function FreightRegister() {
                 onPress={() => setSelectedQuestion(question)}
                 activeOpacity={0.85}
               >
-                <Text
-                  style={[
-                    styles.questionChipText,
-                    active && styles.questionChipTextActive,
-                  ]}
-                >
-                  {question}
-                </Text>
+                <Text style={[styles.questionChipText, active && styles.questionChipTextActive]}>{question}</Text>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
-
         <TextInput
           style={styles.input}
-          placeholder={
-            savedCarrierId ? "Leave blank to keep saved answer" : "Hidden answer"
-          }
-          placeholderTextColor="#94A3B8"
+          placeholder={savedCarrierId || saved ? "Leave blank to keep saved answer" : "Hidden answer"}
+          placeholderTextColor="#98A2B3"
           value={answer}
           onChangeText={setAnswer}
           secureTextEntry
@@ -1820,671 +1579,451 @@ export default function FreightRegister() {
     );
   }
 
-  function SectionHeader({
-    icon,
-    title,
-  }: {
-    icon: keyof typeof Ionicons.glyphMap;
-    title: string;
-  }) {
+  function renderCurrentStep() {
+    if (step === 0) return renderAccountStep();
+    if (step === 1) return renderCompanyStep();
+    if (step === 2) return renderAuthorityStep();
+    if (step === 3) return renderSecurityStep();
+    if (step === 4) return renderStripeStep();
+    return renderReviewStep();
+  }
+
+  function renderAccountStep() {
     return (
-      <View style={styles.sectionHeader}>
-        <View style={styles.sectionIcon}>
-          <Ionicons name={icon} size={20} color="#FFFFFF" />
-        </View>
-        <Text style={styles.section}>{title}</Text>
-      </View>
+      <FinaPanel icon="person-outline" title="Account Information" subtitle="Create or resume a Freight Connect carrier account.">
+        <TwoColumn>
+          <Field label="Company Name" value={companyName} onChangeText={setCompanyName} placeholder="ASO Freight LLC" />
+          <Field label="Contact Name" value={contactName} onChangeText={setContactName} placeholder="Owner / Dispatch Contact" />
+          <Field label="Email" value={email} onChangeText={setEmail} placeholder="carrier@email.com" keyboardType="email-address" autoCapitalize="none" />
+          <Field label="Phone" value={phone} onChangeText={setPhone} placeholder="Phone" keyboardType="phone-pad" />
+          <Field label="Username" value={username} onChangeText={setUsername} placeholder="Create username" autoCapitalize="none" />
+          <Field label="Service Area" value={serviceArea} onChangeText={setServiceArea} placeholder="Michigan, Ohio, Indiana" />
+        </TwoColumn>
+
+        {!savedCarrierId ? (
+          <TwoColumn>
+            <Field label="Password" value={password} onChangeText={setPassword} placeholder="Create password" secureTextEntry autoCapitalize="none" />
+            <Field label="Confirm Password" value={confirmPassword} onChangeText={setConfirmPassword} placeholder="Confirm password" secureTextEntry autoCapitalize="none" />
+          </TwoColumn>
+        ) : (
+          <InfoBanner icon="lock-closed-outline" title="Password already exists" text="Use reset password from freight login if this account needs a password change." tone="info" />
+        )}
+      </FinaPanel>
     );
   }
 
-  function ReadOnlyIdBox({
-    label,
-    value,
-    fallback,
-  }: {
-    label: string;
-    value: string;
-    fallback: string;
-  }) {
+  function renderCompanyStep() {
     return (
-      <View style={styles.readOnlyBox}>
-        <Text style={styles.readOnlyLabel}>{label}</Text>
-        <Text style={[styles.readOnlyValue, !value && styles.readOnlyFallback]}>
-          {value || fallback}
-        </Text>
-      </View>
+      <FinaPanel icon="business-outline" title="Company & Address" subtitle="Business location and service identity used for Stripe, loads, and account matching.">
+        <TwoColumn>
+          <Field label="Business Address" value={businessAddress} onChangeText={setBusinessAddress} placeholder="Street address" />
+          <Field label="City" value={city} onChangeText={setCity} placeholder="City" />
+          <Field label="State" value={stateValue} onChangeText={setStateValue} placeholder="MI" autoCapitalize="characters" />
+          <Field label="Zip Code" value={zipCode} onChangeText={setZipCode} placeholder="Zip code" keyboardType="numeric" />
+        </TwoColumn>
+      </FinaPanel>
+    );
+  }
+
+  function renderAuthorityStep() {
+    return (
+      <>
+        <FinaPanel icon="shield-checkmark-outline" title="Authority & Insurance" subtitle="Carrier authority and coverage details are required before the account can be submitted.">
+          <TwoColumn>
+            <Field label="MDOT / DOT Number" value={mdotNumber} onChangeText={setMdotNumber} placeholder="DOT / MDOT Number" />
+            <Field label="MC Number" value={mcNumber} onChangeText={setMcNumber} placeholder="MC Number" />
+            <Field label="Insurance Provider" value={insuranceProvider} onChangeText={setInsuranceProvider} placeholder="Insurance provider" />
+            <Field label="Policy Number" value={insurancePolicyNumber} onChangeText={setInsurancePolicyNumber} placeholder="Policy number" />
+          </TwoColumn>
+          <SwitchCard label="Active MC / Operating Authority" description="I confirm this carrier has active operating authority." value={authorityActive} onValueChange={setAuthorityActive} />
+          <SwitchCard label="Active Insurance" description="I confirm insurance is active and current." value={insuranceActive} onValueChange={setInsuranceActive} />
+        </FinaPanel>
+
+        <FinaPanel icon="cube-outline" title="Equipment & Authorization" subtitle="Choose freight types and transport permissions.">
+          <View style={styles.equipmentGrid}>
+            {EQUIPMENT_OPTIONS.map((item) => {
+              const active = selectedEquipment.includes(item.key);
+              return (
+                <TouchableOpacity key={item.key} style={[styles.equipmentCard, active && styles.equipmentCardActive]} onPress={() => toggleEquipment(item.key)}>
+                  <Ionicons name={item.icon as any} size={23} color={active ? COLORS.white : COLORS.primary} />
+                  <Text style={[styles.equipmentText, active && styles.equipmentTextActive]}>{item.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <SwitchCard label="Licensed to Move Livestock" description="Carrier is authorized for livestock transportation." value={licensedLivestock} onValueChange={setLicensedLivestock} />
+          <SwitchCard label="Licensed for Refrigerated Fresh Food" description="Carrier can handle cold-chain or refrigerated farm freight." value={licensedRefrigeratedFood} onValueChange={setLicensedRefrigeratedFood} />
+        </FinaPanel>
+      </>
+    );
+  }
+
+  function renderSecurityStep() {
+    return (
+      <FinaPanel icon="key-outline" title="Security Questions" subtitle="Used for account recovery and profile verification.">
+        {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1, hasSavedSecurityAnswer1)}
+        {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2, hasSavedSecurityAnswer2)}
+        {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3, hasSavedSecurityAnswer3)}
+      </FinaPanel>
+    );
+  }
+
+  function renderStripeStep() {
+    return (
+      <>
+        <FinaPanel icon="card-outline" title="Stripe Membership & Connect" subtitle="Complete membership and payout setup. The Connect acct_ ID is checked from freight_users and freight_subscriptions.">
+          <View style={styles.statusGrid}>
+            <StatusTile title="Customer" value={stripeCustomerId || "Missing"} good={isStripeCustomerId(stripeCustomerId)} icon="person-circle-outline" />
+            <StatusTile title="Subscription" value={subscriptionId || "Missing"} good={hasActiveSubscription} icon="repeat-outline" />
+            <StatusTile title="Connect" value={freightAccount || "Missing"} good={hasStripeConnectAccount} icon="business-outline" />
+          </View>
+
+          <View style={styles.actionStack}>
+            <ActionButton icon="save-outline" label="Save Registration" onPress={saveRegistration} loading={saving} />
+            <ActionButton icon="card-outline" label={hasActiveSubscription ? "Membership Active" : "Start Stripe Membership"} onPress={startSubscriptionCheckout} loading={saving} variant="dark" disabled={hasActiveSubscription} />
+            <ActionButton icon="business-outline" label={hasStripeConnectAccount ? "Open / Update Stripe Banking" : "Connect Stripe Payouts"} onPress={startStripeConnectOnboarding} loading={saving} variant="outline" />
+            <ActionButton icon="refresh-outline" label="Find / Retrieve Missing Stripe Info" onPress={async () => {
+              const synced = await syncStripeByEmail(email, true);
+              if (!synced?.stripeCustomerId && !synced?.stripeSubscriptionId) await forceSyncFreightSubscription();
+              else Alert.alert("Stripe Synced", "Stripe information was saved without erasing the form.");
+            }} loading={syncingStripe} variant="secondary" />
+          </View>
+        </FinaPanel>
+      </>
+    );
+  }
+
+  function renderReviewStep() {
+    return (
+      <>
+        <FinaPanel icon="checkmark-done-outline" title="Review & Finish" subtitle="Confirm everything is complete before opening the freight dashboard.">
+          <View style={styles.reviewGrid}>
+            <ReviewRow label="Company" value={companyName || "Missing"} />
+            <ReviewRow label="Contact" value={contactName || "Missing"} />
+            <ReviewRow label="Email" value={email || "Missing"} />
+            <ReviewRow label="Account ID" value={accountId || "Assigned after save"} />
+            <ReviewRow label="Freight UUID" value={freightId || "Assigned after save"} />
+            <ReviewRow label="DOT / MDOT" value={mdotNumber || "Missing"} />
+            <ReviewRow label="MC Number" value={mcNumber || "Missing"} />
+            <ReviewRow label="Equipment" value={selectedEquipment.length ? selectedEquipment.join(", ") : "Not selected"} />
+            <ReviewRow label="Stripe Customer" value={stripeCustomerId || "Missing"} />
+            <ReviewRow label="Stripe Subscription" value={subscriptionId || "Missing"} />
+            <ReviewRow label="Stripe Connect" value={freightAccount || "Missing"} />
+          </View>
+          <InfoBanner
+            icon={registrationReadyForDashboard ? "checkmark-circle-outline" : "alert-circle-outline"}
+            title={registrationReadyForDashboard ? "Ready for Dashboard" : "Stripe Setup Required"}
+            text={registrationReadyForDashboard ? "Subscription and Connect account are available." : "Complete Stripe Membership and Connect Banking before submitting."}
+            tone={registrationReadyForDashboard ? "success" : "warning"}
+          />
+          <ActionButton icon="grid-outline" label="Submit & Open Dashboard" onPress={submitToDashboard} loading={saving} />
+        </FinaPanel>
+      </>
     );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
-
-      <KeyboardAvoidingView
-        style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView
-          style={styles.page}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="always"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.heroCard}>
-            <View style={styles.heroIcon}>
-              <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
-            </View>
-            <Text style={styles.kicker}>Farm2Home Freight</Text>
-            <Text style={styles.title}>Carrier Registration</Text>
-            <Text style={styles.subtitle}>
-              Save registration, start Stripe checkout, and after Stripe confirms
-              payment your application is submitted and the freight dashboard
-              opens.
-            </Text>
-          </View>
-
-          {processingReturn ? (
-            <View style={styles.noticeBox}>
-              <View style={styles.noticeHeader}>
-                <ActivityIndicator color={COLORS.amber} />
-                <Text style={styles.noticeTitle}>
-                  Completing Stripe Registration
-                </Text>
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+      <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView style={styles.page} contentContainerStyle={styles.content} keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false}>
+          <View style={styles.shell}>
+            <View style={styles.sidebar}>
+              <View style={styles.brandBlock}>
+                <View style={styles.brandIcon}><Ionicons name="leaf-outline" size={24} color={COLORS.white} /></View>
+                <View>
+                  <Text style={styles.brandTitle}>Farm2Home</Text>
+                  <Text style={styles.brandSub}>Freight Connect</Text>
+                </View>
               </View>
-              <Text style={styles.noticeText}>
-                Please wait while we sync your Stripe subscription and submit
-                your freight application.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.noticeBox}>
-              <View style={styles.noticeHeader}>
-                <Ionicons
-                  name="alert-circle-outline"
-                  size={22}
-                  color={COLORS.amber}
-                />
-                <Text style={styles.noticeTitle}>Use Secure Checkout</Text>
-              </View>
-              <Text style={styles.noticeText}>
-                Do not use a static Stripe payment link. This page creates a
-                unique Stripe Checkout session with your freight ID, email,
-                company name, and username attached.
-              </Text>
-            </View>
-          )}
 
-          <View style={styles.card}>
-            <SectionHeader icon="key-outline" title="System IDs" />
-            <ReadOnlyIdBox
-              label="Supabase UUID / Freight ID"
-              value={freightId}
-              fallback="Assigned after save"
-            />
-            <ReadOnlyIdBox
-              label="Static Account ID"
-              value={accountId}
-              fallback="Assigned after save"
-            />
-            <ReadOnlyIdBox
-              label="Stripe Customer ID"
-              value={stripeCustomerId}
-              fallback="Assigned by Stripe checkout"
-            />
-            <ReadOnlyIdBox
-              label="Stripe Subscription ID"
-              value={subscriptionId}
-              fallback="Assigned by Stripe webhook"
-            />
-            <ReadOnlyIdBox
-              label="Stripe Connect Account ID"
-              value={freightAccount}
-              fallback="Assigned by Connect Bank"
-            />
-
-            <TouchableOpacity
-              style={[styles.syncButton, syncingStripe && styles.disabledButton]}
-              onPress={async () => {
-                const synced = await syncStripeByEmail(email, true);
-
-                if (!synced?.stripeCustomerId && !synced?.stripeSubscriptionId) {
-                  await forceSyncFreightSubscription();
-                  return;
-                }
-
-                Alert.alert(
-                  "Stripe Synced",
-                  "Your existing Stripe information was saved without erasing the form."
+              {STEPS.map((item, index) => {
+                const active = step === index;
+                const completed = index < step;
+                return (
+                  <TouchableOpacity key={item.key} style={[styles.sideStep, active && styles.sideStepActive]} onPress={() => setStep(index)}>
+                    <View style={[styles.sideStepIcon, active && styles.sideStepIconActive, completed && styles.sideStepIconDone]}>
+                      <Ionicons name={completed ? "checkmark-outline" : (item.icon as any)} size={17} color={active || completed ? COLORS.white : COLORS.primary} />
+                    </View>
+                    <Text style={[styles.sideStepText, active && styles.sideStepTextActive]}>{item.title}</Text>
+                  </TouchableOpacity>
                 );
-              }}
-              disabled={syncingStripe}
-            >
-              {syncingStripe ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <Ionicons name="refresh-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.syncButtonText}>
-                    Find / Retrieve Missing Stripe Info
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
+              })}
 
-            <TouchableOpacity
-              style={[styles.syncButton, syncingStripe && styles.disabledButton]}
-              onPress={forceRefreshFreightRegister}
-              disabled={syncingStripe}
-            >
-              {syncingStripe ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <Ionicons name="reload-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.syncButtonText}>Force Refresh Registration</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.card}>
-            <SectionHeader icon="business-outline" title="Company Information" />
-            <TextInput
-              style={styles.input}
-              placeholder="Company Name"
-              placeholderTextColor="#94A3B8"
-              value={companyName}
-              onChangeText={setCompanyName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Contact Name"
-              placeholderTextColor="#94A3B8"
-              value={contactName}
-              onChangeText={setContactName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              placeholderTextColor="#94A3B8"
-              autoCapitalize="none"
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Phone"
-              placeholderTextColor="#94A3B8"
-              keyboardType="phone-pad"
-              value={phone}
-              onChangeText={setPhone}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Service Area"
-              placeholderTextColor="#94A3B8"
-              value={serviceArea}
-              onChangeText={setServiceArea}
-            />
-          </View>
-
-          <View style={styles.card}>
-            <SectionHeader icon="lock-closed-outline" title="Create Freight Login" />
-            <TextInput
-              style={styles.input}
-              placeholder="Create Username"
-              placeholderTextColor="#94A3B8"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            {!savedCarrierId ? (
-              <>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Create Password"
-                  placeholderTextColor="#94A3B8"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                  autoCapitalize="none"
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Confirm Password"
-                  placeholderTextColor="#94A3B8"
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry
-                  autoCapitalize="none"
-                />
-              </>
-            ) : (
-              <Text style={styles.helperText}>
-                Password already exists. Use reset password if needed.
-              </Text>
-            )}
-          </View>
-
-          <View style={styles.securityCard}>
-            <SectionHeader icon="key-outline" title="Security Questions" />
-            {renderQuestionPicker(
-              "Security Question 1",
-              securityQuestion1,
-              setSecurityQuestion1,
-              securityAnswer1,
-              setSecurityAnswer1
-            )}
-            {renderQuestionPicker(
-              "Security Question 2",
-              securityQuestion2,
-              setSecurityQuestion2,
-              securityAnswer2,
-              setSecurityAnswer2
-            )}
-            {renderQuestionPicker(
-              "Security Question 3",
-              securityQuestion3,
-              setSecurityQuestion3,
-              securityAnswer3,
-              setSecurityAnswer3
-            )}
-          </View>
-
-          <View style={styles.card}>
-            <SectionHeader icon="location-outline" title="Business Address" />
-            <TextInput
-              style={styles.input}
-              placeholder="Business Address"
-              placeholderTextColor="#94A3B8"
-              value={businessAddress}
-              onChangeText={setBusinessAddress}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="City"
-              placeholderTextColor="#94A3B8"
-              value={city}
-              onChangeText={setCity}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="State"
-              placeholderTextColor="#94A3B8"
-              value={stateValue}
-              onChangeText={setStateValue}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Zip Code"
-              placeholderTextColor="#94A3B8"
-              keyboardType="numeric"
-              value={zipCode}
-              onChangeText={setZipCode}
-            />
-          </View>
-
-          <View style={styles.card}>
-            <SectionHeader icon="shield-checkmark-outline" title="Authority & Insurance" />
-            <TextInput
-              style={styles.input}
-              placeholder="MDOT Number"
-              placeholderTextColor="#94A3B8"
-              value={mdotNumber}
-              onChangeText={setMdotNumber}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="MC Number"
-              placeholderTextColor="#94A3B8"
-              value={mcNumber}
-              onChangeText={setMcNumber}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Insurance Provider"
-              placeholderTextColor="#94A3B8"
-              value={insuranceProvider}
-              onChangeText={setInsuranceProvider}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Insurance Policy Number"
-              placeholderTextColor="#94A3B8"
-              value={insurancePolicyNumber}
-              onChangeText={setInsurancePolicyNumber}
-            />
-
-            <View style={styles.switchRow}>
-              <Text style={styles.switchText}>Active MC / Operating Authority</Text>
-              <Switch value={authorityActive} onValueChange={setAuthorityActive} />
+              <TouchableOpacity style={styles.sidebarLogin} onPress={() => router.push("/freight/login" as any)}>
+                <Ionicons name="log-in-outline" size={18} color={COLORS.primary} />
+                <Text style={styles.sidebarLoginText}>Freight Login</Text>
+              </TouchableOpacity>
             </View>
 
-            <View style={styles.switchRow}>
-              <Text style={styles.switchText}>Active Insurance</Text>
-              <Switch value={insuranceActive} onValueChange={setInsuranceActive} />
+            <View style={styles.main}>
+              <View style={styles.topbar}>
+                <View>
+                  <Text style={styles.kicker}>Carrier Onboarding</Text>
+                  <Text style={styles.title}>Freight Registration</Text>
+                  <Text style={styles.subtitle}>Fina Admin-style setup for profile, compliance, membership, and payouts.</Text>
+                </View>
+                <TouchableOpacity style={styles.dashboardButton} onPress={registrationReadyForDashboard ? goDashboard : forceRefreshFreightRegister}>
+                  <Ionicons name={registrationReadyForDashboard ? "grid-outline" : "refresh-outline"} size={18} color={COLORS.white} />
+                  <Text style={styles.dashboardButtonText}>{registrationReadyForDashboard ? "Dashboard" : "Refresh"}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {processingReturn ? (
+                <InfoBanner icon="sync-outline" title="Completing Stripe Registration" text="Please wait while we sync your Stripe subscription and submit your freight application." tone="warning" />
+              ) : null}
+
+              <View style={styles.metricGrid}>
+                <MetricCard label="Setup" value={`${setupScore}/5`} icon="analytics-outline" tone="primary" />
+                <MetricCard label="Account" value={accountId || "Pending"} icon="id-card-outline" tone="dark" />
+                <MetricCard label="Subscription" value={hasActiveSubscription ? "Active" : "Pending"} icon="repeat-outline" tone={hasActiveSubscription ? "success" : "warning"} />
+                <MetricCard label="Connect" value={hasStripeConnectAccount ? "Connected" : "Missing"} icon="business-outline" tone={hasStripeConnectAccount ? "success" : "danger"} />
+              </View>
+
+              <View style={styles.mobileStepper}>
+                <WizardStepper step={step} setStep={setStep} />
+              </View>
+
+              {renderCurrentStep()}
+
+              <View style={styles.footerNav}>
+                <TouchableOpacity style={[styles.footerButton, step === 0 && styles.disabledButton]} onPress={goBack} disabled={step === 0}>
+                  <Ionicons name="chevron-back-outline" size={18} color={COLORS.primary} />
+                  <Text style={styles.footerButtonText}>Back</Text>
+                </TouchableOpacity>
+                {step < STEPS.length - 1 ? (
+                  <TouchableOpacity style={styles.footerPrimaryButton} onPress={goNext}>
+                    <Text style={styles.footerPrimaryText}>Continue</Text>
+                    <Ionicons name="chevron-forward-outline" size={18} color={COLORS.white} />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={styles.footerPrimaryButton} onPress={submitToDashboard}>
+                    <Text style={styles.footerPrimaryText}>Finish</Text>
+                    <Ionicons name="checkmark-outline" size={18} color={COLORS.white} />
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
-
-          <View style={styles.card}>
-            <SectionHeader icon="cube-outline" title="Transport Authorization" />
-            <View style={styles.switchRow}>
-              <Text style={styles.switchText}>Licensed to Move Livestock</Text>
-              <Switch
-                value={licensedLivestock}
-                onValueChange={setLicensedLivestock}
-              />
-            </View>
-            <View style={styles.switchRow}>
-              <Text style={styles.switchText}>
-                Licensed for Refrigerated Fresh Food
-              </Text>
-              <Switch
-                value={licensedRefrigeratedFood}
-                onValueChange={setLicensedRefrigeratedFood}
-              />
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.button, saving && styles.disabledButton]}
-            onPress={saveRegistration}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons name="save-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.buttonText}>Save Freight Registration</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.darkButton, saving && styles.disabledButton]}
-            onPress={hasActiveSubscription ? submitToDashboard : startSubscriptionCheckout}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons
-                  name={hasActiveSubscription ? "grid-outline" : "card-outline"}
-                  size={18}
-                  color="#FFFFFF"
-                />
-                <Text style={styles.buttonText}>
-                  {hasActiveSubscription
-                    ? registrationReadyForDashboard
-                      ? "Submit & Open Dashboard"
-                      : "Finish Stripe Connect Before Submit"
-                    : "Start Stripe Membership"}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.outlineButton, saving && styles.disabledButton]}
-            disabled={saving}
-            onPress={startStripeConnectOnboarding}
-          >
-            {saving ? (
-              <ActivityIndicator color={COLORS.red} />
-            ) : (
-              <>
-                <Ionicons name="business-outline" size={18} color={COLORS.red} />
-                <Text style={styles.outlineButtonText}>
-                  {hasStripeConnectAccount
-                    ? "Open / Update Stripe Banking"
-                    : "Connect Stripe Payouts"}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => router.push("/freight/login" as any)}>
-            <Text style={styles.link}>Already registered? Login</Text>
-          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
+function WizardStepper({ step, setStep }: { step: number; setStep: (index: number) => void }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stepperRow}>
+      {STEPS.map((item, index) => {
+        const active = step === index;
+        const complete = index < step;
+        return (
+          <TouchableOpacity key={item.key} style={styles.stepperItem} onPress={() => setStep(index)}>
+            <View style={[styles.stepCircle, active && styles.stepCircleActive, complete && styles.stepCircleDone]}>
+              <Text style={[styles.stepNumber, (active || complete) && styles.stepNumberActive]}>{complete ? "✓" : index + 1}</Text>
+            </View>
+            <Text style={[styles.stepLabel, active && styles.stepLabelActive]}>{item.title}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+function FinaPanel({ icon, title, subtitle, children }: { icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.panel}>
+      <View style={styles.panelHeader}>
+        <View style={styles.panelIcon}><Ionicons name={icon} size={22} color={COLORS.white} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.panelTitle}>{title}</Text>
+          <Text style={styles.panelSubtitle}>{subtitle}</Text>
+        </View>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function TwoColumn({ children }: { children: React.ReactNode }) {
+  return <View style={styles.twoColumn}>{children}</View>;
+}
+
+function Field({ label, ...props }: any) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput style={styles.input} placeholderTextColor="#98A2B3" {...props} />
+    </View>
+  );
+}
+
+function MetricCard({ label, value, icon, tone }: { label: string; value: string; icon: keyof typeof Ionicons.glyphMap; tone: "primary" | "dark" | "success" | "warning" | "danger" }) {
+  const bg = tone === "primary" ? COLORS.primary : tone === "success" ? COLORS.accent : tone === "warning" ? COLORS.warning : tone === "danger" ? COLORS.danger : COLORS.dark;
+  return (
+    <View style={styles.metricCard}>
+      <View style={[styles.metricIcon, { backgroundColor: bg }]}><Ionicons name={icon} size={20} color={COLORS.white} /></View>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
+
+function StatusTile({ title, value, good, icon }: { title: string; value: string; good: boolean; icon: keyof typeof Ionicons.glyphMap }) {
+  return (
+    <View style={styles.statusTile}>
+      <View style={[styles.statusIcon, { backgroundColor: good ? COLORS.accent : COLORS.warning }]}>
+        <Ionicons name={good ? "checkmark-outline" : icon} size={19} color={COLORS.white} />
+      </View>
+      <Text style={styles.statusTitle}>{title}</Text>
+      <Text style={styles.statusValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
+
+function ReviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.reviewRow}>
+      <Text style={styles.reviewLabel}>{label}</Text>
+      <Text style={styles.reviewValue} numberOfLines={2}>{value}</Text>
+    </View>
+  );
+}
+
+function InfoBanner({ icon, title, text, tone }: { icon: keyof typeof Ionicons.glyphMap; title: string; text: string; tone: "info" | "success" | "warning" }) {
+  const bg = tone === "success" ? "#ECFDF3" : tone === "warning" ? "#FFFAEB" : COLORS.primarySoft;
+  const border = tone === "success" ? "#ABEFC6" : tone === "warning" ? "#FEDF89" : "#C7D7FE";
+  const iconBg = tone === "success" ? COLORS.accent : tone === "warning" ? COLORS.warning : COLORS.primary;
+  return (
+    <View style={[styles.infoBanner, { backgroundColor: bg, borderColor: border }]}>
+      <View style={[styles.infoBannerIcon, { backgroundColor: iconBg }]}><Ionicons name={icon} size={18} color={COLORS.white} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.infoBannerTitle}>{title}</Text>
+        <Text style={styles.infoBannerText}>{text}</Text>
+      </View>
+    </View>
+  );
+}
+
+function SwitchCard({ label, description, value, onValueChange }: { label: string; description: string; value: boolean; onValueChange: (value: boolean) => void }) {
+  return (
+    <View style={styles.switchCard}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.switchTitle}>{label}</Text>
+        <Text style={styles.switchSub}>{description}</Text>
+      </View>
+      <Switch value={value} onValueChange={onValueChange} trackColor={{ false: "#D0D5DD", true: COLORS.primary }} thumbColor={COLORS.white} />
+    </View>
+  );
+}
+
+function ActionButton({ icon, label, onPress, loading, variant = "primary", disabled }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void; loading?: boolean; variant?: "primary" | "dark" | "outline" | "secondary"; disabled?: boolean }) {
+  const style = variant === "outline" ? styles.outlineAction : variant === "dark" ? styles.darkAction : variant === "secondary" ? styles.secondaryAction : styles.primaryAction;
+  const color = variant === "outline" || variant === "secondary" ? COLORS.primary : COLORS.white;
+  return (
+    <TouchableOpacity style={[style, (loading || disabled) && styles.disabledButton]} onPress={onPress} disabled={loading || disabled} activeOpacity={0.85}>
+      {loading ? <ActivityIndicator color={color} /> : <Ionicons name={icon} size={18} color={color} />}
+      <Text style={[styles.actionText, { color }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1 },
   page: { flex: 1, backgroundColor: COLORS.bg },
-  content: { paddingBottom: 90 },
-  heroCard: {
-    backgroundColor: COLORS.black,
-    paddingTop: 26,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-  },
-  heroIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 24,
-    backgroundColor: COLORS.red,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 14,
-  },
-  kicker: {
-    color: "#FCA5A5",
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: "900",
-    marginTop: 6,
-    color: "#FFFFFF",
-  },
-  subtitle: {
-    color: "#CBD5E1",
-    fontSize: 15,
-    lineHeight: 23,
-    fontWeight: "700",
-    marginTop: 8,
-  },
-  noticeBox: {
-    backgroundColor: "#FFFBEB",
-    borderColor: COLORS.amber,
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 15,
-    marginHorizontal: 18,
-    marginTop: 18,
-    marginBottom: 14,
-  },
-  noticeHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 6,
-  },
-  noticeTitle: { color: COLORS.text, fontWeight: "900", fontSize: 17 },
-  noticeText: { color: COLORS.text, fontWeight: "700", lineHeight: 22 },
-  card: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 18,
-    marginBottom: 16,
-    borderRadius: 22,
-    padding: 18,
+  content: { padding: 16, paddingBottom: 70 },
+  shell: { flexDirection: Platform.OS === "web" ? "row" : "column", gap: 18, width: "100%" },
+  sidebar: {
+    backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
-  },
-  securityCard: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 18,
-    marginBottom: 16,
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  sectionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 16,
-    backgroundColor: COLORS.black,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  section: { fontSize: 20, fontWeight: "900", color: COLORS.text },
-  input: {
-    backgroundColor: COLORS.surface,
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    fontSize: 16,
-    color: COLORS.text,
-    fontWeight: "700",
-  },
-  helperText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 21,
-    marginBottom: 10,
-  },
-  readOnlyBox: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-  },
-  readOnlyLabel: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  readOnlyValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 15,
-  },
-  readOnlyFallback: { color: "#94A3B8" },
-  syncButton: {
-    backgroundColor: COLORS.black,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 8,
-  },
-  syncButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  securityBox: { marginBottom: 12 },
-  securityLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
-  questionChip: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    marginRight: 8,
-    marginBottom: 10,
-    maxWidth: 280,
-  },
-  questionChipActive: {
-    backgroundColor: COLORS.red,
-    borderColor: COLORS.red,
-  },
-  questionChipText: { color: COLORS.red, fontWeight: "900" },
-  questionChipTextActive: { color: "#FFFFFF" },
-  switchRow: {
-    backgroundColor: COLORS.surface,
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  switchText: {
-    flex: 1,
-    fontWeight: "800",
-    paddingRight: 12,
-    color: COLORS.text,
-  },
-  button: {
-    backgroundColor: COLORS.red,
+    borderRadius: 28,
     padding: 16,
-    borderRadius: 16,
-    marginHorizontal: 18,
-    marginTop: 4,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
+    width: Platform.OS === "web" ? 270 : "100%",
+    alignSelf: "stretch",
   },
-  darkButton: {
-    backgroundColor: COLORS.black,
-    padding: 16,
-    borderRadius: 16,
-    marginHorizontal: 18,
-    marginTop: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  outlineButton: {
-    backgroundColor: "#FFF1F2",
-    borderColor: COLORS.red,
-    borderWidth: 1,
-    padding: 16,
-    borderRadius: 16,
-    marginHorizontal: 18,
-    marginTop: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  outlineButtonText: {
-    color: COLORS.red,
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  disabledButton: { opacity: 0.6 },
-  buttonText: {
-    color: "#FFFFFF",
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  link: {
-    color: COLORS.red, 
-    textAlign: "center",
-    fontWeight: "900",
-    marginTop: 18,
-  },
+  brandBlock: { flexDirection: "row", gap: 12, alignItems: "center", marginBottom: 18 },
+  brandIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+  brandTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18 },
+  brandSub: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
+  sideStep: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 16, marginBottom: 7 },
+  sideStepActive: { backgroundColor: COLORS.primarySoft },
+  sideStepIcon: { width: 34, height: 34, borderRadius: 13, backgroundColor: COLORS.primarySoft, alignItems: "center", justifyContent: "center" },
+  sideStepIconActive: { backgroundColor: COLORS.primary },
+  sideStepIconDone: { backgroundColor: COLORS.accent },
+  sideStepText: { color: COLORS.muted, fontWeight: "800" },
+  sideStepTextActive: { color: COLORS.primary, fontWeight: "900" },
+  sidebarLogin: { marginTop: 10, padding: 13, borderRadius: 15, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  sidebarLoginText: { color: COLORS.primary, fontWeight: "900" },
+  main: { flex: 1, minWidth: 0 },
+  topbar: { backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border, borderRadius: 28, padding: 20, flexDirection: "row", gap: 12, justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  kicker: { color: COLORS.primary, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
+  title: { color: COLORS.text, fontSize: 32, fontWeight: "900", marginTop: 4 },
+  subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 6, lineHeight: 22 },
+  dashboardButton: { backgroundColor: COLORS.primary, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 16, flexDirection: "row", alignItems: "center", gap: 8 },
+  dashboardButtonText: { color: COLORS.white, fontWeight: "900" },
+  metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 16 },
+  metricCard: { flexGrow: 1, flexBasis: Platform.OS === "web" ? "23%" : "47%", backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border, borderRadius: 22, padding: 16, minHeight: 125 },
+  metricIcon: { width: 38, height: 38, borderRadius: 14, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  metricLabel: { color: COLORS.muted, fontWeight: "800", fontSize: 12, textTransform: "uppercase" },
+  metricValue: { color: COLORS.text, fontWeight: "900", fontSize: 20, marginTop: 5 },
+  mobileStepper: { display: Platform.OS === "web" ? "none" : "flex", marginBottom: 14 },
+  stepperRow: { gap: 12, paddingVertical: 4 },
+  stepperItem: { alignItems: "center", gap: 5, minWidth: 70 },
+  stepCircle: { width: 32, height: 32, borderRadius: 999, backgroundColor: COLORS.surface2, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.border },
+  stepCircleActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  stepCircleDone: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  stepNumber: { color: COLORS.muted, fontWeight: "900" },
+  stepNumberActive: { color: COLORS.white },
+  stepLabel: { color: COLORS.muted, fontWeight: "800", fontSize: 11 },
+  stepLabelActive: { color: COLORS.primary },
+  panel: { backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border, borderRadius: 28, padding: 20, marginBottom: 16 },
+  panelHeader: { flexDirection: "row", gap: 12, alignItems: "flex-start", marginBottom: 18 },
+  panelIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+  panelTitle: { color: COLORS.text, fontWeight: "900", fontSize: 23 },
+  panelSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 21, marginTop: 4 },
+  twoColumn: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  fieldWrap: { flexGrow: 1, flexBasis: Platform.OS === "web" ? "48%" : "100%" },
+  fieldLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 7 },
+  input: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 15, paddingHorizontal: 14, paddingVertical: 14, color: COLORS.text, fontWeight: "800", fontSize: 15, marginBottom: 12 },
+  equipmentGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 12 },
+  equipmentCard: { flexBasis: Platform.OS === "web" ? "31%" : "47%", flexGrow: 1, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 14, minHeight: 96, justifyContent: "space-between" },
+  equipmentCardActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  equipmentText: { color: COLORS.text, fontWeight: "900", marginTop: 10 },
+  equipmentTextActive: { color: COLORS.white },
+  switchCard: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 15, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12 },
+  switchTitle: { color: COLORS.text, fontWeight: "900" },
+  switchSub: { color: COLORS.muted, fontWeight: "700", marginTop: 4, lineHeight: 19 },
+  questionBlock: { marginBottom: 12 },
+  questionRow: { gap: 8, paddingBottom: 8 },
+  questionChip: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 999, maxWidth: 280 },
+  questionChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  questionChipText: { color: COLORS.primary, fontWeight: "900" },
+  questionChipTextActive: { color: COLORS.white },
+  statusGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 16 },
+  statusTile: { flexGrow: 1, flexBasis: Platform.OS === "web" ? "31%" : "100%", backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 20, padding: 15 },
+  statusIcon: { width: 36, height: 36, borderRadius: 14, alignItems: "center", justifyContent: "center", marginBottom: 10 },
+  statusTitle: { color: COLORS.muted, fontWeight: "900", textTransform: "uppercase", fontSize: 12 },
+  statusValue: { color: COLORS.text, fontWeight: "900", marginTop: 5 },
+  actionStack: { gap: 10 },
+  primaryAction: { backgroundColor: COLORS.primary, borderRadius: 16, padding: 15, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, width: "100%" },
+  darkAction: { backgroundColor: COLORS.dark, borderRadius: 16, padding: 15, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, width: "100%" },
+  outlineAction: { backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.primary, borderRadius: 16, padding: 15, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, width: "100%" },
+  secondaryAction: { backgroundColor: COLORS.primarySoft, borderWidth: 1, borderColor: "#C7D7FE", borderRadius: 16, padding: 15, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, width: "100%" },
+  actionText: { fontWeight: "900", textAlign: "center", flexShrink: 1 },
+  reviewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 14 },
+  reviewRow: { flexGrow: 1, flexBasis: Platform.OS === "web" ? "31%" : "100%", backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, padding: 13 },
+  reviewLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11, textTransform: "uppercase" },
+  reviewValue: { color: COLORS.text, fontWeight: "900", marginTop: 5, lineHeight: 19 },
+  infoBanner: { borderWidth: 1, borderRadius: 18, padding: 14, flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 12 },
+  infoBannerIcon: { width: 34, height: 34, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  infoBannerTitle: { color: COLORS.text, fontWeight: "900" },
+  infoBannerText: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
+  footerNav: { flexDirection: "row", justifyContent: "space-between", gap: 12, marginBottom: 20 },
+  footerButton: { flex: 1, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, padding: 15, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  footerButtonText: { color: COLORS.primary, fontWeight: "900" },
+  footerPrimaryButton: { flex: 1, backgroundColor: COLORS.primary, borderRadius: 16, padding: 15, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  footerPrimaryText: { color: COLORS.white, fontWeight: "900" },
+  disabledButton: { opacity: 0.55 },
 });

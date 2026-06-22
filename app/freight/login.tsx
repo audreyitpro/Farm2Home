@@ -1,6 +1,6 @@
 // app/freight/login.tsx
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,6 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
-import freightTheme from "../styles/freightTheme";
 
 type FreightUser = {
   id: string;
@@ -65,6 +64,7 @@ type FreightUser = {
   membership_status: string;
   subscriptionStatus: string;
   subscription_status: string;
+
   approved: boolean;
   verificationStatus: string;
   verification_status: string;
@@ -75,17 +75,28 @@ type FreightUser = {
 };
 
 const COLORS = {
-  bg: "#F3F4F6",
+  bg: "#F7F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  text: "#111827",
+  panel: "#F8FAFC",
+  text: "#0F172A",
   muted: "#64748B",
   border: "#E5E7EB",
-  dark: "#020617",
+  borderDark: "#CBD5E1",
+  primary: "#6D5DFB",
+  primaryDark: "#4F46E5",
+  primarySoft: "#EEF2FF",
   green: "#10B981",
   greenDark: "#047857",
-  red: "#B91C1C",
+  amber: "#F59E0B",
+  red: "#EF4444",
+  dark: "#111827",
+  navy: "#020617",
+  white: "#FFFFFF",
 };
+
+const DASHBOARD_ROUTE = "/freight/dashboard" as const;
+const REGISTER_ROUTE = "/freight/register" as const;
+const RESET_REDIRECT = "farm2home://reset-password";
 
 function clean(value: any) {
   return String(value ?? "").trim();
@@ -123,28 +134,58 @@ function pickAcct(...values: any[]) {
 }
 
 function statusIsGood(value: any) {
-  const status = normalize(value);
+  const status = normalize(value || "active");
   return !["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(status);
 }
 
-function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
+function formatMaskedId(value: string, fallback = "Missing") {
+  const id = clean(value);
+  if (!id) return fallback;
+  if (id.length <= 14) return id;
+  return `${id.slice(0, 8)}...${id.slice(-5)}`;
+}
+
+function hasDashboardAccess(user: FreightUser) {
+  return Boolean(
+    user.id &&
+      clean(user.account_id || user.accountId) &&
+      isCus(user.stripe_customer_id || user.stripeCustomerId) &&
+      isSub(user.stripe_subscription_id || user.subscription_id || user.stripeSubscriptionId) &&
+      isAcct(user.freight_account || user.stripe_account_id || user.freightAccount || user.stripeAccountId) &&
+      user.account_active !== false &&
+      user.accountActive !== false &&
+      statusIsGood(user.membership_status || user.membershipStatus) &&
+      statusIsGood(user.subscription_status || user.subscriptionStatus)
+  );
+}
+
+function mapCarrierToFreightUser(item: any, profile?: any, subscription?: any): FreightUser {
   const id = clean(
     item?.id ||
       item?.freight_id ||
       item?.auth_user_id ||
       item?.profile_id ||
+      subscription?.freight_id ||
       profile?.auth_user_id ||
       profile?.id ||
       ""
   );
 
-  const accountId = clean(item?.account_id || profile?.account_id || "");
+  const accountId = clean(
+    item?.account_id ||
+      item?.accountId ||
+      profile?.account_id ||
+      profile?.accountId ||
+      ""
+  );
 
   const stripeCustomerId = pickCus(
     item?.stripe_customer_id,
     item?.stripeCustomerId,
     profile?.stripe_customer_id,
-    profile?.stripeCustomerId
+    profile?.stripeCustomerId,
+    subscription?.stripe_customer_id,
+    subscription?.stripeCustomerId
   );
 
   const stripeSubscriptionId = pickSub(
@@ -155,7 +196,11 @@ function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
     profile?.stripe_subscription_id,
     profile?.subscription_id,
     profile?.stripeSubscriptionId,
-    profile?.subscriptionId
+    profile?.subscriptionId,
+    subscription?.stripe_subscription_id,
+    subscription?.subscription_id,
+    subscription?.stripeSubscriptionId,
+    subscription?.subscriptionId
   );
 
   const freightAccount = pickAcct(
@@ -166,7 +211,11 @@ function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
     profile?.freight_account,
     profile?.freightAccount,
     profile?.stripe_account_id,
-    profile?.stripeAccountId
+    profile?.stripeAccountId,
+    subscription?.freight_account,
+    subscription?.freightAccount,
+    subscription?.stripe_account_id,
+    subscription?.stripeAccountId
   );
 
   const companyName = clean(
@@ -174,6 +223,7 @@ function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
       item?.business_name ||
       item?.companyName ||
       item?.businessName ||
+      subscription?.name ||
       profile?.company_name ||
       profile?.business_name ||
       "Freight Carrier"
@@ -203,6 +253,8 @@ function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
       item?.subscriptionStatus ||
       profile?.subscription_status ||
       profile?.subscriptionStatus ||
+      subscription?.subscription_status ||
+      subscription?.subscriptionStatus ||
       (stripeSubscriptionId ? "active" : "pending")
   );
 
@@ -249,9 +301,9 @@ function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
     contact_name: contactName,
     fullName: clean(item?.full_name || item?.fullName || contactName),
     full_name: clean(item?.full_name || item?.fullName || contactName),
-    email: normalize(item?.email || profile?.email),
+    email: normalize(item?.email || profile?.email || subscription?.freight_email),
     phone: clean(item?.phone || profile?.phone || ""),
-    username: normalize(item?.username || profile?.username || ""),
+    username: normalize(item?.username || profile?.username || subscription?.username || ""),
 
     stripeCustomerId,
     stripe_customer_id: stripeCustomerId,
@@ -270,6 +322,7 @@ function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
     membership_status: membershipStatus,
     subscriptionStatus,
     subscription_status: subscriptionStatus,
+
     approved: item?.approved !== false,
     verificationStatus: clean(
       item?.verification_status ||
@@ -292,40 +345,49 @@ function mapCarrierToFreightUser(item: any, profile?: any): FreightUser {
   };
 }
 
-function isFreightActive(user: FreightUser) {
-  if (user.accountActive === false || user.account_active === false) return false;
-  if (!statusIsGood(user.membershipStatus || user.membership_status)) return false;
-  if (!statusIsGood(user.subscriptionStatus || user.subscription_status)) return false;
-  return true;
-}
-
-function hasDashboardAccess(user: FreightUser) {
-  const hasStripeCustomer = isCus(user.stripeCustomerId || user.stripe_customer_id);
-  const hasSubscription = isSub(
-    user.stripeSubscriptionId || user.stripe_subscription_id || user.subscriptionId || user.subscription_id
-  );
-  const hasConnect = isAcct(
-    user.freightAccount || user.freight_account || user.stripeAccountId || user.stripe_account_id
-  );
-
-  return Boolean(
-    user.id &&
-      user.account_id &&
-      hasStripeCustomer &&
-      hasSubscription &&
-      hasConnect &&
-      isFreightActive(user)
-  );
-}
-
 export default function FreightLoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loginLoading, setLoginLoading] = useState(false);
 
+  const [loginLoading, setLoginLoading] = useState(false);
   const [resetVisible, setResetVisible] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
+  const [lastCheckedUser, setLastCheckedUser] = useState<FreightUser | null>(null);
+
+  const accessStatus = useMemo(() => {
+    if (!lastCheckedUser) {
+      return [
+        { label: "Freight Profile", complete: false, value: "Login to check" },
+        { label: "Static Account", complete: false, value: "Login to check" },
+        { label: "Subscription", complete: false, value: "Login to check" },
+        { label: "Stripe Connect", complete: false, value: "Login to check" },
+      ];
+    }
+
+    return [
+      {
+        label: "Freight Profile",
+        complete: Boolean(lastCheckedUser.id),
+        value: lastCheckedUser.id ? "Found" : "Missing",
+      },
+      {
+        label: "Static Account",
+        complete: Boolean(lastCheckedUser.account_id),
+        value: lastCheckedUser.account_id || "Missing",
+      },
+      {
+        label: "Subscription",
+        complete: isSub(lastCheckedUser.stripe_subscription_id || lastCheckedUser.subscription_id),
+        value: formatMaskedId(lastCheckedUser.stripe_subscription_id || lastCheckedUser.subscription_id),
+      },
+      {
+        label: "Stripe Connect",
+        complete: isAcct(lastCheckedUser.freight_account || lastCheckedUser.stripe_account_id),
+        value: formatMaskedId(lastCheckedUser.freight_account || lastCheckedUser.stripe_account_id),
+      },
+    ];
+  }, [lastCheckedUser]);
 
   async function saveFreightSession(user: FreightUser) {
     const now = new Date().toISOString();
@@ -377,8 +439,34 @@ export default function FreightLoginScreen() {
     return null;
   }
 
+  async function findSubscription(userId: string, cleanEmail: string) {
+    const filters = [
+      userId ? `freight_id.eq.${userId}` : "",
+      cleanEmail ? `freight_email.eq.${cleanEmail}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    const { data, error } = await supabase
+      .from("freight_subscriptions")
+      .select("*")
+      .or(filters)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.log("Freight subscription lookup error:", error.message);
+      return null;
+    }
+
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  }
+
   async function findFreightProfile(userId: string, cleanEmail: string) {
     const profile = await findProfile(userId, cleanEmail);
+    const subscription = await findSubscription(userId, cleanEmail);
     let freightUser: any = null;
 
     if (userId) {
@@ -421,49 +509,103 @@ export default function FreightLoginScreen() {
       if (!carrierByEmail.error && carrierByEmail.data) freightUser = carrierByEmail.data;
     }
 
-    if (!freightUser && profile) {
+    if (!freightUser && (profile || subscription)) {
       freightUser = {
-        id: userId || profile.auth_user_id || profile.id,
-        freight_id: userId || profile.auth_user_id || profile.id,
-        auth_user_id: userId || profile.auth_user_id || profile.id,
-        profile_id: profile.id,
+        id: userId || profile?.auth_user_id || profile?.id || subscription?.freight_id,
+        freight_id: userId || profile?.auth_user_id || profile?.id || subscription?.freight_id,
+        auth_user_id: userId || profile?.auth_user_id || profile?.id || subscription?.freight_id,
+        profile_id: profile?.id || userId || subscription?.freight_id,
         role: "freight",
-        account_id: profile.account_id,
-        company_name: profile.company_name || profile.business_name || "Freight Carrier",
-        business_name: profile.business_name || profile.company_name || "Freight Carrier",
-        contact_name: profile.full_name || profile.name || "",
-        full_name: profile.full_name || profile.name || "",
-        email: profile.email,
-        phone: profile.phone,
-        username: profile.username || "",
-        account_active: profile.account_active ?? true,
-        stripe_customer_id: profile.stripe_customer_id,
-        stripe_subscription_id: profile.stripe_subscription_id || profile.subscription_id,
-        subscription_id: profile.subscription_id || profile.stripe_subscription_id,
-        freight_account: profile.freight_account,
-        stripe_account_id: profile.stripe_account_id,
-        membership_status: profile.membership_status,
-        subscription_status: profile.subscription_status,
-        registration_complete: profile.registration_complete,
-        application_submitted: profile.application_submitted,
+        account_id: profile?.account_id,
+        company_name: profile?.company_name || profile?.business_name || subscription?.name || "Freight Carrier",
+        business_name: profile?.business_name || profile?.company_name || subscription?.name || "Freight Carrier",
+        contact_name: profile?.full_name || profile?.name || "",
+        full_name: profile?.full_name || profile?.name || "",
+        email: profile?.email || subscription?.freight_email || cleanEmail,
+        phone: profile?.phone,
+        username: profile?.username || subscription?.username || "",
+        account_active: profile?.account_active ?? true,
+        stripe_customer_id: profile?.stripe_customer_id || subscription?.stripe_customer_id,
+        stripe_subscription_id:
+          profile?.stripe_subscription_id || profile?.subscription_id || subscription?.stripe_subscription_id,
+        subscription_id:
+          profile?.subscription_id || profile?.stripe_subscription_id || subscription?.stripe_subscription_id,
+        freight_account: profile?.freight_account || subscription?.freight_account,
+        stripe_account_id: profile?.stripe_account_id || subscription?.stripe_account_id,
+        membership_status: profile?.membership_status || (subscription?.stripe_subscription_id ? "active" : "pending"),
+        subscription_status: profile?.subscription_status || subscription?.subscription_status,
+        registration_complete: profile?.registration_complete,
+        application_submitted: profile?.application_submitted,
       };
     }
 
     if (!freightUser) return null;
 
-    return mapCarrierToFreightUser(freightUser, profile);
+    const mapped = mapCarrierToFreightUser(freightUser, profile, subscription);
+
+    const updates: any = {};
+    if (subscription?.stripe_account_id && !pickAcct(freightUser?.stripe_account_id, freightUser?.freight_account)) {
+      updates.stripe_account_id = subscription.stripe_account_id;
+      updates.freight_account = subscription.freight_account || subscription.stripe_account_id;
+      updates.stripe_connect_status = "started";
+    }
+    if (subscription?.stripe_customer_id && !pickCus(freightUser?.stripe_customer_id)) {
+      updates.stripe_customer_id = subscription.stripe_customer_id;
+    }
+    if (subscription?.stripe_subscription_id && !pickSub(freightUser?.stripe_subscription_id, freightUser?.subscription_id)) {
+      updates.stripe_subscription_id = subscription.stripe_subscription_id;
+      updates.subscription_id = subscription.stripe_subscription_id;
+      updates.subscription_status = subscription.subscription_status || "active";
+      updates.membership_status = "active";
+      updates.freight_membership_paid = true;
+    }
+
+    if (freightUser?.id && Object.keys(updates).length > 0) {
+      await supabase
+        .from("freight_users")
+        .update({ ...updates, account_active: true, updated_at: new Date().toISOString() })
+        .eq("id", freightUser.id);
+
+      Object.assign(mapped, {
+        stripeCustomerId: pickCus(updates.stripe_customer_id, mapped.stripeCustomerId),
+        stripe_customer_id: pickCus(updates.stripe_customer_id, mapped.stripe_customer_id),
+        stripeSubscriptionId: pickSub(updates.stripe_subscription_id, mapped.stripeSubscriptionId),
+        stripe_subscription_id: pickSub(updates.stripe_subscription_id, mapped.stripe_subscription_id),
+        subscriptionId: pickSub(updates.subscription_id, mapped.subscriptionId),
+        subscription_id: pickSub(updates.subscription_id, mapped.subscription_id),
+        freightAccount: pickAcct(updates.freight_account, updates.stripe_account_id, mapped.freightAccount),
+        freight_account: pickAcct(updates.freight_account, updates.stripe_account_id, mapped.freight_account),
+        stripeAccountId: pickAcct(updates.freight_account, updates.stripe_account_id, mapped.stripeAccountId),
+        stripe_account_id: pickAcct(updates.freight_account, updates.stripe_account_id, mapped.stripe_account_id),
+        membershipStatus: updates.membership_status || mapped.membershipStatus,
+        membership_status: updates.membership_status || mapped.membership_status,
+        subscriptionStatus: updates.subscription_status || mapped.subscriptionStatus,
+        subscription_status: updates.subscription_status || mapped.subscription_status,
+      });
+    }
+
+    return mapped;
   }
 
   async function touchLastLogin(user: FreightUser) {
     const now = new Date().toISOString();
-    const payload = {
-      last_login_at: now,
-      account_active: true,
-      updated_at: now,
-    };
 
-    await supabase.from("freight_users").update(payload).eq("id", user.id);
-    await supabase.from("profiles").update(payload).eq("id", user.id);
+    await supabase
+      .from("freight_users")
+      .update({
+        last_login_at: now,
+        account_active: true,
+        updated_at: now,
+      })
+      .eq("id", user.id);
+
+    await supabase
+      .from("profiles")
+      .update({
+        account_active: true,
+        last_login_at: now,
+      })
+      .eq("id", user.id);
   }
 
   async function handleLogin() {
@@ -502,20 +644,33 @@ export default function FreightLoginScreen() {
           "Freight Profile Missing",
           "Your login exists, but no freight profile was found. Please complete freight registration."
         );
-        router.replace("/freight/register" as any);
+        router.replace(REGISTER_ROUTE as any);
         return;
       }
 
+      setLastCheckedUser(mappedUser);
       await saveFreightSession(mappedUser);
 
-      if (!isFreightActive(mappedUser)) {
+      if (!statusIsGood(mappedUser.membershipStatus || mappedUser.membership_status)) {
+        Alert.alert("Account Not Active", "Your freight membership is not active.");
+        router.replace(REGISTER_ROUTE as any);
+        return;
+      }
+
+      if (!statusIsGood(mappedUser.subscriptionStatus || mappedUser.subscription_status)) {
+        Alert.alert("Subscription Issue", "Your freight subscription needs attention.");
+        router.replace(REGISTER_ROUTE as any);
+        return;
+      }
+
+      if (mappedUser.accountActive === false || mappedUser.account_active === false) {
         Alert.alert("Account Not Active", "Your freight account is not active.");
         return;
       }
 
       if (hasDashboardAccess(mappedUser)) {
         await touchLastLogin(mappedUser);
-        router.replace("/freight/dashboard" as any);
+        router.replace(DASHBOARD_ROUTE as any);
         return;
       }
 
@@ -531,7 +686,7 @@ export default function FreightLoginScreen() {
         `Your freight profile was found, but this setup is missing: ${missingItems.join(", ")}. You will be taken to registration to finish setup.`
       );
 
-      router.replace("/freight/register" as any);
+      router.replace(REGISTER_ROUTE as any);
     } catch (error: any) {
       console.log("Freight login error:", error);
       Alert.alert("Login Error", error?.message || "Unable to login to freight account.");
@@ -552,7 +707,7 @@ export default function FreightLoginScreen() {
       setResetLoading(true);
 
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: "farm2home://reset-password",
+        redirectTo: RESET_REDIRECT,
       });
 
       if (error) {
@@ -572,7 +727,7 @@ export default function FreightLoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.dark} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -583,99 +738,193 @@ export default function FreightLoginScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.hero}>
-            <View style={styles.heroTop}>
-              <View style={styles.heroIcon}>
-                <Ionicons name="trail-sign-outline" size={34} color="#FFFFFF" />
+          <View style={styles.shell}>
+            <View style={styles.sidebar}>
+              <View style={styles.brandRow}>
+                <View style={styles.brandIcon}>
+                  <Ionicons name="trail-sign-outline" size={28} color={COLORS.white} />
+                </View>
+                <View>
+                  <Text style={styles.brandTitle}>Farm2Home</Text>
+                  <Text style={styles.brandSubtitle}>Freight Connect</Text>
+                </View>
               </View>
 
-              <TouchableOpacity style={styles.homeChip} onPress={() => router.replace("/" as any)}>
-                <Ionicons name="home-outline" size={15} color="#CBD5E1" />
-                <Text style={styles.homeChipText}>Home</Text>
+              <View style={styles.sideDivider} />
+
+              <SideFeature
+                icon="grid-outline"
+                title="Dashboard-first access"
+                body="Completed freight profiles route directly to the carrier dashboard."
+              />
+              <SideFeature
+                icon="card-outline"
+                title="Stripe verified"
+                body="Customer, subscription, and Connect account IDs are checked at login."
+              />
+              <SideFeature
+                icon="business-outline"
+                title="Carrier workspace"
+                body="Manage load board, live routes, payouts, alerts, and profile setup."
+              />
+
+              <TouchableOpacity style={styles.homeButton} onPress={() => router.replace("/" as any)}>
+                <Ionicons name="home-outline" size={18} color={COLORS.primary} />
+                <Text style={styles.homeButtonText}>Back to Home</Text>
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.kicker}>Farm2Home Freight Connect</Text>
-            <Text style={styles.title}>Carrier Login</Text>
-            <Text style={styles.subtitle}>
-              Access freight loads, live tracking, dispatch tools, Stripe payouts, and earnings.
-            </Text>
-          </View>
+            <View style={styles.main}>
+              <View style={styles.topPanel}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.eyebrow}>Fina Admin Style Portal</Text>
+                  <Text style={styles.pageTitle}>Carrier Login</Text>
+                  <Text style={styles.pageSubtitle}>
+                    Sign in to access Farm2Home Freight loads, dispatch tools, route tracking, and Stripe payouts.
+                  </Text>
+                </View>
 
-          <View style={styles.loginCard}>
-            <Text style={styles.cardTitle}>Freight Portal Access</Text>
-            <Text style={styles.cardSubtitle}>
-              Fully registered carriers are routed directly to the freight dashboard.
-            </Text>
+                <View style={styles.statusBadge}>
+                  <View style={styles.statusDot} />
+                  <Text style={styles.statusBadgeText}>Secure</Text>
+                </View>
+              </View>
 
-            <Text style={styles.inputLabel}>Email Address</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="carrier@email.com"
-              placeholderTextColor="#94A3B8"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-            />
+              <View style={styles.metricsRow}>
+                <MetricCard
+                  icon="person-circle-outline"
+                  label="Profile"
+                  value={lastCheckedUser?.companyName || "Carrier"}
+                />
+                <MetricCard
+                  icon="business-outline"
+                  label="Account"
+                  value={lastCheckedUser?.account_id || "Freight ID"}
+                />
+                <MetricCard
+                  icon="shield-checkmark-outline"
+                  label="Access"
+                  value={lastCheckedUser && hasDashboardAccess(lastCheckedUser) ? "Ready" : "Check Login"}
+                />
+              </View>
 
-            <Text style={styles.inputLabel}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter password"
-              placeholderTextColor="#94A3B8"
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={password}
-              onChangeText={setPassword}
-            />
+              <View style={styles.formGrid}>
+                <View style={styles.loginCard}>
+                  <View style={styles.cardHeader}>
+                    <View style={styles.cardIcon}>
+                      <Ionicons name="log-in-outline" size={22} color={COLORS.white} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardTitle}>Welcome back</Text>
+                      <Text style={styles.cardSubtitle}>Use your freight registration email and password.</Text>
+                    </View>
+                  </View>
 
-            <TouchableOpacity
-              style={[styles.loginButton, loginLoading && styles.disabledButton]}
-              onPress={handleLogin}
-              disabled={loginLoading}
-              activeOpacity={0.85}
-            >
-              {loginLoading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.loginButtonText}>Login to Freight Portal</Text>
-                </>
-              )}
-            </TouchableOpacity>
+                  <Text style={styles.inputLabel}>Email Address</Text>
+                  <View style={styles.inputShell}>
+                    <Ionicons name="mail-outline" size={18} color={COLORS.muted} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="carrier@email.com"
+                      placeholderTextColor="#94A3B8"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="email-address"
+                      value={email}
+                      onChangeText={setEmail}
+                    />
+                  </View>
 
-            <TouchableOpacity
-              style={styles.forgotButton}
-              onPress={() => {
-                setResetEmail(email);
-                setResetVisible(true);
-              }}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.forgotText}>Forgot Password?</Text>
-            </TouchableOpacity>
+                  <Text style={styles.inputLabel}>Password</Text>
+                  <View style={styles.inputShell}>
+                    <Ionicons name="lock-closed-outline" size={18} color={COLORS.muted} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Enter password"
+                      placeholderTextColor="#94A3B8"
+                      secureTextEntry
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      value={password}
+                      onChangeText={setPassword}
+                    />
+                  </View>
 
-            <View style={styles.divider} />
+                  <TouchableOpacity
+                    style={[styles.primaryButton, loginLoading && styles.disabledButton]}
+                    onPress={handleLogin}
+                    disabled={loginLoading}
+                    activeOpacity={0.9}
+                  >
+                    {loginLoading ? (
+                      <ActivityIndicator color={COLORS.white} />
+                    ) : (
+                      <>
+                        <Ionicons name="arrow-forward-outline" size={18} color={COLORS.white} />
+                        <Text style={styles.primaryButtonText}>Login to Freight Dashboard</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.registerButton}
-              onPress={() => router.push("/freight/register" as any)}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="business-outline" size={18} color={COLORS.greenDark} />
-              <Text style={styles.registerText}>Register for Freight Connect</Text>
-            </TouchableOpacity>
-          </View>
+                  <TouchableOpacity
+                    style={styles.textButton}
+                    onPress={() => {
+                      setResetEmail(email);
+                      setResetVisible(true);
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.textButtonText}>Forgot Password?</Text>
+                  </TouchableOpacity>
 
-          <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Dashboard access requires</Text>
-            <Text style={styles.infoText}>
-              Supabase freight profile, static account ID, Stripe customer ID, Stripe subscription ID, and Stripe Connect account ID.
-            </Text>
+                  <View style={styles.divider} />
+
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => router.push(REGISTER_ROUTE as any)}
+                    activeOpacity={0.9}
+                  >
+                    <Ionicons name="business-outline" size={18} color={COLORS.primary} />
+                    <Text style={styles.secondaryButtonText}>Register for Freight Connect</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.accessCard}>
+                  <View style={styles.cardHeader}>
+                    <View style={[styles.cardIcon, styles.cardIconSoft]}>
+                      <Ionicons name="analytics-outline" size={22} color={COLORS.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardTitle}>Dashboard access check</Text>
+                      <Text style={styles.cardSubtitle}>Login validates the fields below before routing.</Text>
+                    </View>
+                  </View>
+
+                  {accessStatus.map((item) => (
+                    <View key={item.label} style={styles.accessRow}>
+                      <View style={[styles.accessIcon, item.complete ? styles.accessGood : styles.accessMissing]}>
+                        <Ionicons
+                          name={item.complete ? "checkmark-outline" : "ellipse-outline"}
+                          size={16}
+                          color={item.complete ? COLORS.white : COLORS.muted}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.accessLabel}>{item.label}</Text>
+                        <Text style={styles.accessValue}>{item.value}</Text>
+                      </View>
+                    </View>
+                  ))}
+
+                  <View style={styles.noteBox}>
+                    <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
+                    <Text style={styles.noteText}>
+                      If Stripe Connect exists in freight_subscriptions, this login automatically syncs it into freight_users before dashboard routing.
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -683,19 +932,20 @@ export default function FreightLoginScreen() {
       <Modal visible={resetVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <View style={styles.modalIcon}>
-                <Ionicons name="key-outline" size={28} color="#FFFFFF" />
-              </View>
+            <View style={styles.modalIcon}>
+              <Ionicons name="key-outline" size={28} color={COLORS.white} />
+            </View>
 
-              <Text style={styles.modalTitle}>Reset Freight Password</Text>
-              <Text style={styles.modalSubtitle}>
-                Enter your freight account email. Farm2Home will send a secure reset link if the Auth account exists.
-              </Text>
+            <Text style={styles.modalTitle}>Reset Freight Password</Text>
+            <Text style={styles.modalSubtitle}>
+              Enter your freight account email. Farm2Home will send a secure reset link if the Auth account exists.
+            </Text>
 
-              <Text style={styles.modalInputLabel}>Freight Email</Text>
+            <Text style={styles.inputLabel}>Freight Email</Text>
+            <View style={styles.inputShell}>
+              <Ionicons name="mail-outline" size={18} color={COLORS.muted} />
               <TextInput
-                style={styles.modalInput}
+                style={styles.input}
                 placeholder="Freight Email"
                 placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
@@ -704,33 +954,33 @@ export default function FreightLoginScreen() {
                 value={resetEmail}
                 onChangeText={setResetEmail}
               />
+            </View>
 
-              <TouchableOpacity
-                style={[styles.loginButton, resetLoading && styles.disabledButton]}
-                onPress={handlePasswordReset}
-                disabled={resetLoading}
-                activeOpacity={0.85}
-              >
-                {resetLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons name="mail-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.loginButtonText}>Send Reset Link</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primaryButton, resetLoading && styles.disabledButton]}
+              onPress={handlePasswordReset}
+              disabled={resetLoading}
+              activeOpacity={0.9}
+            >
+              {resetLoading ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <>
+                  <Ionicons name="mail-outline" size={18} color={COLORS.white} />
+                  <Text style={styles.primaryButtonText}>Send Reset Link</Text>
+                </>
+              )}
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={() => {
-                  setResetVisible(false);
-                  setResetEmail("");
-                }}
-              >
-                <Text style={styles.closeText}>Close</Text>
-              </TouchableOpacity>
-            </ScrollView>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => {
+                setResetVisible(false);
+                setResetEmail("");
+              }}
+            >
+              <Text style={styles.closeText}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -738,86 +988,307 @@ export default function FreightLoginScreen() {
   );
 }
 
+function SideFeature({
+  icon,
+  title,
+  body,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  body: string;
+}) {
+  return (
+    <View style={styles.sideFeature}>
+      <View style={styles.sideFeatureIcon}>
+        <Ionicons name={icon} size={18} color={COLORS.primary} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sideFeatureTitle}>{title}</Text>
+        <Text style={styles.sideFeatureBody}>{body}</Text>
+      </View>
+    </View>
+  );
+}
+
+function MetricCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.metricCard}>
+      <View style={styles.metricIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.primary} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.metricLabel}>{label}</Text>
+        <Text style={styles.metricValue} numberOfLines={1}>
+          {value}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme?.colors?.background || COLORS.bg },
-  keyboard: { flex: 1, backgroundColor: freightTheme?.colors?.background || COLORS.bg },
-  content: { flexGrow: 1, paddingBottom: 90 },
-  hero: {
-    backgroundColor: COLORS.dark,
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1 },
+  content: { flexGrow: 1, paddingBottom: 40 },
+  shell: {
+    flex: 1,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    minHeight: Platform.OS === "web" ? 760 : undefined,
+  },
+  sidebar: {
+    backgroundColor: COLORS.navy,
+    paddingHorizontal: 22,
     paddingTop: 28,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingBottom: 22,
+    width: Platform.OS === "web" ? 330 : "100%",
   },
-  heroTop: {
+  brandRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14,
+    gap: 12,
   },
-  heroIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#064E3B",
-    borderWidth: 1,
-    borderColor: COLORS.green,
+  brandIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  homeChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+  brandTitle: {
+    color: COLORS.white,
+    fontSize: 21,
+    fontWeight: "900",
+  },
+  brandSubtitle: {
+    color: "#A5B4FC",
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  sideDivider: {
+    height: 1,
+    backgroundColor: "#1E293B",
+    marginVertical: 24,
+  },
+  sideFeature: {
     backgroundColor: "#0F172A",
     borderWidth: 1,
-    borderColor: "#334155",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 999,
+    borderColor: "#1E293B",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 12,
   },
-  homeChipText: { color: "#CBD5E1", fontWeight: "900", fontSize: 12 },
-  kicker: {
-    color: COLORS.green,
-    fontSize: 12,
+  sideFeatureIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sideFeatureTitle: {
+    color: COLORS.white,
     fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 1,
+    marginBottom: 4,
   },
-  title: { color: "#FFFFFF", fontSize: 38, fontWeight: "900", marginTop: 6 },
-  subtitle: { color: "#CBD5E1", marginTop: 8, lineHeight: 23, fontWeight: "700", maxWidth: 640 },
-  loginCard: {
-    backgroundColor: freightTheme?.colors?.card || COLORS.card,
-    borderRadius: 24,
+  sideFeatureBody: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 19,
+    fontSize: 12,
+  },
+  homeButton: {
+    marginTop: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#312E81",
+    backgroundColor: "#111827",
+    padding: 14,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  homeButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
+  main: {
+    flex: 1,
+    padding: 18,
+  },
+  topPanel: {
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
     padding: 22,
     borderWidth: 1,
-    borderColor: freightTheme?.colors?.border || COLORS.border,
-    margin: 18,
-  },
-  cardTitle: { color: COLORS.text, fontSize: 27, fontWeight: "900", textAlign: "center" },
-  cardSubtitle: {
-    color: COLORS.muted,
-    textAlign: "center",
-    marginTop: 8,
-    marginBottom: 22,
-    lineHeight: 22,
-    fontWeight: "700",
-  },
-  inputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 7 },
-  input: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    color: COLORS.text,
-    fontWeight: "800",
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
     marginBottom: 14,
   },
-  loginButton: {
-    backgroundColor: freightTheme?.colors?.primary || COLORS.greenDark,
+  eyebrow: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    fontSize: 12,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  pageTitle: {
+    color: COLORS.text,
+    fontSize: 34,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  pageSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 7,
+    maxWidth: 680,
+  },
+  statusBadge: {
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+  },
+  statusBadgeText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+  },
+  metricsRow: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    marginBottom: 14,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 20,
+    padding: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  metricIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  metricLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  formGrid: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 14,
+    alignItems: "flex-start",
+  },
+  loginCard: {
+    flex: 1.1,
+    width: "100%",
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  accessCard: {
+    flex: 0.9,
+    width: "100%",
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
+  cardIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 17,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardIconSoft: {
+    backgroundColor: COLORS.primarySoft,
+  },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  cardSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    lineHeight: 19,
+  },
+  inputLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  inputShell: {
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.borderDark,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 14,
+  },
+  input: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+    paddingVertical: 15,
+  },
+  primaryButton: {
+    backgroundColor: COLORS.primary,
     paddingVertical: 16,
     borderRadius: 16,
     alignItems: "center",
@@ -825,71 +1296,140 @@ const styles = StyleSheet.create({
     marginTop: 6,
     flexDirection: "row",
     gap: 8,
+    width: "100%",
+  },
+  primaryButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 15,
+    textAlign: "center",
+    flexShrink: 1,
   },
   disabledButton: { opacity: 0.6 },
-  loginButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
-  forgotButton: { alignItems: "center", marginTop: 16 },
-  forgotText: { color: freightTheme?.colors?.primary || COLORS.greenDark, fontWeight: "900" },
-  divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 18 },
-  registerButton: {
-    backgroundColor: COLORS.surface,
+  textButton: {
+    alignItems: "center",
+    marginTop: 15,
+  },
+  textButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 18,
+  },
+  secondaryButton: {
+    backgroundColor: COLORS.primarySoft,
     borderWidth: 1,
-    borderColor: COLORS.greenDark,
+    borderColor: "#C7D2FE",
     borderRadius: 16,
     padding: 15,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
+    width: "100%",
   },
-  registerText: { color: COLORS.greenDark, fontWeight: "900" },
-  infoCard: {
-    marginHorizontal: 18,
-    backgroundColor: "#0F172A",
+  secondaryButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    textAlign: "center",
+    flexShrink: 1,
+  },
+  accessRow: {
+    backgroundColor: COLORS.panel,
     borderWidth: 1,
-    borderColor: "#1E293B",
-    borderRadius: 22,
-    padding: 16,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    marginBottom: 10,
   },
-  infoTitle: { color: COLORS.green, fontWeight: "900", marginBottom: 6 },
-  infoText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 21 },
+  accessIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  accessGood: {
+    backgroundColor: COLORS.green,
+  },
+  accessMissing: {
+    backgroundColor: "#E2E8F0",
+  },
+  accessLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  accessValue: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  noteBox: {
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: "#C7D2FE",
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    gap: 9,
+    alignItems: "flex-start",
+    marginTop: 4,
+  },
+  noteText: {
+    color: COLORS.primaryDark,
+    fontWeight: "800",
+    lineHeight: 20,
+    flex: 1,
+  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.65)",
+    backgroundColor: "rgba(2,6,23,0.72)",
     justifyContent: "center",
     padding: 22,
   },
-  modalCard: { backgroundColor: "#FFFFFF", borderRadius: 24, padding: 22, maxHeight: "90%" },
+  modalCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 22,
+    maxHeight: "90%",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
   modalIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: freightTheme?.colors?.primary || COLORS.greenDark,
+    width: 58,
+    height: 58,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "center",
     marginBottom: 14,
   },
-  modalTitle: { color: COLORS.text, fontSize: 26, fontWeight: "900", marginBottom: 8, textAlign: "center" },
+  modalTitle: {
+    color: COLORS.text,
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   modalSubtitle: {
     color: COLORS.muted,
     textAlign: "center",
     lineHeight: 22,
-    marginBottom: 18,
+    marginVertical: 14,
     fontWeight: "700",
   },
-  modalInputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 7 },
-  modalInput: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    color: COLORS.text,
-    fontWeight: "700",
-    marginBottom: 14,
+  closeButton: {
+    marginTop: 16,
+    alignItems: "center",
   },
-  closeButton: { marginTop: 16, alignItems: "center" },
-  closeText: { color: COLORS.red, fontWeight: "900" },
+  closeText: {
+    color: COLORS.red,
+    fontWeight: "900",
+  },
 });

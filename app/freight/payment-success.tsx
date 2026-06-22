@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -23,21 +24,36 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   "https://farm2home-production-e4bd.up.railway.app";
 
+const ROUTES = {
+  dashboard: "/freight/dashboard",
+  register: "/freight/register",
+  subscription: "/freight/subscription",
+  connectBank: "/freight/connect-bank",
+  profile: "/freight/profile",
+  support: "/freight/support",
+} as const;
+
 const COLORS = {
-  bg: "#F3F4F6",
+  bg: "#F7F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  green: "#16A34A",
-  amber: "#D97706",
-  text: "#111827",
-  muted: "#6B7280",
+  panel: "#F8FAFC",
+  text: "#0F172A",
+  muted: "#64748B",
   border: "#E5E7EB",
+  primary: "#6D5DFB",
+  primarySoft: "#EEF2FF",
+  green: "#10B981",
+  greenSoft: "#ECFDF5",
+  amber: "#F59E0B",
+  amberSoft: "#FFFBEB",
+  red: "#EF4444",
+  redSoft: "#FEF2F2",
+  navy: "#020617",
+  white: "#FFFFFF",
 };
 
 function clean(value: any) {
-  return String(value || "").trim();
+  return String(value ?? "").trim();
 }
 
 function normalize(value: any) {
@@ -71,6 +87,13 @@ function pickConnectAccountId(...values: any[]) {
   return found ? clean(found) : "";
 }
 
+function shortId(value?: string) {
+  const id = clean(value);
+  if (!id) return "Missing";
+  if (id.length <= 16) return id;
+  return `${id.slice(0, 8)}...${id.slice(-5)}`;
+}
+
 async function parseApiResponse(response: Response) {
   const text = await response.text();
 
@@ -100,10 +123,12 @@ async function saveFreightSession(carrier: any) {
 
 async function getPendingFreightCarrier() {
   const raw =
+    (await AsyncStorage.getItem("pendingFreightSubscription")) ||
     (await AsyncStorage.getItem("pendingFreightCarrier")) ||
     (await AsyncStorage.getItem("currentFreightCarrier")) ||
     (await AsyncStorage.getItem("currentFreight")) ||
     (await AsyncStorage.getItem("currentFreightUser")) ||
+    (await AsyncStorage.getItem("farm2homeCurrentFreight")) ||
     (await AsyncStorage.getItem("currentUser")) ||
     "{}";
 
@@ -111,6 +136,37 @@ async function getPendingFreightCarrier() {
     return JSON.parse(raw);
   } catch {
     return {};
+  }
+}
+
+async function safeUpdateProfiles(payload: any, carrierId: string) {
+  try {
+    await supabase
+      .from("profiles")
+      .update({
+        ...payload,
+        role: "freight",
+        updated_at: new Date().toISOString(),
+      })
+      .or(`id.eq.${carrierId},auth_user_id.eq.${carrierId},profile_id.eq.${carrierId}`);
+  } catch (error) {
+    console.log("profiles update skipped:", error);
+  }
+}
+
+async function safeUpsertAdminVerification(payload: any) {
+  try {
+    await supabase.from("admin_verifications").upsert(payload, { onConflict: "id" });
+  } catch (error) {
+    console.log("admin_verifications upsert skipped:", error);
+  }
+}
+
+async function safeUpsertFreightSubscription(payload: any) {
+  try {
+    await supabase.from("freight_subscriptions").upsert(payload, { onConflict: "freight_id" });
+  } catch (error) {
+    console.log("freight_subscriptions upsert skipped:", error);
   }
 }
 
@@ -145,11 +201,11 @@ export default function FreightPaymentSuccess() {
 
       const pending = await getPendingFreightCarrier();
 
-      if (!sessionId && !directFreightId && !pending?.id && !pending?.freightId) {
+      if (!sessionId && !directFreightId && !pending?.id && !pending?.freightId && !pending?.freight_id) {
         setStatus("error");
         setMessage("Missing Stripe Checkout session. Please restart freight membership setup.");
         Alert.alert("Missing Checkout Session", "Unable to verify payment.");
-        router.replace("/freight/register" as any);
+        router.replace(ROUTES.subscription as any);
         return;
       }
 
@@ -174,7 +230,7 @@ export default function FreightPaymentSuccess() {
           setStatus("error");
           setMessage(paymentData.error || "Stripe payment was not completed.");
           Alert.alert("Payment Not Complete", paymentData.error || "Stripe payment was not completed.");
-          router.replace("/freight/register" as any);
+          router.replace(ROUTES.subscription as any);
           return;
         }
 
@@ -190,6 +246,7 @@ export default function FreightPaymentSuccess() {
         paymentData.stripeCustomerId,
         paymentData.stripe_customer_id,
         metadata.stripe_customer_id,
+        metadata.stripeCustomerId,
         pending.stripeCustomerId,
         pending.stripe_customer_id
       );
@@ -202,6 +259,7 @@ export default function FreightPaymentSuccess() {
         paymentData.stripeSubscriptionId,
         paymentData.stripe_subscription_id,
         metadata.stripe_subscription_id,
+        metadata.stripeSubscriptionId,
         pending.stripeSubscriptionId,
         pending.stripe_subscription_id,
         pending.subscriptionId,
@@ -250,46 +308,54 @@ export default function FreightPaymentSuccess() {
           .from("freight_users")
           .select("*")
           .or(`id.eq.${freightId},freight_id.eq.${freightId},auth_user_id.eq.${freightId},profile_id.eq.${freightId}`)
-          .maybeSingle();
+          .limit(1);
 
-        dbCarrier = data || null;
+        dbCarrier = Array.isArray(data) && data.length > 0 ? data[0] : null;
       }
 
       if (!dbCarrier && finalEmail) {
-        const { data } = await supabase
-          .from("freight_users")
-          .select("*")
-          .eq("email", finalEmail)
-          .maybeSingle();
-
-        dbCarrier = data || null;
+        const { data } = await supabase.from("freight_users").select("*").eq("email", finalEmail).limit(1);
+        dbCarrier = Array.isArray(data) && data.length > 0 ? data[0] : null;
       }
 
-      const carrierId = clean(dbCarrier?.id || freightId || pending.id || pending.freightId);
+      const carrierId = clean(dbCarrier?.id || freightId || pending.id || pending.freightId || pending.freight_id);
 
       if (!carrierId) {
         setStatus("warning");
         setMessage("Payment verified, but no freight profile was found. Please return to registration so your profile can be linked.");
         Alert.alert("Profile Missing", "Payment verified, but no freight profile was found.");
-        router.replace("/freight/register" as any);
+        router.replace(ROUTES.register as any);
         return;
       }
 
       const now = new Date().toISOString();
-      const finalCustomerId = pickCustomerId(stripeCustomerId, dbCarrier?.stripe_customer_id, pending.stripe_customer_id);
+
+      const finalCustomerId = pickCustomerId(
+        stripeCustomerId,
+        dbCarrier?.stripe_customer_id,
+        dbCarrier?.stripe_id,
+        pending.stripe_customer_id,
+        pending.stripeCustomerId
+      );
+
       const finalSubscriptionId = pickSubscriptionId(
         stripeSubscriptionId,
         dbCarrier?.stripe_subscription_id,
         dbCarrier?.subscription_id,
         pending.stripe_subscription_id,
-        pending.subscription_id
+        pending.subscription_id,
+        pending.stripeSubscriptionId,
+        pending.subscriptionId
       );
+
       const finalStripeAccountId = pickConnectAccountId(
         stripeAccountId,
         dbCarrier?.freight_account,
         dbCarrier?.stripe_account_id,
         pending.freight_account,
-        pending.stripe_account_id
+        pending.stripe_account_id,
+        pending.freightAccount,
+        pending.stripeAccountId
       );
 
       const updatePayload: any = {
@@ -300,7 +366,7 @@ export default function FreightPaymentSuccess() {
         subscription_id: finalSubscriptionId || null,
         subscription_status: finalSubscriptionId ? "active" : dbCarrier?.subscription_status || "active",
         membership_status: finalSubscriptionId ? "active" : dbCarrier?.membership_status || "active",
-        freight_membership_paid: Boolean(finalSubscriptionId || sessionId),
+        freight_membership_paid: Boolean(finalSubscriptionId || sessionId || finalCustomerId),
         account_active: true,
         approved: true,
         verification_status: "SUBMITTED",
@@ -324,83 +390,69 @@ export default function FreightPaymentSuccess() {
 
       if (freightUpdateError) throw freightUpdateError;
 
-      await supabase
-        .from("profiles")
-        .update({
-          ...updatePayload,
-          role: "freight",
-          updated_at: now,
-        })
-        .or(`id.eq.${carrierId},auth_user_id.eq.${carrierId},profile_id.eq.${carrierId}`);
+      await safeUpdateProfiles(updatePayload, carrierId);
 
-      await supabase.from("admin_verifications").upsert(
-        {
-          id: carrierId,
-          freight_id: carrierId,
-          carrier_id: carrierId,
-          profile_id: carrierId,
-          account_id: dbCarrier?.account_id || pending.account_id || pending.accountId || "",
-          account_type: "FREIGHT_CARRIER",
-          role: "freight",
-          type: "FREIGHT_CARRIER",
-          company_name:
-            dbCarrier?.company_name ||
-            dbCarrier?.business_name ||
-            pending.companyName ||
-            pending.company_name ||
-            pending.businessName ||
-            "Farm2Home Freight Carrier",
-          business_name:
-            dbCarrier?.business_name ||
-            dbCarrier?.company_name ||
-            pending.businessName ||
-            pending.business_name ||
-            pending.companyName ||
-            "Farm2Home Freight Carrier",
-          contact_name:
-            dbCarrier?.contact_name ||
-            dbCarrier?.full_name ||
-            pending.contactName ||
-            pending.contact_name ||
-            pending.fullName ||
-            "",
-          email: finalEmail || dbCarrier?.email || pending.email || "",
-          phone: dbCarrier?.phone || pending.phone || "",
-          username: normalize(dbCarrier?.username || pending.username || ""),
-          status: "SUBMITTED",
-          review_decision: "submitted",
-          approved: true,
-          rejected: false,
-          reviewed: false,
-          needs_more_info: false,
-          ...updatePayload,
-          created_at: dbCarrier?.created_at || now,
-          updated_at: now,
-        },
-        { onConflict: "id" }
-      );
+      const accountId = dbCarrier?.account_id || pending.account_id || pending.accountId || "";
+      const companyName =
+        dbCarrier?.company_name ||
+        dbCarrier?.business_name ||
+        pending.companyName ||
+        pending.company_name ||
+        pending.businessName ||
+        "Farm2Home Freight Carrier";
 
-      await supabase.from("freight_subscriptions").upsert(
-        {
-          freight_id: carrierId,
-          freight_email: finalEmail || dbCarrier?.email || pending.email || "",
-          name:
-            dbCarrier?.company_name ||
-            dbCarrier?.business_name ||
-            pending.companyName ||
-            pending.businessName ||
-            "Farm2Home Freight Carrier",
-          username: normalize(dbCarrier?.username || pending.username || ""),
-          stripe_customer_id: finalCustomerId || null,
-          stripe_subscription_id: finalSubscriptionId || null,
-          subscription_status: finalSubscriptionId ? "active" : "active",
-          freight_account: finalStripeAccountId || null,
-          stripe_account_id: finalStripeAccountId || null,
-          updated_at: now,
-          created_at: dbCarrier?.created_at || now,
-        },
-        { onConflict: "freight_id" }
-      );
+      await safeUpsertAdminVerification({
+        id: carrierId,
+        freight_id: carrierId,
+        carrier_id: carrierId,
+        profile_id: carrierId,
+        account_id: accountId,
+        account_type: "FREIGHT_CARRIER",
+        role: "freight",
+        type: "FREIGHT_CARRIER",
+        company_name: companyName,
+        business_name:
+          dbCarrier?.business_name ||
+          dbCarrier?.company_name ||
+          pending.businessName ||
+          pending.business_name ||
+          pending.companyName ||
+          "Farm2Home Freight Carrier",
+        contact_name:
+          dbCarrier?.contact_name ||
+          dbCarrier?.full_name ||
+          pending.contactName ||
+          pending.contact_name ||
+          pending.fullName ||
+          "",
+        email: finalEmail || dbCarrier?.email || pending.email || "",
+        phone: dbCarrier?.phone || pending.phone || "",
+        username: normalize(dbCarrier?.username || pending.username || ""),
+        status: "SUBMITTED",
+        review_decision: "submitted",
+        approved: true,
+        rejected: false,
+        reviewed: false,
+        needs_more_info: false,
+        ...updatePayload,
+        created_at: dbCarrier?.created_at || now,
+        updated_at: now,
+      });
+
+      await safeUpsertFreightSubscription({
+        freight_id: carrierId,
+        freight_email: finalEmail || dbCarrier?.email || pending.email || "",
+        name: companyName,
+        username: normalize(dbCarrier?.username || pending.username || ""),
+        stripe_customer_id: finalCustomerId || null,
+        stripe_subscription_id: finalSubscriptionId || null,
+        subscription_status: finalSubscriptionId ? "active" : "active",
+        current_period_end: paymentData.current_period_end || paymentData.currentPeriodEnd || null,
+        freight_account: finalStripeAccountId || null,
+        stripe_account_id: finalStripeAccountId || null,
+        updated_at: now,
+        created_at: dbCarrier?.created_at || now,
+      });
 
       const { data: refreshedDbCarrier } = await supabase
         .from("freight_users")
@@ -419,23 +471,8 @@ export default function FreightPaymentSuccess() {
         email: finalEmail || refreshedDbCarrier?.email || dbCarrier?.email || pending.email || "",
         accountId: refreshedDbCarrier?.account_id || dbCarrier?.account_id || pending.accountId || pending.account_id || "",
         account_id: refreshedDbCarrier?.account_id || dbCarrier?.account_id || pending.account_id || pending.accountId || "",
-        companyName:
-          refreshedDbCarrier?.company_name ||
-          refreshedDbCarrier?.business_name ||
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
-          pending.companyName ||
-          pending.company_name ||
-          pending.businessName ||
-          "Farm2Home Freight Carrier",
-        company_name:
-          refreshedDbCarrier?.company_name ||
-          refreshedDbCarrier?.business_name ||
-          dbCarrier?.company_name ||
-          dbCarrier?.business_name ||
-          pending.company_name ||
-          pending.companyName ||
-          "Farm2Home Freight Carrier",
+        companyName,
+        company_name: companyName,
         businessName:
           refreshedDbCarrier?.business_name ||
           refreshedDbCarrier?.company_name ||
@@ -476,15 +513,16 @@ export default function FreightPaymentSuccess() {
 
       await saveFreightSession(refreshedCarrier);
       await AsyncStorage.removeItem("pendingFreightCarrier");
+      await AsyncStorage.removeItem("pendingFreightSubscription");
 
       setCarrier(refreshedCarrier);
       setStatus("success");
-      setMessage("Farm2Home Freight membership is active. Your profile was updated and you can open the freight dashboard.");
+      setMessage("Farm2Home Freight membership is active. Your Stripe customer and subscription were saved.");
       setLoading(false);
 
       setTimeout(() => {
-        router.replace("/freight/dashboard" as any);
-      }, 900);
+        router.replace(ROUTES.dashboard as any);
+      }, 1200);
     } catch (error: any) {
       console.log("Freight payment verification error:", error);
       setStatus("error");
@@ -505,54 +543,101 @@ export default function FreightPaymentSuccess() {
     if (status === "success") return COLORS.green;
     if (status === "warning") return COLORS.amber;
     if (status === "error") return COLORS.red;
-    return COLORS.black;
+    return COLORS.primary;
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.card}>
-          <View style={[styles.iconWrap, { backgroundColor: iconColor() }]}>
-            {loading ? (
-              <ActivityIndicator size="large" color="#FFFFFF" />
-            ) : (
-              <Ionicons name={iconName()} size={38} color="#FFFFFF" />
-            )}
+        <View style={styles.shell}>
+          <View style={styles.sidebar}>
+            <View style={styles.brandRow}>
+              <View style={styles.brandIcon}>
+                <Ionicons name="card-outline" size={28} color={COLORS.white} />
+              </View>
+              <View>
+                <Text style={styles.brandTitle}>Farm2Home</Text>
+                <Text style={styles.brandSubtitle}>Payment Success</Text>
+              </View>
+            </View>
+
+            <View style={styles.sideDivider} />
+            <SideLink icon="grid-outline" title="Dashboard" route={ROUTES.dashboard} />
+            <SideLink icon="card-outline" title="Subscription" route={ROUTES.subscription} />
+            <SideLink icon="business-outline" title="Connect Bank" route={ROUTES.connectBank} />
+            <SideLink icon="person-outline" title="Profile" route={ROUTES.profile} />
+            <SideLink icon="headset-outline" title="Support" route={ROUTES.support} />
           </View>
 
-          <Text style={styles.kicker}>Farm2Home Freight</Text>
-          <Text style={styles.title}>{status === "success" ? "Payment Success" : "Payment Verification"}</Text>
-          <Text style={styles.message}>{message}</Text>
+          <View style={styles.main}>
+            <View style={styles.card}>
+              <View style={[styles.iconWrap, { backgroundColor: iconColor() }]}>
+                {loading ? (
+                  <ActivityIndicator size="large" color={COLORS.white} />
+                ) : (
+                  <Ionicons name={iconName()} size={38} color={COLORS.white} />
+                )}
+              </View>
 
-          {carrier ? (
-            <View style={styles.infoCard}>
-              <InfoRow label="Account ID" value={carrier.account_id || carrier.accountId || "Pending"} />
-              <InfoRow label="Stripe Customer" value={carrier.stripe_customer_id || carrier.stripeCustomerId || "Pending"} />
-              <InfoRow label="Subscription" value={carrier.stripe_subscription_id || carrier.subscription_id || "Pending"} />
-              <InfoRow label="Connect Account" value={carrier.stripe_account_id || carrier.freight_account || "Connect bank next"} />
+              <Text style={styles.kicker}>Fina Admin Checkout Sync</Text>
+              <Text style={styles.title}>{status === "success" ? "Payment Success" : "Payment Verification"}</Text>
+              <Text style={styles.message}>{message}</Text>
+
+              {carrier ? (
+                <View style={styles.infoCard}>
+                  <InfoRow label="Freight UUID" value={carrier.id || carrier.freightId || "Pending"} />
+                  <InfoRow label="Static Account ID" value={carrier.account_id || carrier.accountId || "Pending"} />
+                  <InfoRow label="Stripe Customer" value={shortId(carrier.stripe_customer_id || carrier.stripeCustomerId)} />
+                  <InfoRow label="Subscription" value={shortId(carrier.stripe_subscription_id || carrier.subscription_id)} />
+                  <InfoRow label="Connect Account" value={shortId(carrier.stripe_account_id || carrier.freight_account)} />
+                </View>
+              ) : null}
+
+              <View style={styles.actionGrid}>
+                <TouchableOpacity style={styles.primaryButton} onPress={() => router.replace(ROUTES.dashboard as any)}>
+                  <Ionicons name="grid-outline" size={18} color={COLORS.white} />
+                  <Text style={styles.primaryButtonText}>Go to Freight Dashboard</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace(ROUTES.connectBank as any)}>
+                  <Ionicons name="business-outline" size={18} color={COLORS.primary} />
+                  <Text style={styles.secondaryButtonText}>Connect / Update Bank</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace(ROUTES.subscription as any)}>
+                  <Ionicons name="card-outline" size={18} color={COLORS.primary} />
+                  <Text style={styles.secondaryButtonText}>Subscription Page</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.darkButton} onPress={() => router.replace(ROUTES.register as any)}>
+                  <Ionicons name="create-outline" size={18} color={COLORS.white} />
+                  <Text style={styles.darkButtonText}>Return to Registration</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          ) : null}
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => router.replace("/freight/dashboard" as any)}
-          >
-            <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.buttonText}>Go to Freight Dashboard</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.outlineButton}
-            onPress={() => router.replace("/freight/register" as any)}
-          >
-            <Ionicons name="create-outline" size={18} color={COLORS.red} />
-            <Text style={styles.outlineButtonText}>Return to Registration</Text>
-          </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function SideLink({
+  icon,
+  title,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  route: string;
+}) {
+  return (
+    <TouchableOpacity style={styles.sidebarLink} onPress={() => router.push(route as any)}>
+      <Ionicons name={icon} size={18} color="#A5B4FC" />
+      <Text style={styles.sidebarLinkText}>{title}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -560,24 +645,54 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
+      <Text style={[styles.infoValue, value === "Missing" || value === "Pending" ? styles.infoMissing : null]} numberOfLines={1}>
+        {value}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  content: { flexGrow: 1, paddingBottom: 40 },
+  shell: {
     flex: 1,
-    backgroundColor: COLORS.bg,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    minHeight: Platform.OS === "web" ? 760 : undefined,
   },
-  content: {
-    flexGrow: 1,
+  sidebar: {
+    backgroundColor: COLORS.navy,
+    paddingHorizontal: 22,
+    paddingTop: 28,
+    paddingBottom: 22,
+    width: Platform.OS === "web" ? 310 : "100%",
+  },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  brandIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
-    padding: 20,
   },
+  brandTitle: { color: COLORS.white, fontSize: 21, fontWeight: "900" },
+  brandSubtitle: { color: "#A5B4FC", fontWeight: "800", marginTop: 2 },
+  sideDivider: { height: 1, backgroundColor: "#1E293B", marginVertical: 22 },
+  sidebarLink: {
+    borderRadius: 16,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  sidebarLinkText: { color: "#CBD5E1", fontWeight: "900" },
+  main: { flex: 1, padding: 18, alignItems: "center", justifyContent: "center" },
   card: {
     width: "100%",
+    maxWidth: 920,
     backgroundColor: COLORS.card,
     borderRadius: 28,
     padding: 24,
@@ -594,19 +709,14 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   kicker: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 1,
     fontSize: 12,
     marginBottom: 8,
   },
-  title: {
-    color: COLORS.text,
-    fontSize: 28,
-    fontWeight: "900",
-    textAlign: "center",
-  },
+  title: { color: COLORS.text, fontSize: 32, fontWeight: "900", textAlign: "center" },
   message: {
     color: COLORS.muted,
     fontSize: 16,
@@ -615,10 +725,11 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     marginTop: 10,
     marginBottom: 20,
+    maxWidth: 720,
   },
   infoCard: {
     width: "100%",
-    backgroundColor: COLORS.surface,
+    backgroundColor: COLORS.panel,
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 18,
@@ -637,12 +748,11 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     marginBottom: 4,
   },
-  infoValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  button: {
-    backgroundColor: COLORS.red,
+  infoValue: { color: COLORS.text, fontWeight: "900" },
+  infoMissing: { color: COLORS.amber },
+  actionGrid: { width: "100%", gap: 12 },
+  primaryButton: {
+    backgroundColor: COLORS.primary,
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 15,
@@ -652,15 +762,11 @@ const styles = StyleSheet.create({
     gap: 8,
     width: "100%",
   },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  outlineButton: {
-    backgroundColor: "#FFF1F2",
+  primaryButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 16 },
+  secondaryButton: {
+    backgroundColor: COLORS.primarySoft,
     borderWidth: 1,
-    borderColor: COLORS.red,
+    borderColor: "#C7D2FE",
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 15,
@@ -669,11 +775,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     width: "100%",
-    marginTop: 12,
   },
-  outlineButtonText: {
-    color: COLORS.red,
-    fontWeight: "900",
-    fontSize: 16,
+  secondaryButtonText: { color: COLORS.primary, fontWeight: "900", fontSize: 16 },
+  darkButton: {
+    backgroundColor: COLORS.navy,
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    width: "100%",
   },
+  darkButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 16 },
 });

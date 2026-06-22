@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -88,24 +89,31 @@ type CarrierStatus = {
 };
 
 const COLORS = {
-  bg: "#F3F4F6",
+  bg: "#F7F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  text: "#111827",
-  muted: "#6B7280",
+  panel: "#F8FAFC",
+  text: "#0F172A",
+  muted: "#64748B",
   border: "#E5E7EB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#991B1B",
-  green: "#16A34A",
+  borderDark: "#CBD5E1",
+  primary: "#6D5DFB",
+  primaryDark: "#4F46E5",
+  primarySoft: "#EEF2FF",
+  green: "#10B981",
+  greenSoft: "#ECFDF5",
+  amber: "#F59E0B",
+  amberSoft: "#FFFBEB",
+  red: "#EF4444",
+  redSoft: "#FEF2F2",
   blue: "#2563EB",
-  amber: "#D97706",
   purple: "#7C3AED",
-  slate: "#475569",
+  navy: "#020617",
+  dark: "#111827",
+  white: "#FFFFFF",
 };
 
 function clean(value: any) {
-  return String(value || "").trim();
+  return String(value ?? "").trim();
 }
 
 function normalize(value: any) {
@@ -125,17 +133,17 @@ function isAcct(value: any) {
 }
 
 function pickCus(...values: any[]) {
-  const found = values.find(isCus);
+  const found = values.find((value) => isCus(value));
   return found ? clean(found) : "";
 }
 
 function pickSub(...values: any[]) {
-  const found = values.find(isSub);
+  const found = values.find((value) => isSub(value));
   return found ? clean(found) : "";
 }
 
 function pickAcct(...values: any[]) {
-  const found = values.find(isAcct);
+  const found = values.find((value) => isAcct(value));
   return found ? clean(found) : "";
 }
 
@@ -144,6 +152,13 @@ function money(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function shortId(value?: string) {
+  const id = clean(value);
+  if (!id) return "Missing";
+  if (id.length <= 14) return id;
+  return `${id.slice(0, 8)}...${id.slice(-5)}`;
 }
 
 function splitCityState(location?: string | null) {
@@ -157,14 +172,12 @@ function splitCityState(location?: string | null) {
 
 function mapStatus(status: any): LoadStatus {
   const value = normalize(status);
-
   if (["available", "open", "posted"].includes(value)) return "OPEN";
   if (["accepted", "assigned", "booked"].includes(value)) return "BOOKED";
   if (["picked_up", "arrived_pickup", "loaded"].includes(value)) return "PICKED_UP";
   if (["in_transit", "arrived_dropoff", "en_route"].includes(value)) return "IN_TRANSIT";
   if (["delivered", "completed"].includes(value)) return "DELIVERED";
   if (["cancelled", "canceled"].includes(value)) return "CANCELLED";
-
   return "OPEN";
 }
 
@@ -179,7 +192,8 @@ function toDbStatus(status: LoadStatus) {
 
 function mapLoad(row: any): FreightLoad {
   const pickupRaw = row.pickup_location || row.pickup_address || row.origin || "";
-  const dropoffRaw = row.dropoff_location || row.delivery_location || row.dropoff_address || row.destination || "";
+  const dropoffRaw =
+    row.dropoff_location || row.delivery_location || row.dropoff_address || row.destination || "";
   const pickup = splitCityState(pickupRaw);
   const dropoff = splitCityState(dropoffRaw);
 
@@ -197,9 +211,7 @@ function mapLoad(row: any): FreightLoad {
     brokerName: row.broker_name || row.farmer_name || row.farm_name || "Farm2Home Broker",
     rate: Number(row.rate || row.freight_total || row.total_due || row.payout_amount || row.carrier_rate || 0),
     miles: Number(row.distance_miles || row.miles || row.route_miles || 0),
-    weight: row.weight_lbs
-      ? `${Number(row.weight_lbs).toLocaleString()} lbs`
-      : row.weight || "TBD",
+    weight: row.weight_lbs ? `${Number(row.weight_lbs).toLocaleString()} lbs` : row.weight || "TBD",
     equipment: row.equipment_type || row.equipment || "Box Truck / Reefer / Flatbed",
     pickupDate:
       row.pickup_date && row.pickup_time
@@ -210,28 +222,39 @@ function mapLoad(row: any): FreightLoad {
   };
 }
 
-function makeCarrierStatus(row: any, stored?: any): CarrierStatus {
-  const id = clean(row?.id || row?.freight_id || row?.auth_user_id || stored?.id || stored?.freightId || "");
+function makeCarrierStatus(row: any, stored?: any, subscription?: any): CarrierStatus {
+  const id = clean(row?.id || row?.freight_id || row?.auth_user_id || stored?.id || stored?.freightId || subscription?.freight_id || "");
   const companyName =
-    clean(row?.company_name || row?.business_name || stored?.companyName || stored?.businessName) ||
+    clean(row?.company_name || row?.business_name || stored?.companyName || stored?.businessName || subscription?.name) ||
     "Farm2Home Freight Carrier";
-  const contactName = clean(row?.contact_name || row?.full_name || row?.name || stored?.contactName || "");
-  const stripeCustomerId = pickCus(row?.stripe_customer_id, stored?.stripeCustomerId, stored?.stripe_customer_id);
+
+  const stripeCustomerId = pickCus(
+    row?.stripe_customer_id,
+    stored?.stripeCustomerId,
+    stored?.stripe_customer_id,
+    subscription?.stripe_customer_id
+  );
+
   const stripeSubscriptionId = pickSub(
     row?.stripe_subscription_id,
     row?.subscription_id,
     stored?.stripeSubscriptionId,
     stored?.stripe_subscription_id,
     stored?.subscriptionId,
-    stored?.subscription_id
+    stored?.subscription_id,
+    subscription?.stripe_subscription_id,
+    subscription?.subscription_id
   );
+
   const stripeAccountId = pickAcct(
     row?.freight_account,
     row?.stripe_account_id,
     stored?.freightAccount,
     stored?.freight_account,
     stored?.stripeAccountId,
-    stored?.stripe_account_id
+    stored?.stripe_account_id,
+    subscription?.freight_account,
+    subscription?.stripe_account_id
   );
 
   return {
@@ -239,16 +262,26 @@ function makeCarrierStatus(row: any, stored?: any): CarrierStatus {
     freightId: id,
     accountId: clean(row?.account_id || stored?.accountId || stored?.account_id),
     companyName,
-    contactName,
-    email: normalize(row?.email || stored?.email),
+    contactName: clean(row?.contact_name || row?.full_name || row?.name || stored?.contactName || ""),
+    email: normalize(row?.email || stored?.email || subscription?.freight_email),
     phone: clean(row?.phone || stored?.phone),
-    username: normalize(row?.username || stored?.username),
+    username: normalize(row?.username || stored?.username || subscription?.username),
     stripeCustomerId,
     stripeSubscriptionId,
     stripeAccountId,
-    membershipStatus: clean(row?.membership_status || stored?.membershipStatus || stored?.membership_status || (stripeSubscriptionId ? "active" : "pending")),
-    subscriptionStatus: clean(row?.subscription_status || stored?.subscriptionStatus || stored?.subscription_status || (stripeSubscriptionId ? "active" : "pending")),
-    connectStatus: clean(row?.stripe_connect_status || stored?.stripeConnectStatus || stored?.stripe_connect_status || (stripeAccountId ? "started" : "not_started")),
+    membershipStatus: clean(
+      row?.membership_status || stored?.membershipStatus || stored?.membership_status || (stripeSubscriptionId ? "active" : "pending")
+    ),
+    subscriptionStatus: clean(
+      row?.subscription_status ||
+        stored?.subscriptionStatus ||
+        stored?.subscription_status ||
+        subscription?.subscription_status ||
+        (stripeSubscriptionId ? "active" : "pending")
+    ),
+    connectStatus: clean(
+      row?.stripe_connect_status || stored?.stripeConnectStatus || stored?.stripe_connect_status || (stripeAccountId ? "started" : "not_started")
+    ),
     payoutsEnabled: Boolean(row?.payouts_enabled || row?.stripe_payouts_enabled || stored?.payoutsEnabled || stored?.payouts_enabled),
     chargesEnabled: Boolean(row?.charges_enabled || row?.stripe_charges_enabled || stored?.chargesEnabled || stored?.charges_enabled),
     onboardingComplete: Boolean(row?.stripe_onboarding_complete || stored?.stripeOnboardingComplete || stored?.stripe_onboarding_complete),
@@ -335,13 +368,15 @@ export default function FreightDashboard() {
       updated_at: new Date().toISOString(),
     };
 
-    await AsyncStorage.setItem("currentFreight", JSON.stringify(sessionUser));
-    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(sessionUser));
-    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(sessionUser));
-    await AsyncStorage.setItem("farm2homeCurrentFreight", JSON.stringify(sessionUser));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(sessionUser));
-    await AsyncStorage.setItem("userRole", "freight");
-    await AsyncStorage.setItem("currentUserRole", "freight");
+    await AsyncStorage.multiSet([
+      ["currentFreight", JSON.stringify(sessionUser)],
+      ["currentFreightCarrier", JSON.stringify(sessionUser)],
+      ["currentFreightUser", JSON.stringify(sessionUser)],
+      ["farm2homeCurrentFreight", JSON.stringify(sessionUser)],
+      ["currentUser", JSON.stringify(sessionUser)],
+      ["userRole", "freight"],
+      ["currentUserRole", "freight"],
+    ]);
 
     setCarrier(nextCarrier);
     return nextCarrier;
@@ -371,6 +406,79 @@ export default function FreightDashboard() {
     return null;
   }
 
+  async function findSubscription(userId: string, email: string) {
+    const filters = [
+      userId ? `freight_id.eq.${userId}` : "",
+      email ? `freight_email.eq.${email}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    const { data, error } = await supabase
+      .from("freight_subscriptions")
+      .select("*")
+      .or(filters)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.log("Freight dashboard subscription lookup error:", error.message);
+      return null;
+    }
+
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  }
+
+  async function syncSubscriptionIntoCarrier(carrierRow: any, subscription: any) {
+    if (!carrierRow?.id || !subscription) return carrierRow;
+
+    const updates: any = {};
+
+    if (subscription?.stripe_customer_id && !pickCus(carrierRow?.stripe_customer_id)) {
+      updates.stripe_customer_id = subscription.stripe_customer_id;
+    }
+
+    if (subscription?.stripe_subscription_id && !pickSub(carrierRow?.stripe_subscription_id, carrierRow?.subscription_id)) {
+      updates.stripe_subscription_id = subscription.stripe_subscription_id;
+      updates.subscription_id = subscription.stripe_subscription_id;
+      updates.subscription_status = subscription.subscription_status || "active";
+      updates.membership_status = "active";
+      updates.freight_membership_paid = true;
+      updates.application_submitted = true;
+    }
+
+    const subAcct = pickAcct(subscription?.freight_account, subscription?.stripe_account_id);
+    const rowAcct = pickAcct(carrierRow?.freight_account, carrierRow?.stripe_account_id);
+
+    if (subAcct && !rowAcct) {
+      updates.freight_account = subAcct;
+      updates.stripe_account_id = subAcct;
+      updates.stripe_connect_status = "started";
+    }
+
+    if (Object.keys(updates).length === 0) return carrierRow;
+
+    const { data, error } = await supabase
+      .from("freight_users")
+      .update({
+        ...updates,
+        account_active: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", carrierRow.id)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.log("Freight dashboard subscription sync error:", error.message);
+      return { ...carrierRow, ...updates };
+    }
+
+    return data || { ...carrierRow, ...updates };
+  }
+
   async function loadDashboard() {
     try {
       setLoading(true);
@@ -385,7 +493,7 @@ export default function FreightDashboard() {
         return;
       }
 
-      const dbCarrier = await findCarrierRow(authId, email);
+      let dbCarrier = await findCarrierRow(authId, email);
 
       if (!dbCarrier) {
         Alert.alert("Freight Profile Missing", "Please complete freight registration first.");
@@ -393,7 +501,10 @@ export default function FreightDashboard() {
         return;
       }
 
-      const nextCarrier = await persistCarrier(makeCarrierStatus(dbCarrier, stored));
+      const subscription = await findSubscription(dbCarrier.id || authId, email || normalize(dbCarrier.email));
+      dbCarrier = await syncSubscriptionIntoCarrier(dbCarrier, subscription);
+
+      const nextCarrier = await persistCarrier(makeCarrierStatus(dbCarrier, stored, subscription));
       await loadLoads(nextCarrier.id);
     } catch (error: any) {
       console.log("Freight dashboard error:", error);
@@ -461,7 +572,6 @@ export default function FreightDashboard() {
     }
 
     const now = new Date().toISOString();
-
     const payload: any = {
       status: toDbStatus(nextStatus),
       updated_at: now,
@@ -494,6 +604,8 @@ export default function FreightDashboard() {
 
     await supabase.from("freight_notifications").insert({
       freight_user_id: carrier.id,
+      freight_id: carrier.id,
+      user_id: carrier.id,
       load_id: load.id,
       title:
         nextStatus === "BOOKED"
@@ -508,6 +620,7 @@ export default function FreightDashboard() {
       message: `${load.title} is now ${nextStatus.replace(/_/g, " ")}.`,
       type: "load",
       is_read: false,
+      read: false,
       created_at: now,
     });
 
@@ -524,10 +637,7 @@ export default function FreightDashboard() {
   }
 
   const openLoads = useMemo(() => loads.filter((x) => x.status === "OPEN"), [loads]);
-  const bookedLoads = useMemo(
-    () => loads.filter((x) => ["BOOKED", "PICKED_UP", "IN_TRANSIT"].includes(x.status)),
-    [loads]
-  );
+  const bookedLoads = useMemo(() => loads.filter((x) => ["BOOKED", "PICKED_UP", "IN_TRANSIT"].includes(x.status)), [loads]);
   const deliveredLoads = useMemo(() => loads.filter((x) => x.status === "DELIVERED"), [loads]);
   const totalVisibleRevenue = useMemo(() => loads.reduce((sum, item) => sum + Number(item.rate || 0), 0), [loads]);
   const bookedRevenue = useMemo(() => bookedLoads.reduce((sum, item) => sum + Number(item.rate || 0), 0), [bookedLoads]);
@@ -551,8 +661,8 @@ export default function FreightDashboard() {
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
-        <ActivityIndicator size="large" color={COLORS.red} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.centerText}>Loading Farm2Home Freight...</Text>
       </SafeAreaView>
     );
@@ -560,191 +670,288 @@ export default function FreightDashboard() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       <ScrollView
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />}
       >
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.heroEyebrow}>Farm2Home Freight Connect</Text>
-              <Text style={styles.heroTitle}>Carrier Dashboard</Text>
-              <Text style={styles.heroSubtitle}>
-                Manage available loads, booked freight, route details, Stripe payout setup, rate
-                optimization, and carrier profile status from one command center.
-              </Text>
+        <View style={styles.shell}>
+          <View style={styles.sidebar}>
+            <View style={styles.brandRow}>
+              <View style={styles.brandIcon}>
+                <Ionicons name="trail-sign-outline" size={28} color={COLORS.white} />
+              </View>
+              <View>
+                <Text style={styles.brandTitle}>Farm2Home</Text>
+                <Text style={styles.brandSubtitle}>Freight Connect</Text>
+              </View>
             </View>
 
-            <TouchableOpacity style={styles.alertButton} onPress={() => goTo(ROUTES.notifications)}>
-              <Ionicons name="notifications-outline" size={26} color="#FFFFFF" />
-              {alertsCount > 0 ? (
-                <View style={styles.alertDot}>
-                  <Text style={styles.alertDotText}>{alertsCount}</Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-          </View>
+            <View style={styles.sideDivider} />
 
-          <View style={styles.carrierCard}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.carrierLabel}>Carrier Account</Text>
-              <Text style={styles.carrierName}>{carrier?.companyName || "Farm2Home Freight Carrier"}</Text>
-              <Text style={styles.carrierSub}>
-                {carrier?.email || "Freight carrier workspace"} · {carrier?.accountId || "Account ID pending"}
-              </Text>
-            </View>
+            <SidebarLink icon="grid-outline" title="Dashboard" active route={ROUTES.dashboard} />
+            <SidebarLink icon="search-outline" title="Load Board" route={ROUTES.board} />
+            <SidebarLink icon="briefcase-outline" title="My Loads" route={ROUTES.myLoads} />
+            <SidebarLink icon="pulse-outline" title="Live Loads" route={ROUTES.liveLoads} />
+            <SidebarLink icon="business-outline" title="Connect Bank" route={ROUTES.connectBank} />
+            <SidebarLink icon="notifications-outline" title="Notifications" route={ROUTES.notifications} />
+            <SidebarLink icon="person-outline" title="Profile" route={ROUTES.profile} />
+            <SidebarLink icon="settings-outline" title="Settings" route={ROUTES.settings} />
+
             <TouchableOpacity style={styles.logoutButton} onPress={logout}>
-              <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
+              <Ionicons name="log-out-outline" size={18} color={COLORS.white} />
+              <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
-        </View>
 
-        <View style={styles.setupCard}>
-          <View style={styles.setupTop}>
-            <View>
-              <Text style={styles.setupLabel}>Profile Setup</Text>
-              <Text style={styles.setupValue}>{setupScore}% Complete</Text>
+          <View style={styles.main}>
+            <View style={styles.topPanel}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eyebrow}>Fina Admin Style Command Center</Text>
+                <Text style={styles.pageTitle}>Carrier Dashboard</Text>
+                <Text style={styles.pageSubtitle}>
+                  Manage load board activity, booked freight, route status, payout setup, and carrier account health.
+                </Text>
+              </View>
+
+              <TouchableOpacity style={styles.alertButton} onPress={() => goTo(ROUTES.notifications)}>
+                <Ionicons name="notifications-outline" size={23} color={COLORS.primary} />
+                {alertsCount > 0 ? (
+                  <View style={styles.alertDot}>
+                    <Text style={styles.alertDotText}>{alertsCount}</Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.setupButton} onPress={() => goTo(ROUTES.profile)}>
-              <Text style={styles.setupButtonText}>Profile</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${setupScore}%` }]} />
-          </View>
-        </View>
 
-        <View style={styles.statusGrid}>
-          <StatusCard label="Freight ID" value={carrier?.freightId || "Missing"} ready={Boolean(carrier?.freightId)} />
-          <StatusCard label="Account ID" value={carrier?.accountId || "Missing"} ready={Boolean(carrier?.accountId)} />
-          <StatusCard label="Stripe Customer" value={carrier?.stripeCustomerId || "Missing"} ready={isCus(carrier?.stripeCustomerId)} />
-          <StatusCard label="Subscription" value={carrier?.stripeSubscriptionId || "Missing"} ready={isSub(carrier?.stripeSubscriptionId)} />
-          <StatusCard label="Connect Account" value={carrier?.stripeAccountId || "Missing"} ready={isAcct(carrier?.stripeAccountId)} />
-          <StatusCard label="Payouts" value={carrier?.payoutsEnabled ? "Enabled" : carrier?.connectStatus || "Pending"} ready={Boolean(carrier?.payoutsEnabled || carrier?.onboardingComplete)} />
-        </View>
-
-        <View style={styles.primaryNav}>
-          <NavButton title="Load Board" icon="search-outline" route={ROUTES.board} filled />
-          <NavButton title="My Loads" icon="briefcase-outline" route={ROUTES.myLoads} />
-        </View>
-
-        <View style={styles.metricsRow}>
-          <MetricCard icon="cube-outline" label="Available Loads" value={openLoads.length} route={ROUTES.board} />
-          <MetricCard icon="briefcase-outline" label="Booked Loads" value={bookedLoads.length} route={ROUTES.myLoads} />
-          <MetricCard icon="checkmark-done-outline" label="Delivered" value={deliveredLoads.length} route={ROUTES.myLoads} />
-        </View>
-
-        <View style={styles.revenueCard}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.revenueLabel}>Board Value</Text>
-            <Text style={styles.revenueValue}>{money(totalVisibleRevenue)}</Text>
-            <Text style={styles.revenueSub}>
-              Booked value {money(bookedRevenue)} · Avg {money(avgRatePerMile)} / mi
-            </Text>
-          </View>
-
-          <TouchableOpacity style={styles.revenueButton} onPress={() => goTo(ROUTES.rateOptimizer)}>
-            <Ionicons name="trending-up-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.revenueButtonText}>Optimize</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.sectionTitle}>Carrier Tools</Text>
-
-        <View style={styles.toolGrid}>
-          <ToolCard title="Available Loads" icon="cube-outline" route={ROUTES.board} />
-          <ToolCard title="My Booked Loads" icon="briefcase-outline" route={ROUTES.myLoads} />
-          <ToolCard title="Live Load Board" icon="pulse-outline" route={ROUTES.liveLoads} />
-          <ToolCard title="Rate Optimizer" icon="trending-up-outline" route={ROUTES.rateOptimizer} />
-          <ToolCard title="Route Details" icon="map-outline" route={ROUTES.loadDetail} />
-          <ToolCard title="Payment Tracking" icon="receipt-outline" route={ROUTES.paymentSuccess} />
-          <ToolCard title="Connect Bank / Payouts" icon="business-outline" route={ROUTES.connectBank} />
-          <ToolCard title="Broker / Farmer Details" icon="people-outline" route={ROUTES.loadDetail} />
-          <ToolCard title="Alerts" icon="notifications-outline" route={ROUTES.notifications} />
-          <ToolCard title="Carrier Profile" icon="person-outline" route={ROUTES.profile} />
-          <ToolCard title="Settings" icon="settings-outline" route={ROUTES.settings} />
-          <ToolCard title="Support" icon="headset-outline" route={ROUTES.support} />
-        </View>
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitleNoPad}>Truckstop-Style Load Board</Text>
-
-          <TouchableOpacity style={styles.refreshButton} onPress={refreshDashboard}>
-            <Ionicons name="refresh-outline" size={17} color={COLORS.red} />
-            <Text style={styles.refreshText}>Refresh</Text>
-          </TouchableOpacity>
-        </View>
-
-        <FlatList
-          data={loads}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <LoadCard
-              load={item}
-              onBook={() => bookLoad(item)}
-              onPickup={() => updateLoadStatus(item, "PICKED_UP")}
-              onTransit={() => updateLoadStatus(item, "IN_TRANSIT")}
-              onDelivered={() => updateLoadStatus(item, "DELIVERED")}
-            />
-          )}
-          scrollEnabled={false}
-          contentContainerStyle={styles.listContent}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Ionicons name="cube-outline" size={42} color={COLORS.red} />
-              <Text style={styles.emptyTitle}>No farm freight loads found</Text>
-              <Text style={styles.emptyText}>
-                Refresh the board or open Live Loads to check for farm, livestock, produce, hay,
-                and refrigerated freight opportunities.
-              </Text>
+            <View style={styles.carrierPanel}>
+              <View style={styles.carrierAvatar}>
+                <Ionicons name="business-outline" size={26} color={COLORS.white} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.carrierName}>{carrier?.companyName || "Farm2Home Freight Carrier"}</Text>
+                <Text style={styles.carrierSub}>
+                  {carrier?.email || "carrier workspace"} · {carrier?.accountId || "Account ID pending"}
+                </Text>
+              </View>
+              <View style={[styles.readyPill, { backgroundColor: setupScore === 100 ? COLORS.greenSoft : COLORS.amberSoft }]}>
+                <Ionicons
+                  name={setupScore === 100 ? "checkmark-circle-outline" : "alert-circle-outline"}
+                  size={17}
+                  color={setupScore === 100 ? COLORS.green : COLORS.amber}
+                />
+                <Text style={[styles.readyPillText, { color: setupScore === 100 ? COLORS.green : COLORS.amber }]}>
+                  {setupScore === 100 ? "Ready" : `${setupScore}%`}
+                </Text>
+              </View>
             </View>
-          }
-        />
+
+            <View style={styles.metricGrid}>
+              <DashboardMetric icon="cube-outline" label="Available Loads" value={String(openLoads.length)} route={ROUTES.board} />
+              <DashboardMetric icon="briefcase-outline" label="Booked Loads" value={String(bookedLoads.length)} route={ROUTES.myLoads} />
+              <DashboardMetric icon="cash-outline" label="Board Value" value={money(totalVisibleRevenue)} route={ROUTES.rateOptimizer} />
+              <DashboardMetric icon="trending-up-outline" label="Avg Rate / Mile" value={`${money(avgRatePerMile)}/mi`} route={ROUTES.rateOptimizer} />
+            </View>
+
+            <View style={styles.gridTwo}>
+              <View style={styles.card}>
+                <SectionHeader
+                  icon="shield-checkmark-outline"
+                  title="Account Health"
+                  subtitle="Stripe and registration fields synced from freight_users and freight_subscriptions."
+                />
+
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${setupScore}%` }]} />
+                </View>
+
+                <View style={styles.statusGrid}>
+                  <StatusRow label="Freight ID" value={shortId(carrier?.freightId)} ready={Boolean(carrier?.freightId)} />
+                  <StatusRow label="Account ID" value={carrier?.accountId || "Missing"} ready={Boolean(carrier?.accountId)} />
+                  <StatusRow label="Customer" value={shortId(carrier?.stripeCustomerId)} ready={isCus(carrier?.stripeCustomerId)} />
+                  <StatusRow label="Subscription" value={shortId(carrier?.stripeSubscriptionId)} ready={isSub(carrier?.stripeSubscriptionId)} />
+                  <StatusRow label="Connect" value={shortId(carrier?.stripeAccountId)} ready={isAcct(carrier?.stripeAccountId)} />
+                  <StatusRow
+                    label="Payouts"
+                    value={carrier?.payoutsEnabled ? "Enabled" : carrier?.connectStatus || "Pending"}
+                    ready={Boolean(carrier?.payoutsEnabled || carrier?.onboardingComplete)}
+                  />
+                </View>
+
+                <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(ROUTES.connectBank)}>
+                  <Ionicons name="business-outline" size={18} color={COLORS.white} />
+                  <Text style={styles.primaryButtonText}>Manage Connect Bank</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.card}>
+                <SectionHeader
+                  icon="analytics-outline"
+                  title="Revenue Snapshot"
+                  subtitle="Visible load board value and booked freight value."
+                />
+
+                <View style={styles.revenueBox}>
+                  <Text style={styles.revenueLabel}>Board Value</Text>
+                  <Text style={styles.revenueValue}>{money(totalVisibleRevenue)}</Text>
+                  <Text style={styles.revenueSub}>Booked freight value: {money(bookedRevenue)}</Text>
+                </View>
+
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => goTo(ROUTES.rateOptimizer)}>
+                  <Ionicons name="trending-up-outline" size={18} color={COLORS.primary} />
+                  <Text style={styles.secondaryButtonText}>Open Rate Optimizer</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <SectionHeader
+                icon="apps-outline"
+                title="Carrier Tools"
+                subtitle="Quick access to core freight operations."
+              />
+
+              <View style={styles.toolGrid}>
+                <ToolCard title="Available Loads" icon="cube-outline" route={ROUTES.board} />
+                <ToolCard title="My Loads" icon="briefcase-outline" route={ROUTES.myLoads} />
+                <ToolCard title="Live Loads" icon="pulse-outline" route={ROUTES.liveLoads} />
+                <ToolCard title="Rate Optimizer" icon="trending-up-outline" route={ROUTES.rateOptimizer} />
+                <ToolCard title="Connect Bank" icon="business-outline" route={ROUTES.connectBank} />
+                <ToolCard title="Notifications" icon="notifications-outline" route={ROUTES.notifications} />
+                <ToolCard title="Profile" icon="person-outline" route={ROUTES.profile} />
+                <ToolCard title="Support" icon="headset-outline" route={ROUTES.support} />
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.listHeader}>
+                <SectionHeader
+                  icon="list-outline"
+                  title="Load Board Preview"
+                  subtitle="Open and active freight opportunities."
+                />
+
+                <TouchableOpacity style={styles.refreshButton} onPress={refreshDashboard}>
+                  <Ionicons name="refresh-outline" size={17} color={COLORS.primary} />
+                  <Text style={styles.refreshText}>Refresh</Text>
+                </TouchableOpacity>
+              </View>
+
+              <FlatList
+                data={loads}
+                keyExtractor={(item) => item.id}
+                scrollEnabled={false}
+                contentContainerStyle={styles.listContent}
+                ListEmptyComponent={
+                  <View style={styles.emptyCard}>
+                    <Ionicons name="cube-outline" size={42} color={COLORS.primary} />
+                    <Text style={styles.emptyTitle}>No farm freight loads found</Text>
+                    <Text style={styles.emptyText}>
+                      Refresh the board or open Live Loads to check for farm, livestock, produce, hay, and refrigerated freight opportunities.
+                    </Text>
+                    <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(ROUTES.board)}>
+                      <Text style={styles.primaryButtonText}>Open Load Board</Text>
+                    </TouchableOpacity>
+                  </View>
+                }
+                renderItem={({ item }) => (
+                  <LoadCard
+                    load={item}
+                    onBook={() => bookLoad(item)}
+                    onPickup={() => updateLoadStatus(item, "PICKED_UP")}
+                    onTransit={() => updateLoadStatus(item, "IN_TRANSIT")}
+                    onDelivered={() => updateLoadStatus(item, "DELIVERED")}
+                  />
+                )}
+              />
+            </View>
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function NavButton({
-  title,
+function SidebarLink({
   icon,
+  title,
   route,
-  filled,
+  active,
 }: {
-  title: string;
   icon: keyof typeof Ionicons.glyphMap;
+  title: string;
   route: FreightRoute;
-  filled?: boolean;
+  active?: boolean;
 }) {
   return (
-    <TouchableOpacity style={filled ? styles.navFilled : styles.navOutline} onPress={() => goTo(route)}>
-      <Ionicons name={icon} size={18} color={filled ? "#FFFFFF" : COLORS.red} />
-      <Text style={filled ? styles.navFilledText : styles.navOutlineText}>{title}</Text>
+    <TouchableOpacity style={[styles.sidebarLink, active && styles.sidebarLinkActive]} onPress={() => goTo(route)}>
+      <Ionicons name={icon} size={18} color={active ? COLORS.white : "#A5B4FC"} />
+      <Text style={[styles.sidebarLinkText, active && styles.sidebarLinkTextActive]}>{title}</Text>
     </TouchableOpacity>
   );
 }
 
-function StatusCard({ label, value, ready }: { label: string; value: string; ready: boolean }) {
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+}) {
   return (
-    <View style={styles.statusCardMini}>
-      <View style={[styles.statusIconMini, { backgroundColor: ready ? "#DCFCE7" : "#FEF3C7" }]}>
-        <Ionicons name={ready ? "checkmark-circle-outline" : "alert-circle-outline"} size={18} color={ready ? COLORS.green : COLORS.amber} />
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.white} />
       </View>
-      <Text style={styles.statusLabelMini}>{label}</Text>
-      <Text style={styles.statusValueMini} numberOfLines={1}>{value}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+      </View>
     </View>
   );
 }
 
-function MetricCard({ icon, label, value, route }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: number; route: FreightRoute }) {
+function DashboardMetric({
+  icon,
+  label,
+  value,
+  route,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  route: FreightRoute;
+}) {
   return (
     <TouchableOpacity style={styles.metricCard} onPress={() => goTo(route)}>
-      <Ionicons name={icon} size={24} color={COLORS.red} />
-      <Text style={styles.metricValue}>{value}</Text>
+      <View style={styles.metricIcon}>
+        <Ionicons name={icon} size={21} color={COLORS.primary} />
+      </View>
       <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue} numberOfLines={1}>{value}</Text>
     </TouchableOpacity>
+  );
+}
+
+function StatusRow({ label, value, ready }: { label: string; value: string; ready: boolean }) {
+  return (
+    <View style={styles.statusRow}>
+      <View style={[styles.statusIcon, ready ? styles.statusGood : styles.statusWarn]}>
+        <Ionicons
+          name={ready ? "checkmark-outline" : "alert-circle-outline"}
+          size={16}
+          color={ready ? COLORS.white : COLORS.amber}
+        />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.statusLabel}>{label}</Text>
+        <Text style={styles.statusValue} numberOfLines={1}>{value}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -752,7 +959,7 @@ function ToolCard({ title, icon, route }: { title: string; icon: keyof typeof Io
   return (
     <TouchableOpacity style={styles.toolCard} onPress={() => goTo(route)}>
       <View style={styles.toolIcon}>
-        <Ionicons name={icon} size={22} color={COLORS.red} />
+        <Ionicons name={icon} size={22} color={COLORS.primary} />
       </View>
       <Text style={styles.toolTitle}>{title}</Text>
     </TouchableOpacity>
@@ -761,11 +968,11 @@ function ToolCard({ title, icon, route }: { title: string; icon: keyof typeof Io
 
 function statusColor(status: LoadStatus) {
   if (status === "OPEN") return COLORS.blue;
-  if (status === "BOOKED") return COLORS.red;
+  if (status === "BOOKED") return COLORS.primary;
   if (status === "PICKED_UP") return COLORS.amber;
   if (status === "IN_TRANSIT") return COLORS.purple;
   if (status === "DELIVERED") return COLORS.green;
-  return COLORS.slate;
+  return COLORS.muted;
 }
 
 function LoadCard({
@@ -835,34 +1042,34 @@ function LoadCard({
         <View style={styles.loadActions}>
           {load.status === "OPEN" ? (
             <TouchableOpacity style={styles.primaryAction} onPress={onBook}>
-              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+              <Ionicons name="checkmark-circle-outline" size={18} color={COLORS.white} />
               <Text style={styles.primaryActionText}>Book Load</Text>
             </TouchableOpacity>
           ) : null}
 
           {load.status === "BOOKED" ? (
             <TouchableOpacity style={styles.warningAction} onPress={onPickup}>
-              <Ionicons name="archive-outline" size={18} color="#FFFFFF" />
+              <Ionicons name="archive-outline" size={18} color={COLORS.white} />
               <Text style={styles.primaryActionText}>Confirm Pickup</Text>
             </TouchableOpacity>
           ) : null}
 
           {load.status === "PICKED_UP" ? (
             <TouchableOpacity style={styles.transitAction} onPress={onTransit}>
-              <Ionicons name="navigate-outline" size={18} color="#FFFFFF" />
+              <Ionicons name="navigate-outline" size={18} color={COLORS.white} />
               <Text style={styles.primaryActionText}>Start Transit</Text>
             </TouchableOpacity>
           ) : null}
 
           {load.status === "IN_TRANSIT" ? (
             <TouchableOpacity style={styles.successAction} onPress={onDelivered}>
-              <Ionicons name="checkmark-done-outline" size={18} color="#FFFFFF" />
+              <Ionicons name="checkmark-done-outline" size={18} color={COLORS.white} />
               <Text style={styles.primaryActionText}>Complete</Text>
             </TouchableOpacity>
           ) : null}
 
           <TouchableOpacity style={styles.secondaryAction} onPress={() => openLoad(ROUTES.loadDetail, load.id)}>
-            <Ionicons name="document-text-outline" size={18} color={COLORS.red} />
+            <Ionicons name="document-text-outline" size={18} color={COLORS.primary} />
             <Text style={styles.secondaryActionText}>Details</Text>
           </TouchableOpacity>
         </View>
@@ -874,7 +1081,7 @@ function LoadCard({
 function InfoBox({ icon, label, value }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }) {
   return (
     <View style={styles.infoBox}>
-      <Ionicons name={icon} size={16} color={COLORS.red} />
+      <Ionicons name={icon} size={16} color={COLORS.primary} />
       <Text style={styles.infoLabel}>{label}</Text>
       <Text style={styles.infoValue}>{value || "TBD"}</Text>
     </View>
@@ -883,88 +1090,384 @@ function InfoBox({ icon, label, value }: { icon: keyof typeof Ionicons.glyphMap;
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  center: { flex: 1, backgroundColor: COLORS.bg, alignItems: "center", justifyContent: "center", padding: 24 },
+  center: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
   centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
-  hero: { backgroundColor: COLORS.black, paddingTop: 28, paddingBottom: 28, paddingHorizontal: 20 },
-  heroTop: { flexDirection: "row", gap: 14, alignItems: "flex-start" },
-  heroEyebrow: { color: "#FCA5A5", fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 },
-  heroTitle: { color: "#FFFFFF", fontSize: 34, fontWeight: "900", marginBottom: 10 },
-  heroSubtitle: { color: "#D1D5DB", fontSize: 15, lineHeight: 23, fontWeight: "700" },
-  alertButton: { width: 58, height: 58, borderRadius: 22, backgroundColor: COLORS.red, alignItems: "center", justifyContent: "center", position: "relative" },
-  alertDot: { position: "absolute", right: -4, top: -4, backgroundColor: "#FFFFFF", borderRadius: 999, minWidth: 22, height: 22, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
-  alertDotText: { color: COLORS.red, fontWeight: "900", fontSize: 11 },
-  carrierCard: { marginTop: 18, borderRadius: 20, padding: 15, backgroundColor: "#111827", borderWidth: 1, borderColor: "#374151", flexDirection: "row", alignItems: "center", gap: 12 },
-  carrierLabel: { color: "#FCA5A5", fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  carrierName: { color: "#FFFFFF", fontSize: 20, fontWeight: "900", marginTop: 5 },
-  carrierSub: { color: "#D1D5DB", fontWeight: "700", marginTop: 4 },
-  logoutButton: { backgroundColor: COLORS.red, width: 42, height: 42, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  setupCard: { backgroundColor: COLORS.card, margin: 18, borderRadius: 22, padding: 18, borderWidth: 1, borderColor: COLORS.border },
-  setupTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
-  setupLabel: { color: COLORS.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  setupValue: { color: COLORS.text, fontSize: 24, fontWeight: "900", marginTop: 4 },
-  setupButton: { backgroundColor: COLORS.black, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11 },
-  setupButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  progressTrack: { height: 10, borderRadius: 999, backgroundColor: "#E5E7EB", overflow: "hidden" },
-  progressFill: { height: 10, borderRadius: 999, backgroundColor: COLORS.red },
-  statusGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: 18, marginBottom: 4 },
-  statusCardMini: { width: "48%", backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 14 },
-  statusIconMini: { width: 34, height: 34, borderRadius: 13, alignItems: "center", justifyContent: "center", marginBottom: 10 },
-  statusLabelMini: { color: COLORS.muted, fontWeight: "900", fontSize: 11, textTransform: "uppercase" },
-  statusValueMini: { color: COLORS.text, fontWeight: "900", marginTop: 4 },
-  primaryNav: { flexDirection: "row", gap: 10, padding: 18 },
-  navFilled: { flex: 1, backgroundColor: COLORS.red, borderRadius: 15, paddingVertical: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
-  navOutline: { flex: 1, backgroundColor: COLORS.card, borderColor: COLORS.red, borderWidth: 1, borderRadius: 15, paddingVertical: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
-  navFilledText: { color: "#FFFFFF", fontWeight: "900" },
-  navOutlineText: { color: COLORS.red, fontWeight: "900" },
-  metricsRow: { flexDirection: "row", gap: 10, paddingHorizontal: 18, marginBottom: 14 },
-  metricCard: { flex: 1, backgroundColor: COLORS.card, borderRadius: 20, padding: 15, alignItems: "center", borderWidth: 1, borderColor: COLORS.border },
-  metricValue: { fontSize: 28, fontWeight: "900", color: COLORS.text, marginTop: 7 },
-  metricLabel: { color: COLORS.muted, fontWeight: "800", fontSize: 12, textAlign: "center", marginTop: 4 },
-  revenueCard: { backgroundColor: COLORS.red, marginHorizontal: 18, borderRadius: 24, padding: 18, marginBottom: 18, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
-  revenueLabel: { color: "#FFE4E6", fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  revenueValue: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginTop: 4 },
-  revenueSub: { color: "#FFE4E6", fontWeight: "800", marginTop: 4 },
-  revenueButton: { backgroundColor: COLORS.black, paddingHorizontal: 14, paddingVertical: 13, borderRadius: 16, flexDirection: "row", gap: 7, alignItems: "center" },
-  revenueButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  sectionTitle: { fontSize: 23, fontWeight: "900", color: COLORS.text, paddingHorizontal: 18, marginBottom: 12 },
-  sectionTitleNoPad: { fontSize: 23, fontWeight: "900", color: COLORS.text, flex: 1 },
-  toolGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: 18, marginBottom: 20 },
-  toolCard: { width: "48%", backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 15, minHeight: 105, justifyContent: "space-between" },
-  toolIcon: { width: 42, height: 42, borderRadius: 15, backgroundColor: "#FEF2F2", alignItems: "center", justifyContent: "center", marginBottom: 10 },
+  scrollContent: { flexGrow: 1, paddingBottom: 40 },
+  shell: {
+    flex: 1,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    minHeight: Platform.OS === "web" ? 840 : undefined,
+  },
+  sidebar: {
+    backgroundColor: COLORS.navy,
+    paddingHorizontal: 22,
+    paddingTop: 28,
+    paddingBottom: 22,
+    width: Platform.OS === "web" ? 310 : "100%",
+  },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  brandIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  brandTitle: { color: COLORS.white, fontSize: 21, fontWeight: "900" },
+  brandSubtitle: { color: "#A5B4FC", fontWeight: "800", marginTop: 2 },
+  sideDivider: { height: 1, backgroundColor: "#1E293B", marginVertical: 22 },
+  sidebarLink: {
+    borderRadius: 16,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  sidebarLinkActive: { backgroundColor: COLORS.primary },
+  sidebarLinkText: { color: "#CBD5E1", fontWeight: "900" },
+  sidebarLinkTextActive: { color: COLORS.white },
+  logoutButton: {
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "#1E293B",
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+  },
+  logoutText: { color: COLORS.white, fontWeight: "900" },
+  main: { flex: 1, padding: 18 },
+  topPanel: {
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
+    marginBottom: 14,
+  },
+  eyebrow: { color: COLORS.primary, fontWeight: "900", fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
+  pageTitle: { color: COLORS.text, fontSize: 34, fontWeight: "900", marginTop: 6 },
+  pageSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 22, marginTop: 7, maxWidth: 760 },
+  alertButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 18,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  alertDot: {
+    position: "absolute",
+    right: -4,
+    top: -4,
+    backgroundColor: COLORS.red,
+    borderRadius: 999,
+    minWidth: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  alertDotText: { color: COLORS.white, fontWeight: "900", fontSize: 11 },
+  carrierPanel: {
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    gap: 13,
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  carrierAvatar: {
+    width: 58,
+    height: 58,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  carrierName: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
+  carrierSub: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  readyPill: {
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
+  readyPillText: { fontWeight: "900", fontSize: 12 },
+  metricGrid: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    marginBottom: 14,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 22,
+    padding: 16,
+  },
+  metricIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  metricLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11, textTransform: "uppercase" },
+  metricValue: { color: COLORS.text, fontWeight: "900", fontSize: 23, marginTop: 5 },
+  gridTwo: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 14,
+    alignItems: "flex-start",
+  },
+  card: {
+    flex: 1,
+    width: "100%",
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  sectionHeader: { flexDirection: "row", gap: 12, alignItems: "flex-start", marginBottom: 16 },
+  sectionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
+  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
+  progressTrack: { height: 10, borderRadius: 999, backgroundColor: "#E5E7EB", overflow: "hidden", marginBottom: 14 },
+  progressFill: { height: 10, borderRadius: 999, backgroundColor: COLORS.primary },
+  statusGrid: { gap: 10 },
+  statusRow: {
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 12,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  statusIcon: { width: 32, height: 32, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  statusGood: { backgroundColor: COLORS.green },
+  statusWarn: { backgroundColor: COLORS.amberSoft },
+  statusLabel: { color: COLORS.text, fontWeight: "900" },
+  statusValue: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
+  primaryButton: {
+    backgroundColor: COLORS.primary,
+    padding: 15,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+    width: "100%",
+  },
+  primaryButtonText: { color: COLORS.white, fontWeight: "900", textAlign: "center", flexShrink: 1 },
+  secondaryButton: {
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: "#C7D2FE",
+    padding: 15,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+    width: "100%",
+  },
+  secondaryButtonText: { color: COLORS.primary, fontWeight: "900", textAlign: "center", flexShrink: 1 },
+  revenueBox: { backgroundColor: COLORS.navy, borderRadius: 20, padding: 18 },
+  revenueLabel: { color: "#A5B4FC", fontWeight: "900", textTransform: "uppercase", fontSize: 12 },
+  revenueValue: { color: COLORS.white, fontSize: 34, fontWeight: "900", marginTop: 5 },
+  revenueSub: { color: "#CBD5E1", fontWeight: "800", marginTop: 5 },
+  toolGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  toolCard: {
+    width: Platform.OS === "web" ? "23.5%" : "48%",
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 15,
+    minHeight: 104,
+    justifyContent: "space-between",
+  },
+  toolIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
   toolTitle: { color: COLORS.text, fontWeight: "900", fontSize: 14, lineHeight: 19 },
-  sectionHeader: { paddingHorizontal: 18, marginBottom: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  refreshButton: { backgroundColor: COLORS.card, borderColor: COLORS.red, borderWidth: 1, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 6 },
-  refreshText: { color: COLORS.red, fontWeight: "900" },
-  listContent: { paddingBottom: 90 },
-  loadCard: { backgroundColor: COLORS.card, marginHorizontal: 18, marginBottom: 16, borderRadius: 24, padding: 18, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 5, borderLeftColor: COLORS.red },
+  listHeader: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  refreshButton: {
+    alignSelf: Platform.OS === "web" ? "flex-start" : "stretch",
+    backgroundColor: COLORS.primarySoft,
+    borderColor: "#C7D2FE",
+    borderWidth: 1,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  refreshText: { color: COLORS.primary, fontWeight: "900" },
+  listContent: { paddingBottom: 10 },
+  loadCard: {
+    backgroundColor: COLORS.white,
+    marginBottom: 16,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderLeftWidth: 5,
+    borderLeftColor: COLORS.primary,
+  },
   loadTop: { flexDirection: "row", gap: 12, marginBottom: 14 },
   loadTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
   loadSub: { color: COLORS.muted, fontWeight: "800", marginTop: 4 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, alignSelf: "flex-start" },
-  statusText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
-  routeCard: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 14, marginBottom: 13 },
+  statusText: { color: COLORS.white, fontSize: 11, fontWeight: "900" },
+  routeCard: {
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 13,
+  },
   routePoint: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   routeLine: { width: 1, height: 18, backgroundColor: COLORS.border, marginLeft: 8, marginVertical: 4 },
   routeLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
   routeValue: { color: COLORS.text, fontWeight: "900", fontSize: 15, marginTop: 2 },
   routeSmall: { color: COLORS.muted, fontWeight: "700", marginTop: 2, lineHeight: 18 },
   infoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  infoBox: { width: "48%", backgroundColor: COLORS.surface, borderRadius: 15, borderWidth: 1, borderColor: COLORS.border, padding: 12 },
+  infoBox: {
+    width: Platform.OS === "web" ? "23.5%" : "48%",
+    backgroundColor: COLORS.panel,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 12,
+  },
   infoLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase", marginTop: 6 },
   infoValue: { color: COLORS.text, fontWeight: "800", marginTop: 4, lineHeight: 19 },
-  ratePanel: { borderTopWidth: 1, borderTopColor: COLORS.border, marginTop: 16, paddingTop: 16, flexDirection: "row", gap: 12, alignItems: "center" },
+  ratePanel: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    marginTop: 16,
+    paddingTop: 16,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    alignItems: Platform.OS === "web" ? "center" : "stretch",
+  },
   rateLabel: { color: COLORS.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  rateValue: { color: COLORS.red, fontSize: 30, fontWeight: "900", marginTop: 4 },
+  rateValue: { color: COLORS.primary, fontSize: 30, fontWeight: "900", marginTop: 4 },
   rateSmall: { color: COLORS.muted, fontWeight: "800", marginTop: 3 },
   loadActions: { minWidth: 145, gap: 8 },
-  primaryAction: { backgroundColor: COLORS.red, paddingHorizontal: 13, paddingVertical: 13, borderRadius: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7 },
-  warningAction: { backgroundColor: COLORS.amber, paddingHorizontal: 13, paddingVertical: 13, borderRadius: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7 },
-  transitAction: { backgroundColor: COLORS.purple, paddingHorizontal: 13, paddingVertical: 13, borderRadius: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7 },
-  successAction: { backgroundColor: COLORS.green, paddingHorizontal: 13, paddingVertical: 13, borderRadius: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7 },
-  primaryActionText: { color: "#FFFFFF", fontWeight: "900" },
-  secondaryAction: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.red, paddingHorizontal: 13, paddingVertical: 12, borderRadius: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7 },
-  secondaryActionText: { color: COLORS.red, fontWeight: "900" },
-  emptyCard: { marginHorizontal: 18, backgroundColor: COLORS.card, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, padding: 24, alignItems: "center" },
+  primaryAction: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  warningAction: {
+    backgroundColor: COLORS.amber,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  transitAction: {
+    backgroundColor: COLORS.purple,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  successAction: {
+    backgroundColor: COLORS.green,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  primaryActionText: { color: COLORS.white, fontWeight: "900" },
+  secondaryAction: {
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: "#C7D2FE",
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  secondaryActionText: { color: COLORS.primary, fontWeight: "900" },
+  emptyCard: {
+    backgroundColor: COLORS.panel,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 24,
+    alignItems: "center",
+  },
   emptyTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", marginTop: 10 },
   emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", marginTop: 8, lineHeight: 22 },
 });

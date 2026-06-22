@@ -6,6 +6,7 @@ import {
   Alert,
   Linking,
   Platform,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -34,6 +35,7 @@ const ROUTES = {
   board: "/freight/board",
   liveLoads: "/freight/live-loads",
   myLoads: "/freight/my-loads",
+  connectBank: "/freight/connect-bank",
   subscription: "/freight/subscription",
   profile: "/freight/profile",
   settings: "/freight/settings",
@@ -67,6 +69,7 @@ type Carrier = {
   stripe_subscription_id?: string;
   subscriptionId?: string;
   subscription_id?: string;
+  subscription_status?: string;
   freightAccount?: string;
   freight_account?: string;
   stripeAccountId?: string;
@@ -85,22 +88,28 @@ type Carrier = {
 };
 
 const COLORS = {
-  bg: "#F3F4F6",
+  bg: "#F7F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redSoft: "#FFF1F2",
-  text: "#111827",
-  muted: "#6B7280",
+  panel: "#F8FAFC",
+  text: "#0F172A",
+  muted: "#64748B",
   border: "#E5E7EB",
-  green: "#16A34A",
-  amber: "#D97706",
+  primary: "#6D5DFB",
+  primaryDark: "#4F46E5",
+  primarySoft: "#EEF2FF",
+  green: "#10B981",
+  greenSoft: "#ECFDF5",
+  amber: "#F59E0B",
+  amberSoft: "#FFFBEB",
+  red: "#EF4444",
+  redSoft: "#FEF2F2",
   blue: "#2563EB",
+  navy: "#020617",
+  white: "#FFFFFF",
 };
 
 function clean(value: any) {
-  return String(value || "").trim();
+  return String(value ?? "").trim();
 }
 
 function normalize(value: any) {
@@ -136,7 +145,15 @@ function pickSub(...values: any[]) {
 
 function boolValue(...values: any[]) {
   const found = values.find((value) => value !== undefined && value !== null);
+  if (typeof found === "string") return ["true", "1", "yes", "enabled", "complete"].includes(normalize(found));
   return Boolean(found);
+}
+
+function shortId(value?: string) {
+  const id = clean(value);
+  if (!id) return "Missing";
+  if (id.length <= 16) return id;
+  return `${id.slice(0, 8)}...${id.slice(-5)}`;
 }
 
 async function parseApiResponse(response: Response) {
@@ -153,6 +170,15 @@ function goTo(route: FreightRoute) {
   router.push(route as any);
 }
 
+function currentFreightAccount(activeCarrier?: Carrier | null) {
+  return pickAcct(
+    activeCarrier?.freight_account,
+    activeCarrier?.freightAccount,
+    activeCarrier?.stripe_account_id,
+    activeCarrier?.stripeAccountId
+  );
+}
+
 async function saveFreightSession(carrier: Carrier) {
   await AsyncStorage.setItem("currentFreight", JSON.stringify(carrier));
   await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(carrier));
@@ -167,6 +193,7 @@ export default function FreightConnectBankScreen() {
   const params = useLocalSearchParams();
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [carrier, setCarrier] = useState<Carrier | null>(null);
@@ -174,24 +201,32 @@ export default function FreightConnectBankScreen() {
   const freightAccount = useMemo(() => currentFreightAccount(carrier), [carrier]);
 
   const payoutsReady = useMemo(() => {
-    return Boolean(
-      carrier?.payoutsEnabled ||
-        carrier?.payouts_enabled ||
-        carrier?.stripe_payouts_enabled
-    );
+    return Boolean(carrier?.payoutsEnabled || carrier?.payouts_enabled || carrier?.stripe_payouts_enabled);
   }, [carrier]);
 
   const chargesReady = useMemo(() => {
-    return Boolean(
-      carrier?.chargesEnabled ||
-        carrier?.charges_enabled ||
-        carrier?.stripe_charges_enabled
-    );
+    return Boolean(carrier?.chargesEnabled || carrier?.charges_enabled || carrier?.stripe_charges_enabled);
   }, [carrier]);
 
   const onboardingReady = useMemo(() => {
     return Boolean(carrier?.onboardingComplete || carrier?.stripe_onboarding_complete);
   }, [carrier]);
+
+  const hasSubscription = useMemo(() => {
+    return Boolean(
+      pickSub(carrier?.stripeSubscriptionId, carrier?.stripe_subscription_id, carrier?.subscriptionId, carrier?.subscription_id) ||
+        carrier?.subscription_status
+    );
+  }, [carrier]);
+
+  const setupScore = useMemo(() => {
+    let score = 0;
+    if (freightAccount) score += 25;
+    if (onboardingReady) score += 25;
+    if (chargesReady) score += 25;
+    if (payoutsReady) score += 25;
+    return score;
+  }, [freightAccount, onboardingReady, chargesReady, payoutsReady]);
 
   useFocusEffect(
     useCallback(() => {
@@ -203,9 +238,9 @@ export default function FreightConnectBankScreen() {
       if (connected === "true" || refresh === "true") {
         setTimeout(() => {
           checkConnectStatus(true);
-        }, 600);
+        }, 700);
       }
-    }, [params?.connected, params?.refresh, params?.freightId])
+    }, [params?.connected, params?.refresh, params?.freightId, params?.freight_id])
   );
 
   async function getStoredCarrier() {
@@ -243,10 +278,7 @@ export default function FreightConnectBankScreen() {
       nextCarrier.stripeAccountId
     );
 
-    const stripeCustomerId = pickCus(
-      nextCarrier.stripe_customer_id,
-      nextCarrier.stripeCustomerId
-    );
+    const stripeCustomerId = pickCus(nextCarrier.stripe_customer_id, nextCarrier.stripeCustomerId);
 
     const stripeSubscriptionId = pickSub(
       nextCarrier.stripe_subscription_id,
@@ -338,6 +370,31 @@ export default function FreightConnectBankScreen() {
     return normalized;
   }
 
+  async function findSubscription(freightId: string, email: string) {
+    const filters = [
+      freightId ? `freight_id.eq.${freightId}` : "",
+      email ? `freight_email.eq.${email}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    const { data, error } = await supabase
+      .from("freight_subscriptions")
+      .select("*")
+      .or(filters)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.log("Connect bank subscription lookup error:", error.message);
+      return null;
+    }
+
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  }
+
   async function loadCarrier() {
     try {
       setLoading(true);
@@ -364,6 +421,7 @@ export default function FreightConnectBankScreen() {
         authId ? `id.eq.${authId}` : "",
         authId ? `auth_user_id.eq.${authId}` : "",
         authId ? `profile_id.eq.${authId}` : "",
+        authId ? `freight_id.eq.${authId}` : "",
         email ? `email.eq.${email}` : "",
         staticAccountId ? `account_id.eq.${staticAccountId}` : "",
       ]
@@ -376,47 +434,102 @@ export default function FreightConnectBankScreen() {
         .or(filters)
         .limit(1);
 
-      if (error) {
-        console.log("Freight connect bank profile load error:", error.message);
-      }
+      if (error) console.log("Freight connect bank profile load error:", error.message);
 
       const dbCarrier = Array.isArray(dbRows) && dbRows.length > 0 ? dbRows[0] : null;
 
       if (!dbCarrier) {
-        Alert.alert(
-          "Freight Profile Missing",
-          "No freight profile was found. Please complete freight registration first."
-        );
+        Alert.alert("Freight Profile Missing", "No freight profile was found. Please complete freight registration first.");
         router.replace(ROUTES.register as any);
         return;
       }
 
-      await persistCarrier({
+      const sub = await findSubscription(
+        dbCarrier.id || paramFreightId || storedId || authId,
+        normalize(dbCarrier.email || email)
+      );
+
+      const subAcct = pickAcct(sub?.freight_account, sub?.stripe_account_id);
+      const carrierAcct = pickAcct(dbCarrier?.freight_account, dbCarrier?.stripe_account_id);
+
+      let mergedCarrier: Carrier = {
         ...(stored || {}),
         ...(dbCarrier || {}),
         id: dbCarrier.id,
         freightId: dbCarrier.freight_id || dbCarrier.id,
         freight_id: dbCarrier.freight_id || dbCarrier.id,
         email: normalize(dbCarrier.email || email),
-      });
-    } catch (error) {
+        stripe_customer_id: pickCus(dbCarrier.stripe_customer_id, sub?.stripe_customer_id),
+        stripe_subscription_id: pickSub(
+          dbCarrier.stripe_subscription_id,
+          dbCarrier.subscription_id,
+          sub?.stripe_subscription_id
+        ),
+        subscription_id: pickSub(
+          dbCarrier.subscription_id,
+          dbCarrier.stripe_subscription_id,
+          sub?.stripe_subscription_id
+        ),
+        subscription_status: dbCarrier.subscription_status || sub?.subscription_status || "",
+        freight_account: pickAcct(dbCarrier.freight_account, dbCarrier.stripe_account_id, subAcct),
+        stripe_account_id: pickAcct(dbCarrier.stripe_account_id, dbCarrier.freight_account, subAcct),
+      };
+
+      if (subAcct && !carrierAcct) {
+        const updatePayload = {
+          freight_account: subAcct,
+          stripe_account_id: subAcct,
+          stripe_connect_status: "started",
+          updated_at: new Date().toISOString(),
+        };
+
+        await supabase.from("freight_users").update(updatePayload).eq("id", dbCarrier.id);
+        mergedCarrier = { ...mergedCarrier, ...updatePayload };
+      }
+
+      await persistCarrier(mergedCarrier);
+    } catch (error: any) {
       console.log("Freight connect bank load error:", error);
-      Alert.alert("Connect Bank Error", "Unable to load freight payout setup.");
+      Alert.alert("Connect Bank Error", error?.message || "Unable to load freight payout setup.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  async function onRefresh() {
+    setRefreshing(true);
+    await loadCarrier();
+  }
+
+  async function safeUpdateProfiles(payload: any, freightId: string) {
+    try {
+      await supabase
+        .from("profiles")
+        .update(payload)
+        .or(`id.eq.${freightId},auth_user_id.eq.${freightId},profile_id.eq.${freightId}`);
+    } catch (error) {
+      console.log("Profiles update skipped:", error);
+    }
+  }
+
+  async function safeUpdateAdmin(payload: any, freightId: string) {
+    try {
+      await supabase
+        .from("admin_verifications")
+        .update(payload)
+        .or(`id.eq.${freightId},freight_id.eq.${freightId},carrier_id.eq.${freightId},profile_id.eq.${freightId}`);
+    } catch (error) {
+      console.log("Admin verification update skipped:", error);
     }
   }
 
   async function updateSupabaseConnectStatus(payload: any, sourceCarrier?: Carrier | null) {
     const activeCarrier = sourceCarrier || carrier;
-    const freightId = clean(
-      activeCarrier?.id || activeCarrier?.freightId || activeCarrier?.freight_id
-    );
+    const freightId = clean(activeCarrier?.id || activeCarrier?.freightId || activeCarrier?.freight_id);
     const email = normalize(activeCarrier?.email);
 
-    if (!freightId && !email) {
-      throw new Error("Missing freight profile identity.");
-    }
+    if (!freightId && !email) throw new Error("Missing freight profile identity.");
 
     const freightConnectAccount = pickAcct(
       payload.freight_account,
@@ -431,8 +544,7 @@ export default function FreightConnectBankScreen() {
       ...payload,
       freight_account: freightConnectAccount || null,
       stripe_account_id: freightConnectAccount || null,
-      stripe_connect_status:
-        payload.stripe_connect_status || (freightConnectAccount ? "started" : "not_started"),
+      stripe_connect_status: payload.stripe_connect_status || (freightConnectAccount ? "started" : "not_started"),
       updated_at: new Date().toISOString(),
     };
 
@@ -449,34 +561,26 @@ export default function FreightConnectBankScreen() {
     const { error } = await freightQuery;
     if (error) throw error;
 
-    if (freightId) {
-      await supabase
-        .from("profiles")
-        .update(updatePayload)
-        .or(`id.eq.${freightId},auth_user_id.eq.${freightId},profile_id.eq.${freightId}`);
+    const subscriptionPayload = {
+      freight_account: freightConnectAccount || null,
+      stripe_account_id: freightConnectAccount || null,
+      updated_at: new Date().toISOString(),
+    };
 
-      await supabase
-        .from("admin_verifications")
-        .update(updatePayload)
-        .or(`id.eq.${freightId},freight_id.eq.${freightId},carrier_id.eq.${freightId},profile_id.eq.${freightId}`);
-
+    if (freightId && email) {
       await supabase
         .from("freight_subscriptions")
-        .update({
-          freight_account: freightConnectAccount || null,
-          stripe_account_id: freightConnectAccount || null,
-          updated_at: new Date().toISOString(),
-        })
+        .update(subscriptionPayload)
         .or(`freight_id.eq.${freightId},freight_email.eq.${email}`);
+    } else if (freightId) {
+      await supabase.from("freight_subscriptions").update(subscriptionPayload).eq("freight_id", freightId);
     } else if (email) {
-      await supabase
-        .from("freight_subscriptions")
-        .update({
-          freight_account: freightConnectAccount || null,
-          stripe_account_id: freightConnectAccount || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("freight_email", email);
+      await supabase.from("freight_subscriptions").update(subscriptionPayload).eq("freight_email", email);
+    }
+
+    if (freightId) {
+      await safeUpdateProfiles(updatePayload, freightId);
+      await safeUpdateAdmin(updatePayload, freightId);
     }
   }
 
@@ -484,7 +588,7 @@ export default function FreightConnectBankScreen() {
     const finalUrl = clean(url);
 
     if (!finalUrl || !finalUrl.startsWith("https://connect.stripe.com/")) {
-      Alert.alert("Stripe Error", "No valid Stripe Connect onboarding URL was returned.");
+      Alert.alert("Stripe Error", "No valid Stripe Connect onboarding or update URL was returned.");
       return;
     }
 
@@ -495,7 +599,6 @@ export default function FreightConnectBankScreen() {
 
     try {
       const supported = await Linking.canOpenURL(finalUrl);
-
       if (supported) {
         await Linking.openURL(finalUrl);
         return;
@@ -507,7 +610,7 @@ export default function FreightConnectBankScreen() {
     }
   }
 
-  async function startConnectBank() {
+  async function createOrUpdateStripeLink(mode: "onboarding" | "update") {
     if (!carrier) {
       Alert.alert("Profile Missing", "Please log in again.");
       return;
@@ -531,18 +634,40 @@ export default function FreightConnectBankScreen() {
         return;
       }
 
-      const returnUrl = `${APP_URL}/freight/connect-bank?connected=true&freightId=${encodeURIComponent(
-        freightId
-      )}`;
+      if (mode === "update" && !existingFreightAccount) {
+        Alert.alert("No Stripe Account", "Start Stripe payout setup first before updating banking info.");
+        return;
+      }
 
-      const refreshUrl = `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(
-        freightId
-      )}`;
+      const returnUrl = `${APP_URL}/freight/connect-bank?connected=true&freightId=${encodeURIComponent(freightId)}`;
+      const refreshUrl = `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(freightId)}`;
 
-      const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const requestBody = {
+        role: "freight",
+        mode,
+        purpose: mode === "update" ? "update_bank" : "onboarding",
+        userId: freightId,
+        freightId,
+        freight_id: freightId,
+        accountId: staticAccountId,
+        account_id: staticAccountId,
+        email,
+        freight_email: email,
+        companyName: carrier.companyName || carrier.businessName || carrier.company_name,
+        businessName: carrier.businessName || carrier.companyName || carrier.business_name,
+        business_name: carrier.businessName || carrier.companyName || carrier.business_name,
+        name: carrier.companyName || carrier.businessName || carrier.company_name,
+        contactName: carrier.contactName || carrier.contact_name || "",
+        phone: carrier.phone || "",
+        username: normalize(carrier.username),
+        freight_account: existingFreightAccount || undefined,
+        stripe_account_id: existingFreightAccount || undefined,
+        update_existing: Boolean(existingFreightAccount),
+        returnUrl,
+        return_url: returnUrl,
+        refreshUrl,
+        refresh_url: refreshUrl,
+        metadata: {
           role: "freight",
           userId: freightId,
           freightId,
@@ -551,36 +676,20 @@ export default function FreightConnectBankScreen() {
           account_id: staticAccountId,
           email,
           freight_email: email,
-          companyName: carrier.companyName || carrier.businessName || carrier.company_name,
-          businessName: carrier.businessName || carrier.companyName || carrier.business_name,
-          business_name: carrier.businessName || carrier.companyName || carrier.business_name,
-          name: carrier.companyName || carrier.businessName || carrier.company_name,
-          contactName: carrier.contactName || carrier.contact_name || "",
-          phone: carrier.phone || "",
-          username: normalize(carrier.username),
-          freight_account: existingFreightAccount || undefined,
-          stripe_account_id: existingFreightAccount || undefined,
-          returnUrl,
-          return_url: returnUrl,
-          refreshUrl,
-          refresh_url: refreshUrl,
-          metadata: {
-            role: "freight",
-            userId: freightId,
-            freightId,
-            freight_id: freightId,
-            accountId: staticAccountId,
-            account_id: staticAccountId,
-            email,
-            freight_email: email,
-          },
-        }),
+          mode,
+        },
+      };
+
+      const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
       });
 
       const data = await parseApiResponse(response);
 
       if (!response.ok || !data.success) {
-        Alert.alert("Stripe Error", data.error || "Unable to open Stripe onboarding.");
+        Alert.alert("Stripe Error", data.error || "Unable to open Stripe Connect.");
         return;
       }
 
@@ -599,17 +708,25 @@ export default function FreightConnectBankScreen() {
         return;
       }
 
-      const onboardingUrl = clean(data.url || data.onboardingUrl || data.onboarding_url);
+      const stripeUrl = clean(
+        data.url ||
+          data.onboardingUrl ||
+          data.onboarding_url ||
+          data.accountLinkUrl ||
+          data.account_link_url ||
+          data.updateUrl ||
+          data.update_url
+      );
 
-      if (!onboardingUrl) {
-        Alert.alert("Stripe Error", "Backend did not return a Stripe onboarding URL.");
+      if (!stripeUrl) {
+        Alert.alert("Stripe Error", "Backend did not return a Stripe onboarding/update URL.");
         return;
       }
 
       const statusUpdate = {
         freight_account: newFreightAccount,
         stripe_account_id: newFreightAccount,
-        stripe_connect_status: "started",
+        stripe_connect_status: mode === "update" ? "update_started" : "started",
         payouts_enabled: Boolean(data.payoutsEnabled || data.payouts_enabled),
         charges_enabled: Boolean(data.chargesEnabled || data.charges_enabled),
         stripe_payouts_enabled: Boolean(data.payoutsEnabled || data.payouts_enabled),
@@ -632,14 +749,21 @@ export default function FreightConnectBankScreen() {
       });
 
       setCarrier(updated);
-
-      await openStripeUrl(onboardingUrl);
+      await openStripeUrl(stripeUrl);
     } catch (error: any) {
       console.log("Connect bank error:", error);
-      Alert.alert("Connect Bank Error", error?.message || "Unable to start payout setup.");
+      Alert.alert("Connect Bank Error", error?.message || "Unable to open Stripe Connect.");
     } finally {
       setConnecting(false);
     }
+  }
+
+  async function startConnectBank() {
+    await createOrUpdateStripeLink("onboarding");
+  }
+
+  async function updateBankingInfo() {
+    await createOrUpdateStripeLink("update");
   }
 
   async function checkConnectStatus(silent = false) {
@@ -734,49 +858,35 @@ export default function FreightConnectBankScreen() {
         } else {
           Alert.alert(
             "Stripe Setup Pending",
-            "If you just finished Stripe onboarding, wait a moment and tap Reload Payout Status again."
+            "If you just finished Stripe onboarding or banking updates, wait a moment and tap Reload Payout Status again."
           );
         }
       }
     } catch (error: any) {
-      if (!silent) {
-        Alert.alert("Status Error", error?.message || "Unable to check payout status.");
-      }
+      if (!silent) Alert.alert("Status Error", error?.message || "Unable to check payout status.");
     } finally {
       setChecking(false);
     }
   }
 
   function statusColor() {
-    if (payoutsReady && chargesReady && onboardingReady) {
-      return COLORS.green;
-    }
-
-    if (freightAccount) {
-      return COLORS.amber;
-    }
-
+    if (payoutsReady && chargesReady && onboardingReady) return COLORS.green;
+    if (freightAccount) return COLORS.amber;
     return COLORS.red;
   }
 
   function statusText() {
-    if (payoutsReady && chargesReady && onboardingReady) {
-      return "Payout Ready";
-    }
-
-    if (freightAccount) {
-      return "Setup Incomplete";
-    }
-
+    if (payoutsReady && chargesReady && onboardingReady) return "Payout Ready";
+    if (freightAccount) return "Setup Incomplete";
     return "Not Connected";
   }
 
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.red} />
+          <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={styles.centerText}>Loading freight bank setup...</Text>
         </View>
       </SafeAreaView>
@@ -785,147 +895,204 @@ export default function FreightConnectBankScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.eyebrow}>Farm2Home Freight</Text>
-              <Text style={styles.title}>Connect Bank</Text>
-              <Text style={styles.subtitle}>
-                Complete Stripe Express onboarding. Your saved Stripe acct_ ID is reused instead
-                of creating duplicate payout accounts.
-              </Text>
-            </View>
-
-            <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(ROUTES.dashboard)}>
-              <Ionicons name="grid-outline" size={30} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <Ionicons name="business-outline" size={28} color="#FFFFFF" />
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text style={styles.companyName}>
-              {carrier?.companyName || carrier?.businessName || "Freight Carrier"}
-            </Text>
-            <Text style={styles.companyEmail}>{carrier?.email || "Freight account"}</Text>
-            <Text style={styles.accountId}>
-              Account ID: {carrier?.accountId || carrier?.account_id || "Not assigned"}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.statusCard}>
-          <View style={styles.statusTop}>
-            <View>
-              <Text style={styles.statusLabel}>Stripe Payout Status</Text>
-              <View style={[styles.statusPill, { backgroundColor: statusColor() }]}>
-                <Text style={styles.statusPillText}>{statusText()}</Text>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.shell}>
+          <View style={styles.sidebar}>
+            <View style={styles.brandRow}>
+              <View style={styles.brandIcon}>
+                <Ionicons name="business-outline" size={28} color={COLORS.white} />
+              </View>
+              <View>
+                <Text style={styles.brandTitle}>Farm2Home</Text>
+                <Text style={styles.brandSubtitle}>Connect Bank</Text>
               </View>
             </View>
 
-            <Ionicons name="card-outline" size={34} color="#FFFFFF" />
+            <View style={styles.sideDivider} />
+
+            <SidebarLink icon="grid-outline" title="Dashboard" route={ROUTES.dashboard} />
+            <SidebarLink icon="search-outline" title="Load Board" route={ROUTES.board} />
+            <SidebarLink icon="briefcase-outline" title="My Loads" route={ROUTES.myLoads} />
+            <SidebarLink icon="business-outline" title="Connect Bank" active route={ROUTES.connectBank} />
+            <SidebarLink icon="person-outline" title="Profile" route={ROUTES.profile} />
+            <SidebarLink icon="settings-outline" title="Settings" route={ROUTES.settings} />
+
+            <View style={styles.sideNote}>
+              <Ionicons name="shield-checkmark-outline" size={20} color="#A5B4FC" />
+              <Text style={styles.sideNoteText}>
+                Existing subscription carriers can reopen Stripe to update banking without creating duplicate acct_ accounts.
+              </Text>
+            </View>
           </View>
 
-          <Text style={styles.statusNote}>
-            Stripe Connect Account ID: {freightAccount || "Not created yet"}
-          </Text>
-        </View>
+          <View style={styles.main}>
+            <View style={styles.topPanel}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eyebrow}>Fina Admin Style Payout Setup</Text>
+                <Text style={styles.pageTitle}>Stripe Connect Bank</Text>
+                <Text style={styles.pageSubtitle}>
+                  Start onboarding, continue setup, update banking info for an existing subscription, and sync payout readiness.
+                </Text>
+              </View>
 
-        <View style={styles.card}>
-          <SectionHeader
-            icon="shield-checkmark-outline"
-            title="Permanent Stripe Connect Setup"
-            subtitle="This page saves freight_account and stripe_account_id to freight_users, profiles, admin_verifications, and freight_subscriptions."
-          />
+              <TouchableOpacity style={styles.topButton} onPress={() => goTo(ROUTES.dashboard)}>
+                <Ionicons name="grid-outline" size={22} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
 
-          <InfoRow
-            label="Stripe Connect Account"
-            value={freightAccount ? "Saved" : "Missing"}
-            good={Boolean(freightAccount)}
-          />
-          <InfoRow
-            label="Onboarding"
-            value={onboardingReady ? "Complete" : "Required"}
-            good={onboardingReady}
-          />
-          <InfoRow
-            label="Charges Enabled"
-            value={chargesReady ? "Enabled" : "Pending"}
-            good={chargesReady}
-          />
-          <InfoRow
-            label="Payouts Enabled"
-            value={payoutsReady ? "Enabled" : "Pending"}
-            good={payoutsReady}
-          />
-        </View>
+            <View style={styles.profilePanel}>
+              <View style={styles.profileAvatar}>
+                <Ionicons name="business-outline" size={26} color={COLORS.white} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.companyName}>
+                  {carrier?.companyName || carrier?.businessName || "Freight Carrier"}
+                </Text>
+                <Text style={styles.companyEmail}>{carrier?.email || "Freight account"}</Text>
+                <Text style={styles.accountId}>
+                  Account ID: {carrier?.accountId || carrier?.account_id || "Not assigned"}
+                </Text>
+              </View>
+              <View style={[styles.statusMini, { backgroundColor: statusColor() }]}>
+                <Text style={styles.statusMiniText}>{statusText()}</Text>
+              </View>
+            </View>
 
-        <TouchableOpacity
-          style={[styles.primaryButton, connecting && styles.disabledButton]}
-          onPress={startConnectBank}
-          disabled={connecting}
-        >
-          {connecting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.buttonText}>
-                {freightAccount ? "Continue Stripe Setup" : "Start Stripe Payout Setup"}
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
+            <View style={styles.metricGrid}>
+              <MetricCard icon="card-outline" label="Connect Account" value={shortId(freightAccount)} ready={Boolean(freightAccount)} />
+              <MetricCard icon="checkmark-circle-outline" label="Onboarding" value={onboardingReady ? "Complete" : "Required"} ready={onboardingReady} />
+              <MetricCard icon="cash-outline" label="Charges" value={chargesReady ? "Enabled" : "Pending"} ready={chargesReady} />
+              <MetricCard icon="wallet-outline" label="Payouts" value={payoutsReady ? "Enabled" : "Pending"} ready={payoutsReady} />
+            </View>
 
-        <TouchableOpacity
-          style={[styles.secondaryButton, checking && styles.disabledButton]}
-          onPress={() => checkConnectStatus(false)}
-          disabled={checking}
-        >
-          {checking ? (
-            <ActivityIndicator color={COLORS.red} />
-          ) : (
-            <>
-              <Ionicons name="refresh-outline" size={18} color={COLORS.red} />
-              <Text style={styles.secondaryButtonText}>Reload Payout Status</Text>
-            </>
-          )}
-        </TouchableOpacity>
+            <View style={styles.gridTwo}>
+              <View style={styles.card}>
+                <SectionHeader
+                  icon="shield-checkmark-outline"
+                  title="Payout Setup Progress"
+                  subtitle="Stripe account, onboarding, charges, payouts, and banking updates."
+                />
 
-        <TouchableOpacity style={styles.dashboardButton} onPress={() => goTo(ROUTES.dashboard)}>
-          <Ionicons name="arrow-back-outline" size={18} color={COLORS.text} />
-          <Text style={styles.dashboardButtonText}>Back to Freight Dashboard</Text>
-        </TouchableOpacity>
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${setupScore}%` }]} />
+                </View>
 
-        <View style={styles.quickGrid}>
-          <QuickLink icon="grid-outline" label="Dashboard" route={ROUTES.dashboard} />
-          <QuickLink icon="list-outline" label="Load Board" route={ROUTES.board} />
-          <QuickLink icon="briefcase-outline" label="My Loads" route={ROUTES.myLoads} />
-          <QuickLink icon="pulse-outline" label="Live Loads" route={ROUTES.liveLoads} />
-          <QuickLink icon="card-outline" label="Subscription" route={ROUTES.subscription} />
-          <QuickLink icon="business-outline" label="Profile" route={ROUTES.profile} />
-          <QuickLink icon="settings-outline" label="Settings" route={ROUTES.settings} />
-          <QuickLink icon="headset-outline" label="Support" route={ROUTES.support} />
-          <QuickLink icon="help-circle-outline" label="Help" route={ROUTES.help} />
+                <InfoRow label="Stripe Connect Account" value={freightAccount ? shortId(freightAccount) : "Missing"} good={Boolean(freightAccount)} />
+                <InfoRow label="Active Subscription" value={hasSubscription ? "Found" : "Missing"} good={hasSubscription} />
+                <InfoRow label="Onboarding" value={onboardingReady ? "Complete" : "Required"} good={onboardingReady} />
+                <InfoRow label="Charges Enabled" value={chargesReady ? "Enabled" : "Pending"} good={chargesReady} />
+                <InfoRow label="Payouts Enabled" value={payoutsReady ? "Enabled" : "Pending"} good={payoutsReady} />
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, connecting && styles.disabledButton]}
+                  onPress={startConnectBank}
+                  disabled={connecting}
+                >
+                  {connecting ? (
+                    <ActivityIndicator color={COLORS.white} />
+                  ) : (
+                    <>
+                      <Ionicons name="open-outline" size={18} color={COLORS.white} />
+                      <Text style={styles.primaryButtonText}>
+                        {freightAccount ? "Continue Stripe Setup" : "Start Stripe Payout Setup"}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.secondaryButton, connecting && styles.disabledButton]}
+                  onPress={updateBankingInfo}
+                  disabled={connecting || !freightAccount}
+                >
+                  {connecting ? (
+                    <ActivityIndicator color={COLORS.primary} />
+                  ) : (
+                    <>
+                      <Ionicons name="card-outline" size={18} color={COLORS.primary} />
+                      <Text style={styles.secondaryButtonText}>Update Banking Info</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.secondaryButton, checking && styles.disabledButton]}
+                  onPress={() => checkConnectStatus(false)}
+                  disabled={checking}
+                >
+                  {checking ? (
+                    <ActivityIndicator color={COLORS.primary} />
+                  ) : (
+                    <>
+                      <Ionicons name="refresh-outline" size={18} color={COLORS.primary} />
+                      <Text style={styles.secondaryButtonText}>Reload Payout Status</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.card}>
+                <SectionHeader icon="server-outline" title="Saved Stripe IDs" subtitle="Values used by login, dashboard, and payout screens." />
+
+                <IdRow label="Freight UUID" value={carrier?.id || carrier?.freightId || ""} />
+                <IdRow label="Static Account ID" value={carrier?.accountId || carrier?.account_id || ""} />
+                <IdRow label="Stripe Customer" value={pickCus(carrier?.stripeCustomerId, carrier?.stripe_customer_id)} />
+                <IdRow label="Subscription" value={pickSub(carrier?.stripeSubscriptionId, carrier?.stripe_subscription_id, carrier?.subscription_id)} />
+                <IdRow label="Connect Account" value={freightAccount} />
+
+                <View style={styles.noticeBox}>
+                  <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
+                  <Text style={styles.noticeText}>
+                    This page hydrates acct_ from freight_subscriptions into freight_users and sends the existing acct_ to Stripe when updating banking.
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <SectionHeader icon="apps-outline" title="Quick Navigation" subtitle="Continue freight setup or return to operations." />
+
+              <View style={styles.quickGrid}>
+                <QuickLink icon="grid-outline" label="Dashboard" route={ROUTES.dashboard} />
+                <QuickLink icon="list-outline" label="Load Board" route={ROUTES.board} />
+                <QuickLink icon="briefcase-outline" label="My Loads" route={ROUTES.myLoads} />
+                <QuickLink icon="pulse-outline" label="Live Loads" route={ROUTES.liveLoads} />
+                <QuickLink icon="card-outline" label="Subscription" route={ROUTES.subscription} />
+                <QuickLink icon="business-outline" label="Profile" route={ROUTES.profile} />
+                <QuickLink icon="settings-outline" label="Settings" route={ROUTES.settings} />
+                <QuickLink icon="headset-outline" label="Support" route={ROUTES.support} />
+                <QuickLink icon="help-circle-outline" label="Help" route={ROUTES.help} />
+              </View>
+            </View>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function currentFreightAccount(activeCarrier?: Carrier | null) {
-  return pickAcct(
-    activeCarrier?.freight_account,
-    activeCarrier?.freightAccount,
-    activeCarrier?.stripe_account_id,
-    activeCarrier?.stripeAccountId
+function SidebarLink({
+  icon,
+  title,
+  route,
+  active,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  route: FreightRoute;
+  active?: boolean;
+}) {
+  return (
+    <TouchableOpacity style={[styles.sidebarLink, active && styles.sidebarLinkActive]} onPress={() => goTo(route)}>
+      <Ionicons name={icon} size={18} color={active ? COLORS.white : "#A5B4FC"} />
+      <Text style={[styles.sidebarLinkText, active && styles.sidebarLinkTextActive]}>{title}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -941,7 +1108,7 @@ function SectionHeader({
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionIcon}>
-        <Ionicons name={icon} size={20} color="#FFFFFF" />
+        <Ionicons name={icon} size={20} color={COLORS.white} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.sectionTitle}>{title}</Text>
@@ -951,13 +1118,49 @@ function SectionHeader({
   );
 }
 
+function MetricCard({
+  icon,
+  label,
+  value,
+  ready,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  ready: boolean;
+}) {
+  return (
+    <View style={styles.metricCard}>
+      <View style={[styles.metricIcon, ready ? styles.metricGood : styles.metricWarn]}>
+        <Ionicons name={icon} size={21} color={ready ? COLORS.green : COLORS.amber} />
+      </View>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
+
 function InfoRow({ label, value, good }: { label: string; value: string; good: boolean }) {
   return (
     <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <View style={[styles.infoBadge, { backgroundColor: good ? COLORS.green : COLORS.amber }]}>
-        <Text style={styles.infoBadgeText}>{value}</Text>
+      <View style={[styles.infoIcon, good ? styles.infoGood : styles.infoWarn]}>
+        <Ionicons name={good ? "checkmark-outline" : "alert-circle-outline"} size={16} color={good ? COLORS.white : COLORS.amber} />
       </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function IdRow({ label, value }: { label: string; value?: string }) {
+  return (
+    <View style={styles.idRow}>
+      <Text style={styles.idLabel}>{label}</Text>
+      <Text style={[styles.idValue, !value && styles.idMissing]} numberOfLines={1}>
+        {value || "Missing"}
+      </Text>
     </View>
   );
 }
@@ -973,7 +1176,9 @@ function QuickLink({
 }) {
   return (
     <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
-      <Ionicons name={icon} size={22} color={COLORS.red} />
+      <View style={styles.quickIcon}>
+        <Ionicons name={icon} size={21} color={COLORS.primary} />
+      </View>
       <Text style={styles.quickLinkText}>{label}</Text>
     </TouchableOpacity>
   );
@@ -981,206 +1186,212 @@ function QuickLink({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  content: { paddingBottom: 90 },
-  center: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
+  content: { flexGrow: 1, paddingBottom: 40 },
+  center: { flex: 1, backgroundColor: COLORS.bg, alignItems: "center", justifyContent: "center", padding: 24 },
   centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
-  hero: {
-    backgroundColor: COLORS.black,
-    paddingTop: 30,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
+  shell: {
+    flex: 1,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    minHeight: Platform.OS === "web" ? 840 : undefined,
   },
-  heroTop: { flexDirection: "row", alignItems: "flex-start", gap: 14 },
-  heroIcon: {
+  sidebar: {
+    backgroundColor: COLORS.navy,
+    paddingHorizontal: 22,
+    paddingTop: 28,
+    paddingBottom: 22,
+    width: Platform.OS === "web" ? 310 : "100%",
+  },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  brandIcon: {
     width: 54,
     height: 54,
     borderRadius: 20,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  eyebrow: {
-    color: "#FCA5A5",
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    fontSize: 12,
-  },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 32,
-    fontWeight: "900",
-    marginTop: 6,
-  },
-  subtitle: {
-    color: "#D1D5DB",
-    marginTop: 8,
-    lineHeight: 22,
-    fontWeight: "700",
-  },
-  profileCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 16,
-    marginHorizontal: 18,
-    marginTop: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+  brandTitle: { color: COLORS.white, fontSize: 21, fontWeight: "900" },
+  brandSubtitle: { color: "#A5B4FC", fontWeight: "800", marginTop: 2 },
+  sideDivider: { height: 1, backgroundColor: "#1E293B", marginVertical: 22 },
+  sidebarLink: {
+    borderRadius: 16,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
     flexDirection: "row",
+    gap: 10,
     alignItems: "center",
-    gap: 14,
+    marginBottom: 8,
   },
-  avatar: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
-    backgroundColor: COLORS.red,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  companyName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
-  companyEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  accountId: { color: COLORS.muted, fontWeight: "800", marginTop: 4, fontSize: 12 },
-  statusCard: {
-    backgroundColor: COLORS.red,
-    borderRadius: 22,
-    padding: 18,
-    marginHorizontal: 18,
-    marginBottom: 16,
-  },
-  statusTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  statusLabel: {
-    color: "#FFE4E6",
-    fontWeight: "900",
-    textTransform: "uppercase",
-    fontSize: 12,
-  },
-  statusPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    marginTop: 8,
-  },
-  statusPillText: { color: "#FFFFFF", fontWeight: "900" },
-  statusNote: {
-    color: "#FFE4E6",
-    fontWeight: "800",
-    marginTop: 14,
-    lineHeight: 20,
-  },
-  card: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 18,
-    marginHorizontal: 18,
-    marginBottom: 16,
+  sidebarLinkActive: { backgroundColor: COLORS.primary },
+  sidebarLinkText: { color: "#CBD5E1", fontWeight: "900" },
+  sidebarLinkTextActive: { color: COLORS.white },
+  sideNote: {
+    backgroundColor: "#0F172A",
     borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  sectionHeader: {
+    borderColor: "#1E293B",
+    borderRadius: 18,
+    padding: 14,
     flexDirection: "row",
     gap: 10,
     alignItems: "flex-start",
+    marginTop: 12,
+  },
+  sideNoteText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 20, flex: 1 },
+  main: { flex: 1, padding: 18 },
+  topPanel: {
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    gap: 14,
+    alignItems: "flex-start",
     marginBottom: 14,
   },
-  sectionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 16,
-    backgroundColor: COLORS.black,
+  eyebrow: { color: COLORS.primary, fontWeight: "900", fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
+  pageTitle: { color: COLORS.text, fontSize: 34, fontWeight: "900", marginTop: 6 },
+  pageSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 22, marginTop: 7, maxWidth: 760 },
+  topButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 18,
+    backgroundColor: COLORS.primarySoft,
     alignItems: "center",
     justifyContent: "center",
   },
+  profilePanel: {
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    gap: 13,
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  profileAvatar: {
+    width: 58,
+    height: 58,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  companyName: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
+  companyEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  accountId: { color: COLORS.muted, fontWeight: "800", marginTop: 4, fontSize: 12 },
+  statusMini: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 8 },
+  statusMiniText: { color: COLORS.white, fontWeight: "900", fontSize: 12 },
+  metricGrid: { flexDirection: Platform.OS === "web" ? "row" : "column", gap: 12, marginBottom: 14 },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 22,
+    padding: 16,
+  },
+  metricIcon: { width: 42, height: 42, borderRadius: 16, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  metricGood: { backgroundColor: COLORS.greenSoft },
+  metricWarn: { backgroundColor: COLORS.amberSoft },
+  metricLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11, textTransform: "uppercase" },
+  metricValue: { color: COLORS.text, fontWeight: "900", fontSize: 18, marginTop: 5 },
+  gridTwo: { flexDirection: Platform.OS === "web" ? "row" : "column", gap: 14, alignItems: "flex-start" },
+  card: {
+    flex: 1,
+    width: "100%",
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  sectionHeader: { flexDirection: "row", gap: 12, alignItems: "flex-start", marginBottom: 16 },
+  sectionIcon: { width: 42, height: 42, borderRadius: 16, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
   sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900" },
-  sectionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 3,
-  },
+  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
+  progressTrack: { height: 10, borderRadius: 999, backgroundColor: "#E5E7EB", overflow: "hidden", marginBottom: 14 },
+  progressFill: { height: 10, borderRadius: 999, backgroundColor: COLORS.primary },
   infoRow: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: COLORS.panel,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 14,
-    padding: 13,
-    marginTop: 8,
+    borderRadius: 16,
+    padding: 12,
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     gap: 10,
+    alignItems: "center",
+    marginBottom: 10,
   },
-  infoLabel: { color: COLORS.text, fontWeight: "900", flex: 1 },
-  infoBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  infoBadgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
+  infoIcon: { width: 32, height: 32, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  infoGood: { backgroundColor: COLORS.green },
+  infoWarn: { backgroundColor: COLORS.amberSoft },
+  infoLabel: { color: COLORS.text, fontWeight: "900" },
+  infoValue: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
   primaryButton: {
-    backgroundColor: COLORS.red,
-    padding: 16,
+    backgroundColor: COLORS.primary,
+    padding: 15,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    marginHorizontal: 18,
     flexDirection: "row",
     gap: 8,
+    marginTop: 6,
+    width: "100%",
   },
+  primaryButtonText: { color: COLORS.white, fontWeight: "900", textAlign: "center", flexShrink: 1 },
   secondaryButton: {
-    backgroundColor: COLORS.redSoft,
+    backgroundColor: COLORS.primarySoft,
     borderWidth: 1,
-    borderColor: COLORS.red,
-    padding: 16,
+    borderColor: "#C7D2FE",
+    padding: 15,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    marginHorizontal: 18,
-    marginTop: 12,
-    marginBottom: 12,
     flexDirection: "row",
     gap: 8,
+    marginTop: 12,
+    width: "100%",
   },
-  dashboardButton: {
-    backgroundColor: COLORS.card,
+  secondaryButtonText: { color: COLORS.primary, fontWeight: "900", textAlign: "center", flexShrink: 1 },
+  disabledButton: { opacity: 0.65 },
+  idRow: {
+    backgroundColor: COLORS.panel,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 16,
     borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginHorizontal: 18,
-    marginBottom: 16,
-    flexDirection: "row",
-    gap: 8,
+    padding: 13,
+    marginBottom: 10,
   },
-  disabledButton: { opacity: 0.65 },
-  buttonText: { color: "#FFFFFF", fontWeight: "900" },
-  secondaryButtonText: { color: COLORS.red, fontWeight: "900" },
-  dashboardButtonText: { color: COLORS.text, fontWeight: "900" },
-  quickGrid: {
+  idLabel: { color: COLORS.muted, fontWeight: "900", textTransform: "uppercase", fontSize: 11 },
+  idValue: { color: COLORS.text, fontWeight: "900", marginTop: 5 },
+  idMissing: { color: COLORS.amber },
+  noticeBox: {
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: "#C7D2FE",
+    borderRadius: 16,
+    padding: 13,
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingHorizontal: 18,
+    gap: 9,
+    alignItems: "flex-start",
+    marginTop: 4,
   },
+  noticeText: { color: COLORS.primaryDark, fontWeight: "800", lineHeight: 20, flex: 1 },
+  quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   quickLink: {
-    width: "48%",
-    backgroundColor: COLORS.card,
+    width: Platform.OS === "web" ? "23.5%" : "48%",
+    backgroundColor: COLORS.panel,
     borderRadius: 18,
     padding: 15,
     borderWidth: 1,
     borderColor: COLORS.border,
-    alignItems: "center",
-    gap: 8,
+    minHeight: 102,
+    justifyContent: "space-between",
   },
-  quickLinkText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
+  quickIcon: { width: 42, height: 42, borderRadius: 15, backgroundColor: COLORS.primarySoft, alignItems: "center", justifyContent: "center", marginBottom: 8 },
+  quickLinkText: { color: COLORS.text, fontWeight: "900" },
 });
