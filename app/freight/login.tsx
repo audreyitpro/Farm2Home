@@ -22,56 +22,105 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
+/**
+ * IMPORTANT SCHEMA NOTE
+ * This version matches your actual Supabase schema shown in screenshots:
+ *
+ * public.freight_users has:
+ * - id text
+ * - freight_id text
+ * - auth_user_id uuid
+ * - profile_id uuid
+ * - role text
+ * - email text
+ * - account_id text
+ * - company_name text
+ * - business_name text
+ * - name text
+ * - full_name text
+ * - username text
+ * - stripe_customer_id text
+ * - subscription_id text
+ * - freight_account text
+ * - account_active boolean
+ * - approved boolean
+ * - freight_membership_paid boolean
+ * - membership_status text
+ * - verification_status text
+ * - compliance_status text
+ * - admin_review_status text
+ * - created_at timestamp
+ * - updated_at timestamp
+ *
+ * public.profiles has:
+ * - id uuid
+ * - auth_user_id uuid
+ * - role text
+ * - full_name text
+ * - email text
+ * - phone text
+ * - created_at timestamp
+ * - account_id text
+ * - freight_account text
+ * - stripe_account_id text
+ *
+ * public.freight_subscriptions has:
+ * - freight_id text
+ * - freight_email text
+ * - name text
+ * - username text
+ * - stripe_customer_id text
+ * - stripe_subscription_id text
+ * - subscription_status text
+ * - stripe_account_id text
+ * - freight_account text
+ */
+
 type FreightUser = {
   id: string;
-  freightId: string;
   freight_id: string;
-  profileId: string;
-  profile_id: string;
-  authUserId: string;
   auth_user_id: string;
+  profile_id: string;
   role: "freight";
 
-  accountId: string;
+  email: string;
   account_id: string;
 
-  companyName: string;
   company_name: string;
-  businessName: string;
   business_name: string;
-  contactName: string;
-  contact_name: string;
-  fullName: string;
+  name: string;
   full_name: string;
-  email: string;
-  phone: string;
   username: string;
+  phone: string;
 
-  stripeCustomerId: string;
   stripe_customer_id: string;
-  stripeSubscriptionId: string;
-  stripe_subscription_id: string;
-  subscriptionId: string;
   subscription_id: string;
-  freightAccount: string;
   freight_account: string;
-  stripeAccountId: string;
-  stripe_account_id: string;
 
-  accountActive: boolean;
   account_active: boolean;
-  membershipStatus: string;
-  membership_status: string;
-  subscriptionStatus: string;
-  subscription_status: string;
-
   approved: boolean;
-  verificationStatus: string;
+  freight_membership_paid: boolean;
+  membership_status: string;
+
   verification_status: string;
-  registrationComplete: boolean;
-  registration_complete: boolean;
-  applicationSubmitted: boolean;
-  application_submitted: boolean;
+  compliance_status: string;
+  admin_review_status: string;
+
+  created_at?: string;
+  updated_at?: string;
+
+  // aliases used by other screens
+  freightId?: string;
+  accountId?: string;
+  companyName?: string;
+  businessName?: string;
+  fullName?: string;
+  stripeCustomerId?: string;
+  subscriptionId?: string;
+  freightAccount?: string;
+  stripeAccountId?: string;
+  accountActive?: boolean;
+  membershipStatus?: string;
 };
 
 const COLORS = {
@@ -87,9 +136,7 @@ const COLORS = {
   primarySoft: "#EEF2FF",
   green: "#10B981",
   greenDark: "#047857",
-  amber: "#F59E0B",
   red: "#EF4444",
-  dark: "#111827",
   navy: "#020617",
   white: "#FFFFFF",
 };
@@ -104,6 +151,11 @@ function clean(value: any) {
 
 function normalize(value: any) {
   return clean(value).toLowerCase();
+}
+
+function isUuid(value: any) {
+  const v = clean(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
 function isCus(value: any) {
@@ -146,348 +198,114 @@ function statusIsGood(value: any) {
   return !["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(status);
 }
 
-function accountIdOf(user: any) {
-  return clean(user?.account_id || user?.accountId);
-}
-
-function customerIdOf(user: any) {
-  return pickCus(user?.stripe_customer_id, user?.stripeCustomerId);
-}
-
-function subscriptionIdOf(user: any) {
-  return pickSub(
-    user?.stripe_subscription_id,
-    user?.subscription_id,
-    user?.stripeSubscriptionId,
-    user?.subscriptionId
-  );
-}
-
-function connectIdOf(user: any) {
-  return pickAcct(
-    user?.freight_account,
-    user?.stripe_account_id,
-    user?.freightAccount,
-    user?.stripeAccountId
-  );
-}
-
-function formatMaskedId(value: string, fallback = "Missing") {
+function maskId(value: string, fallback = "Missing") {
   const id = clean(value);
   if (!id) return fallback;
   if (id.length <= 14) return id;
   return `${id.slice(0, 8)}...${id.slice(-5)}`;
 }
 
-function ensureFreightUserAliases(user: FreightUser): FreightUser {
-  const id = clean(user.id || user.freight_id || user.freightId || user.auth_user_id || user.authUserId);
-  const accountId = accountIdOf(user);
-  const stripeCustomerId = customerIdOf(user);
-  const stripeSubscriptionId = subscriptionIdOf(user);
-  const stripeConnectId = connectIdOf(user);
+function getSubscriptionId(row: any) {
+  return pickSub(row?.subscription_id, row?.stripe_subscription_id, row?.stripeSubscriptionId, row?.subscriptionId);
+}
+
+function getConnectAccount(row: any) {
+  return pickAcct(row?.freight_account, row?.stripe_account_id, row?.freightAccount, row?.stripeAccountId);
+}
+
+function getCustomerId(row: any) {
+  return pickCus(row?.stripe_customer_id, row?.stripeCustomerId);
+}
+
+function buildFreightUser(row: any): FreightUser {
+  const id = clean(row?.id || row?.freight_id);
+  const freightId = clean(row?.freight_id || row?.id);
+  const companyName = clean(row?.company_name || row?.business_name || row?.name || "Freight Carrier");
+  const fullName = clean(row?.full_name || row?.name || companyName);
+  const subscriptionId = getSubscriptionId(row);
+  const connectAccount = getConnectAccount(row);
+  const customerId = getCustomerId(row);
+  const accountActive = row?.account_active !== false;
 
   return {
-    ...user,
     id,
-    freightId: id,
-    freight_id: id,
-    authUserId: clean(user.authUserId || user.auth_user_id || id),
-    auth_user_id: clean(user.auth_user_id || user.authUserId || id),
-    profileId: clean(user.profileId || user.profile_id || id),
-    profile_id: clean(user.profile_id || user.profileId || id),
+    freight_id: freightId,
+    auth_user_id: clean(row?.auth_user_id),
+    profile_id: clean(row?.profile_id),
+    role: "freight",
 
-    accountId,
-    account_id: accountId,
+    email: normalize(row?.email || row?.freight_email),
+    account_id: clean(row?.account_id),
 
-    stripeCustomerId,
-    stripe_customer_id: stripeCustomerId,
-    stripeSubscriptionId: stripeSubscriptionId,
-    stripe_subscription_id: stripeSubscriptionId,
-    subscriptionId: stripeSubscriptionId,
-    subscription_id: stripeSubscriptionId,
-    freightAccount: stripeConnectId,
-    freight_account: stripeConnectId,
-    stripeAccountId: stripeConnectId,
-    stripe_account_id: stripeConnectId,
+    company_name: companyName,
+    business_name: clean(row?.business_name || companyName),
+    name: clean(row?.name || fullName),
+    full_name: fullName,
+    username: clean(row?.username),
+    phone: clean(row?.phone),
 
-    accountActive: user.accountActive !== false && user.account_active !== false,
-    account_active: user.accountActive !== false && user.account_active !== false,
+    stripe_customer_id: customerId,
+    subscription_id: subscriptionId,
+    freight_account: connectAccount,
+
+    account_active: accountActive,
+    approved: row?.approved !== false,
+    freight_membership_paid: row?.freight_membership_paid !== false && Boolean(subscriptionId),
+    membership_status: clean(row?.membership_status || row?.subscription_status || (subscriptionId ? "active" : "pending")),
+
+    verification_status: clean(row?.verification_status || "SUBMITTED"),
+    compliance_status: clean(row?.compliance_status || "SUBMITTED"),
+    admin_review_status: clean(row?.admin_review_status || "submitted"),
+
+    created_at: row?.created_at,
+    updated_at: row?.updated_at,
+
+    freightId,
+    accountId: clean(row?.account_id),
+    companyName,
+    businessName: clean(row?.business_name || companyName),
+    fullName,
+    stripeCustomerId: customerId,
+    subscriptionId,
+    freightAccount: connectAccount,
+    stripeAccountId: connectAccount,
+    accountActive,
+    membershipStatus: clean(row?.membership_status || row?.subscription_status || (subscriptionId ? "active" : "pending")),
   };
 }
 
-function hasAllFiveFreightRequirements(user: FreightUser) {
-  const fixed = ensureFreightUserAliases(user);
+function hasDashboardAccess(user: FreightUser | null) {
+  if (!user) return false;
 
   return Boolean(
-    fixed.id &&
-      accountIdOf(fixed) &&
-      isCus(customerIdOf(fixed)) &&
-      isSub(subscriptionIdOf(fixed)) &&
-      isAcct(connectIdOf(fixed))
+    clean(user.id) &&
+      clean(user.account_id) &&
+      isCus(user.stripe_customer_id) &&
+      isSub(user.subscription_id) &&
+      isAcct(user.freight_account) &&
+      !valueIsFalse(user.account_active) &&
+      statusIsGood(user.membership_status || "active")
   );
 }
 
-function hasDashboardAccess(user: FreightUser) {
-  const fixed = ensureFreightUserAliases(user);
-
-  if (!hasAllFiveFreightRequirements(fixed)) return false;
-
-  return Boolean(
-    !valueIsFalse(fixed.account_active) &&
-      !valueIsFalse(fixed.accountActive) &&
-      statusIsGood(fixed.membership_status || fixed.membershipStatus || "active") &&
-      statusIsGood(fixed.subscription_status || fixed.subscriptionStatus || "active")
-  );
-}
-
-async function generateFreightAccountId() {
-  try {
-    const { data, error } = await supabase.rpc("next_account_id", {
-      p_role: "freight",
-      p_prefix: "Freight",
-    });
-
-    if (!error && data) return String(data);
-  } catch (error) {
-    console.log("next_account_id skipped:", error);
+function getMissingAccessItems(user: FreightUser | null) {
+  if (!user) {
+    return [
+      "Freight Profile",
+      "Static Account ID",
+      "Stripe Customer ID",
+      "Subscription ID",
+      "Stripe Connect Account",
+    ];
   }
 
-  return `Freight_${Date.now()}`;
-}
-
-function buildEmptyFreightUser(userId: string, email: string): FreightUser {
-  return {
-    id: userId,
-    freightId: userId,
-    freight_id: userId,
-    profileId: userId,
-    profile_id: userId,
-    authUserId: userId,
-    auth_user_id: userId,
-    role: "freight",
-
-    accountId: "",
-    account_id: "",
-
-    companyName: "Freight Carrier",
-    company_name: "Freight Carrier",
-    businessName: "Freight Carrier",
-    business_name: "Freight Carrier",
-    contactName: "",
-    contact_name: "",
-    fullName: "",
-    full_name: "",
-    email,
-    phone: "",
-    username: "",
-
-    stripeCustomerId: "",
-    stripe_customer_id: "",
-    stripeSubscriptionId: "",
-    stripe_subscription_id: "",
-    subscriptionId: "",
-    subscription_id: "",
-    freightAccount: "",
-    freight_account: "",
-    stripeAccountId: "",
-    stripe_account_id: "",
-
-    accountActive: false,
-    account_active: false,
-    membershipStatus: "pending",
-    membership_status: "pending",
-    subscriptionStatus: "pending",
-    subscription_status: "pending",
-
-    approved: false,
-    verificationStatus: "REGISTERED",
-    verification_status: "REGISTERED",
-    registrationComplete: false,
-    registration_complete: false,
-    applicationSubmitted: false,
-    application_submitted: false,
-  };
-}
-
-function mapCarrierToFreightUser(item: any, profile?: any, subscription?: any): FreightUser {
-  const id = clean(
-    item?.id ||
-      item?.freight_id ||
-      item?.auth_user_id ||
-      item?.profile_id ||
-      subscription?.freight_id ||
-      profile?.auth_user_id ||
-      profile?.id ||
-      ""
-  );
-
-  const accountId = clean(item?.account_id || item?.accountId || profile?.account_id || profile?.accountId || "");
-
-  const stripeCustomerId = pickCus(
-    item?.stripe_customer_id,
-    item?.stripeCustomerId,
-    profile?.stripe_customer_id,
-    profile?.stripeCustomerId,
-    subscription?.stripe_customer_id,
-    subscription?.stripeCustomerId
-  );
-
-  const stripeSubscriptionId = pickSub(
-    item?.stripe_subscription_id,
-    item?.subscription_id,
-    item?.stripeSubscriptionId,
-    item?.subscriptionId,
-    profile?.stripe_subscription_id,
-    profile?.subscription_id,
-    profile?.stripeSubscriptionId,
-    profile?.subscriptionId,
-    subscription?.stripe_subscription_id,
-    subscription?.subscription_id,
-    subscription?.stripeSubscriptionId,
-    subscription?.subscriptionId
-  );
-
-  const freightAccount = pickAcct(
-    item?.freight_account,
-    item?.freightAccount,
-    item?.stripe_account_id,
-    item?.stripeAccountId,
-    profile?.freight_account,
-    profile?.freightAccount,
-    profile?.stripe_account_id,
-    profile?.stripeAccountId,
-    subscription?.freight_account,
-    subscription?.freightAccount,
-    subscription?.stripe_account_id,
-    subscription?.stripeAccountId
-  );
-
-  const companyName = clean(
-    item?.company_name ||
-      item?.business_name ||
-      item?.companyName ||
-      item?.businessName ||
-      profile?.company_name ||
-      profile?.business_name ||
-      subscription?.name ||
-      "Freight Carrier"
-  );
-
-  const contactName = clean(
-    item?.contact_name ||
-      item?.full_name ||
-      item?.name ||
-      item?.contactName ||
-      item?.fullName ||
-      profile?.full_name ||
-      profile?.name ||
-      subscription?.name ||
-      ""
-  );
-
-  const membershipStatus = clean(
-    item?.membership_status ||
-      item?.membershipStatus ||
-      profile?.membership_status ||
-      profile?.membershipStatus ||
-      (stripeSubscriptionId ? "active" : "pending")
-  );
-
-  const subscriptionStatus = clean(
-    item?.subscription_status ||
-      item?.subscriptionStatus ||
-      profile?.subscription_status ||
-      profile?.subscriptionStatus ||
-      subscription?.subscription_status ||
-      subscription?.subscriptionStatus ||
-      (stripeSubscriptionId ? "active" : "pending")
-  );
-
-  const registrationComplete = Boolean(
-    item?.registration_complete ||
-      item?.registrationComplete ||
-      item?.application_submitted ||
-      item?.applicationSubmitted ||
-      profile?.registration_complete ||
-      profile?.application_submitted ||
-      (stripeCustomerId && stripeSubscriptionId && freightAccount)
-  );
-
-  const applicationSubmitted = Boolean(
-    item?.application_submitted ||
-      item?.applicationSubmitted ||
-      profile?.application_submitted ||
-      registrationComplete
-  );
-
-  const accountActive =
-    item?.account_active === undefined
-      ? !valueIsFalse(profile?.account_active)
-      : !valueIsFalse(item?.account_active);
-
-  return ensureFreightUserAliases({
-    id,
-    freightId: id,
-    freight_id: id,
-    profileId: clean(item?.profile_id || profile?.id || id),
-    profile_id: clean(item?.profile_id || profile?.id || id),
-    authUserId: clean(item?.auth_user_id || profile?.auth_user_id || id),
-    auth_user_id: clean(item?.auth_user_id || profile?.auth_user_id || id),
-    role: "freight",
-
-    accountId,
-    account_id: accountId,
-
-    companyName,
-    company_name: companyName,
-    businessName: clean(item?.business_name || item?.businessName || companyName),
-    business_name: clean(item?.business_name || item?.businessName || companyName),
-    contactName,
-    contact_name: contactName,
-    fullName: clean(item?.full_name || item?.fullName || contactName),
-    full_name: clean(item?.full_name || item?.fullName || contactName),
-    email: normalize(item?.email || profile?.email || subscription?.freight_email),
-    phone: clean(item?.phone || profile?.phone || ""),
-    username: normalize(item?.username || profile?.username || subscription?.username || ""),
-
-    stripeCustomerId,
-    stripe_customer_id: stripeCustomerId,
-    stripeSubscriptionId,
-    stripe_subscription_id: stripeSubscriptionId,
-    subscriptionId: stripeSubscriptionId,
-    subscription_id: stripeSubscriptionId,
-    freightAccount,
-    freight_account: freightAccount,
-    stripeAccountId: freightAccount,
-    stripe_account_id: freightAccount,
-
-    accountActive,
-    account_active: accountActive,
-    membershipStatus,
-    membership_status: membershipStatus,
-    subscriptionStatus,
-    subscription_status: subscriptionStatus,
-
-    approved: item?.approved !== false,
-    verificationStatus: clean(
-      item?.verification_status ||
-        item?.admin_review_status ||
-        item?.compliance_status ||
-        profile?.verification_status ||
-        "SUBMITTED"
-    ),
-    verification_status: clean(
-      item?.verification_status ||
-        item?.admin_review_status ||
-        item?.compliance_status ||
-        profile?.verification_status ||
-        "SUBMITTED"
-    ),
-    registrationComplete,
-    registration_complete: registrationComplete,
-    applicationSubmitted,
-    application_submitted: applicationSubmitted,
-  });
+  return [
+    !clean(user.id) ? "Freight Profile" : "",
+    !clean(user.account_id) ? "Static Account ID" : "",
+    !isCus(user.stripe_customer_id) ? "Stripe Customer ID" : "",
+    !isSub(user.subscription_id) ? "Subscription ID" : "",
+    !isAcct(user.freight_account) ? "Stripe Connect Account" : "",
+  ].filter(Boolean);
 }
 
 export default function FreightLoginScreen() {
@@ -515,50 +333,49 @@ export default function FreightLoginScreen() {
       ];
     }
 
-    const fixed = ensureFreightUserAliases(lastCheckedUser);
-    const accountId = accountIdOf(fixed);
-    const customerId = customerIdOf(fixed);
-    const subscriptionId = subscriptionIdOf(fixed);
-    const connectId = connectIdOf(fixed);
-
     return [
       {
         label: "Freight Profile",
-        complete: Boolean(fixed.id),
-        value: fixed.id ? "Found" : "Missing",
+        complete: Boolean(lastCheckedUser.id),
+        value: lastCheckedUser.id ? "Found" : "Missing",
       },
       {
         label: "Static Account",
-        complete: Boolean(accountId),
-        value: accountId || "Missing",
+        complete: Boolean(lastCheckedUser.account_id),
+        value: lastCheckedUser.account_id || "Missing",
       },
       {
         label: "Stripe Customer",
-        complete: isCus(customerId),
-        value: formatMaskedId(customerId),
+        complete: isCus(lastCheckedUser.stripe_customer_id),
+        value: maskId(lastCheckedUser.stripe_customer_id),
       },
       {
         label: "Subscription",
-        complete: isSub(subscriptionId),
-        value: formatMaskedId(subscriptionId),
+        complete: isSub(lastCheckedUser.subscription_id),
+        value: maskId(lastCheckedUser.subscription_id),
       },
       {
         label: "Stripe Connect",
-        complete: isAcct(connectId),
-        value: formatMaskedId(connectId),
+        complete: isAcct(lastCheckedUser.freight_account),
+        value: maskId(lastCheckedUser.freight_account),
       },
     ];
   }, [lastCheckedUser]);
 
   async function saveFreightSession(user: FreightUser) {
-    const now = new Date().toISOString();
-    const fixed = ensureFreightUserAliases(user);
-
     const sessionUser = {
-      ...fixed,
+      ...user,
       role: "freight" as const,
-      updatedAt: now,
-      updated_at: now,
+      freightId: user.freight_id || user.id,
+      accountId: user.account_id,
+      stripeCustomerId: user.stripe_customer_id,
+      subscriptionId: user.subscription_id,
+      freightAccount: user.freight_account,
+      stripeAccountId: user.freight_account,
+      accountActive: user.account_active,
+      membershipStatus: user.membership_status,
+      updatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     await AsyncStorage.multiSet([
@@ -572,36 +389,10 @@ export default function FreightLoginScreen() {
       ["userRole", "freight"],
       ["currentUserRole", "freight"],
       ["lastLoginRole", "freight"],
-      ["lastFreightDashboardReady", hasDashboardAccess(sessionUser) ? "true" : "false"],
+      ["lastFreightDashboardReady", hasDashboardAccess(user) ? "true" : "false"],
     ]);
 
     return sessionUser;
-  }
-
-  async function findProfile(userId: string, cleanEmail: string) {
-    if (userId) {
-      const byAuth = await supabase
-        .from("profiles")
-        .select("*")
-        .or(`id.eq.${userId},auth_user_id.eq.${userId},profile_id.eq.${userId}`)
-        .eq("role", "freight")
-        .maybeSingle();
-
-      if (!byAuth.error && byAuth.data) return byAuth.data;
-    }
-
-    if (cleanEmail) {
-      const byEmail = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("email", cleanEmail)
-        .eq("role", "freight")
-        .maybeSingle();
-
-      if (!byEmail.error && byEmail.data) return byEmail.data;
-    }
-
-    return null;
   }
 
   async function findSubscription(userId: string, cleanEmail: string) {
@@ -622,7 +413,7 @@ export default function FreightLoginScreen() {
       .limit(10);
 
     if (error) {
-      console.log("Freight subscription lookup error:", error.message);
+      console.log("freight_subscriptions lookup failed:", error.message);
       return null;
     }
 
@@ -630,474 +421,281 @@ export default function FreightLoginScreen() {
 
     const complete = data.find(
       (row) =>
-        pickCus(row?.stripe_customer_id) &&
-        pickSub(row?.stripe_subscription_id) &&
-        pickAcct(row?.stripe_account_id, row?.freight_account)
+        isCus(row?.stripe_customer_id) &&
+        isSub(row?.stripe_subscription_id) &&
+        isAcct(row?.freight_account || row?.stripe_account_id)
     );
 
     return complete || data[0];
   }
 
-  async function findFreightProfile(userId: string, cleanEmail: string) {
-    const profile = await findProfile(userId, cleanEmail);
-    const subscription = await findSubscription(userId, cleanEmail);
+  async function findProfileByEmail(cleanEmail: string) {
+    if (!cleanEmail) return null;
 
-    let freightUser: any = null;
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", cleanEmail)
+      .maybeSingle();
 
+    if (error) {
+      console.log("profiles lookup by email failed:", error.message);
+      return null;
+    }
+
+    return data || null;
+  }
+
+  async function findProfileByAuthId(authUserId: string) {
+    if (!authUserId || !isUuid(authUserId)) return null;
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .or(`id.eq.${authUserId},auth_user_id.eq.${authUserId}`)
+      .maybeSingle();
+
+    if (error) {
+      console.log("profiles lookup by auth id failed:", error.message);
+      return null;
+    }
+
+    return data || null;
+  }
+
+  async function findFreightUser(userId: string, cleanEmail: string) {
     if (userId) {
-      const userById = await supabase
+      const { data, error } = await supabase
         .from("freight_users")
         .select("*")
-        .or(`id.eq.${userId},freight_id.eq.${userId},auth_user_id.eq.${userId},profile_id.eq.${userId}`)
+        .or(`id.eq.${userId},freight_id.eq.${userId}`)
         .maybeSingle();
 
-      if (!userById.error && userById.data) freightUser = userById.data;
+      if (!error && data) return buildFreightUser(data);
+
+      if (error) console.log("freight_users lookup by id failed:", error.message);
     }
 
-    if (!freightUser && cleanEmail) {
-      const userByEmail = await supabase
+    if (cleanEmail) {
+      const { data, error } = await supabase
         .from("freight_users")
-        .select("*")
-        .eq("email", cleanEmail)
-        .maybeSingle();
-
-      if (!userByEmail.error && userByEmail.data) freightUser = userByEmail.data;
-    }
-
-    if (!freightUser && userId) {
-      const carrierById = await supabase
-        .from("freight_carriers")
-        .select("*")
-        .or(`id.eq.${userId},freight_id.eq.${userId},auth_user_id.eq.${userId},profile_id.eq.${userId}`)
-        .maybeSingle();
-
-      if (!carrierById.error && carrierById.data) freightUser = carrierById.data;
-    }
-
-    if (!freightUser && cleanEmail) {
-      const carrierByEmail = await supabase
-        .from("freight_carriers")
         .select("*")
         .eq("email", cleanEmail)
         .maybeSingle();
 
-      if (!carrierByEmail.error && carrierByEmail.data) freightUser = carrierByEmail.data;
+      if (!error && data) return buildFreightUser(data);
+
+      if (error) console.log("freight_users lookup by email failed:", error.message);
     }
 
-    if (!freightUser && (profile || subscription)) {
-      freightUser = {
-        id: userId || profile?.auth_user_id || profile?.id || subscription?.freight_id,
-        freight_id: userId || profile?.auth_user_id || profile?.id || subscription?.freight_id,
-        auth_user_id: userId || profile?.auth_user_id || profile?.id || subscription?.freight_id,
-        profile_id: profile?.id || userId || subscription?.freight_id,
-        role: "freight",
-        account_id: profile?.account_id,
-        company_name: profile?.company_name || profile?.business_name || subscription?.name || "Freight Carrier",
-        business_name: profile?.business_name || profile?.company_name || subscription?.name || "Freight Carrier",
-        contact_name: profile?.full_name || profile?.name || subscription?.name || "",
-        full_name: profile?.full_name || profile?.name || subscription?.name || "",
-        email: profile?.email || subscription?.freight_email || cleanEmail,
-        phone: profile?.phone,
-        username: profile?.username || subscription?.username || "",
-        account_active: profile?.account_active ?? true,
-        stripe_customer_id: profile?.stripe_customer_id || subscription?.stripe_customer_id,
-        stripe_subscription_id:
-          profile?.stripe_subscription_id || profile?.subscription_id || subscription?.stripe_subscription_id,
-        subscription_id:
-          profile?.subscription_id || profile?.stripe_subscription_id || subscription?.stripe_subscription_id,
-        freight_account: profile?.freight_account || subscription?.freight_account,
-        stripe_account_id: profile?.stripe_account_id || subscription?.stripe_account_id,
-        membership_status: profile?.membership_status || (subscription?.stripe_subscription_id ? "active" : "pending"),
-        subscription_status: profile?.subscription_status || subscription?.subscription_status,
-        registration_complete: profile?.registration_complete,
-        application_submitted: profile?.application_submitted,
-      };
-    }
-
-    if (!freightUser) return null;
-
-    const mapped = mapCarrierToFreightUser(freightUser, profile, subscription);
-
-    const updates: any = {};
-    const subscriptionCustomer = pickCus(subscription?.stripe_customer_id);
-    const subscriptionSub = pickSub(subscription?.stripe_subscription_id);
-    const subscriptionConnect = pickAcct(subscription?.stripe_account_id, subscription?.freight_account);
-
-    if (subscriptionCustomer && !customerIdOf(mapped)) updates.stripe_customer_id = subscriptionCustomer;
-
-    if (subscriptionSub && !subscriptionIdOf(mapped)) {
-      updates.stripe_subscription_id = subscriptionSub;
-      updates.subscription_id = subscriptionSub;
-      updates.subscription_status = subscription?.subscription_status || "active";
-      updates.membership_status = "active";
-      updates.freight_membership_paid = true;
-    }
-
-    if (subscriptionConnect && !connectIdOf(mapped)) {
-      updates.stripe_account_id = subscriptionConnect;
-      updates.freight_account = subscriptionConnect;
-      updates.stripe_connect_status = "started";
-    }
-
-    if (mapped?.id && Object.keys(updates).length > 0) {
-      await supabase
-        .from("freight_users")
-        .update({
-          ...updates,
-          account_active: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", mapped.id);
-
-      return ensureFreightUserAliases({
-        ...mapped,
-        stripe_customer_id: pickCus(updates.stripe_customer_id, mapped.stripe_customer_id),
-        stripeCustomerId: pickCus(updates.stripe_customer_id, mapped.stripeCustomerId),
-        stripe_subscription_id: pickSub(updates.stripe_subscription_id, mapped.stripe_subscription_id),
-        stripeSubscriptionId: pickSub(updates.stripe_subscription_id, mapped.stripeSubscriptionId),
-        subscription_id: pickSub(updates.subscription_id, mapped.subscription_id),
-        subscriptionId: pickSub(updates.subscription_id, mapped.subscriptionId),
-        freight_account: pickAcct(updates.freight_account, updates.stripe_account_id, mapped.freight_account),
-        freightAccount: pickAcct(updates.freight_account, updates.stripe_account_id, mapped.freightAccount),
-        stripe_account_id: pickAcct(updates.stripe_account_id, updates.freight_account, mapped.stripe_account_id),
-        stripeAccountId: pickAcct(updates.stripe_account_id, updates.freight_account, mapped.stripeAccountId),
-        membership_status: updates.membership_status || mapped.membership_status,
-        membershipStatus: updates.membership_status || mapped.membershipStatus,
-        subscription_status: updates.subscription_status || mapped.subscription_status,
-        subscriptionStatus: updates.subscription_status || mapped.subscriptionStatus,
-        account_active: true,
-        accountActive: true,
-      });
-    }
-
-    return ensureFreightUserAliases(mapped);
+    return null;
   }
 
-  async function completeFreightLoginFromSubscription(user: FreightUser, authUserId: string, loginEmail: string) {
-    const subscription = await findSubscription(user.id || authUserId, loginEmail);
+  async function syncSubscriptionConnectColumn(subscription: any) {
+    const connectAccount = pickAcct(subscription?.freight_account, subscription?.stripe_account_id);
 
-    const finalId = clean(user.id || authUserId || subscription?.freight_id);
-    const finalEmail = normalize(user.email || loginEmail || subscription?.freight_email);
+    if (!subscription?.id || !connectAccount) return subscription;
 
-    let finalAccountId = accountIdOf(user);
+    const needsUpdate =
+      subscription?.freight_account !== connectAccount || subscription?.stripe_account_id !== connectAccount;
 
-    if (!finalAccountId && finalId) {
-      const { data } = await supabase
-        .from("freight_users")
-        .select("account_id")
-        .or(`id.eq.${finalId},freight_id.eq.${finalId},auth_user_id.eq.${finalId},profile_id.eq.${finalId}`)
-        .limit(1);
+    if (!needsUpdate) return subscription;
 
-      if (Array.isArray(data) && data[0]?.account_id) finalAccountId = clean(data[0].account_id);
+    const { data, error } = await supabase
+      .from("freight_subscriptions")
+      .update({
+        freight_account: connectAccount,
+        stripe_account_id: connectAccount,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", subscription.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.log("freight_subscriptions connect sync failed:", error.message);
+      return subscription;
     }
 
-    if (!finalAccountId && finalEmail) {
-      const { data } = await supabase
-        .from("freight_users")
-        .select("account_id")
-        .eq("email", finalEmail)
-        .limit(1);
-
-      if (Array.isArray(data) && data[0]?.account_id) finalAccountId = clean(data[0].account_id);
-    }
-
-    if (!finalAccountId) finalAccountId = await generateFreightAccountId();
-
-    const finalCustomerId = pickCus(subscription?.stripe_customer_id, customerIdOf(user));
-    const finalSubscriptionId = pickSub(subscription?.stripe_subscription_id, subscriptionIdOf(user));
-    const finalConnectAccount = pickAcct(subscription?.stripe_account_id, subscription?.freight_account, connectIdOf(user));
-
-    const finalSubscriptionStatus =
-      subscription?.subscription_status ||
-      user.subscription_status ||
-      user.subscriptionStatus ||
-      (finalSubscriptionId ? "active" : "pending");
-
-    const completed = Boolean(finalId && finalAccountId && finalCustomerId && finalSubscriptionId && finalConnectAccount);
-
-    const completedUser = ensureFreightUserAliases({
-      ...user,
-      id: finalId,
-      freightId: finalId,
-      freight_id: finalId,
-      authUserId: clean(user.authUserId || user.auth_user_id || authUserId || finalId),
-      auth_user_id: clean(user.auth_user_id || user.authUserId || authUserId || finalId),
-      profileId: clean(user.profileId || user.profile_id || finalId),
-      profile_id: clean(user.profile_id || user.profileId || finalId),
-
-      accountId: finalAccountId,
-      account_id: finalAccountId,
-      email: finalEmail,
-
-      stripeCustomerId: finalCustomerId,
-      stripe_customer_id: finalCustomerId,
-      stripeSubscriptionId: finalSubscriptionId,
-      stripe_subscription_id: finalSubscriptionId,
-      subscriptionId: finalSubscriptionId,
-      subscription_id: finalSubscriptionId,
-      freightAccount: finalConnectAccount,
-      freight_account: finalConnectAccount,
-      stripeAccountId: finalConnectAccount,
-      stripe_account_id: finalConnectAccount,
-
-      accountActive: completed,
-      account_active: completed,
-      membershipStatus: finalSubscriptionId ? "active" : "pending",
-      membership_status: finalSubscriptionId ? "active" : "pending",
-      subscriptionStatus: finalSubscriptionStatus,
-      subscription_status: finalSubscriptionStatus,
-      approved: completed,
-      registrationComplete: completed,
-      registration_complete: completed,
-      applicationSubmitted: completed,
-      application_submitted: completed,
-    });
-
-    const now = new Date().toISOString();
-
-    if (finalId) {
-      const freightPayload = {
-        id: finalId,
-        freight_id: finalId,
-        profile_id: finalId,
-        auth_user_id: authUserId || finalId,
-        role: "freight",
-        account_id: finalAccountId,
-        email: finalEmail,
-        company_name: completedUser.company_name || completedUser.companyName || subscription?.name || "Freight Carrier",
-        business_name: completedUser.business_name || completedUser.businessName || subscription?.name || "Freight Carrier",
-        contact_name:
-          completedUser.contact_name ||
-          completedUser.contactName ||
-          completedUser.full_name ||
-          completedUser.fullName ||
-          "",
-        full_name:
-          completedUser.full_name ||
-          completedUser.fullName ||
-          completedUser.contact_name ||
-          completedUser.contactName ||
-          "",
-        phone: completedUser.phone || "",
-        username: completedUser.username || subscription?.username || "",
-        stripe_customer_id: finalCustomerId || null,
-        stripe_subscription_id: finalSubscriptionId || null,
-        subscription_id: finalSubscriptionId || null,
-        freight_account: finalConnectAccount || null,
-        stripe_account_id: finalConnectAccount || null,
-        stripe_connect_status: finalConnectAccount ? "started" : "not_started",
-        account_active: completed,
-        approved: completed,
-        registration_complete: completed,
-        application_submitted: completed,
-        freight_membership_paid: Boolean(finalSubscriptionId),
-        membership_status: finalSubscriptionId ? "active" : "pending_payment",
-        subscription_status: finalSubscriptionStatus,
-        verification_status: completed ? "SUBMITTED" : "REGISTERED",
-        compliance_status: completed ? "SUBMITTED" : "PENDING_PAYMENT",
-        admin_review_status: completed ? "submitted" : "pending_payment",
-        updated_at: now,
-      };
-
-      await supabase.from("freight_users").upsert(freightPayload, { onConflict: "id" });
-
-      try {
-        await supabase.from("profiles").upsert(
-          {
-            id: finalId,
-            auth_user_id: authUserId || finalId,
-            profile_id: finalId,
-            role: "freight",
-            account_id: finalAccountId,
-            email: finalEmail,
-            full_name: freightPayload.full_name,
-            name: freightPayload.full_name,
-            username: freightPayload.username,
-            company_name: freightPayload.company_name,
-            stripe_customer_id: finalCustomerId || null,
-            stripe_subscription_id: finalSubscriptionId || null,
-            subscription_id: finalSubscriptionId || null,
-            freight_account: finalConnectAccount || null,
-            stripe_account_id: finalConnectAccount || null,
-            account_active: completed,
-            registration_complete: completed,
-            application_submitted: completed,
-            membership_status: finalSubscriptionId ? "active" : "pending_payment",
-            subscription_status: finalSubscriptionStatus,
-            updated_at: now,
-          },
-          { onConflict: "id" }
-        );
-      } catch (error) {
-        console.log("Freight login profile upsert skipped:", error);
-      }
-
-      if (finalCustomerId || finalSubscriptionId || finalConnectAccount) {
-        const subscriptionPayload = {
-          freight_id: finalId,
-          freight_email: finalEmail,
-          name: freightPayload.company_name,
-          username: freightPayload.username,
-          stripe_customer_id: finalCustomerId || null,
-          stripe_subscription_id: finalSubscriptionId || null,
-          subscription_status: finalSubscriptionStatus,
-          stripe_account_id: finalConnectAccount || null,
-          freight_account: finalConnectAccount || null,
-          updated_at: now,
-        };
-
-        const { data: existingSub } = await supabase
-          .from("freight_subscriptions")
-          .select("id")
-          .or(`freight_id.eq.${finalId},freight_email.eq.${finalEmail}`)
-          .limit(1);
-
-        if (Array.isArray(existingSub) && existingSub[0]?.id) {
-          await supabase.from("freight_subscriptions").update(subscriptionPayload).eq("id", existingSub[0].id);
-        } else {
-          await supabase.from("freight_subscriptions").insert({
-            ...subscriptionPayload,
-            created_at: now,
-          });
-        }
-      }
-    }
-
-    return ensureFreightUserAliases(completedUser);
+    return data || subscription;
   }
 
-  async function activateCompletedFreightAccount(user: FreightUser) {
-    const fixed = ensureFreightUserAliases(user);
+  async function ensureProfile(authUserId: string, cleanEmail: string, subscription: any, existingFreightUser?: FreightUser | null) {
+    const connectAccount = pickAcct(subscription?.freight_account, subscription?.stripe_account_id, existingFreightUser?.freight_account);
+    const profileByEmail = await findProfileByEmail(cleanEmail);
+    const profileByAuth = profileByEmail ? null : await findProfileByAuthId(authUserId);
+    const existingProfile = profileByEmail || profileByAuth;
 
-    if (!hasAllFiveFreightRequirements(fixed)) return fixed;
+    const profileFullName = clean(
+      subscription?.name ||
+        existingProfile?.full_name ||
+        existingFreightUser?.full_name ||
+        existingFreightUser?.company_name ||
+        "Freight Carrier"
+    );
 
-    const now = new Date().toISOString();
+    const profileAccountId = clean(existingProfile?.account_id || existingFreightUser?.account_id || "Freight_001");
 
-    const activePayload = {
-      account_active: true,
-      approved: true,
-      registration_complete: true,
-      application_submitted: true,
-      freight_membership_paid: true,
-      membership_status: "active",
-      subscription_status: fixed.subscription_status || fixed.subscriptionStatus || "active",
-      verification_status: "SUBMITTED",
-      compliance_status: "SUBMITTED",
-      admin_review_status: "submitted",
-      stripe_customer_id: customerIdOf(fixed),
-      stripe_subscription_id: subscriptionIdOf(fixed),
-      subscription_id: subscriptionIdOf(fixed),
-      freight_account: connectIdOf(fixed),
-      stripe_account_id: connectIdOf(fixed),
-      updated_at: now,
-    };
-
-    await supabase.from("freight_users").update(activePayload).eq("id", fixed.id);
-
-    try {
-      await supabase
+    if (existingProfile?.id) {
+      const { data, error } = await supabase
         .from("profiles")
         .update({
-          account_active: true,
-          registration_complete: true,
-          application_submitted: true,
-          membership_status: "active",
-          subscription_status: activePayload.subscription_status,
-          stripe_customer_id: activePayload.stripe_customer_id,
-          stripe_subscription_id: activePayload.stripe_subscription_id,
-          subscription_id: activePayload.subscription_id,
-          stripe_account_id: activePayload.stripe_account_id,
-          freight_account: activePayload.freight_account,
-          updated_at: now,
+          auth_user_id: authUserId,
+          role: "freight",
+          full_name: profileFullName,
+          account_id: profileAccountId,
+          freight_account: connectAccount || existingProfile?.freight_account || null,
+          stripe_account_id: connectAccount || existingProfile?.stripe_account_id || null,
         })
-        .or(`id.eq.${fixed.id},auth_user_id.eq.${fixed.id},profile_id.eq.${fixed.id}`);
-    } catch (error) {
-      console.log("profiles active sync skipped:", error);
+        .eq("id", existingProfile.id)
+        .select("*")
+        .maybeSingle();
+
+      if (error) {
+        console.log("profiles update failed:", error.message);
+        Alert.alert("Profile Sync Failed", error.message);
+        return existingProfile;
+      }
+
+      return data || existingProfile;
     }
 
-    try {
-      await supabase
-        .from("freight_subscriptions")
-        .update({
-          stripe_customer_id: activePayload.stripe_customer_id,
-          stripe_subscription_id: activePayload.stripe_subscription_id,
-          subscription_status: activePayload.subscription_status,
-          stripe_account_id: activePayload.stripe_account_id,
-          freight_account: activePayload.freight_account,
-          updated_at: now,
-        })
-        .or(`freight_id.eq.${fixed.id},freight_email.eq.${fixed.email}`);
-    } catch (error) {
-      console.log("freight_subscriptions active sync skipped:", error);
+    const { data, error } = await supabase
+      .from("profiles")
+      .insert({
+        id: authUserId,
+        auth_user_id: authUserId,
+        role: "freight",
+        full_name: profileFullName,
+        email: cleanEmail,
+        phone: "",
+        account_id: profileAccountId,
+        freight_account: connectAccount || null,
+        stripe_account_id: connectAccount || null,
+        created_at: new Date().toISOString(),
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.log("profiles insert failed:", error.message);
+      Alert.alert("Profile Create Failed", error.message);
+      return null;
     }
 
-    return ensureFreightUserAliases({
-      ...fixed,
-      accountActive: true,
-      account_active: true,
-      approved: true,
-      registrationComplete: true,
-      registration_complete: true,
-      applicationSubmitted: true,
-      application_submitted: true,
-      membershipStatus: "active",
-      membership_status: "active",
-      subscriptionStatus: activePayload.subscription_status,
-      subscription_status: activePayload.subscription_status,
-      stripeCustomerId: activePayload.stripe_customer_id,
-      stripe_customer_id: activePayload.stripe_customer_id,
-      stripeSubscriptionId: activePayload.stripe_subscription_id,
-      stripe_subscription_id: activePayload.stripe_subscription_id,
-      subscriptionId: activePayload.subscription_id,
-      subscription_id: activePayload.subscription_id,
-      freightAccount: activePayload.freight_account,
-      freight_account: activePayload.freight_account,
-      stripeAccountId: activePayload.stripe_account_id,
-      stripe_account_id: activePayload.stripe_account_id,
-    });
+    return data;
+  }
+
+  async function syncFreightUser(authUserId: string, cleanEmail: string) {
+    const existingFreightUser = await findFreightUser(authUserId, cleanEmail);
+    let subscription = await findSubscription(authUserId, cleanEmail);
+
+    if (!subscription && existingFreightUser) {
+      const checked = buildFreightUser(existingFreightUser);
+      setLastCheckedUser(checked);
+      return checked;
+    }
+
+    if (!subscription) return existingFreightUser;
+
+    subscription = await syncSubscriptionConnectColumn(subscription);
+
+    const profile = await ensureProfile(authUserId, cleanEmail, subscription, existingFreightUser);
+
+    const profileId = clean(profile?.id || existingFreightUser?.profile_id);
+    const profileAuthUserId = clean(profile?.auth_user_id || authUserId);
+    const accountId = clean(profile?.account_id || existingFreightUser?.account_id || "Freight_001");
+
+    const customerId = pickCus(subscription?.stripe_customer_id, existingFreightUser?.stripe_customer_id);
+    const subscriptionId = pickSub(subscription?.stripe_subscription_id, existingFreightUser?.subscription_id);
+    const connectAccount = pickAcct(
+      subscription?.freight_account,
+      subscription?.stripe_account_id,
+      profile?.freight_account,
+      profile?.stripe_account_id,
+      existingFreightUser?.freight_account
+    );
+
+    if (!profileId) {
+      Alert.alert("Profile Missing", "The profile row could not be created or found.");
+      return existingFreightUser;
+    }
+
+    const complete = Boolean(customerId && subscriptionId && connectAccount);
+
+    const payload = {
+      id: authUserId,
+      freight_id: authUserId,
+      auth_user_id: profileAuthUserId,
+      profile_id: profileId,
+      role: "freight",
+      email: cleanEmail,
+      account_id: accountId,
+
+      company_name: clean(subscription?.name || existingFreightUser?.company_name || profile?.full_name || "Freight Carrier"),
+      business_name: clean(subscription?.name || existingFreightUser?.business_name || profile?.full_name || "Freight Carrier"),
+      name: clean(subscription?.name || existingFreightUser?.name || profile?.full_name || "Freight Carrier"),
+      full_name: clean(subscription?.name || existingFreightUser?.full_name || profile?.full_name || "Freight Carrier"),
+      username: clean(subscription?.username || existingFreightUser?.username || ""),
+
+      stripe_customer_id: customerId || null,
+      subscription_id: subscriptionId || null,
+      freight_account: connectAccount || null,
+
+      account_active: complete,
+      approved: complete,
+      freight_membership_paid: Boolean(subscriptionId),
+      membership_status: subscriptionId ? "active" : "pending",
+      verification_status: complete ? "SUBMITTED" : "REGISTERED",
+      compliance_status: complete ? "SUBMITTED" : "PENDING_PAYMENT",
+      admin_review_status: complete ? "submitted" : "pending_payment",
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("freight_users")
+      .upsert(payload, { onConflict: "id" })
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.log("freight_users upsert failed:", error.message);
+      Alert.alert("Freight User Sync Failed", error.message);
+      return existingFreightUser;
+    }
+
+    const finalUser = buildFreightUser(data || payload);
+    setLastCheckedUser(finalUser);
+    return finalUser;
   }
 
   async function touchLastLogin(user: FreightUser) {
-    const fixed = ensureFreightUserAliases(user);
-    const now = new Date().toISOString();
-
-    await supabase
+    const { error } = await supabase
       .from("freight_users")
       .update({
-        last_login_at: now,
         account_active: true,
-        updated_at: now,
+        updated_at: new Date().toISOString(),
       })
-      .eq("id", fixed.id);
+      .eq("id", user.id);
 
-    try {
-      await supabase
-        .from("profiles")
-        .update({
-          account_active: true,
-          last_login_at: now,
-        })
-        .or(`id.eq.${fixed.id},auth_user_id.eq.${fixed.id},profile_id.eq.${fixed.id}`);
-    } catch (error) {
-      console.log("profiles last login update skipped:", error);
+    if (error) {
+      console.log("last login update skipped:", error.message);
     }
   }
 
   async function openFreightDashboard(user: FreightUser) {
     if (routingLockedRef.current) return;
 
-    const fixed = ensureFreightUserAliases(user);
-
     routingLockedRef.current = true;
     setNavigatingToDashboard(true);
-    setLastCheckedUser(fixed);
+    setLastCheckedUser(user);
 
-    const savedUser = await saveFreightSession(fixed);
-    await touchLastLogin(savedUser);
+    await saveFreightSession(user);
+    await touchLastLogin(user);
 
     setTimeout(() => {
       router.replace(DASHBOARD_ROUTE as any);
-    }, 150);
+    }, 120);
   }
 
   async function previewFreightAccessByEmail(inputEmail: string) {
@@ -1105,10 +703,42 @@ export default function FreightLoginScreen() {
     if (!cleanEmail || !cleanEmail.includes("@")) return;
 
     try {
-      const mappedUser = await findFreightProfile("", cleanEmail);
-      if (mappedUser) setLastCheckedUser(ensureFreightUserAliases(mappedUser));
+      const user = await findFreightUser("", cleanEmail);
+
+      if (user) {
+        setLastCheckedUser(user);
+        return;
+      }
+
+      const subscription = await findSubscription("", cleanEmail);
+
+      if (subscription) {
+        const previewUser = buildFreightUser({
+          id: subscription.freight_id || "",
+          freight_id: subscription.freight_id || "",
+          auth_user_id: subscription.freight_id || "",
+          profile_id: "",
+          role: "freight",
+          email: subscription.freight_email || cleanEmail,
+          account_id: "",
+          company_name: subscription.name || "Freight Carrier",
+          business_name: subscription.name || "Freight Carrier",
+          name: subscription.name || "Freight Carrier",
+          full_name: subscription.name || "Freight Carrier",
+          username: subscription.username || "",
+          stripe_customer_id: subscription.stripe_customer_id,
+          subscription_id: subscription.stripe_subscription_id,
+          freight_account: subscription.freight_account || subscription.stripe_account_id,
+          account_active: false,
+          approved: false,
+          freight_membership_paid: Boolean(subscription.stripe_subscription_id),
+          membership_status: subscription.subscription_status || "active",
+        });
+
+        setLastCheckedUser(previewUser);
+      }
     } catch (error) {
-      console.log("Freight preview access check skipped:", error);
+      console.log("preview check skipped:", error);
     }
   }
 
@@ -1154,137 +784,44 @@ export default function FreightLoginScreen() {
         return;
       }
 
-      const userId = clean(data?.user?.id);
+      const authUserId = clean(data?.user?.id);
 
-      if (!userId) {
+      if (!authUserId) {
         Alert.alert("Login Error", "Unable to confirm freight account.");
         return;
       }
 
-      const subscriptionFirst = await findSubscription(userId, cleanEmail);
-      const subscriptionCustomerId = pickCus(subscriptionFirst?.stripe_customer_id);
-      const subscriptionSubscriptionId = pickSub(subscriptionFirst?.stripe_subscription_id);
-      const subscriptionConnectAccount = pickAcct(subscriptionFirst?.stripe_account_id, subscriptionFirst?.freight_account);
+      const syncedUser = await syncFreightUser(authUserId, cleanEmail);
 
-      if (subscriptionCustomerId && subscriptionSubscriptionId && subscriptionConnectAccount) {
-        const existingProfile = await findProfile(userId, cleanEmail);
-
-        const subscriptionUser = mapCarrierToFreightUser(
-          {
-            id: userId,
-            freight_id: userId,
-            auth_user_id: userId,
-            profile_id: userId,
-            role: "freight",
-            account_id: existingProfile?.account_id || "",
-            company_name:
-              existingProfile?.company_name ||
-              existingProfile?.business_name ||
-              subscriptionFirst?.name ||
-              "Freight Carrier",
-            business_name:
-              existingProfile?.business_name ||
-              existingProfile?.company_name ||
-              subscriptionFirst?.name ||
-              "Freight Carrier",
-            contact_name: existingProfile?.full_name || existingProfile?.name || subscriptionFirst?.name || "",
-            full_name: existingProfile?.full_name || existingProfile?.name || subscriptionFirst?.name || "",
-            email: cleanEmail,
-            phone: existingProfile?.phone || "",
-            username: existingProfile?.username || subscriptionFirst?.username || "",
-            account_active: true,
-            approved: true,
-            registration_complete: true,
-            application_submitted: true,
-            membership_status: "active",
-            subscription_status: subscriptionFirst?.subscription_status || "active",
-            stripe_customer_id: subscriptionCustomerId,
-            stripe_subscription_id: subscriptionSubscriptionId,
-            subscription_id: subscriptionSubscriptionId,
-            freight_account: subscriptionConnectAccount,
-            stripe_account_id: subscriptionConnectAccount,
-          },
-          existingProfile,
-          subscriptionFirst
-        );
-
-        const completedUser = await completeFreightLoginFromSubscription(subscriptionUser, userId, cleanEmail);
-        const activeUser = await activateCompletedFreightAccount(completedUser);
-        const fixedActiveUser = ensureFreightUserAliases(activeUser);
-
-        setLastCheckedUser(fixedActiveUser);
-        await saveFreightSession(fixedActiveUser);
-
-        if (hasDashboardAccess(fixedActiveUser)) {
-          await openFreightDashboard(fixedActiveUser);
-          return;
-        }
-      }
-
-      const mappedUser = await findFreightProfile(userId, cleanEmail);
-
-      if (!mappedUser) {
-        const emptyUser = buildEmptyFreightUser(userId, cleanEmail);
-        const completedUser = await completeFreightLoginFromSubscription(emptyUser, userId, cleanEmail);
-        const activeUser = await activateCompletedFreightAccount(completedUser);
-        const fixedActiveUser = ensureFreightUserAliases(activeUser);
-
-        setLastCheckedUser(fixedActiveUser);
-        await saveFreightSession(fixedActiveUser);
-
-        if (hasDashboardAccess(fixedActiveUser)) {
-          await openFreightDashboard(fixedActiveUser);
-          return;
-        }
-
+      if (!syncedUser) {
         Alert.alert(
-          "Freight Profile Missing",
-          "Your login exists, but the freight setup is incomplete. Registration will open with your saved email."
+          "Freight Setup Missing",
+          "Your login exists, but no freight subscription or freight profile was found. Registration will open."
         );
 
         router.replace({
           pathname: REGISTER_ROUTE as any,
-          params: { freightId: userId, email: cleanEmail },
+          params: { freightId: authUserId, email: cleanEmail },
         });
         return;
       }
 
-      const completedUser = await completeFreightLoginFromSubscription(mappedUser, userId, cleanEmail);
-      const activeUser = await activateCompletedFreightAccount(completedUser);
-      const fixedActiveUser = ensureFreightUserAliases(activeUser);
+      setLastCheckedUser(syncedUser);
+      await saveFreightSession(syncedUser);
 
-      setLastCheckedUser(fixedActiveUser);
-      await saveFreightSession(fixedActiveUser);
-
-      if (hasDashboardAccess(fixedActiveUser)) {
-        await openFreightDashboard(fixedActiveUser);
+      if (hasDashboardAccess(syncedUser)) {
+        await openFreightDashboard(syncedUser);
         return;
       }
 
-      const missingItems = [
-        !fixedActiveUser.id ? "Freight Profile ID" : "",
-        !accountIdOf(fixedActiveUser) ? "Static Account ID" : "",
-        !isCus(customerIdOf(fixedActiveUser)) ? "Stripe Customer ID" : "",
-        !isSub(subscriptionIdOf(fixedActiveUser)) ? "Stripe Subscription ID" : "",
-        !isAcct(connectIdOf(fixedActiveUser)) ? "Stripe Connect Account ID" : "",
-      ].filter(Boolean);
+      const missingItems = getMissingAccessItems(syncedUser);
 
       Alert.alert(
         "Finish Freight Setup",
-        `Your freight profile was found, but this setup is missing: ${missingItems.join(
-          ", "
-        )}. Registration will open with your saved information.`
+        `Your account was found, but this setup is missing: ${missingItems.join(", ")}.`
       );
-
-      router.replace({
-        pathname: REGISTER_ROUTE as any,
-        params: {
-          freightId: fixedActiveUser.id || userId,
-          email: fixedActiveUser.email || cleanEmail,
-        },
-      });
     } catch (error: any) {
-      console.log("Freight login error:", error);
+      console.log("freight login error:", error);
       Alert.alert("Login Error", error?.message || "Unable to login to freight account.");
     } finally {
       if (!routingLockedRef.current) setLoginLoading(false);
@@ -1325,8 +862,15 @@ export default function FreightLoginScreen() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
-      <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.shell}>
             <View style={styles.sidebar}>
               <View style={styles.brandRow}>
@@ -1341,11 +885,29 @@ export default function FreightLoginScreen() {
 
               <View style={styles.sideDivider} />
 
-              <SideFeature icon="grid-outline" title="Dashboard-first access" body="Completed freight profiles route directly to the carrier dashboard." />
-              <SideFeature icon="card-outline" title="Stripe verified" body="Customer, subscription, and Connect account IDs are checked at login." />
-              <SideFeature icon="business-outline" title="Carrier workspace" body="Manage load board, live routes, payouts, alerts, and profile setup." />
+              <SideFeature
+                icon="grid-outline"
+                title="Dashboard-first access"
+                body="Completed freight profiles route directly to the carrier dashboard."
+              />
 
-              <TouchableOpacity style={styles.homeButton} onPress={() => router.replace("/" as any)}>
+              <SideFeature
+                icon="card-outline"
+                title="Stripe verified"
+                body="Customer, subscription, and Connect account IDs are checked at login."
+              />
+
+              <SideFeature
+                icon="business-outline"
+                title="Carrier workspace"
+                body="Manage load board, live routes, payouts, alerts, and profile setup."
+              />
+
+              <TouchableOpacity
+                style={styles.homeButton}
+                onPress={() => router.replace("/" as any)}
+                activeOpacity={0.9}
+              >
                 <Ionicons name="home-outline" size={18} color={COLORS.primary} />
                 <Text style={styles.homeButtonText}>Back to Home</Text>
               </TouchableOpacity>
@@ -1368,9 +930,21 @@ export default function FreightLoginScreen() {
               </View>
 
               <View style={styles.metricsRow}>
-                <MetricCard icon="person-circle-outline" label="Profile" value={lastCheckedUser?.companyName || "Carrier"} />
-                <MetricCard icon="business-outline" label="Account" value={lastCheckedUser ? accountIdOf(lastCheckedUser) || "Freight ID" : "Freight ID"} />
-                <MetricCard icon="shield-checkmark-outline" label="Access" value={lastCheckedUser && hasDashboardAccess(lastCheckedUser) ? "Ready" : "Check Login"} />
+                <MetricCard
+                  icon="person-circle-outline"
+                  label="Profile"
+                  value={lastCheckedUser?.company_name || "Carrier"}
+                />
+                <MetricCard
+                  icon="business-outline"
+                  label="Account"
+                  value={lastCheckedUser?.account_id || "Freight ID"}
+                />
+                <MetricCard
+                  icon="shield-checkmark-outline"
+                  label="Access"
+                  value={hasDashboardAccess(lastCheckedUser) ? "Ready" : "Check Login"}
+                />
               </View>
 
               <View style={styles.formGrid}>
@@ -1451,7 +1025,11 @@ export default function FreightLoginScreen() {
 
                   <View style={styles.divider} />
 
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push(REGISTER_ROUTE as any)} activeOpacity={0.9}>
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => router.push(REGISTER_ROUTE as any)}
+                    activeOpacity={0.9}
+                  >
                     <Ionicons name="business-outline" size={18} color={COLORS.primary} />
                     <Text style={styles.secondaryButtonText}>Register for Freight Connect</Text>
                   </TouchableOpacity>
@@ -1487,7 +1065,7 @@ export default function FreightLoginScreen() {
                   <View style={styles.noteBox}>
                     <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
                     <Text style={styles.noteText}>
-                      If Stripe Connect exists in freight_subscriptions, this login automatically syncs it into freight_users before dashboard routing.
+                      Freight access requires profile ID, static Freight ID, Stripe customer, subscription, and Stripe Connect account.
                     </Text>
                   </View>
                 </View>
@@ -1524,7 +1102,12 @@ export default function FreightLoginScreen() {
               />
             </View>
 
-            <TouchableOpacity style={[styles.primaryButton, resetLoading && styles.disabledButton]} onPress={handlePasswordReset} disabled={resetLoading} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={[styles.primaryButton, resetLoading && styles.disabledButton]}
+              onPress={handlePasswordReset}
+              disabled={resetLoading}
+              activeOpacity={0.9}
+            >
               {resetLoading ? (
                 <ActivityIndicator color={COLORS.white} />
               ) : (
@@ -1613,7 +1196,11 @@ const styles = StyleSheet.create({
     paddingBottom: 22,
     width: Platform.OS === "web" ? 330 : "100%",
   },
-  brandRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
   brandIcon: {
     width: 54,
     height: 54,
@@ -1622,9 +1209,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  brandTitle: { color: COLORS.white, fontSize: 21, fontWeight: "900" },
-  brandSubtitle: { color: "#A5B4FC", fontWeight: "800", marginTop: 2 },
-  sideDivider: { height: 1, backgroundColor: "#1E293B", marginVertical: 24 },
+  brandTitle: {
+    color: COLORS.white,
+    fontSize: 21,
+    fontWeight: "900",
+  },
+  brandSubtitle: {
+    color: "#A5B4FC",
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  sideDivider: {
+    height: 1,
+    backgroundColor: "#1E293B",
+    marginVertical: 24,
+  },
   sideFeature: {
     backgroundColor: "#0F172A",
     borderWidth: 1,
@@ -1643,8 +1242,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sideFeatureTitle: { color: COLORS.white, fontWeight: "900", marginBottom: 4 },
-  sideFeatureBody: { color: "#CBD5E1", fontWeight: "700", lineHeight: 19, fontSize: 12 },
+  sideFeatureTitle: {
+    color: COLORS.white,
+    fontWeight: "900",
+    marginBottom: 4,
+  },
+  sideFeatureBody: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 19,
+    fontSize: 12,
+  },
   homeButton: {
     marginTop: 12,
     borderRadius: 14,
@@ -1657,8 +1265,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  homeButtonText: { color: COLORS.white, fontWeight: "900" },
-  main: { flex: 1, padding: 18 },
+  homeButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
+  main: {
+    flex: 1,
+    padding: 18,
+  },
   topPanel: {
     backgroundColor: COLORS.white,
     borderRadius: 26,
@@ -1677,8 +1291,19 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: "uppercase",
   },
-  pageTitle: { color: COLORS.text, fontSize: 34, fontWeight: "900", marginTop: 6 },
-  pageSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 22, marginTop: 7, maxWidth: 680 },
+  pageTitle: {
+    color: COLORS.text,
+    fontSize: 34,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  pageSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 7,
+    maxWidth: 680,
+  },
   statusBadge: {
     backgroundColor: "#ECFDF5",
     borderWidth: 1,
@@ -1690,8 +1315,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7,
   },
-  statusDot: { width: 8, height: 8, borderRadius: 999, backgroundColor: COLORS.green },
-  statusBadgeText: { color: COLORS.greenDark, fontWeight: "900" },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+  },
+  statusBadgeText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+  },
   metricsRow: {
     flexDirection: Platform.OS === "web" ? "row" : "column",
     gap: 12,
@@ -1722,7 +1355,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textTransform: "uppercase",
   },
-  metricValue: { color: COLORS.text, fontWeight: "900", marginTop: 3 },
+  metricValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 3,
+  },
   formGrid: {
     flexDirection: Platform.OS === "web" ? "row" : "column",
     gap: 14,
@@ -1746,7 +1383,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20 },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
   cardIcon: {
     width: 46,
     height: 46,
@@ -1755,10 +1397,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  cardIconSoft: { backgroundColor: COLORS.primarySoft },
-  cardTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900" },
-  cardSubtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3, lineHeight: 19 },
-  inputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
+  cardIconSoft: {
+    backgroundColor: COLORS.primarySoft,
+  },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  cardSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    lineHeight: 19,
+  },
+  inputLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
   inputShell: {
     backgroundColor: COLORS.panel,
     borderWidth: 1,
@@ -1770,7 +1427,12 @@ const styles = StyleSheet.create({
     gap: 9,
     marginBottom: 14,
   },
-  input: { flex: 1, color: COLORS.text, fontWeight: "800", paddingVertical: 15 },
+  input: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+    paddingVertical: 15,
+  },
   primaryButton: {
     backgroundColor: COLORS.primary,
     paddingVertical: 16,
@@ -1782,7 +1444,13 @@ const styles = StyleSheet.create({
     gap: 8,
     width: "100%",
   },
-  primaryButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 15, textAlign: "center", flexShrink: 1 },
+  primaryButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 15,
+    textAlign: "center",
+    flexShrink: 1,
+  },
   disabledButton: { opacity: 0.6 },
   readyBanner: {
     backgroundColor: "#ECFDF5",
@@ -1795,10 +1463,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  readyBannerText: { color: COLORS.greenDark, fontWeight: "900", flex: 1, lineHeight: 19 },
-  textButton: { alignItems: "center", marginTop: 15 },
-  textButtonText: { color: COLORS.primary, fontWeight: "900" },
-  divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 18 },
+  readyBannerText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    flex: 1,
+    lineHeight: 19,
+  },
+  textButton: {
+    alignItems: "center",
+    marginTop: 15,
+  },
+  textButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 18,
+  },
   secondaryButton: {
     backgroundColor: COLORS.primarySoft,
     borderWidth: 1,
@@ -1811,7 +1494,12 @@ const styles = StyleSheet.create({
     gap: 8,
     width: "100%",
   },
-  secondaryButtonText: { color: COLORS.primary, fontWeight: "900", textAlign: "center", flexShrink: 1 },
+  secondaryButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    textAlign: "center",
+    flexShrink: 1,
+  },
   accessRow: {
     backgroundColor: COLORS.panel,
     borderWidth: 1,
@@ -1830,10 +1518,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  accessGood: { backgroundColor: COLORS.green },
-  accessMissing: { backgroundColor: "#E2E8F0" },
-  accessLabel: { color: COLORS.text, fontWeight: "900" },
-  accessValue: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
+  accessGood: {
+    backgroundColor: COLORS.green,
+  },
+  accessMissing: {
+    backgroundColor: "#E2E8F0",
+  },
+  accessLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  accessValue: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 2,
+  },
   noteBox: {
     backgroundColor: COLORS.primarySoft,
     borderWidth: 1,
@@ -1845,7 +1544,12 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginTop: 4,
   },
-  noteText: { color: COLORS.primaryDark, fontWeight: "800", lineHeight: 20, flex: 1 },
+  noteText: {
+    color: COLORS.primaryDark,
+    fontWeight: "800",
+    lineHeight: 20,
+    flex: 1,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(2,6,23,0.72)",
@@ -1870,7 +1574,12 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 14,
   },
-  modalTitle: { color: COLORS.text, fontSize: 26, fontWeight: "900", textAlign: "center" },
+  modalTitle: {
+    color: COLORS.text,
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   modalSubtitle: {
     color: COLORS.muted,
     textAlign: "center",
@@ -1878,6 +1587,12 @@ const styles = StyleSheet.create({
     marginVertical: 14,
     fontWeight: "700",
   },
-  closeButton: { marginTop: 16, alignItems: "center" },
-  closeText: { color: COLORS.red, fontWeight: "900" },
+  closeButton: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+  closeText: {
+    color: COLORS.red,
+    fontWeight: "900",
+  },
 });
