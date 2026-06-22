@@ -18,6 +18,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as WebBrowser from "expo-web-browser";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -143,6 +144,7 @@ async function saveFreightSession(carrier: any) {
   await AsyncStorage.setItem("currentFreight", JSON.stringify(carrier));
   await AsyncStorage.setItem("currentFreightUser", JSON.stringify(carrier));
   await AsyncStorage.setItem("currentUser", JSON.stringify(carrier));
+  await AsyncStorage.setItem("farm2homeCurrentFreight", JSON.stringify(carrier));
   await AsyncStorage.setItem("userRole", "freight");
   await AsyncStorage.setItem("currentUserRole", "freight");
 }
@@ -152,6 +154,7 @@ export default function FreightRegister() {
 
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [stripeLoading, setStripeLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
 
@@ -1155,33 +1158,94 @@ export default function FreightRegister() {
     }
   }
 
-  async function startSubscriptionCheckout() {
-    if (saving) return;
+  async function saveFreightProfile(fullValidation = false) {
+    if (saving) return null;
 
-    if (hasActiveSubscription) {
-      Alert.alert("Membership Already Active", "This freight account already has an active Stripe subscription.");
-      return;
+    if (savedCarrierId || freightId) {
+      if (!validateForm({ full: fullValidation })) return null;
+
+      try {
+        setSaving(true);
+
+        const existingId = savedCarrierId || freightId;
+        const saved = await saveFreightUserRow(existingId, accountId || undefined);
+        return saved;
+      } catch (error: any) {
+        Alert.alert("Save Error", error?.message || "Unable to save freight profile.");
+        return null;
+      } finally {
+        setSaving(false);
+      }
     }
 
-    let finalId = savedCarrierId || freightId;
-    let finalAccountId = accountId;
-    const finalEmail = normalize(email);
+    return await saveRegistration();
+  }
 
-    if (!finalId || !finalEmail) {
-      const saved = await saveRegistration();
-      finalId = saved?.id || savedCarrierId || freightId;
-      finalAccountId = saved?.account_id || accountId;
-    }
-
-    if (!finalId || !finalEmail) {
-      Alert.alert("Save Required", "Save registration before starting subscription.");
-      return;
-    }
+  async function handleStripeCheckout() {
+    if (stripeLoading) return;
 
     try {
-      setSaving(true);
-      const successUrl = `${APP_URL}/freight/register?stripe=success&freightId=${encodeURIComponent(finalId)}`;
-      const cancelUrl = `${APP_URL}/freight/register?stripe=cancelled&freightId=${encodeURIComponent(finalId)}`;
+      setStripeLoading(true);
+
+      const savedProfile = await saveFreightProfile(false);
+
+      if (!savedProfile?.id) {
+        Alert.alert("Save Required", "Freight profile could not be saved.");
+        return;
+      }
+
+      const savedId = savedProfile.id;
+      const savedAccountId = savedProfile.account_id || savedProfile.accountId || accountId;
+      const savedEmail = normalize(savedProfile.email || email);
+      const savedCompanyName =
+        savedProfile.company_name ||
+        savedProfile.companyName ||
+        savedProfile.business_name ||
+        savedProfile.businessName ||
+        companyName.trim();
+      const savedBusinessName =
+        savedProfile.business_name ||
+        savedProfile.businessName ||
+        savedProfile.company_name ||
+        savedProfile.companyName ||
+        companyName.trim();
+      const savedUsername = normalize(savedProfile.username || username);
+
+      const pendingCarrier = {
+        ...savedProfile,
+        role: "freight",
+        freightId: savedId,
+        freight_id: savedId,
+        accountId: savedAccountId,
+        account_id: savedAccountId,
+        email: savedEmail,
+        companyName: savedCompanyName,
+        company_name: savedCompanyName,
+        businessName: savedBusinessName,
+        business_name: savedBusinessName,
+        username: savedUsername,
+        stripeCustomerId: pickStripeCustomerId(savedProfile.stripeCustomerId, savedProfile.stripe_customer_id, stripeCustomerId),
+        stripe_customer_id: pickStripeCustomerId(savedProfile.stripeCustomerId, savedProfile.stripe_customer_id, stripeCustomerId),
+        stripeSubscriptionId: pickStripeSubscriptionId(savedProfile.stripeSubscriptionId, savedProfile.stripe_subscription_id, savedProfile.subscription_id, subscriptionId),
+        stripe_subscription_id: pickStripeSubscriptionId(savedProfile.stripeSubscriptionId, savedProfile.stripe_subscription_id, savedProfile.subscription_id, subscriptionId),
+        subscriptionId: pickStripeSubscriptionId(savedProfile.subscriptionId, savedProfile.subscription_id, savedProfile.stripe_subscription_id, subscriptionId),
+        subscription_id: pickStripeSubscriptionId(savedProfile.subscriptionId, savedProfile.subscription_id, savedProfile.stripe_subscription_id, subscriptionId),
+        freightAccount: pickStripeConnectAccountId(savedProfile.freightAccount, savedProfile.freight_account, savedProfile.stripe_account_id, freightAccount),
+        freight_account: pickStripeConnectAccountId(savedProfile.freightAccount, savedProfile.freight_account, savedProfile.stripe_account_id, freightAccount),
+        stripeAccountId: pickStripeConnectAccountId(savedProfile.stripeAccountId, savedProfile.stripe_account_id, savedProfile.freight_account, freightAccount),
+        stripe_account_id: pickStripeConnectAccountId(savedProfile.stripeAccountId, savedProfile.stripe_account_id, savedProfile.freight_account, freightAccount),
+      };
+
+      await AsyncStorage.setItem("pendingFreightCarrier", JSON.stringify(pendingCarrier));
+      await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(pendingCarrier));
+      await AsyncStorage.setItem("currentFreight", JSON.stringify(pendingCarrier));
+      await AsyncStorage.setItem("currentFreightUser", JSON.stringify(pendingCarrier));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(pendingCarrier));
+      await AsyncStorage.setItem("userRole", "freight");
+      await AsyncStorage.setItem("currentUserRole", "freight");
+
+      const successUrl = `${APP_URL}/freight/register?stripe=success&freightId=${encodeURIComponent(savedId)}`;
+      const cancelUrl = `${APP_URL}/freight/register?stripe=cancelled&freightId=${encodeURIComponent(savedId)}`;
 
       const response = await fetch(`${API_BASE_URL}/payments/create-freight-subscription-checkout`, {
         method: "POST",
@@ -1189,77 +1253,96 @@ export default function FreightRegister() {
         body: JSON.stringify({
           role: "freight",
           planType: "freight",
-          userId: finalId,
-          freightId: finalId,
-          freight_id: finalId,
-          accountId: finalAccountId,
-          account_id: finalAccountId,
-          email: finalEmail,
-          customerEmail: finalEmail,
-          freight_email: finalEmail,
-          companyName: companyName.trim(),
-          businessName: companyName.trim(),
-          business_name: companyName.trim(),
-          name: companyName.trim(),
-          contactName: contactName.trim(),
-          contact_name: contactName.trim(),
-          username: normalize(username),
+          userId: savedId,
+          freightId: savedId,
+          freight_id: savedId,
+          accountId: savedAccountId,
+          account_id: savedAccountId,
+          email: savedEmail,
+          freight_email: savedEmail,
+          customerEmail: savedEmail,
+          companyName: savedCompanyName,
+          company_name: savedCompanyName,
+          businessName: savedBusinessName,
+          business_name: savedBusinessName,
+          name: savedCompanyName,
+          contactName: savedProfile.contact_name || savedProfile.contactName || contactName.trim(),
+          contact_name: savedProfile.contact_name || savedProfile.contactName || contactName.trim(),
+          username: savedUsername,
           successUrl,
           success_url: successUrl,
           cancelUrl,
           cancel_url: cancelUrl,
           metadata: {
             role: "freight",
-            freight_id: finalId,
-            account_id: finalAccountId,
-            freight_email: finalEmail,
-            email: finalEmail,
-            company_name: companyName.trim(),
-            business_name: companyName.trim(),
-            contact_name: contactName.trim(),
-            username: normalize(username),
+            userId: savedId,
+            freightId: savedId,
+            freight_id: savedId,
+            accountId: savedAccountId,
+            account_id: savedAccountId,
+            email: savedEmail,
+            freight_email: savedEmail,
+            companyName: savedCompanyName,
+            company_name: savedCompanyName,
+            businessName: savedBusinessName,
+            business_name: savedBusinessName,
+            username: savedUsername,
           },
         }),
       });
 
-      const json = await parseApiResponse(response);
-      if (!response.ok || !json.success) {
-        Alert.alert("Checkout Error", json.error || "Backend checkout failed.");
+      const data = await parseApiResponse(response);
+
+      if (!response.ok || !data?.success || !data?.url) {
+        Alert.alert("Stripe Error", data?.error || "Unable to open Stripe checkout.");
         return;
       }
 
-      if (json.alreadySubscribed) {
-        const customerId = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id);
-        const subId = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id);
-        const status = json.subscriptionStatus || json.subscription_status || "active";
-        setStripeCustomerId(customerId);
-        setSubscriptionId(subId);
-        setSubscriptionStatus(status);
-        await markApplicationSubmittedAndOpenDashboard(finalId, {
-          stripeCustomerId: customerId,
-          stripeSubscriptionId: subId,
-          subscriptionStatus: status,
+      const returnedCustomerId = pickStripeCustomerId(data.stripeCustomerId, data.stripe_customer_id, data.customerId, data.customer_id);
+      if (returnedCustomerId) setStripeCustomerId(returnedCustomerId);
+
+      if (data.alreadySubscribed) {
+        const returnedSubscriptionId = pickStripeSubscriptionId(
+          data.stripeSubscriptionId,
+          data.stripe_subscription_id,
+          data.subscriptionId,
+          data.subscription_id
+        );
+        const returnedStatus = data.subscriptionStatus || data.subscription_status || "active";
+
+        if (returnedSubscriptionId) setSubscriptionId(returnedSubscriptionId);
+        setSubscriptionStatus(returnedStatus);
+
+        await markApplicationSubmittedAndOpenDashboard(savedId, {
+          stripeCustomerId: returnedCustomerId,
+          stripeSubscriptionId: returnedSubscriptionId,
+          subscriptionStatus: returnedStatus,
         });
         return;
       }
 
-      const url = String(json.url || json.checkoutUrl || "").trim();
-      if (!url || !url.startsWith("https://")) {
-        Alert.alert("Checkout Error", "No valid Stripe Checkout URL was returned.");
+      const stripeUrl = String(data.url || data.checkoutUrl || data.checkout_url || "").trim();
+
+      if (!stripeUrl || !stripeUrl.startsWith("https://")) {
+        Alert.alert("Stripe Error", "No valid Stripe Checkout URL was returned.");
         return;
       }
 
-      if (json.stripeCustomerId) setStripeCustomerId(pickStripeCustomerId(json.stripeCustomerId));
       if (Platform.OS === "web") {
-        window.location.assign(url);
+        window.location.href = stripeUrl;
         return;
       }
-      await Linking.openURL(url);
+
+      await WebBrowser.openBrowserAsync(stripeUrl);
     } catch (error: any) {
-      Alert.alert("Checkout Error", error?.message || "Backend checkout failed.");
+      Alert.alert("Stripe Error", error?.message || "Unable to open Stripe.");
     } finally {
-      setSaving(false);
+      setStripeLoading(false);
     }
+  }
+
+  async function startSubscriptionCheckout() {
+    await handleStripeCheckout();
   }
 
   async function markApplicationSubmittedAndOpenDashboard(
@@ -1680,7 +1763,7 @@ export default function FreightRegister() {
 
           <View style={styles.actionStack}>
             <ActionButton icon="save-outline" label="Save Registration" onPress={saveRegistration} loading={saving} />
-            <ActionButton icon="card-outline" label={hasActiveSubscription ? "Membership Active" : "Start Stripe Membership"} onPress={startSubscriptionCheckout} loading={saving} variant="dark" disabled={hasActiveSubscription} />
+            <ActionButton icon="card-outline" label={hasActiveSubscription ? "Membership Active" : "Start Stripe Membership"} onPress={startSubscriptionCheckout} loading={stripeLoading || saving} variant="dark" disabled={hasActiveSubscription || stripeLoading} />
             <ActionButton icon="business-outline" label={hasStripeConnectAccount ? "Open / Update Stripe Banking" : "Connect Stripe Payouts"} onPress={startStripeConnectOnboarding} loading={saving} variant="outline" />
             <ActionButton icon="refresh-outline" label="Find / Retrieve Missing Stripe Info" onPress={async () => {
               const synced = await syncStripeByEmail(email, true);
