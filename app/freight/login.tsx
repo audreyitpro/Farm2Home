@@ -1,6 +1,6 @@
 // app/freight/login.tsx
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -172,6 +172,39 @@ function hasDashboardAccess(user: FreightUser) {
       statusIsGood(user.membership_status || user.membershipStatus || "active") &&
       statusIsGood(user.subscription_status || user.subscriptionStatus || "active")
   );
+}
+
+function buildFreightUserFromSubscriptionOnly(authUserId: string, cleanEmail: string, subscription: any, profile?: any) {
+  const id = clean(authUserId || subscription?.freight_id || profile?.auth_user_id || profile?.id || "");
+  return {
+    id,
+    freight_id: id,
+    freightId: id,
+    auth_user_id: id,
+    authUserId: id,
+    profile_id: profile?.id || id,
+    profileId: profile?.id || id,
+    role: "freight",
+    account_id: clean(profile?.account_id || subscription?.freight_account || ""),
+    company_name: profile?.company_name || profile?.business_name || subscription?.name || "Freight Carrier",
+    business_name: profile?.business_name || profile?.company_name || subscription?.name || "Freight Carrier",
+    contact_name: profile?.full_name || profile?.name || subscription?.name || "",
+    full_name: profile?.full_name || profile?.name || subscription?.name || "",
+    email: cleanEmail || subscription?.freight_email || profile?.email || "",
+    phone: profile?.phone || "",
+    username: profile?.username || subscription?.username || "",
+    account_active: true,
+    approved: true,
+    stripe_customer_id: subscription?.stripe_customer_id,
+    stripe_subscription_id: subscription?.stripe_subscription_id,
+    subscription_id: subscription?.stripe_subscription_id,
+    freight_account: subscription?.freight_account || subscription?.stripe_account_id,
+    stripe_account_id: subscription?.stripe_account_id || subscription?.freight_account,
+    membership_status: "active",
+    subscription_status: subscription?.subscription_status || "active",
+    registration_complete: true,
+    application_submitted: true,
+  };
 }
 
 function mapCarrierToFreightUser(item: any, profile?: any, subscription?: any): FreightUser {
@@ -371,6 +404,7 @@ export default function FreightLoginScreen() {
   const [lastCheckedUser, setLastCheckedUser] = useState<FreightUser | null>(null);
   const [navigatingToDashboard, setNavigatingToDashboard] = useState(false);
   const routingLockedRef = useRef(false);
+  const previewTimerRef = useRef<any>(null);
 
   const accessStatus = useMemo(() => {
     if (!lastCheckedUser) {
@@ -498,14 +532,23 @@ export default function FreightLoginScreen() {
       .select("*")
       .or(filters)
       .order("updated_at", { ascending: false })
-      .limit(1);
+      .limit(10);
 
     if (error) {
       console.log("Freight subscription lookup error:", error.message);
       return null;
     }
 
-    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    const complete = data.find(
+      (row) =>
+        pickCus(row?.stripe_customer_id) &&
+        pickSub(row?.stripe_subscription_id) &&
+        pickAcct(row?.stripe_account_id, row?.freight_account)
+    );
+
+    return complete || data[0];
   }
 
   async function findFreightProfile(userId: string, cleanEmail: string) {
@@ -583,14 +626,20 @@ export default function FreightLoginScreen() {
       };
     }
 
+    if (!freightUser && subscription && pickCus(subscription?.stripe_customer_id) && pickSub(subscription?.stripe_subscription_id)) {
+      freightUser = buildFreightUserFromSubscriptionOnly(userId, cleanEmail, subscription, profile);
+    }
+
     if (!freightUser) return null;
 
     const mapped = mapCarrierToFreightUser(freightUser, profile, subscription);
 
     const updates: any = {};
-    if (subscription?.stripe_account_id && !pickAcct(freightUser?.stripe_account_id, freightUser?.freight_account)) {
-      updates.stripe_account_id = subscription.stripe_account_id;
-      updates.freight_account = subscription.freight_account || subscription.stripe_account_id;
+    const subscriptionConnectAccount = pickAcct(subscription?.stripe_account_id, subscription?.freight_account);
+
+    if (subscriptionConnectAccount && !pickAcct(freightUser?.stripe_account_id, freightUser?.freight_account)) {
+      updates.stripe_account_id = subscriptionConnectAccount;
+      updates.freight_account = subscriptionConnectAccount;
       updates.stripe_connect_status = "started";
     }
     if (subscription?.stripe_customer_id && !pickCus(freightUser?.stripe_customer_id)) {
@@ -758,6 +807,39 @@ export default function FreightLoginScreen() {
     }, 80);
   }
 
+  async function previewFreightAccessByEmail(inputEmail: string) {
+    const cleanEmail = normalize(inputEmail);
+    if (!cleanEmail || !cleanEmail.includes("@")) return;
+
+    try {
+      const mappedUser = await findFreightProfile("", cleanEmail);
+      if (mappedUser) {
+        setLastCheckedUser(mappedUser);
+      }
+    } catch (error) {
+      console.log("Freight preview access check skipped:", error);
+    }
+  }
+
+  useEffect(() => {
+    const cleanEmail = normalize(email);
+
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setLastCheckedUser(null);
+      return;
+    }
+
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+
+    previewTimerRef.current = setTimeout(() => {
+      previewFreightAccessByEmail(cleanEmail);
+    }, 650);
+
+    return () => {
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    };
+  }, [email]);
+
   async function handleLogin() {
     const cleanEmail = normalize(email);
     const cleanPassword = clean(password);
@@ -847,7 +929,7 @@ export default function FreightLoginScreen() {
       const missingItems = [
         !activeMappedUser.id ? "Freight Profile ID" : "",
         !activeMappedUser.account_id ? "Static Account ID" : "",
-        !isCus(activeMappedUser.stripe_customer_id) ? "Stripe Customer ID" : "",
+        !isCus(activeMappedUser.stripe_customer_id || activeMappedUser.stripeCustomerId) ? "Stripe Customer ID" : "",
         !isSub(activeMappedUser.stripe_subscription_id || activeMappedUser.subscription_id) ? "Stripe Subscription ID" : "",
         !isAcct(activeMappedUser.freight_account || activeMappedUser.stripe_account_id) ? "Stripe Connect Account ID" : "",
       ].filter(Boolean);
