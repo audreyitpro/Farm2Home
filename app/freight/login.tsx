@@ -1,6 +1,6 @@
 // app/freight/login.tsx
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -138,6 +138,24 @@ function statusIsGood(value: any) {
   return !["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(status);
 }
 
+function valueIsFalse(value: any) {
+  if (value === false) return true;
+  if (typeof value === "string") {
+    return ["false", "0", "no", "inactive", "disabled"].includes(normalize(value));
+  }
+  return false;
+}
+
+function hasAllFiveFreightRequirements(user: FreightUser) {
+  return Boolean(
+    user.id &&
+      clean(user.account_id || user.accountId) &&
+      isCus(user.stripe_customer_id || user.stripeCustomerId) &&
+      isSub(user.stripe_subscription_id || user.subscription_id || user.stripeSubscriptionId || user.subscriptionId) &&
+      isAcct(user.freight_account || user.stripe_account_id || user.freightAccount || user.stripeAccountId)
+  );
+}
+
 function formatMaskedId(value: string, fallback = "Missing") {
   const id = clean(value);
   if (!id) return fallback;
@@ -146,16 +164,13 @@ function formatMaskedId(value: string, fallback = "Missing") {
 }
 
 function hasDashboardAccess(user: FreightUser) {
+  if (!hasAllFiveFreightRequirements(user)) return false;
+
   return Boolean(
-    user.id &&
-      clean(user.account_id || user.accountId) &&
-      isCus(user.stripe_customer_id || user.stripeCustomerId) &&
-      isSub(user.stripe_subscription_id || user.subscription_id || user.stripeSubscriptionId) &&
-      isAcct(user.freight_account || user.stripe_account_id || user.freightAccount || user.stripeAccountId) &&
-      user.account_active !== false &&
-      user.accountActive !== false &&
-      statusIsGood(user.membership_status || user.membershipStatus) &&
-      statusIsGood(user.subscription_status || user.subscriptionStatus)
+    !valueIsFalse(user.account_active) &&
+      !valueIsFalse(user.accountActive) &&
+      statusIsGood(user.membership_status || user.membershipStatus || "active") &&
+      statusIsGood(user.subscription_status || user.subscriptionStatus || "active")
   );
 }
 
@@ -277,8 +292,8 @@ function mapCarrierToFreightUser(item: any, profile?: any, subscription?: any): 
 
   const accountActive =
     item?.account_active === undefined
-      ? profile?.account_active !== false
-      : item?.account_active !== false;
+      ? !valueIsFalse(profile?.account_active)
+      : !valueIsFalse(item?.account_active);
 
   return {
     id,
@@ -354,6 +369,8 @@ export default function FreightLoginScreen() {
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
   const [lastCheckedUser, setLastCheckedUser] = useState<FreightUser | null>(null);
+  const [navigatingToDashboard, setNavigatingToDashboard] = useState(false);
+  const routingLockedRef = useRef(false);
 
   const accessStatus = useMemo(() => {
     if (!lastCheckedUser) {
@@ -375,6 +392,11 @@ export default function FreightLoginScreen() {
         label: "Static Account",
         complete: Boolean(lastCheckedUser.account_id),
         value: lastCheckedUser.account_id || "Missing",
+      },
+      {
+        label: "Stripe Customer",
+        complete: isCus(lastCheckedUser.stripe_customer_id || lastCheckedUser.stripeCustomerId),
+        value: formatMaskedId(lastCheckedUser.stripe_customer_id || lastCheckedUser.stripeCustomerId),
       },
       {
         label: "Subscription",
@@ -400,6 +422,13 @@ export default function FreightLoginScreen() {
       updated_at: now,
     };
 
+    await AsyncStorage.multiRemove([
+      "pendingFreightCarrier",
+      "pendingFreightSubscription",
+      "pendingFreightRegister",
+      "pendingFreightProfile",
+    ]);
+
     await AsyncStorage.multiSet([
       ["currentFreight", JSON.stringify(sessionUser)],
       ["currentFreightCarrier", JSON.stringify(sessionUser)],
@@ -408,6 +437,8 @@ export default function FreightLoginScreen() {
       ["currentUser", JSON.stringify(sessionUser)],
       ["userRole", "freight"],
       ["currentUserRole", "freight"],
+      ["lastLoginRole", "freight"],
+      ["lastFreightDashboardReady", "true"],
     ]);
 
     return sessionUser;
@@ -587,6 +618,97 @@ export default function FreightLoginScreen() {
     return mapped;
   }
 
+  async function activateCompletedFreightAccount(user: FreightUser) {
+    if (!hasAllFiveFreightRequirements(user)) return user;
+
+    const now = new Date().toISOString();
+    const activePayload = {
+      account_active: true,
+      approved: true,
+      registration_complete: true,
+      application_submitted: true,
+      freight_membership_paid: true,
+      membership_status: "active",
+      subscription_status: user.subscription_status || user.subscriptionStatus || "active",
+      verification_status: "SUBMITTED",
+      compliance_status: "SUBMITTED",
+      admin_review_status: "submitted",
+      stripe_customer_id: user.stripe_customer_id || user.stripeCustomerId,
+      stripe_subscription_id: user.stripe_subscription_id || user.subscription_id || user.stripeSubscriptionId,
+      subscription_id: user.subscription_id || user.stripe_subscription_id || user.stripeSubscriptionId,
+      freight_account: user.freight_account || user.stripe_account_id || user.freightAccount || user.stripeAccountId,
+      stripe_account_id: user.stripe_account_id || user.freight_account || user.stripeAccountId || user.freightAccount,
+      updated_at: now,
+    };
+
+    await supabase.from("freight_users").update(activePayload).eq("id", user.id);
+
+    try {
+      await supabase
+        .from("profiles")
+        .update({
+          account_active: true,
+          registration_complete: true,
+          application_submitted: true,
+          membership_status: "active",
+          subscription_status: activePayload.subscription_status,
+          stripe_customer_id: activePayload.stripe_customer_id,
+          stripe_subscription_id: activePayload.stripe_subscription_id,
+          subscription_id: activePayload.subscription_id,
+          stripe_account_id: activePayload.stripe_account_id,
+          freight_account: activePayload.freight_account,
+          updated_at: now,
+        })
+        .or(`id.eq.${user.id},auth_user_id.eq.${user.id},profile_id.eq.${user.id}`);
+    } catch (error) {
+      console.log("profiles active sync skipped:", error);
+    }
+
+    try {
+      await supabase
+        .from("freight_subscriptions")
+        .update({
+          stripe_customer_id: activePayload.stripe_customer_id,
+          stripe_subscription_id: activePayload.stripe_subscription_id,
+          subscription_status: activePayload.subscription_status,
+          stripe_account_id: activePayload.stripe_account_id,
+          freight_account: activePayload.freight_account,
+          updated_at: now,
+        })
+        .or(`freight_id.eq.${user.id},freight_email.eq.${user.email}`);
+    } catch (error) {
+      console.log("freight_subscriptions active sync skipped:", error);
+    }
+
+    const activeUser = {
+      ...user,
+      accountActive: true,
+      account_active: true,
+      approved: true,
+      registrationComplete: true,
+      registration_complete: true,
+      applicationSubmitted: true,
+      application_submitted: true,
+      membershipStatus: "active",
+      membership_status: "active",
+      subscriptionStatus: activePayload.subscription_status,
+      subscription_status: activePayload.subscription_status,
+      stripeCustomerId: activePayload.stripe_customer_id,
+      stripe_customer_id: activePayload.stripe_customer_id,
+      stripeSubscriptionId: activePayload.stripe_subscription_id,
+      stripe_subscription_id: activePayload.stripe_subscription_id,
+      subscriptionId: activePayload.subscription_id,
+      subscription_id: activePayload.subscription_id,
+      freightAccount: activePayload.freight_account,
+      freight_account: activePayload.freight_account,
+      stripeAccountId: activePayload.stripe_account_id,
+      stripe_account_id: activePayload.stripe_account_id,
+    };
+
+    await saveFreightSession(activeUser);
+    return activeUser;
+  }
+
   async function touchLastLogin(user: FreightUser) {
     const now = new Date().toISOString();
 
@@ -606,6 +728,20 @@ export default function FreightLoginScreen() {
         last_login_at: now,
       })
       .eq("id", user.id);
+  }
+
+  async function openFreightDashboard(user: FreightUser) {
+    if (routingLockedRef.current) return;
+
+    routingLockedRef.current = true;
+    setNavigatingToDashboard(true);
+
+    const savedUser = await saveFreightSession(user);
+    await touchLastLogin(savedUser);
+
+    setTimeout(() => {
+      router.replace(DASHBOARD_ROUTE as any);
+    }, 80);
   }
 
   async function handleLogin() {
@@ -648,37 +784,43 @@ export default function FreightLoginScreen() {
         return;
       }
 
-      setLastCheckedUser(mappedUser);
-      await saveFreightSession(mappedUser);
+      let activeMappedUser = mappedUser;
 
-      if (!statusIsGood(mappedUser.membershipStatus || mappedUser.membership_status)) {
+      if (hasAllFiveFreightRequirements(mappedUser)) {
+        activeMappedUser = await activateCompletedFreightAccount(mappedUser);
+      }
+
+      setLastCheckedUser(activeMappedUser);
+      await saveFreightSession(activeMappedUser);
+
+      if (hasDashboardAccess(activeMappedUser)) {
+        await openFreightDashboard(activeMappedUser);
+        return;
+      }
+
+      if (!statusIsGood(activeMappedUser.membershipStatus || activeMappedUser.membership_status)) {
         Alert.alert("Account Not Active", "Your freight membership is not active.");
         router.replace(REGISTER_ROUTE as any);
         return;
       }
 
-      if (!statusIsGood(mappedUser.subscriptionStatus || mappedUser.subscription_status)) {
+      if (!statusIsGood(activeMappedUser.subscriptionStatus || activeMappedUser.subscription_status)) {
         Alert.alert("Subscription Issue", "Your freight subscription needs attention.");
         router.replace(REGISTER_ROUTE as any);
         return;
       }
 
-      if (mappedUser.accountActive === false || mappedUser.account_active === false) {
+      if (valueIsFalse(activeMappedUser.accountActive) || valueIsFalse(activeMappedUser.account_active)) {
         Alert.alert("Account Not Active", "Your freight account is not active.");
         return;
       }
 
-      if (hasDashboardAccess(mappedUser)) {
-        await touchLastLogin(mappedUser);
-        router.replace(DASHBOARD_ROUTE as any);
-        return;
-      }
-
       const missingItems = [
-        !mappedUser.account_id ? "Static Account ID" : "",
-        !isCus(mappedUser.stripe_customer_id) ? "Stripe Customer ID" : "",
-        !isSub(mappedUser.stripe_subscription_id || mappedUser.subscription_id) ? "Stripe Subscription ID" : "",
-        !isAcct(mappedUser.freight_account || mappedUser.stripe_account_id) ? "Stripe Connect Account ID" : "",
+        !activeMappedUser.id ? "Freight Profile ID" : "",
+        !activeMappedUser.account_id ? "Static Account ID" : "",
+        !isCus(activeMappedUser.stripe_customer_id) ? "Stripe Customer ID" : "",
+        !isSub(activeMappedUser.stripe_subscription_id || activeMappedUser.subscription_id) ? "Stripe Subscription ID" : "",
+        !isAcct(activeMappedUser.freight_account || activeMappedUser.stripe_account_id) ? "Stripe Connect Account ID" : "",
       ].filter(Boolean);
 
       Alert.alert(
@@ -686,12 +828,20 @@ export default function FreightLoginScreen() {
         `Your freight profile was found, but this setup is missing: ${missingItems.join(", ")}. You will be taken to registration to finish setup.`
       );
 
-      router.replace(REGISTER_ROUTE as any);
+      router.replace({
+        pathname: REGISTER_ROUTE as any,
+        params: {
+          freightId: activeMappedUser.id,
+          email: activeMappedUser.email,
+        },
+      });
     } catch (error: any) {
       console.log("Freight login error:", error);
       Alert.alert("Login Error", error?.message || "Unable to login to freight account.");
     } finally {
-      setLoginLoading(false);
+      if (!routingLockedRef.current) {
+        setLoginLoading(false);
+      }
     }
   }
 
@@ -851,20 +1001,27 @@ export default function FreightLoginScreen() {
                   </View>
 
                   <TouchableOpacity
-                    style={[styles.primaryButton, loginLoading && styles.disabledButton]}
+                    style={[styles.primaryButton, (loginLoading || navigatingToDashboard) && styles.disabledButton]}
                     onPress={handleLogin}
-                    disabled={loginLoading}
+                    disabled={loginLoading || navigatingToDashboard}
                     activeOpacity={0.9}
                   >
-                    {loginLoading ? (
+                    {loginLoading || navigatingToDashboard ? (
                       <ActivityIndicator color={COLORS.white} />
                     ) : (
                       <>
                         <Ionicons name="arrow-forward-outline" size={18} color={COLORS.white} />
-                        <Text style={styles.primaryButtonText}>Login to Freight Dashboard</Text>
+                        <Text style={styles.primaryButtonText}>{navigatingToDashboard ? "Opening Dashboard..." : "Login to Freight Dashboard"}</Text>
                       </>
                     )}
                   </TouchableOpacity>
+
+                  {navigatingToDashboard ? (
+                    <View style={styles.readyBanner}>
+                      <Ionicons name="checkmark-circle-outline" size={18} color={COLORS.greenDark} />
+                      <Text style={styles.readyBannerText}>Dashboard session is ready. Opening freight dashboard...</Text>
+                    </View>
+                  ) : null}
 
                   <TouchableOpacity
                     style={styles.textButton}
@@ -1306,6 +1463,23 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   disabledButton: { opacity: 0.6 },
+  readyBanner: {
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  readyBannerText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    flex: 1,
+    lineHeight: 19,
+  },
   textButton: {
     alignItems: "center",
     marginTop: 15,
