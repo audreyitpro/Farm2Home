@@ -156,6 +156,7 @@ export default function FreightRegister() {
   const [saving, setSaving] = useState(false);
   const [stripeLoading, setStripeLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
+  const [connectLoading, setConnectLoading] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
 
   const [savedCarrierId, setSavedCarrierId] = useState("");
@@ -512,6 +513,106 @@ export default function FreightRegister() {
     setHasSavedSecurityAnswer1(Boolean(carrier.security_answer_1 || carrier.securityAnswer1));
     setHasSavedSecurityAnswer2(Boolean(carrier.security_answer_2 || carrier.securityAnswer2));
     setHasSavedSecurityAnswer3(Boolean(carrier.security_answer_3 || carrier.securityAnswer3));
+  }
+
+  function buildCurrentFreightSnapshot(base: any = {}) {
+    const currentId = base.id || base.freightId || base.freight_id || savedCarrierId || freightId;
+    const currentAccountId = base.account_id || base.accountId || accountId;
+    const currentEmail = normalize(base.email || email);
+    const currentCompanyName = base.company_name || base.companyName || base.business_name || base.businessName || companyName.trim();
+    const currentContactName = base.contact_name || base.contactName || base.full_name || base.name || contactName.trim();
+    const currentUsername = normalize(base.username || username);
+    const currentCustomerId = pickStripeCustomerId(base.stripe_customer_id, base.stripeCustomerId, stripeCustomerId);
+    const currentSubscriptionId = pickStripeSubscriptionId(
+      base.stripe_subscription_id,
+      base.subscription_id,
+      base.stripeSubscriptionId,
+      base.subscriptionId,
+      subscriptionId
+    );
+    const currentConnectAccount = pickStripeConnectAccountId(
+      base.freight_account,
+      base.freightAccount,
+      base.stripe_account_id,
+      base.stripeAccountId,
+      freightAccount
+    );
+
+    return {
+      ...base,
+      id: currentId,
+      freightId: currentId,
+      freight_id: currentId,
+      accountId: currentAccountId,
+      account_id: currentAccountId,
+      role: "freight",
+      companyName: currentCompanyName,
+      company_name: currentCompanyName,
+      businessName: currentCompanyName,
+      business_name: currentCompanyName,
+      contactName: currentContactName,
+      contact_name: currentContactName,
+      fullName: currentContactName,
+      full_name: currentContactName,
+      name: currentContactName,
+      email: currentEmail,
+      phone: base.phone || phone.trim(),
+      username: currentUsername,
+      serviceArea: base.serviceArea || base.service_area || serviceArea.trim(),
+      service_area: base.service_area || base.serviceArea || serviceArea.trim(),
+      businessAddress: base.businessAddress || base.business_address || businessAddress.trim(),
+      business_address: base.business_address || base.businessAddress || businessAddress.trim(),
+      city: base.city || city.trim(),
+      state: base.state || stateValue.trim().toUpperCase(),
+      zipCode: base.zipCode || base.zip_code || zipCode.trim(),
+      zip_code: base.zip_code || base.zipCode || zipCode.trim(),
+      mdotNumber: base.mdotNumber || base.mdot_number || mdotNumber.trim(),
+      mdot_number: base.mdot_number || base.mdotNumber || mdotNumber.trim(),
+      dot_number: base.dot_number || base.mdot_number || mdotNumber.trim(),
+      mcNumber: base.mcNumber || base.mc_number || mcNumber.trim(),
+      mc_number: base.mc_number || base.mcNumber || mcNumber.trim(),
+      insuranceProvider: base.insuranceProvider || base.insurance_provider || insuranceProvider.trim(),
+      insurance_provider: base.insurance_provider || base.insuranceProvider || insuranceProvider.trim(),
+      insurancePolicyNumber: base.insurancePolicyNumber || base.insurance_policy_number || insurancePolicyNumber.trim(),
+      insurance_policy_number: base.insurance_policy_number || base.insurancePolicyNumber || insurancePolicyNumber.trim(),
+      authorityActive: Boolean(base.authorityActive ?? base.authority_active ?? authorityActive),
+      authority_active: Boolean(base.authority_active ?? base.authorityActive ?? authorityActive),
+      insuranceActive: Boolean(base.insuranceActive ?? base.insurance_active ?? insuranceActive),
+      insurance_active: Boolean(base.insurance_active ?? base.insuranceActive ?? insuranceActive),
+      licensedLivestock: Boolean(base.licensedLivestock ?? base.licensed_livestock ?? licensedLivestock),
+      licensed_livestock: Boolean(base.licensed_livestock ?? base.licensedLivestock ?? licensedLivestock),
+      licensedRefrigeratedFood: Boolean(base.licensedRefrigeratedFood ?? base.licensed_refrigerated_food ?? licensedRefrigeratedFood),
+      licensed_refrigerated_food: Boolean(base.licensed_refrigerated_food ?? base.licensedRefrigeratedFood ?? licensedRefrigeratedFood),
+      equipment_types: selectedEquipment.length ? selectedEquipment : base.equipment_types || [],
+      equipment_type: selectedEquipment.length ? selectedEquipment.join(", ") : base.equipment_type || "",
+      stripeCustomerId: currentCustomerId,
+      stripe_customer_id: currentCustomerId,
+      stripeId: currentCustomerId,
+      stripe_id: currentCustomerId,
+      stripeSubscriptionId: currentSubscriptionId,
+      stripe_subscription_id: currentSubscriptionId,
+      subscriptionId: currentSubscriptionId,
+      subscription_id: currentSubscriptionId,
+      subscriptionStatus: base.subscriptionStatus || base.subscription_status || subscriptionStatus,
+      subscription_status: base.subscription_status || base.subscriptionStatus || subscriptionStatus,
+      freightAccount: currentConnectAccount,
+      freight_account: currentConnectAccount,
+      stripeAccountId: currentConnectAccount,
+      stripe_account_id: currentConnectAccount,
+      updatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  async function saveFreightSnapshot(snapshot: any) {
+    await AsyncStorage.setItem("pendingFreightCarrier", JSON.stringify(snapshot));
+    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(snapshot));
+    await AsyncStorage.setItem("currentFreight", JSON.stringify(snapshot));
+    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(snapshot));
+    await AsyncStorage.setItem("farm2homeCurrentFreight", JSON.stringify(snapshot));
+    await AsyncStorage.setItem("currentUser", JSON.stringify(snapshot));
+    await AsyncStorage.setItem("userRole", "freight");
+    await AsyncStorage.setItem("currentUserRole", "freight");
   }
 
   function buildPreservedCarrier(row: any) {
@@ -1485,32 +1586,59 @@ export default function FreightRegister() {
   }
 
   async function startStripeConnectOnboarding() {
-    if (saving) return;
+    if (connectLoading || saving) return;
 
-    let finalFreightId = savedCarrierId || freightId;
-    let finalAccountId = accountId;
-    const finalEmail = normalize(email);
+    const preSaveSnapshot = buildCurrentFreightSnapshot();
+    await saveFreightSnapshot(preSaveSnapshot);
 
-    if (!finalFreightId || !finalEmail) {
-      const saved = await saveRegistration();
-      finalFreightId = saved?.id || savedCarrierId || freightId;
-      finalAccountId = saved?.account_id || saved?.accountId || accountId;
-    }
-
-    if (!finalFreightId || !finalEmail) {
-      Alert.alert("Save Required", "Save the freight registration before connecting Stripe payouts.");
-      return;
-    }
+    let finalFreightId = savedCarrierId || freightId || preSaveSnapshot.id;
+    let finalAccountId = accountId || preSaveSnapshot.account_id || preSaveSnapshot.accountId;
+    let finalEmail = normalize(email || preSaveSnapshot.email);
 
     try {
-      setSaving(true);
-      await saveFreightUserRow(finalFreightId, finalAccountId);
+      setConnectLoading(true);
+
+      if (!finalFreightId || !finalEmail) {
+        const savedProfile = await saveFreightProfile(false);
+
+        if (!savedProfile?.id) {
+          Alert.alert("Save Required", "Save the freight registration before connecting Stripe payouts.");
+          return;
+        }
+
+        const savedSnapshot = buildCurrentFreightSnapshot(savedProfile);
+        await saveFreightSnapshot(savedSnapshot);
+
+        finalFreightId = savedSnapshot.id;
+        finalAccountId = savedSnapshot.account_id || savedSnapshot.accountId;
+        finalEmail = normalize(savedSnapshot.email);
+      }
+
+      if (!finalFreightId || !finalEmail) {
+        Alert.alert("Save Required", "Missing freight ID or email. Save the registration first.");
+        return;
+      }
+
+      const connectSnapshot = buildCurrentFreightSnapshot({
+        ...preSaveSnapshot,
+        id: finalFreightId,
+        freight_id: finalFreightId,
+        account_id: finalAccountId,
+        email: finalEmail,
+      });
+
+      await saveFreightSnapshot(connectSnapshot);
+
+      const returnUrl = `${APP_URL}/freight/connect-bank?connected=true&freightId=${encodeURIComponent(finalFreightId)}`;
+      const refreshUrl = `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(finalFreightId)}`;
 
       const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           role: "freight",
+          mode: freightAccount ? "update" : "onboarding",
+          purpose: freightAccount ? "update_bank" : "onboarding",
           freightId: finalFreightId,
           freight_id: finalFreightId,
           userId: finalFreightId,
@@ -1518,17 +1646,39 @@ export default function FreightRegister() {
           account_id: finalAccountId,
           email: finalEmail,
           freight_email: finalEmail,
-          companyName: companyName.trim(),
-          businessName: companyName.trim(),
-          name: companyName.trim(),
-          contactName: contactName.trim(),
-          freight_account: freightAccount,
-          returnUrl: `${APP_URL}/freight/register?connect=success&freightId=${encodeURIComponent(finalFreightId)}`,
-          refreshUrl: `${APP_URL}/freight/register?connect=refresh&freightId=${encodeURIComponent(finalFreightId)}`,
+          companyName: companyName.trim() || connectSnapshot.companyName,
+          company_name: companyName.trim() || connectSnapshot.company_name,
+          businessName: companyName.trim() || connectSnapshot.businessName,
+          business_name: companyName.trim() || connectSnapshot.business_name,
+          name: companyName.trim() || connectSnapshot.companyName,
+          contactName: contactName.trim() || connectSnapshot.contactName,
+          contact_name: contactName.trim() || connectSnapshot.contact_name,
+          username: normalize(username || connectSnapshot.username),
+          phone: phone.trim() || connectSnapshot.phone,
+          freight_account: freightAccount || connectSnapshot.freight_account || undefined,
+          stripe_account_id: freightAccount || connectSnapshot.stripe_account_id || undefined,
+          update_existing: Boolean(freightAccount || connectSnapshot.freight_account || connectSnapshot.stripe_account_id),
+          returnUrl,
+          return_url: returnUrl,
+          refreshUrl,
+          refresh_url: refreshUrl,
+          metadata: {
+            role: "freight",
+            userId: finalFreightId,
+            freightId: finalFreightId,
+            freight_id: finalFreightId,
+            accountId: finalAccountId,
+            account_id: finalAccountId,
+            email: finalEmail,
+            freight_email: finalEmail,
+            company_name: companyName.trim() || connectSnapshot.companyName,
+            username: normalize(username || connectSnapshot.username),
+          },
         }),
       });
 
       const json = await parseApiResponse(response);
+
       if (!response.ok || !json.success) {
         Alert.alert("Connect Stripe Error", json.error || "Unable to create Stripe Connect onboarding link.");
         return;
@@ -1539,35 +1689,48 @@ export default function FreightRegister() {
         json.stripeAccountId,
         json.stripe_account_id,
         json.connectedAccountId,
+        json.connected_account_id,
         json.account,
         freightAccount
       );
+
+      const onboardingUrl = String(
+        json.url ||
+          json.onboardingUrl ||
+          json.onboarding_url ||
+          json.accountLinkUrl ||
+          json.account_link_url ||
+          json.updateUrl ||
+          json.update_url ||
+          ""
+      ).trim();
 
       if (!returnedFreightAccount) {
         Alert.alert("Connect Stripe Error", "Stripe did not return a real Account ID that starts with acct_.");
         return;
       }
 
-      const onboardingUrl = String(json.url || json.onboardingUrl || "").trim();
       if (!onboardingUrl || !onboardingUrl.startsWith("https://connect.stripe.com/")) {
-        Alert.alert("Stripe Connect Error", "No valid Stripe onboarding URL was returned.");
+        Alert.alert("Stripe Connect Error", "No valid Stripe Connect onboarding URL was returned.");
         return;
       }
 
       setFreightAccount(returnedFreightAccount);
+
       const connectUpdate = {
         freight_account: returnedFreightAccount,
         stripe_account_id: returnedFreightAccount,
         stripe_connect_status: "started",
-        payouts_enabled: Boolean(json.payoutsEnabled),
-        charges_enabled: Boolean(json.chargesEnabled),
-        stripe_payouts_enabled: Boolean(json.payoutsEnabled),
-        stripe_charges_enabled: Boolean(json.chargesEnabled),
-        stripe_onboarding_complete: Boolean(json.onboardingComplete),
+        payouts_enabled: Boolean(json.payoutsEnabled || json.payouts_enabled),
+        charges_enabled: Boolean(json.chargesEnabled || json.charges_enabled),
+        stripe_payouts_enabled: Boolean(json.payoutsEnabled || json.payouts_enabled),
+        stripe_charges_enabled: Boolean(json.chargesEnabled || json.charges_enabled),
+        stripe_onboarding_complete: Boolean(json.onboardingComplete || json.onboarding_complete || json.stripe_onboarding_complete),
         updated_at: new Date().toISOString(),
       };
 
       await supabase.from("freight_users").update(connectUpdate).eq("id", finalFreightId);
+
       await supabase
         .from("freight_subscriptions")
         .update({
@@ -1582,45 +1745,29 @@ export default function FreightRegister() {
         .update(connectUpdate)
         .or(`id.eq.${finalFreightId},freight_id.eq.${finalFreightId},profile_id.eq.${finalFreightId}`);
 
-      await saveFreightSession({
+      const updatedSnapshot = buildCurrentFreightSnapshot({
+        ...connectSnapshot,
+        ...connectUpdate,
         id: finalFreightId,
-        freightId: finalFreightId,
         freight_id: finalFreightId,
-        accountId: finalAccountId,
         account_id: finalAccountId,
-        role: "freight",
-        companyName: companyName.trim(),
-        company_name: companyName.trim(),
-        businessName: companyName.trim(),
-        business_name: companyName.trim(),
-        contactName: contactName.trim(),
-        contact_name: contactName.trim(),
         email: finalEmail,
-        phone: phone.trim(),
-        username: normalize(username),
-        stripeCustomerId,
-        stripe_customer_id: stripeCustomerId,
-        stripeSubscriptionId: subscriptionId,
-        stripe_subscription_id: subscriptionId,
-        subscriptionId,
-        subscription_id: subscriptionId,
-        subscriptionStatus,
-        subscription_status: subscriptionStatus,
-        freightAccount: returnedFreightAccount,
         freight_account: returnedFreightAccount,
-        stripeAccountId: returnedFreightAccount,
         stripe_account_id: returnedFreightAccount,
       });
 
+      await saveFreightSnapshot(updatedSnapshot);
+
       if (Platform.OS === "web") {
-        window.location.assign(onboardingUrl);
+        window.location.href = onboardingUrl;
         return;
       }
-      await Linking.openURL(onboardingUrl);
+
+      await WebBrowser.openBrowserAsync(onboardingUrl);
     } catch (error: any) {
       Alert.alert("Connect Stripe Error", error?.message || "Unable to start Stripe Connect onboarding.");
     } finally {
-      setSaving(false);
+      setConnectLoading(false);
     }
   }
 
@@ -1764,7 +1911,7 @@ export default function FreightRegister() {
           <View style={styles.actionStack}>
             <ActionButton icon="save-outline" label="Save Registration" onPress={saveRegistration} loading={saving} />
             <ActionButton icon="card-outline" label={hasActiveSubscription ? "Membership Active" : "Start Stripe Membership"} onPress={startSubscriptionCheckout} loading={stripeLoading || saving} variant="dark" disabled={hasActiveSubscription || stripeLoading} />
-            <ActionButton icon="business-outline" label={hasStripeConnectAccount ? "Open / Update Stripe Banking" : "Connect Stripe Payouts"} onPress={startStripeConnectOnboarding} loading={saving} variant="outline" />
+            <ActionButton icon="business-outline" label={hasStripeConnectAccount ? "Open / Update Stripe Banking" : "Connect Stripe Payouts"} onPress={startStripeConnectOnboarding} loading={connectLoading || saving} variant="outline" disabled={connectLoading} />
             <ActionButton icon="refresh-outline" label="Find / Retrieve Missing Stripe Info" onPress={async () => {
               const synced = await syncStripeByEmail(email, true);
               if (!synced?.stripeCustomerId && !synced?.stripeSubscriptionId) await forceSyncFreightSubscription();
