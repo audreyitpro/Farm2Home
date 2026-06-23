@@ -30,9 +30,11 @@ import { supabase } from "../data/supabaseClient";
  *
  * Customer access requires:
  * 1. customers.id
- * 2. customers.account_id
- * 3. customers.stripe_customer_id = cus_...
- * 4. customers.subscription_id or customers.stripe_subscription_id = sub_...
+ * 2. customers.stripe_customer_id = cus_...
+ * 3. customers.subscription_id or customers.stripe_subscription_id = sub_...
+ * 4. subscription_status is active, trialing, or past_due
+ *
+ * DO NOT require account_id for customer cart/checkout/marketplace access.
  *
  * Customer Stripe rules:
  * - cus_ is Stripe Customer
@@ -41,18 +43,23 @@ import { supabase } from "../data/supabaseClient";
  */
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F6F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
+  surface: "#F8FAFC",
+  surface2: "#F1F5F9",
+  black: "#020617",
+  navy: "#020617",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  primarySoft: "#EEF2FF",
+  red: "#635BFF",
+  redDark: "#4638D8",
+  text: "#101828",
+  muted: "#667085",
   border: "#E5E7EB",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
+  green: "#10B981",
+  greenDark: "#047857",
+  greenSoft: "#D1FAE5",
   amber: "#F59E0B",
   amberSoft: "#FEF3C7",
   white: "#FFFFFF",
@@ -124,6 +131,10 @@ function maskId(value: string, fallback = "Missing") {
   if (!id) return fallback;
   if (id.length <= 14) return id;
   return `${id.slice(0, 8)}...${id.slice(-5)}`;
+}
+
+function isValidCustomerSubscriptionStatus(value: any) {
+  return ["active", "trialing", "past_due"].includes(String(value || "").toLowerCase());
 }
 
 function statusIsBlocked(value: any) {
@@ -222,12 +233,9 @@ function customerHasMarketplaceAccess(row: any) {
 
   return Boolean(
     customer.id &&
-      customer.account_id &&
       isStripeCustomerId(customer.stripe_customer_id) &&
       isStripeSubscriptionId(customer.subscription_id) &&
-      customer.account_active !== false &&
-      !statusIsBlocked(customer.membership_status) &&
-      !statusIsBlocked(customer.subscription_status)
+      isValidCustomerSubscriptionStatus(customer.subscription_status)
   );
 }
 
@@ -235,14 +243,14 @@ function missingAccessItems(row: any) {
   const customer = row ? buildCustomerSession(row) : null;
 
   if (!customer) {
-    return ["Customer Profile", "Static Account ID", "Stripe Customer ID", "Subscription ID"];
+    return ["Customer Profile", "Stripe Customer ID", "Subscription ID", "Valid Subscription Status"];
   }
 
   return [
     !customer.id ? "Customer Profile" : "",
-    !customer.account_id ? "Static Account ID" : "",
     !isStripeCustomerId(customer.stripe_customer_id) ? "Stripe Customer ID" : "",
     !isStripeSubscriptionId(customer.subscription_id) ? "Subscription ID" : "",
+    !isValidCustomerSubscriptionStatus(customer.subscription_status) ? "Valid Subscription Status" : "",
   ].filter(Boolean);
 }
 
@@ -275,9 +283,9 @@ export default function CustomerLoginScreen() {
     if (!lastCheckedCustomer) {
       return [
         { label: "Customer Profile", complete: false, value: "Login to check" },
-        { label: "Static Account", complete: false, value: "Login to check" },
         { label: "Stripe Customer", complete: false, value: "Login to check" },
         { label: "Subscription", complete: false, value: "Login to check" },
+        { label: "Membership Status", complete: false, value: "Login to check" },
       ];
     }
 
@@ -290,11 +298,6 @@ export default function CustomerLoginScreen() {
         value: customer.id ? "Found" : "Missing",
       },
       {
-        label: "Static Account",
-        complete: Boolean(customer.account_id),
-        value: customer.account_id || "Missing",
-      },
-      {
         label: "Stripe Customer",
         complete: isStripeCustomerId(customer.stripe_customer_id),
         value: maskId(customer.stripe_customer_id),
@@ -303,6 +306,11 @@ export default function CustomerLoginScreen() {
         label: "Subscription",
         complete: isStripeSubscriptionId(customer.subscription_id),
         value: maskId(customer.subscription_id),
+      },
+      {
+        label: "Membership Status",
+        complete: isValidCustomerSubscriptionStatus(customer.subscription_status),
+        value: customer.subscription_status || "Missing",
       },
     ];
   }, [lastCheckedCustomer]);
@@ -624,9 +632,13 @@ export default function CustomerLoginScreen() {
           json.subscriptionStatus ||
           json.subscription_status ||
           (stripeSubscriptionId ? "active" : "pending_payment"),
-        membership_status: stripeSubscriptionId ? "active" : "pending_payment",
+        membership_status: isValidCustomerSubscriptionStatus(
+          json.subscriptionStatus || json.subscription_status || (stripeSubscriptionId ? "active" : "pending_payment")
+        )
+          ? "active"
+          : "pending_payment",
         customer_membership_paid: Boolean(stripeSubscriptionId),
-        account_active: true,
+        account_active: Boolean(stripeSubscriptionId),
         application_complete: Boolean(stripeSubscriptionId),
         application_submitted: Boolean(stripeSubscriptionId),
         submitted_at: stripeSubscriptionId ? new Date().toISOString() : null,
@@ -972,17 +984,17 @@ export default function CustomerLoginScreen() {
 
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
-              <Ionicons name="shield-checkmark-outline" size={22} color={COLORS.red} />
-              <Text style={styles.noticeTitle}>Marketplace Access Check</Text>
+              <Ionicons name="shield-checkmark-outline" size={22} color={COLORS.primary} />
+              <Text style={styles.noticeTitle}>Customer Marketplace Access</Text>
             </View>
             <Text style={styles.noticeText}>
-              Customer login verifies profile, static customer account, Stripe customer ID, and subscription ID before opening Marketplace.
+              Customer login verifies profile, Stripe customer ID, subscription ID, and active/trialing/past_due status before opening Marketplace. Account ID is optional for customers.
             </Text>
           </View>
 
           <View style={styles.progressCard}>
             <View style={styles.progressTop}>
-              <Text style={styles.progressTitle}>Login Checklist</Text>
+              <Text style={styles.progressTitle}>Access Checklist</Text>
               <Text style={styles.progressScore}>
                 {accessStatus.filter((item) => item.complete).length}/4
               </Text>
@@ -1065,10 +1077,10 @@ export default function CustomerLoginScreen() {
               activeOpacity={0.85}
             >
               {syncingStripe ? (
-                <ActivityIndicator color={COLORS.red} />
+                <ActivityIndicator color={COLORS.primary} />
               ) : (
                 <>
-                  <Ionicons name="sync-outline" size={20} color={COLORS.red} />
+                  <Ionicons name="sync-outline" size={20} color={COLORS.primary} />
                   <Text style={styles.secondaryText}>Retrieve Missing Stripe Info</Text>
                 </>
               )}
@@ -1114,7 +1126,7 @@ export default function CustomerLoginScreen() {
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
               <View style={styles.modalIcon}>
-                <Ionicons name="key-outline" size={28} color={COLORS.red} />
+                <Ionicons name="key-outline" size={28} color={COLORS.primary} />
               </View>
 
               <Text style={styles.modalTitle}>Reset Password</Text>
@@ -1173,7 +1185,7 @@ const styles = StyleSheet.create({
     paddingBottom: 70,
   },
   hero: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.navy,
     paddingTop: 22,
     paddingHorizontal: 20,
     paddingBottom: 30,
@@ -1183,7 +1195,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 9,
@@ -1194,13 +1206,13 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 24,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   kicker: {
-    color: "#FCA5A5",
+    color: "#A5B4FC",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -1267,7 +1279,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   progressScore: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontWeight: "900",
     fontSize: 24,
   },
@@ -1323,7 +1335,7 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 18,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1356,7 +1368,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   loginButton: {
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     padding: 17,
     borderRadius: 18,
     marginTop: 8,
@@ -1375,7 +1387,7 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: "#FCA5A5",
+    borderColor: "#C7D2FE",
     borderRadius: 18,
     padding: 15,
     marginTop: 12,
@@ -1385,7 +1397,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   secondaryText: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontWeight: "900",
     fontSize: 15,
   },
@@ -1409,7 +1421,7 @@ const styles = StyleSheet.create({
   linkButton: { marginTop: 16 },
   linkText: {
     textAlign: "center",
-    color: COLORS.red,
+    color: COLORS.primary,
     fontWeight: "900",
   },
   infoCard: {
@@ -1482,7 +1494,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   closeText: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontWeight: "900",
   },
 });

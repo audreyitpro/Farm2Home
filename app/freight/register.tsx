@@ -1414,83 +1414,63 @@ export default function FreightRegister() {
       const saved = await saveFreightProfile(false);
       if (!saved?.id) return;
 
-      const returnUrl = `${APP_URL}/freight/register?connect=success&freightId=${encodeURIComponent(saved.id)}&email=${encodeURIComponent(saved.email)}`;
-      const refreshUrl = `${APP_URL}/freight/register?connect=refresh&freightId=${encodeURIComponent(saved.id)}&email=${encodeURIComponent(saved.email)}`;
+      const returnUrl = `${APP_URL}/freight/connect-bank?success=true&freightId=${encodeURIComponent(
+        saved.id
+      )}&email=${encodeURIComponent(saved.email)}`;
 
-      const connectPayload = {
-        role: "freight",
-        userId: saved.id,
-        freightId: saved.id,
-        freight_id: saved.id,
-        accountId: saved.account_id,
-        account_id: saved.account_id,
-        email: saved.email,
-        freight_email: saved.email,
-        businessName: saved.company_name || saved.business_name,
-        business_name: saved.business_name || saved.company_name,
-        companyName: saved.company_name || saved.business_name,
-        company_name: saved.company_name || saved.business_name,
-        name: saved.company_name || saved.business_name || saved.name,
-        username: saved.username,
-        returnUrl,
-        return_url: returnUrl,
-        refreshUrl,
-        refresh_url: refreshUrl,
-      };
+      const refreshUrl = `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(
+        saved.id
+      )}&email=${encodeURIComponent(saved.email)}`;
 
-      async function callConnectEndpoint(path: string) {
-        const response = await fetch(`${API_BASE_URL}${path}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(connectPayload),
-        });
+      const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "freight",
 
-        const json = await parseApiResponse(response);
-        return { response, json, path };
-      }
+          userId: saved.id,
+          freightId: saved.id,
+          freight_id: saved.id,
 
-      let result = await callConnectEndpoint("/payments/create-freight-connect-account");
+          accountId: saved.account_id,
+          account_id: saved.account_id,
 
-      if (!result.response.ok || (!result.json?.success && !getStripeLaunchUrl(result.json))) {
-        console.log("FREIGHT CONNECT PRIMARY RESPONSE:", result.path, result.json);
+          email: saved.email,
+          freight_email: saved.email,
 
-        // Fallback to the generic endpoint that already worked in testing.
-        const fallback = await callConnectEndpoint("/payments/create-connect-account");
-        console.log("FREIGHT CONNECT FALLBACK RESPONSE:", fallback.path, fallback.json);
+          businessName: saved.company_name || saved.business_name,
+          business_name: saved.business_name || saved.company_name,
+          companyName: saved.company_name || saved.business_name,
+          company_name: saved.company_name || saved.business_name,
 
-        if (fallback.response.ok && (fallback.json?.success || getStripeLaunchUrl(fallback.json))) {
-          result = fallback;
-        }
-      }
+          name: saved.company_name || saved.business_name || saved.name,
+          username: saved.username,
 
-      const json = result.json;
-      console.log("FREIGHT CONNECT FINAL RESPONSE:", result.path, json);
+          returnUrl,
+          return_url: returnUrl,
+          refreshUrl,
+          refresh_url: refreshUrl,
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+      console.log("FREIGHT CONNECT RESPONSE:", data);
 
       const connectAccount = pickStripeConnectAccountId(
-        json.stripeAccountId,
-        json.stripe_account_id,
-        json.freight_account,
-        json.freightAccount,
-        json.account,
-        json.accountId,
-        json.connectedAccountId,
-        json.connected_account_id,
-        json.data?.stripeAccountId,
-        json.data?.stripe_account_id,
-        json.data?.accountId,
-        json.data?.account,
-        json.result?.stripeAccountId,
-        json.result?.stripe_account_id,
-        json.result?.accountId,
-        json.result?.account
+        data.stripeAccountId,
+        data.stripe_account_id,
+        data.accountId,
+        data.account_id,
+        data.account,
+        data.freight_account
       );
 
-      const launchUrl = getStripeLaunchUrl(json);
+      const launchUrl = getStripeLaunchUrl(data);
 
-      if (!result.response.ok || (!json.success && !launchUrl && !connectAccount)) {
+      if (!response.ok || !data.success || !launchUrl) {
         Alert.alert(
           "Connect Error",
-          json.error || json.message || "Unable to start Stripe Connect onboarding."
+          data.error || data.message || "Stripe Connect onboarding URL was not returned."
         );
         return;
       }
@@ -1498,40 +1478,30 @@ export default function FreightRegister() {
       if (connectAccount) {
         setFreightAccount(connectAccount);
 
+        try {
+          await supabase
+            .from("freight_users")
+            .update({
+              freight_account: connectAccount,
+              stripe_account_id: connectAccount,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", saved.id);
+        } catch (updateError) {
+          console.log("freight_users connect update skipped:", updateError);
+        }
+
         await upsertFreightSubscriptionRow({
           freightId: saved.id,
           emailValue: saved.email,
           customerId: stripeCustomerId || saved.stripe_customer_id,
           subscriptionValue: subscriptionId || saved.subscription_id,
           connectValue: connectAccount,
-          subscriptionStatusValue: subscriptionStatus || saved.subscription_status || "active",
+          subscriptionStatusValue:
+            subscriptionStatus || saved.subscription_status || "active",
         });
 
-        await supabase
-          .from("freight_users")
-          .update({
-            freight_account: connectAccount,
-            stripe_account_id: connectAccount,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", saved.id);
-
-        const merged = {
-          ...saved,
-          freight_account: connectAccount,
-          stripe_account_id: connectAccount,
-        };
-
-        hydrateForm(merged);
-        await saveFreightSession(merged);
-      }
-
-      if (!launchUrl) {
-        Alert.alert(
-          "Connect Saved",
-          "Stripe Connect account was saved, but Stripe did not return an onboarding URL. Tap Refresh, then Connect Stripe Payouts again if onboarding is still incomplete."
-        );
-        return;
+        await saveFreightUserRow(saved.id, saved.account_id);
       }
 
       await openUrl(launchUrl);
