@@ -24,6 +24,8 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
+const MESSAGE_TABLE = "customer_farmer_messages";
+
 const COLORS = {
   bg: "#F8F8FB",
   card: "#FFFFFF",
@@ -455,7 +457,7 @@ export default function CustomerFarmerChat() {
     customerIdValue: string,
     customerNameValue: string
   ) {
-    const tables = ["customer_farmer_messages", "farm_messages", "messages", "chat_messages"];
+    const tables = [MESSAGE_TABLE];
     const found: FarmConversation[] = [];
 
     for (const table of tables) {
@@ -512,7 +514,7 @@ export default function CustomerFarmerChat() {
   }
 
   async function loadMessages(conversationId: string) {
-    const tables = ["customer_farmer_messages", "farm_messages", "messages", "chat_messages"];
+    const tables = [MESSAGE_TABLE];
 
     for (const table of tables) {
       try {
@@ -564,7 +566,7 @@ export default function CustomerFarmerChat() {
         {
           event: "INSERT",
           schema: "public",
-          table: "customer_farmer_messages",
+          table: MESSAGE_TABLE,
           filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
@@ -629,7 +631,7 @@ export default function CustomerFarmerChat() {
     try {
       setSending(true);
 
-      const tables = ["customer_farmer_messages", "farm_messages", "messages", "chat_messages"];
+      const tables = [MESSAGE_TABLE];
       let saved: any = null;
 
       for (const table of tables) {
@@ -658,7 +660,7 @@ export default function CustomerFarmerChat() {
   }
 
   async function markMessagesRead(conversationId: string) {
-    const tables = ["customer_farmer_messages", "farm_messages", "messages", "chat_messages"];
+    const tables = [MESSAGE_TABLE];
 
     for (const table of tables) {
       try {
