@@ -212,16 +212,37 @@ function getStripeLaunchUrl(data: any) {
 }
 
 async function openUrl(url: string) {
-  if (!url) return;
+  const finalUrl = clean(url);
+
+  console.log("OPEN STRIPE URL:", finalUrl);
+
+  if (!finalUrl || !finalUrl.startsWith("http")) {
+    Alert.alert("Stripe Error", "No valid Stripe URL was returned.");
+    return;
+  }
+
   if (Platform.OS === "web") {
-    window.location.href = url;
+    window.location.assign(finalUrl);
     return;
   }
 
   try {
-    await WebBrowser.openBrowserAsync(url);
-  } catch {
-    await Linking.openURL(url);
+    const result = await WebBrowser.openBrowserAsync(finalUrl);
+    console.log("STRIPE BROWSER RESULT:", result);
+
+    if (result?.type === "cancel" || result?.type === "dismiss") {
+      await Linking.openURL(finalUrl);
+    }
+  } catch (browserError) {
+    console.log("WebBrowser open failed, trying Linking:", browserError);
+
+    const canOpen = await Linking.canOpenURL(finalUrl);
+    if (!canOpen) {
+      Alert.alert("Stripe Error", "This device cannot open the Stripe URL.");
+      return;
+    }
+
+    await Linking.openURL(finalUrl);
   }
 }
 
@@ -1384,21 +1405,26 @@ export default function FreightRegister() {
       const customer = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id, json.customerId, json.customer_id);
       const sub = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id, json.subscriptionId, json.subscription_id);
 
-      if (customer) setStripeCustomerId(customer);
-      if (sub) setSubscriptionId(sub);
-      if (json.subscriptionStatus || json.subscription_status) {
-        setSubscriptionStatus(json.subscriptionStatus || json.subscription_status);
-      }
-
-      await saveFreightUserRow(saved.id, saved.account_id);
-
       if (!url) {
         console.log("FREIGHT STRIPE CHECKOUT RESPONSE:", json);
         Alert.alert("Stripe Error", "Stripe checkout URL was not returned from backend.");
         return;
       }
 
-      await openUrl(url);
+      // Launch Stripe immediately. Do not let Supabase saves block browser launch.
+      void openUrl(url);
+
+      if (customer) setStripeCustomerId(customer);
+      if (sub) setSubscriptionId(sub);
+      if (json.subscriptionStatus || json.subscription_status) {
+        setSubscriptionStatus(json.subscriptionStatus || json.subscription_status);
+      }
+
+      try {
+        await saveFreightUserRow(saved.id, saved.account_id);
+      } catch (saveError) {
+        console.log("freight membership save after launch skipped:", saveError);
+      }
     } catch (error: any) {
       Alert.alert("Stripe Error", error?.message || "Unable to start freight membership checkout.");
     } finally {
@@ -1495,7 +1521,12 @@ export default function FreightRegister() {
 
       if (connectAccount) {
         setFreightAccount(connectAccount);
+      }
 
+      // Launch Stripe immediately. Do not let Supabase saves block browser launch.
+      void openUrl(launchUrl);
+
+      if (connectAccount) {
         try {
           await supabase
             .from("freight_users")
@@ -1515,20 +1546,35 @@ export default function FreightRegister() {
           console.log("freight_users connect update skipped:", updateError);
         }
 
-        await upsertFreightSubscriptionRow({
-          freightId: finalFreightId,
-          emailValue: finalEmail,
-          customerId: stripeCustomerId || saved.stripe_customer_id,
-          subscriptionValue: subscriptionId || saved.subscription_id || saved.stripe_subscription_id,
-          connectValue: connectAccount,
-          subscriptionStatusValue:
-            subscriptionStatus || saved.subscription_status || "active",
-        });
+        try {
+          await upsertFreightSubscriptionRow({
+            freightId: finalFreightId,
+            emailValue: finalEmail,
+            customerId: stripeCustomerId || saved.stripe_customer_id,
+            subscriptionValue: subscriptionId || saved.subscription_id || saved.stripe_subscription_id,
+            connectValue: connectAccount,
+            subscriptionStatusValue:
+              subscriptionStatus || saved.subscription_status || "active",
+          });
+        } catch (subscriptionError) {
+          console.log("freight_subscriptions connect update skipped:", subscriptionError);
+        }
 
-        await saveFreightUserRow(finalFreightId, finalAccountId);
+        try {
+          await saveFreightSession({
+            ...saved,
+            id: finalFreightId,
+            freight_id: finalFreightId,
+            account_id: finalAccountId,
+            stripe_customer_id: stripeCustomerId || saved.stripe_customer_id,
+            subscription_id: subscriptionId || saved.subscription_id || saved.stripe_subscription_id,
+            freight_account: connectAccount,
+            stripe_account_id: connectAccount,
+          });
+        } catch (sessionError) {
+          console.log("freight session save after launch skipped:", sessionError);
+        }
       }
-
-      await openUrl(launchUrl);
     } catch (error: any) {
       console.log("FREIGHT CONNECT ERROR:", error);
       Alert.alert("Connect Error", error?.message || "Unable to connect Stripe payouts.");

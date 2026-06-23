@@ -208,20 +208,37 @@ function getStripeLaunchUrl(data: any) {
 }
 
 async function openStripeUrl(url: string) {
-  if (!url || !url.startsWith("http")) {
+  const finalUrl = clean(url);
+
+  console.log("OPEN STRIPE URL:", finalUrl);
+
+  if (!finalUrl || !finalUrl.startsWith("http")) {
     Alert.alert("Stripe Error", "No valid Stripe checkout URL returned.");
     return;
   }
 
   if (Platform.OS === "web") {
-    window.location.href = url;
+    window.location.assign(finalUrl);
     return;
   }
 
   try {
-    await WebBrowser.openBrowserAsync(url);
-  } catch {
-    await Linking.openURL(url);
+    const result = await WebBrowser.openBrowserAsync(finalUrl);
+    console.log("STRIPE BROWSER RESULT:", result);
+
+    if (result?.type === "cancel" || result?.type === "dismiss") {
+      await Linking.openURL(finalUrl);
+    }
+  } catch (browserError) {
+    console.log("WebBrowser open failed, trying Linking:", browserError);
+
+    const canOpen = await Linking.canOpenURL(finalUrl);
+    if (!canOpen) {
+      Alert.alert("Stripe Error", "This device cannot open the Stripe URL.");
+      return;
+    }
+
+    await Linking.openURL(finalUrl);
   }
 }
 
@@ -1569,7 +1586,18 @@ export default function CustomerRegister() {
         updated_at: new Date().toISOString(),
       };
 
-      await supabase.from("customers").update(pendingPayload).eq("id", id);
+      if (!checkoutUrl) {
+        throw new Error("Stripe checkout URL was not returned from backend.");
+      }
+
+      // Launch Stripe immediately. Do not let Supabase saves block browser launch.
+      void openStripeUrl(checkoutUrl);
+
+      try {
+        await supabase.from("customers").update(pendingPayload).eq("id", id);
+      } catch (customerUpdateError) {
+        console.log("customer pending update after launch skipped:", customerUpdateError);
+      }
 
       const pendingCustomer = buildCustomerSession({
         ...saved,
@@ -1581,14 +1609,17 @@ export default function CustomerRegister() {
         username: cleanUsername,
       });
 
-      await upsertCustomerSubscriptionRow(pendingCustomer);
-      await saveCurrentCustomer(pendingCustomer);
-
-      if (!checkoutUrl) {
-        throw new Error("Stripe checkout URL was not returned from backend.");
+      try {
+        await upsertCustomerSubscriptionRow(pendingCustomer);
+      } catch (subscriptionSaveError) {
+        console.log("customer subscription pending save after launch skipped:", subscriptionSaveError);
       }
 
-      await openStripeUrl(checkoutUrl);
+      try {
+        await saveCurrentCustomer(pendingCustomer);
+      } catch (sessionSaveError) {
+        console.log("customer session save after launch skipped:", sessionSaveError);
+      }
     } catch (error: any) {
       console.log("CUSTOMER REGISTER ERROR:", error);
       Alert.alert(
