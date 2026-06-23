@@ -616,7 +616,7 @@ export default function CustomerDashboard() {
               icon="navigate-outline"
               title="Tracking"
               subtitle="Track active deliveries"
-              onPress={() => requireAccess("/customer/order-tracking")}
+              onPress={() => requireAccess("/customer/tracking")}
             />
             <ActionButton
               icon="chatbubbles-outline"
@@ -970,6 +970,8 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
+    position: "relative",
+    zIndex: 1,
   },
   sectionTitle: {
     fontSize: 22,
@@ -984,9 +986,9 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   actionGrid: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    flexWrap: "wrap",
+    flexDirection: "column",
     gap: 10,
+    paddingBottom: 4,
   },
   actionButton: {
     backgroundColor: COLORS.surface,
@@ -997,9 +999,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginBottom: Platform.OS === "web" ? 0 : 10,
-    flexBasis: Platform.OS === "web" ? "48%" : "auto",
-    flexGrow: 1,
+    marginBottom: 0,
+    width: "100%",
+    flexGrow: 0,
   },
   primaryAction: {
     backgroundColor: COLORS.primary,
@@ -1041,9 +1043,12 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 16,
     marginHorizontal: 18,
-    marginBottom: 16,
+    marginTop: 2,
+    marginBottom: 28,
     flexDirection: "row",
     gap: 12,
+    position: "relative",
+    zIndex: 0,
   },
   infoIcon: {
     width: 42,

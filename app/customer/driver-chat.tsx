@@ -24,69 +24,36 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-/**
- * app/customer/driver-chat.tsx
- *
- * Customer <-> Driver chat.
- *
- * Supports:
- * - Order-specific driver conversation
- * - Supabase realtime
- * - ETA / gate code / delivery notes quick replies
- * - Message timestamps
- * - Read receipt fields
- * - Photo URL attachment
- * - Driver job lookup from delivery tables
- *
- * Tables attempted:
- * - customer_driver_messages
- * - driver_messages
- * - delivery_messages
- * - messages
- * - chat_messages
- *
- * Recommended dedicated table:
- *
- * customer_driver_messages:
- * id text primary key
- * conversation_id text
- * order_id text
- * customer_id text
- * customer_name text
- * driver_id text
- * driver_name text
- * sender_id text
- * sender_role text
- * sender_name text
- * receiver_id text
- * receiver_role text
- * message text
- * image_url text
- * read_by_customer boolean
- * read_by_driver boolean
- * created_at timestamptz
- * updated_at timestamptz
- */
-
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F8F8FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
-  blue: "#2563EB",
-  blueSoft: "#DBEAFE",
-  purple: "#7C3AED",
-  purpleSoft: "#EDE9FE",
+  surface: "#FFFFFF",
+
+  black: "#2A3042",
+
+  red: "#556EE6",
+  redDark: "#485EC4",
+
+  text: "#495057",
+  muted: "#74788D",
+  border: "#EFF2F7",
+
+  green: "#34C38F",
+  greenDark: "#2CA67A",
+  greenSoft: "#E8FBF3",
+
+  amber: "#F1B44C",
+  amberSoft: "#FFF6E5",
+
+  blue: "#50A5F1",
+  blueSoft: "#EAF5FE",
+
+  purple: "#556EE6",
+  purpleSoft: "#EEF2FF",
+
+  danger: "#F46A6A",
+  dangerSoft: "#FFECEC",
+
   white: "#FFFFFF",
 };
 
@@ -184,10 +151,6 @@ function buildConversationId(orderId: string, customerId: string, driverId: stri
   const safeCustomer = clean(customerId) || "customer";
   const safeDriver = clean(driverId) || "driver";
   return `customer_driver_${safeOrder}_${safeCustomer}_${safeDriver}`;
-}
-
-function getOrderId(row: any) {
-  return clean(row?.id || row?.order_id || row?.orderId);
 }
 
 function prettyStatus(value: any) {
@@ -383,7 +346,10 @@ export default function CustomerDriverChat() {
         ];
   }
 
-  async function loadDriverConversationsFromJobs(orderId: string, activeCustomer: CustomerSession | null) {
+  async function loadDriverConversationsFromJobs(
+    orderId: string,
+    activeCustomer: CustomerSession | null
+  ) {
     const customerIdValue = getCustomerId(activeCustomer);
     const rows: DriverConversation[] = [];
     const jobs = await fetchDeliveryJobs(orderId);
@@ -430,7 +396,7 @@ export default function CustomerDriverChat() {
 
         if (!error && Array.isArray(data)) allJobs.push(...data);
       } catch {
-        // try next
+        // Try next table.
       }
     }
 
@@ -445,7 +411,13 @@ export default function CustomerDriverChat() {
   }
 
   async function loadExistingConversationsFromMessages(customerIdValue: string) {
-    const tables = ["customer_driver_messages", "driver_messages", "delivery_messages", "messages", "chat_messages"];
+    const tables = [
+      "customer_driver_messages",
+      "driver_messages",
+      "delivery_messages",
+      "messages",
+      "chat_messages",
+    ];
     const found: DriverConversation[] = [];
 
     for (const table of tables) {
@@ -480,7 +452,7 @@ export default function CustomerDriverChat() {
           break;
         }
       } catch {
-        // try next
+        // Try next table.
       }
     }
 
@@ -500,7 +472,13 @@ export default function CustomerDriverChat() {
   }
 
   async function loadMessages(conversationId: string) {
-    const tables = ["customer_driver_messages", "driver_messages", "delivery_messages", "messages", "chat_messages"];
+    const tables = [
+      "customer_driver_messages",
+      "driver_messages",
+      "delivery_messages",
+      "messages",
+      "chat_messages",
+    ];
 
     for (const table of tables) {
       try {
@@ -508,7 +486,7 @@ export default function CustomerDriverChat() {
         setMessages(rows.map(normalizeMessage));
         return;
       } catch {
-        // try next
+        // Try next table.
       }
     }
 
@@ -616,7 +594,14 @@ export default function CustomerDriverChat() {
     try {
       setSending(true);
 
-      const tables = ["customer_driver_messages", "driver_messages", "delivery_messages", "messages", "chat_messages"];
+      const tables = [
+        "customer_driver_messages",
+        "driver_messages",
+        "delivery_messages",
+        "messages",
+        "chat_messages",
+      ];
+
       let saved: any = null;
 
       for (const table of tables) {
@@ -645,7 +630,13 @@ export default function CustomerDriverChat() {
   }
 
   async function markMessagesRead(conversationId: string) {
-    const tables = ["customer_driver_messages", "driver_messages", "delivery_messages", "messages", "chat_messages"];
+    const tables = [
+      "customer_driver_messages",
+      "driver_messages",
+      "delivery_messages",
+      "messages",
+      "chat_messages",
+    ];
 
     for (const table of tables) {
       try {
@@ -658,7 +649,7 @@ export default function CustomerDriverChat() {
           .eq("conversation_id", conversationId)
           .eq("receiver_role", "customer");
       } catch {
-        // skip
+        // Skip missing table.
       }
     }
   }
@@ -701,11 +692,16 @@ export default function CustomerDriverChat() {
           <Text style={styles.kicker}>Customer ↔ Driver</Text>
           <Text style={styles.heroTitle}>Driver Chat</Text>
           <Text style={styles.heroText}>
-            Coordinate ETA, gate codes, delivery location, proof of delivery, and live delivery questions.
+            Coordinate ETA, gate codes, delivery location, proof of delivery, and live delivery
+            questions.
           </Text>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.conversationRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.conversationRow}
+        >
           {conversations.map((conversation) => {
             const active = conversation.conversationId === selectedConversation?.conversationId;
 
@@ -718,11 +714,19 @@ export default function CustomerDriverChat() {
                 <View style={[styles.conversationAvatar, active && styles.conversationAvatarActive]}>
                   <Ionicons name="car-outline" size={19} color={active ? COLORS.white : COLORS.red} />
                 </View>
+
                 <View style={{ maxWidth: 190 }}>
-                  <Text style={[styles.conversationName, active && styles.conversationNameActive]} numberOfLines={1}>
+                  <Text
+                    style={[styles.conversationName, active && styles.conversationNameActive]}
+                    numberOfLines={1}
+                  >
                     {conversation.driverName || "Farm2Home Driver"}
                   </Text>
-                  <Text style={[styles.conversationMeta, active && styles.conversationMetaActive]} numberOfLines={1}>
+
+                  <Text
+                    style={[styles.conversationMeta, active && styles.conversationMetaActive]}
+                    numberOfLines={1}
+                  >
                     {conversation.orderId && conversation.orderId !== "general"
                       ? `Order #${conversation.orderId.slice(-8).toUpperCase()}`
                       : "General delivery chat"}
@@ -736,11 +740,13 @@ export default function CustomerDriverChat() {
         {selectedConversation ? (
           <View style={styles.driverInfoCard}>
             <View style={styles.driverBigAvatar}>
-              <Ionicons name="person-outline" size={30} color={COLORS.white} />
+              <Ionicons name="person-outline" size={30} color={COLORS.red} />
             </View>
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.driverTitle}>{selectedConversation.driverName || "Farm2Home Driver"}</Text>
+              <Text style={styles.driverTitle}>
+                {selectedConversation.driverName || "Farm2Home Driver"}
+              </Text>
               <Text style={styles.driverSubtitle}>
                 {selectedConversation.driverId
                   ? `Driver ID: ${selectedConversation.driverId}`
@@ -757,9 +763,21 @@ export default function CustomerDriverChat() {
         ) : null}
 
         <View style={styles.deliveryInfoCard}>
-          <InfoRow icon="storefront-outline" label="Pickup" value={selectedConversation?.pickupAddress || "Farm pickup location"} />
-          <InfoRow icon="location-outline" label="Dropoff" value={selectedConversation?.dropoffAddress || "Customer delivery address"} />
-          <InfoRow icon="navigate-outline" label="Current Location" value={selectedConversation?.currentLocation || "Waiting for driver update"} />
+          <InfoRow
+            icon="storefront-outline"
+            label="Pickup"
+            value={selectedConversation?.pickupAddress || "Farm pickup location"}
+          />
+          <InfoRow
+            icon="location-outline"
+            label="Dropoff"
+            value={selectedConversation?.dropoffAddress || "Customer delivery address"}
+          />
+          <InfoRow
+            icon="navigate-outline"
+            label="Current Location"
+            value={selectedConversation?.currentLocation || "Waiting for driver update"}
+          />
         </View>
 
         <View style={styles.quickActions}>
@@ -774,7 +792,11 @@ export default function CustomerDriverChat() {
           </Pressable>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickReplyRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.quickReplyRow}
+        >
           {QUICK_REPLIES.map((reply) => (
             <Pressable key={reply} style={styles.quickReply} onPress={() => sendMessage(reply)}>
               <Text style={styles.quickReplyText}>{reply}</Text>
@@ -810,9 +832,7 @@ export default function CustomerDriverChat() {
               {dateTimeLabel(item.created_at)}
             </Text>
 
-            {mine ? (
-              <Text style={styles.readReceipt}>{item.read_by_driver ? "Read" : "Sent"}</Text>
-            ) : null}
+            {mine ? <Text style={styles.readReceipt}>{item.read_by_driver ? "Read" : "Sent"}</Text> : null}
           </View>
         </View>
       </View>
@@ -822,7 +842,7 @@ export default function CustomerDriverChat() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
         <View style={styles.center}>
           <ActivityIndicator color={COLORS.red} size="large" />
           <Text style={styles.centerText}>Loading driver chat...</Text>
@@ -833,7 +853,7 @@ export default function CustomerDriverChat() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -865,7 +885,9 @@ export default function CustomerDriverChat() {
           {imageUrl ? (
             <View style={styles.imageUrlPreview}>
               <Ionicons name="image-outline" size={16} color={COLORS.red} />
-              <Text style={styles.imageUrlText} numberOfLines={1}>{imageUrl}</Text>
+              <Text style={styles.imageUrlText} numberOfLines={1}>
+                {imageUrl}
+              </Text>
               <Pressable onPress={() => setImageUrl("")}>
                 <Ionicons name="close-circle-outline" size={18} color={COLORS.muted} />
               </Pressable>
@@ -887,7 +909,7 @@ export default function CustomerDriverChat() {
             <TextInput
               style={styles.messageInput}
               placeholder="Message driver..."
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               value={messageText}
               onChangeText={setMessageText}
               multiline
@@ -945,15 +967,22 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
   centerText: { color: COLORS.muted, fontWeight: "800" },
   listContent: { paddingBottom: 12 },
+
   hero: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.red,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 28,
+
+    shadowColor: COLORS.red,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
   },
   backButton: {
     alignSelf: "flex-start",
-    backgroundColor: COLORS.red,
+    backgroundColor: "rgba(255,255,255,0.18)",
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
@@ -967,20 +996,21 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 24,
-    backgroundColor: COLORS.red,
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   kicker: {
-    color: "#FCA5A5",
+    color: "#DDE3FF",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1,
     textTransform: "uppercase",
   },
   heroTitle: { color: COLORS.white, fontSize: 34, fontWeight: "900", marginTop: 6 },
-  heroText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 22, marginTop: 8 },
+  heroText: { color: "#EEF2FF", fontWeight: "700", lineHeight: 22, marginTop: 8 },
+
   conversationRow: { gap: 10, paddingHorizontal: 18, paddingVertical: 14 },
   conversationChip: {
     backgroundColor: COLORS.card,
@@ -991,13 +1021,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     alignItems: "center",
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   conversationChipActive: { backgroundColor: COLORS.red, borderColor: COLORS.red },
   conversationAvatar: {
     width: 42,
     height: 42,
     borderRadius: 16,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1005,7 +1041,8 @@ const styles = StyleSheet.create({
   conversationName: { color: COLORS.text, fontWeight: "900" },
   conversationNameActive: { color: COLORS.white },
   conversationMeta: { color: COLORS.muted, fontWeight: "700", fontSize: 12, marginTop: 3 },
-  conversationMetaActive: { color: "#FFE4E6" },
+  conversationMetaActive: { color: "#EEF2FF" },
+
   driverInfoCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1017,18 +1054,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   driverBigAvatar: {
     width: 58,
     height: 58,
     borderRadius: 21,
-    backgroundColor: COLORS.black,
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
   },
   driverTitle: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
   driverSubtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   etaText: { color: COLORS.red, fontWeight: "900", marginTop: 4 },
+
   deliveryInfoCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1038,6 +1082,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginBottom: 12,
     gap: 8,
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   infoRow: {
     backgroundColor: COLORS.surface,
@@ -1048,8 +1098,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 9,
   },
-  infoLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11, textTransform: "uppercase" },
+  infoLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
   infoValue: { color: COLORS.text, fontWeight: "800", marginTop: 3, lineHeight: 19 },
+
   quickActions: {
     flexDirection: "row",
     gap: 10,
@@ -1058,15 +1114,18 @@ const styles = StyleSheet.create({
   },
   quickActionButton: {
     flex: 1,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     borderRadius: 16,
     padding: 13,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 7,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   quickActionText: { color: COLORS.red, fontWeight: "900" },
+
   quickReplyRow: { gap: 8, paddingHorizontal: 18, paddingBottom: 10 },
   quickReply: {
     backgroundColor: COLORS.card,
@@ -1077,6 +1136,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   quickReplyText: { color: COLORS.red, fontWeight: "900", fontSize: 12 },
+
   messageRow: { paddingHorizontal: 18, marginVertical: 5 },
   myMessageRow: { alignItems: "flex-end" },
   theirMessageRow: { alignItems: "flex-start" },
@@ -1093,7 +1153,7 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 5,
   },
   senderLabel: { fontWeight: "900", fontSize: 11, marginBottom: 5 },
-  mySenderLabel: { color: "#FFE4E6" },
+  mySenderLabel: { color: "#EEF2FF" },
   theirSenderLabel: { color: COLORS.muted },
   messageText: { fontWeight: "700", lineHeight: 21 },
   myMessageText: { color: COLORS.white },
@@ -1107,9 +1167,10 @@ const styles = StyleSheet.create({
   },
   messageFooter: { flexDirection: "row", gap: 8, marginTop: 7, justifyContent: "flex-end" },
   messageTime: { fontSize: 10, fontWeight: "800" },
-  myMessageTime: { color: "#FFE4E6" },
+  myMessageTime: { color: "#EEF2FF" },
   theirMessageTime: { color: COLORS.muted },
-  readReceipt: { color: "#FFE4E6", fontSize: 10, fontWeight: "900" },
+  readReceipt: { color: "#EEF2FF", fontSize: 10, fontWeight: "900" },
+
   emptyCard: {
     marginHorizontal: 18,
     marginTop: 20,
@@ -1119,18 +1180,31 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 24,
     alignItems: "center",
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   emptyIcon: {
     width: 68,
     height: 68,
     borderRadius: 24,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   emptyTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
-  emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", lineHeight: 22, marginTop: 8 },
+  emptyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+
   composerWrap: {
     backgroundColor: COLORS.card,
     borderTopWidth: 1,
@@ -1140,7 +1214,7 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === "ios" ? 24 : 12,
   },
   imageUrlPreview: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     borderRadius: 14,
     padding: 10,
     flexDirection: "row",
@@ -1154,7 +1228,7 @@ const styles = StyleSheet.create({
     width: 43,
     height: 43,
     borderRadius: 16,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
   },

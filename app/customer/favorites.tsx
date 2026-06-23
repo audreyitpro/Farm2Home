@@ -25,67 +25,36 @@ import { Ionicons } from "@expo/vector-icons";
 import { addToCart } from "../data/cartStore";
 import { supabase } from "../data/supabaseClient";
 
-/**
- * app/customer/favorites.tsx
- *
- * Customer favorites screen.
- *
- * Supports:
- * - Favorite farmers
- * - Favorite products
- * - Search/filter
- * - Add favorite product to cart
- * - Remove favorite
- * - Open marketplace/farmer page
- * - Reads/writes Supabase favorite tables when available
- * - Falls back to AsyncStorage if tables are missing
- *
- * Tables attempted:
- * - customer_favorites
- * - favorites
- * - customer_saved_items
- *
- * Recommended table:
- *
- * customer_favorites:
- * id text primary key
- * customer_id text
- * customer_email text
- * type text -- product | farmer
- * farmer_id text
- * farm_name text
- * product_id text
- * product_name text
- * product_image text
- * price numeric
- * unit text
- * category text
- * stripe_account_id text
- * created_at timestamptz
- * updated_at timestamptz
- */
-
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F8F8FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
-  blue: "#2563EB",
-  blueSoft: "#DBEAFE",
-  purple: "#7C3AED",
-  purpleSoft: "#EDE9FE",
-  danger: "#DC2626",
-  dangerSoft: "#FEE2E2",
+  surface: "#FFFFFF",
+
+  black: "#2A3042",
+
+  red: "#556EE6",
+  redDark: "#485EC4",
+
+  text: "#495057",
+  muted: "#74788D",
+  border: "#EFF2F7",
+
+  green: "#34C38F",
+  greenDark: "#2CA67A",
+  greenSoft: "#E8FBF3",
+
+  amber: "#F1B44C",
+  amberSoft: "#FFF6E5",
+
+  blue: "#50A5F1",
+  blueSoft: "#EAF5FE",
+
+  purple: "#556EE6",
+  purpleSoft: "#EEF2FF",
+
+  danger: "#F46A6A",
+  dangerSoft: "#FFECEC",
+
   white: "#FFFFFF",
 };
 
@@ -159,8 +128,10 @@ function getCustomerName(customer: CustomerSession | null) {
 function dateLabel(value: any) {
   const raw = clean(value);
   if (!raw) return "Saved";
+
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return raw;
+
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -218,20 +189,18 @@ function getStripeAccount(item: any) {
   );
 }
 
-function normalizeFavorite(
-  row: any,
-  customer: CustomerSession | null = null
-): FavoriteItem {
+function normalizeFavorite(row: any, customer: CustomerSession | null = null): FavoriteItem {
   const type = getFavoriteType(row);
-  const customerId =
-    getCustomerId(customer) || clean(row.customer_id || row.customerId);
+  const customerId = getCustomerId(customer) || clean(row.customer_id || row.customerId);
   const productId = getProductId(row);
   const farmerId = getFarmerId(row);
   const farmName = getFarmName(row);
 
   const id = clean(row.id)
     ? clean(row.id)
-    : `favorite_${type}_${customerId || "customer"}_${farmerId || farmName}_${productId || "farm"}`;
+    : `favorite_${type}_${customerId || "customer"}_${farmerId || farmName}_${
+        productId || "farm"
+      }`;
 
   return {
     ...row,
@@ -303,7 +272,9 @@ export default function CustomerFavorites() {
       if (!query) return true;
 
       const haystack = normalize(
-        `${getProductName(item)} ${getFarmName(item)} ${item.category || ""} ${item.unit || ""}`
+        `${getProductName(item)} ${getFarmName(item)} ${item.category || ""} ${
+          item.unit || ""
+        }`
       );
 
       return haystack.includes(query);
@@ -409,6 +380,7 @@ export default function CustomerFavorites() {
     const loaded: FavoriteItem[] = [];
 
     const localRaw = await AsyncStorage.getItem("customerFavorites");
+
     if (localRaw) {
       try {
         const parsed = JSON.parse(localRaw);
@@ -455,13 +427,13 @@ export default function CustomerFavorites() {
       }
     }
 
-    const unique = Array.from(
-      new Map(loaded.map((item) => [item.id, item])).values()
-    ).sort((a, b) => {
-      const ad = new Date(a.created_at || 0).getTime();
-      const bd = new Date(b.created_at || 0).getTime();
-      return bd - ad;
-    });
+    const unique = Array.from(new Map(loaded.map((item) => [item.id, item])).values()).sort(
+      (a, b) => {
+        const ad = new Date(a.created_at || 0).getTime();
+        const bd = new Date(b.created_at || 0).getTime();
+        return bd - ad;
+      }
+    );
 
     setFavorites(unique);
     await AsyncStorage.setItem("customerFavorites", JSON.stringify(unique));
@@ -578,8 +550,18 @@ export default function CustomerFavorites() {
 
         <View style={styles.metricsRow}>
           <MetricCard icon="heart-outline" label="Saved" value={`${metrics.total}`} tone="red" />
-          <MetricCard icon="basket-outline" label="Products" value={`${metrics.productCount}`} tone="green" />
-          <MetricCard icon="leaf-outline" label="Farmers" value={`${metrics.farmerCount}`} tone="blue" />
+          <MetricCard
+            icon="basket-outline"
+            label="Products"
+            value={`${metrics.productCount}`}
+            tone="green"
+          />
+          <MetricCard
+            icon="leaf-outline"
+            label="Farmers"
+            value={`${metrics.farmerCount}`}
+            tone="blue"
+          />
         </View>
 
         <View style={styles.searchCard}>
@@ -587,10 +569,11 @@ export default function CustomerFavorites() {
           <TextInput
             style={styles.searchInput}
             placeholder="Search favorites..."
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor="#ADB5BD"
             value={searchText}
             onChangeText={setSearchText}
           />
+
           {searchText ? (
             <Pressable onPress={() => setSearchText("")}>
               <Ionicons name="close-circle-outline" size={20} color={COLORS.muted} />
@@ -648,9 +631,16 @@ export default function CustomerFavorites() {
         {image ? (
           <Image source={{ uri: image }} style={styles.favoriteImage} />
         ) : (
-          <View style={[styles.favoritePlaceholder, isProduct ? styles.productPlaceholder : styles.farmPlaceholder]}>
+          <View
+            style={[
+              styles.favoritePlaceholder,
+              isProduct ? styles.productPlaceholder : styles.farmPlaceholder,
+            ]}
+          >
             <Text style={styles.favoriteInitial}>
-              {(isProduct ? getProductName(item) : getFarmName(item)).slice(0, 1).toUpperCase()}
+              {(isProduct ? getProductName(item) : getFarmName(item))
+                .slice(0, 1)
+                .toUpperCase()}
             </Text>
           </View>
         )}
@@ -673,7 +663,12 @@ export default function CustomerFavorites() {
                 size={13}
                 color={isProduct ? COLORS.greenDark : COLORS.blue}
               />
-              <Text style={[styles.typeBadgeText, isProduct ? styles.productBadgeText : styles.farmerBadgeText]}>
+              <Text
+                style={[
+                  styles.typeBadgeText,
+                  isProduct ? styles.productBadgeText : styles.farmerBadgeText,
+                ]}
+              >
                 {isProduct ? "Product" : "Farmer"}
               </Text>
             </View>
@@ -686,9 +681,7 @@ export default function CustomerFavorites() {
                 {item.unit ? ` / ${item.unit}` : ""}
               </Text>
 
-              {item.category ? (
-                <Text style={styles.categoryText}>{item.category}</Text>
-              ) : null}
+              {item.category ? <Text style={styles.categoryText}>{item.category}</Text> : null}
             </View>
           ) : (
             <Text style={styles.savedText}>Saved {dateLabel(item.created_at)}</Text>
@@ -714,7 +707,7 @@ export default function CustomerFavorites() {
             </Pressable>
 
             <Pressable style={styles.secondaryAction} onPress={() => removeFavorite(item)}>
-              <Ionicons name="trash-outline" size={16} color={COLORS.red} />
+              <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
             </Pressable>
           </View>
         </View>
@@ -779,7 +772,7 @@ function MetricCard({
   tone: "red" | "green" | "blue";
 }) {
   const config = {
-    red: { bg: "#FEE2E2", color: COLORS.red },
+    red: { bg: "#EEF2FF", color: COLORS.red },
     green: { bg: COLORS.greenSoft, color: COLORS.green },
     blue: { bg: COLORS.blueSoft, color: COLORS.blue },
   }[tone];
@@ -813,15 +806,22 @@ const styles = StyleSheet.create({
   listContent: {
     paddingBottom: 70,
   },
+
   hero: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.red,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 28,
+
+    shadowColor: COLORS.red,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
   },
   backButton: {
     alignSelf: "flex-start",
-    backgroundColor: COLORS.red,
+    backgroundColor: "rgba(255,255,255,0.18)",
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
@@ -838,13 +838,13 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 24,
-    backgroundColor: COLORS.red,
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   kicker: {
-    color: "#FCA5A5",
+    color: "#DDE3FF",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1,
@@ -857,11 +857,12 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   heroText: {
-    color: "#CBD5E1",
+    color: "#EEF2FF",
     fontWeight: "700",
     lineHeight: 22,
     marginTop: 8,
   },
+
   metricsRow: {
     flexDirection: Platform.OS === "web" ? "row" : "column",
     gap: 10,
@@ -875,6 +876,12 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: 20,
     padding: 14,
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   metricIcon: {
     width: 38,
@@ -895,6 +902,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 2,
   },
+
   searchCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -907,6 +915,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
@@ -914,6 +928,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontWeight: "800",
   },
+
   filterRow: {
     gap: 8,
     paddingHorizontal: 18,
@@ -939,6 +954,7 @@ const styles = StyleSheet.create({
   filterTextActive: {
     color: COLORS.white,
   },
+
   sectionHeader: {
     paddingHorizontal: 18,
     paddingTop: 14,
@@ -959,18 +975,21 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   shopButton: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 999,
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   shopButtonText: {
     color: COLORS.red,
     fontWeight: "900",
   },
+
   favoriteCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -981,6 +1000,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     flexDirection: "row",
     gap: 12,
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   favoriteImage: {
     width: 88,
@@ -1049,6 +1074,7 @@ const styles = StyleSheet.create({
   farmerBadgeText: {
     color: COLORS.blue,
   },
+
   productMetaRow: {
     flexDirection: "row",
     gap: 8,
@@ -1076,6 +1102,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 6,
   },
+
   actionRow: {
     flexDirection: "row",
     gap: 8,
@@ -1099,10 +1126,11 @@ const styles = StyleSheet.create({
   secondaryAction: {
     width: 44,
     borderRadius: 15,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.dangerSoft,
     alignItems: "center",
     justifyContent: "center",
   },
+
   emptyCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1112,12 +1140,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginTop: 14,
     alignItems: "center",
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   emptyIcon: {
     width: 68,
     height: 68,
     borderRadius: 24,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,

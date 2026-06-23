@@ -17,16 +17,34 @@ import { router, useLocalSearchParams } from "expo-router";
 import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
-  bg: "#F8FAF5",
+  bg: "#F8F8FB",
   card: "#FFFFFF",
-  text: "#172017",
-  muted: "#64748B",
-  border: "#E3E8DD",
-  primary: "#2E7D32",
-  primaryDark: "#14532D",
-  soft: "#EEF5EA",
-  dark: "#111827",
-  blue: "#2563EB",
+  surface: "#FFFFFF",
+
+  text: "#495057",
+  muted: "#74788D",
+  border: "#EFF2F7",
+
+  primary: "#556EE6",
+  primaryDark: "#485EC4",
+  soft: "#EEF2FF",
+
+  dark: "#2A3042",
+
+  blue: "#50A5F1",
+  blueSoft: "#EAF5FE",
+
+  green: "#34C38F",
+  greenDark: "#2CA67A",
+  greenSoft: "#E8FBF3",
+
+  amber: "#F1B44C",
+  amberSoft: "#FFF6E5",
+
+  danger: "#F46A6A",
+  dangerSoft: "#FFECEC",
+
+  white: "#FFFFFF",
 };
 
 type DriverLocation = {
@@ -185,8 +203,11 @@ function getStepIndex(status?: string) {
 
 function formatDate(value?: string) {
   if (!value) return "No update yet";
+
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return "No update yet";
+
   return date.toLocaleString();
 }
 
@@ -442,8 +463,8 @@ export default function CustomerOrderTracking() {
         conversationId: delivery?.id
           ? `delivery_${delivery.id}`
           : orderId
-          ? `order_${orderId}`
-          : "support",
+            ? `order_${orderId}`
+            : "support",
         orderId: delivery?.order_id || orderId,
         deliveryOrderId: delivery?.id || deliveryOrderId,
         driverId: delivery?.driver_id || driverLocation?.driver_id || "",
@@ -467,10 +488,7 @@ export default function CustomerOrderTracking() {
 
   return (
     <View style={styles.page}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
           <Pressable
             style={styles.backButton}
@@ -526,8 +544,8 @@ export default function CustomerOrderTracking() {
                   driverLocation?.updated_at
                     ? formatDate(driverLocation.updated_at)
                     : delivery?.updated_at
-                    ? formatDate(delivery.updated_at)
-                    : "No update yet"
+                      ? formatDate(delivery.updated_at)
+                      : "No update yet"
                 }
               />
             </>
@@ -657,8 +675,14 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 16, paddingBottom: 44 },
+  page: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 44,
+  },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -666,22 +690,32 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   backText: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: "900",
     color: COLORS.text,
     marginTop: -4,
   },
-  title: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
+  title: {
+    color: COLORS.text,
+    fontSize: 25,
+    fontWeight: "900",
+  },
   subtitle: {
     color: COLORS.muted,
     fontSize: 12,
@@ -689,37 +723,53 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   statusCard: {
-    backgroundColor: COLORS.primaryDark,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
+    backgroundColor: COLORS.primary,
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 14,
+
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
   },
-  statusHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  statusHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
   label: {
-    color: "#BBF7D0",
+    color: "#DDE3FF",
     fontSize: 12,
     fontWeight: "900",
     marginBottom: 5,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
   statusTitle: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontSize: 24,
     fontWeight: "900",
   },
   statusSub: {
-    color: "#DCFCE7",
+    color: "#EEF2FF",
     fontWeight: "800",
     marginTop: 5,
   },
   progressCircle: {
-    width: 62,
-    height: 62,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.16)",
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
-  progressText: { color: "#FFFFFF", fontWeight: "900", fontSize: 17 },
+  progressText: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 17,
+  },
   progressTrack: {
     height: 10,
     backgroundColor: "rgba(255,255,255,0.25)",
@@ -729,15 +779,21 @@ const styles = StyleSheet.create({
   },
   progressFill: {
     height: "100%",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.white,
   },
   card: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 14,
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   cardTitle: {
     color: COLORS.text,
@@ -758,7 +814,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.soft,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     marginBottom: 8,
   },
@@ -767,6 +823,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
     marginBottom: 4,
+    textTransform: "uppercase",
   },
   infoValue: {
     color: COLORS.text,
@@ -777,7 +834,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.soft,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
     marginBottom: 10,
   },
@@ -787,7 +844,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   locationText: {
-    color: COLORS.primaryDark,
+    color: COLORS.primary,
     fontWeight: "900",
     marginTop: 6,
   },
@@ -799,32 +856,41 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: COLORS.primary,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 13,
     alignItems: "center",
     marginBottom: 8,
   },
-  primaryButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  primaryButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
   secondaryButton: {
     backgroundColor: COLORS.blue,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 13,
     alignItems: "center",
     marginBottom: 8,
   },
-  secondaryButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  secondaryButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
   darkButton: {
     backgroundColor: COLORS.dark,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 13,
     alignItems: "center",
   },
-  darkButtonText: { color: "#FFFFFF", fontWeight: "900" },
+  darkButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
   proofButton: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 13,
     alignItems: "center",
     marginBottom: 8,
@@ -856,7 +922,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.blue,
   },
   timelineDotText: {
-    color: "#FFFFFF",
+    color: COLORS.white,
     fontWeight: "900",
     fontSize: 12,
   },
@@ -896,7 +962,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.primary,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 13,
     alignItems: "center",
   },

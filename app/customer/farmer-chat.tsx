@@ -24,66 +24,33 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-/**
- * app/customer/farmer-chat.tsx
- *
- * Customer <-> Farmer chat.
- *
- * Supports:
- * - Order-specific conversations
- * - Farm-specific conversations
- * - Supabase realtime
- * - Message timestamps
- * - Read receipts fields
- * - Quick replies
- * - Multiple farmer conversations per order
- *
- * Tables attempted:
- * - customer_farmer_messages
- * - farm_messages
- * - messages
- * - chat_messages
- *
- * Required minimum columns if creating a dedicated table:
- *
- * customer_farmer_messages:
- * id text primary key
- * conversation_id text
- * order_id text
- * customer_id text
- * customer_name text
- * farmer_id text
- * farm_name text
- * sender_id text
- * sender_role text
- * sender_name text
- * receiver_id text
- * receiver_role text
- * message text
- * image_url text
- * read_by_customer boolean
- * read_by_farmer boolean
- * created_at timestamptz
- * updated_at timestamptz
- */
-
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F8F8FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
-  blue: "#2563EB",
-  blueSoft: "#DBEAFE",
+  surface: "#FFFFFF",
+
+  black: "#2A3042",
+
+  red: "#556EE6",
+  redDark: "#485EC4",
+
+  text: "#495057",
+  muted: "#74788D",
+  border: "#EFF2F7",
+
+  green: "#34C38F",
+  greenDark: "#2CA67A",
+  greenSoft: "#E8FBF3",
+
+  amber: "#F1B44C",
+  amberSoft: "#FFF6E5",
+
+  blue: "#50A5F1",
+  blueSoft: "#EAF5FE",
+
+  danger: "#F46A6A",
+  dangerSoft: "#FFECEC",
+
   white: "#FFFFFF",
 };
 
@@ -180,12 +147,14 @@ function buildConversationId(orderId: string, customerId: string, farmerId: stri
   return `customer_farmer_${safeOrder}_${safeCustomer}_${safeFarmer}`;
 }
 
-function getOrderId(row: any) {
-  return clean(row?.id || row?.order_id || row?.orderId);
-}
-
 function getFarmName(item: any) {
-  return clean(item?.farm_name || item?.farmName || item?.farmerName || item?.farmName || "Farm2Home Farm");
+  return clean(
+    item?.farm_name ||
+      item?.farmName ||
+      item?.farmerName ||
+      item?.farmer_name ||
+      "Farm2Home Farm"
+  );
 }
 
 function getFarmerId(item: any) {
@@ -222,6 +191,7 @@ export default function CustomerFarmerChat() {
   useFocusEffect(
     useCallback(() => {
       loadScreen();
+
       return () => {
         if (channelRef.current) {
           supabase.removeChannel(channelRef.current);
@@ -248,8 +218,10 @@ export default function CustomerFarmerChat() {
   async function loadScreen() {
     try {
       setLoading(true);
+
       const activeCustomer = await loadCustomer();
       const nextConversations = await loadConversations(activeCustomer);
+
       setConversations(nextConversations);
 
       const preferred =
@@ -381,7 +353,10 @@ export default function CustomerFarmerChat() {
         ];
   }
 
-  async function loadFarmConversationsFromOrder(orderId: string, activeCustomer: CustomerSession | null) {
+  async function loadFarmConversationsFromOrder(
+    orderId: string,
+    activeCustomer: CustomerSession | null
+  ) {
     const found: FarmConversation[] = [];
     const customerIdValue = getCustomerId(activeCustomer);
 
@@ -390,6 +365,7 @@ export default function CustomerFarmerChat() {
 
     const items = await fetchOrderItems(orderId);
     const rawItems = items.length ? items : Array.isArray(order.items) ? order.items : [];
+
     const payoutSplits = Array.isArray(order.payout_splits)
       ? order.payout_splits
       : Array.isArray(order.payoutSplits)
@@ -448,7 +424,7 @@ export default function CustomerFarmerChat() {
 
         if (!error && data) return data;
       } catch {
-        // try next
+        // Try next table.
       }
     }
 
@@ -468,14 +444,17 @@ export default function CustomerFarmerChat() {
 
         if (!error && Array.isArray(data) && data.length > 0) return data;
       } catch {
-        // try next
+        // Try next table.
       }
     }
 
     return [];
   }
 
-  async function loadExistingConversationsFromMessages(customerIdValue: string, customerNameValue: string) {
+  async function loadExistingConversationsFromMessages(
+    customerIdValue: string,
+    customerNameValue: string
+  ) {
     const tables = ["customer_farmer_messages", "farm_messages", "messages", "chat_messages"];
     const found: FarmConversation[] = [];
 
@@ -493,6 +472,7 @@ export default function CustomerFarmerChat() {
             const farmerId = clean(row.farmer_id || row.farmerId);
             const farmName = clean(row.farm_name || row.farmName || "Farm2Home Farm");
             const orderId = clean(row.order_id || row.orderId || "general");
+
             const conversationId =
               clean(row.conversation_id || row.conversationId) ||
               buildConversationId(orderId, customerIdValue, farmerId, farmName);
@@ -512,7 +492,7 @@ export default function CustomerFarmerChat() {
           break;
         }
       } catch {
-        // try next
+        // Try next table.
       }
     }
 
@@ -540,7 +520,7 @@ export default function CustomerFarmerChat() {
         setMessages(rows.map(normalizeMessage));
         return;
       } catch {
-        // try next
+        // Try next table.
       }
     }
 
@@ -589,6 +569,7 @@ export default function CustomerFarmerChat() {
         },
         (payload) => {
           const incoming = normalizeMessage(payload.new);
+
           setMessages((prev) => {
             if (prev.some((item) => item.id === incoming.id)) return prev;
             return [...prev, incoming];
@@ -690,7 +671,7 @@ export default function CustomerFarmerChat() {
           .eq("conversation_id", conversationId)
           .eq("receiver_role", "customer");
       } catch {
-        // skip
+        // Skip missing table/column.
       }
     }
   }
@@ -733,11 +714,16 @@ export default function CustomerFarmerChat() {
           <Text style={styles.kicker}>Customer ↔ Farmer</Text>
           <Text style={styles.heroTitle}>Farmer Chat</Text>
           <Text style={styles.heroText}>
-            Ask about products, harvest dates, substitutions, pickup, delivery, and custom farm orders.
+            Ask about products, harvest dates, substitutions, pickup, delivery, and custom farm
+            orders.
           </Text>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.conversationRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.conversationRow}
+        >
           {conversations.map((conversation) => {
             const active = conversation.conversationId === selectedConversation?.conversationId;
 
@@ -748,15 +734,28 @@ export default function CustomerFarmerChat() {
                 onPress={() => setSelectedConversation(conversation)}
               >
                 <View style={[styles.conversationAvatar, active && styles.conversationAvatarActive]}>
-                  <Text style={[styles.conversationAvatarText, active && styles.conversationAvatarTextActive]}>
+                  <Text
+                    style={[
+                      styles.conversationAvatarText,
+                      active && styles.conversationAvatarTextActive,
+                    ]}
+                  >
                     {conversation.farmName.slice(0, 1).toUpperCase()}
                   </Text>
                 </View>
+
                 <View style={{ maxWidth: 180 }}>
-                  <Text style={[styles.conversationName, active && styles.conversationNameActive]} numberOfLines={1}>
+                  <Text
+                    style={[styles.conversationName, active && styles.conversationNameActive]}
+                    numberOfLines={1}
+                  >
                     {conversation.farmName}
                   </Text>
-                  <Text style={[styles.conversationMeta, active && styles.conversationMetaActive]} numberOfLines={1}>
+
+                  <Text
+                    style={[styles.conversationMeta, active && styles.conversationMetaActive]}
+                    numberOfLines={1}
+                  >
                     {conversation.orderId && conversation.orderId !== "general"
                       ? `Order #${conversation.orderId.slice(-8).toUpperCase()}`
                       : "General chat"}
@@ -801,7 +800,11 @@ export default function CustomerFarmerChat() {
           </Pressable>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickReplyRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.quickReplyRow}
+        >
           {QUICK_REPLIES.map((reply) => (
             <Pressable key={reply} style={styles.quickReply} onPress={() => sendMessage(reply)}>
               <Text style={styles.quickReplyText}>{reply}</Text>
@@ -822,9 +825,7 @@ export default function CustomerFarmerChat() {
             {mine ? "You" : item.sender_name || selectedConversation?.farmName || "Farmer"}
           </Text>
 
-          {item.image_url ? (
-            <Image source={{ uri: item.image_url }} style={styles.messageImage} />
-          ) : null}
+          {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.messageImage} /> : null}
 
           {item.message ? (
             <Text style={[styles.messageText, mine ? styles.myMessageText : styles.theirMessageText]}>
@@ -838,9 +839,7 @@ export default function CustomerFarmerChat() {
             </Text>
 
             {mine ? (
-              <Text style={styles.readReceipt}>
-                {item.read_by_farmer ? "Read" : "Sent"}
-              </Text>
+              <Text style={styles.readReceipt}>{item.read_by_farmer ? "Read" : "Sent"}</Text>
             ) : null}
           </View>
         </View>
@@ -884,7 +883,8 @@ export default function CustomerFarmerChat() {
               </View>
               <Text style={styles.emptyTitle}>Start the conversation</Text>
               <Text style={styles.emptyText}>
-                Send a message to coordinate product availability, pickup, delivery, or substitutions.
+                Send a message to coordinate product availability, pickup, delivery, or
+                substitutions.
               </Text>
             </View>
           }
@@ -894,7 +894,9 @@ export default function CustomerFarmerChat() {
           {imageUrl ? (
             <View style={styles.imageUrlPreview}>
               <Ionicons name="image-outline" size={16} color={COLORS.red} />
-              <Text style={styles.imageUrlText} numberOfLines={1}>{imageUrl}</Text>
+              <Text style={styles.imageUrlText} numberOfLines={1}>
+                {imageUrl}
+              </Text>
               <Pressable onPress={() => setImageUrl("")}>
                 <Ionicons name="close-circle-outline" size={18} color={COLORS.muted} />
               </Pressable>
@@ -907,7 +909,10 @@ export default function CustomerFarmerChat() {
               onPress={() =>
                 Alert.prompt
                   ? Alert.prompt("Image URL", "Paste an image URL to attach.", setImageUrl)
-                  : Alert.alert("Attach Photo", "Paste an image URL into the hidden photo field feature on web/mobile.")
+                  : Alert.alert(
+                      "Attach Photo",
+                      "Paste an image URL into the hidden photo field feature on web/mobile."
+                    )
               }
             >
               <Ionicons name="image-outline" size={20} color={COLORS.red} />
@@ -916,7 +921,7 @@ export default function CustomerFarmerChat() {
             <TextInput
               style={styles.messageInput}
               placeholder="Message farmer..."
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               value={messageText}
               onChangeText={setMessageText}
               multiline
@@ -954,15 +959,22 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
   centerText: { color: COLORS.muted, fontWeight: "800" },
   listContent: { paddingBottom: 12 },
+
   hero: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.red,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 28,
+
+    shadowColor: COLORS.red,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
   },
   backButton: {
     alignSelf: "flex-start",
-    backgroundColor: COLORS.red,
+    backgroundColor: "rgba(255,255,255,0.18)",
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
@@ -976,20 +988,21 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 24,
-    backgroundColor: COLORS.red,
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   kicker: {
-    color: "#FCA5A5",
+    color: "#DDE3FF",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1,
     textTransform: "uppercase",
   },
   heroTitle: { color: COLORS.white, fontSize: 34, fontWeight: "900", marginTop: 6 },
-  heroText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 22, marginTop: 8 },
+  heroText: { color: "#EEF2FF", fontWeight: "700", lineHeight: 22, marginTop: 8 },
+
   conversationRow: { gap: 10, paddingHorizontal: 18, paddingVertical: 14 },
   conversationChip: {
     backgroundColor: COLORS.card,
@@ -1000,23 +1013,30 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     alignItems: "center",
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   conversationChipActive: { backgroundColor: COLORS.red, borderColor: COLORS.red },
   conversationAvatar: {
     width: 42,
     height: 42,
     borderRadius: 16,
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
   },
   conversationAvatarActive: { backgroundColor: "rgba(255,255,255,0.18)" },
-  conversationAvatarText: { color: COLORS.greenDark, fontWeight: "900", fontSize: 18 },
+  conversationAvatarText: { color: COLORS.red, fontWeight: "900", fontSize: 18 },
   conversationAvatarTextActive: { color: COLORS.white },
   conversationName: { color: COLORS.text, fontWeight: "900" },
   conversationNameActive: { color: COLORS.white },
   conversationMeta: { color: COLORS.muted, fontWeight: "700", fontSize: 12, marginTop: 3 },
-  conversationMetaActive: { color: "#FFE4E6" },
+  conversationMetaActive: { color: "#EEF2FF" },
+
   farmInfoCard: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1028,18 +1048,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   farmBigAvatar: {
     width: 58,
     height: 58,
     borderRadius: 21,
-    backgroundColor: COLORS.black,
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
   },
-  farmBigAvatarText: { color: COLORS.white, fontWeight: "900", fontSize: 24 },
+  farmBigAvatarText: { color: COLORS.red, fontWeight: "900", fontSize: 24 },
   farmTitle: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
   farmSubtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
+
   quickActions: {
     flexDirection: "row",
     gap: 10,
@@ -1048,15 +1075,18 @@ const styles = StyleSheet.create({
   },
   quickActionButton: {
     flex: 1,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     borderRadius: 16,
     padding: 13,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 7,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   quickActionText: { color: COLORS.red, fontWeight: "900" },
+
   quickReplyRow: { gap: 8, paddingHorizontal: 18, paddingBottom: 10 },
   quickReply: {
     backgroundColor: COLORS.card,
@@ -1067,6 +1097,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   quickReplyText: { color: COLORS.red, fontWeight: "900", fontSize: 12 },
+
   messageRow: { paddingHorizontal: 18, marginVertical: 5 },
   myMessageRow: { alignItems: "flex-end" },
   theirMessageRow: { alignItems: "flex-start" },
@@ -1083,7 +1114,7 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 5,
   },
   senderLabel: { fontWeight: "900", fontSize: 11, marginBottom: 5 },
-  mySenderLabel: { color: "#FFE4E6" },
+  mySenderLabel: { color: "#EEF2FF" },
   theirSenderLabel: { color: COLORS.muted },
   messageText: { fontWeight: "700", lineHeight: 21 },
   myMessageText: { color: COLORS.white },
@@ -1097,9 +1128,10 @@ const styles = StyleSheet.create({
   },
   messageFooter: { flexDirection: "row", gap: 8, marginTop: 7, justifyContent: "flex-end" },
   messageTime: { fontSize: 10, fontWeight: "800" },
-  myMessageTime: { color: "#FFE4E6" },
+  myMessageTime: { color: "#EEF2FF" },
   theirMessageTime: { color: COLORS.muted },
-  readReceipt: { color: "#FFE4E6", fontSize: 10, fontWeight: "900" },
+  readReceipt: { color: "#EEF2FF", fontSize: 10, fontWeight: "900" },
+
   emptyCard: {
     marginHorizontal: 18,
     marginTop: 20,
@@ -1109,18 +1141,31 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 24,
     alignItems: "center",
+
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
   emptyIcon: {
     width: 68,
     height: 68,
     borderRadius: 24,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   emptyTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
-  emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", lineHeight: 22, marginTop: 8 },
+  emptyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+
   composerWrap: {
     backgroundColor: COLORS.card,
     borderTopWidth: 1,
@@ -1130,7 +1175,7 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === "ios" ? 24 : 12,
   },
   imageUrlPreview: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     borderRadius: 14,
     padding: 10,
     flexDirection: "row",
@@ -1144,7 +1189,7 @@ const styles = StyleSheet.create({
     width: 43,
     height: 43,
     borderRadius: 16,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#EEF2FF",
     alignItems: "center",
     justifyContent: "center",
   },

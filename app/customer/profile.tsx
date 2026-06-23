@@ -54,24 +54,40 @@ import { supabase } from "../data/supabaseClient";
  */
 
 const COLORS = {
-  bg: "#F4F5F7",
+  // Fina Admin Dashboard color scheme
+  // Keeping the old Grocerly property names so existing UI/schema does not break.
+  bg: "#F8F8FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
-  blue: "#2563EB",
-  blueSoft: "#DBEAFE",
-  danger: "#DC2626",
-  dangerSoft: "#FEE2E2",
+  surface: "#FFFFFF",
+  black: "#2A3042",
+
+  // Old red is now Fina primary indigo
+  red: "#556EE6",
+  redDark: "#485EC4",
+  primaryLight: "#EEF2FF",
+
+  // Fina success
+  green: "#34C38F",
+  greenDark: "#2CA67A",
+  greenSoft: "#E8FBF3",
+
+  // Fina warning
+  amber: "#F1B44C",
+  amberSoft: "#FFF6E5",
+
+  // Fina info
+  blue: "#50A5F1",
+  blueSoft: "#EAF5FE",
+
+  // Fina danger
+  danger: "#F46A6A",
+  dangerSoft: "#FFECEC",
+
+  // Fina typography/borders
+  text: "#495057",
+  muted: "#74788D",
+  border: "#EFF2F7",
+
   white: "#FFFFFF",
 };
 
@@ -1079,7 +1095,7 @@ export default function CustomerProfile() {
               value={fullName}
               onChangeText={setFullName}
               placeholder="Full name"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
             />
 
             <Label text="Username" />
@@ -1088,7 +1104,7 @@ export default function CustomerProfile() {
               value={username}
               onChangeText={setUsername}
               placeholder="Username"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               autoCapitalize="none"
             />
 
@@ -1098,7 +1114,7 @@ export default function CustomerProfile() {
               value={email}
               onChangeText={setEmail}
               placeholder="Email"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               autoCapitalize="none"
               keyboardType="email-address"
             />
@@ -1109,7 +1125,7 @@ export default function CustomerProfile() {
               value={phone}
               onChangeText={setPhone}
               placeholder="Phone"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               keyboardType="phone-pad"
             />
           </View>
@@ -1141,7 +1157,7 @@ export default function CustomerProfile() {
               value={deliveryAddress}
               onChangeText={setDeliveryAddress}
               placeholder="Delivery address"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
             />
 
             <View style={styles.inputRow}>
@@ -1152,7 +1168,7 @@ export default function CustomerProfile() {
                   value={deliveryCity}
                   onChangeText={setDeliveryCity}
                   placeholder="City"
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor="#ADB5BD"
                 />
               </View>
 
@@ -1163,7 +1179,7 @@ export default function CustomerProfile() {
                   value={deliveryState}
                   onChangeText={setDeliveryState}
                   placeholder="MI"
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor="#ADB5BD"
                   autoCapitalize="characters"
                 />
               </View>
@@ -1175,7 +1191,7 @@ export default function CustomerProfile() {
               value={deliveryZip}
               onChangeText={setDeliveryZip}
               placeholder="Zip code"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               keyboardType="numeric"
             />
 
@@ -1185,7 +1201,7 @@ export default function CustomerProfile() {
               value={deliveryInstructions}
               onChangeText={setDeliveryInstructions}
               placeholder="Gate code, porch notes, apartment number, preferred drop-off..."
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               multiline
             />
 
@@ -1212,7 +1228,7 @@ export default function CustomerProfile() {
             <TextInput
               style={styles.input}
               placeholder="New password"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               value={newPassword}
               onChangeText={setNewPassword}
               secureTextEntry
@@ -1221,7 +1237,7 @@ export default function CustomerProfile() {
             <TextInput
               style={styles.input}
               placeholder="Confirm new password"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#ADB5BD"
               value={confirmNewPassword}
               onChangeText={setConfirmNewPassword}
               secureTextEntry
@@ -1387,14 +1403,14 @@ const styles = StyleSheet.create({
   },
   heroInitial: { color: COLORS.white, fontWeight: "900", fontSize: 32 },
   kicker: {
-    color: "#FCA5A5",
+    color: "#DDE4FF",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1,
     textTransform: "uppercase",
   },
   heroTitle: { color: COLORS.white, fontSize: 34, fontWeight: "900", marginTop: 6 },
-  heroText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 22, marginTop: 6 },
+  heroText: { color: "#EFF2F7", fontWeight: "700", lineHeight: 22, marginTop: 6 },
   statusPill: {
     alignSelf: "flex-start",
     marginTop: 12,
@@ -1406,7 +1422,7 @@ const styles = StyleSheet.create({
   pendingPill: { backgroundColor: COLORS.amberSoft },
   statusPillText: { fontWeight: "900", textTransform: "capitalize" },
   activeText: { color: COLORS.greenDark },
-  pendingText: { color: "#92400E" },
+  pendingText: { color: "#B7791F" },
   metricsRow: {
     flexDirection: "row",
     gap: 10,
@@ -1524,7 +1540,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   secondaryButton: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primaryLight,
     padding: 15,
     borderRadius: 16,
     alignItems: "center",
@@ -1588,7 +1604,7 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 16,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primaryLight,
     justifyContent: "center",
     alignItems: "center",
   },
