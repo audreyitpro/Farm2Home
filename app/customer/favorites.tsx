@@ -25,36 +25,29 @@ import { Ionicons } from "@expo/vector-icons";
 import { addToCart } from "../data/cartStore";
 import { supabase } from "../data/supabaseClient";
 
+const FAVORITES_TABLE = "customer_favorites";
+
 const COLORS = {
   bg: "#F8F8FB",
   card: "#FFFFFF",
   surface: "#FFFFFF",
-
   black: "#2A3042",
-
   red: "#556EE6",
   redDark: "#485EC4",
-
   text: "#495057",
   muted: "#74788D",
   border: "#EFF2F7",
-
   green: "#34C38F",
   greenDark: "#2CA67A",
   greenSoft: "#E8FBF3",
-
   amber: "#F1B44C",
   amberSoft: "#FFF6E5",
-
   blue: "#50A5F1",
   blueSoft: "#EAF5FE",
-
   purple: "#556EE6",
   purpleSoft: "#EEF2FF",
-
   danger: "#F46A6A",
   dangerSoft: "#FFECEC",
-
   white: "#FFFFFF",
 };
 
@@ -74,7 +67,9 @@ type FavoriteItem = {
   customerId?: string;
   customer_email?: string;
   customerEmail?: string;
+  customer_name?: string;
   type: "product" | "farmer" | string;
+  item_type?: string;
   farmer_id?: string;
   farmerId?: string;
   farm_name?: string;
@@ -87,6 +82,7 @@ type FavoriteItem = {
   productName?: string;
   product_image?: string;
   productImage?: string;
+  image_url?: string;
   image?: string;
   imageUrl?: string;
   price?: number;
@@ -140,7 +136,7 @@ function dateLabel(value: any) {
 }
 
 function getFavoriteType(item: any) {
-  const type = normalize(item.type || item.favorite_type || item.favoriteType);
+  const type = normalize(item.type || item.item_type || item.favorite_type || item.favoriteType);
   if (type.includes("farmer") || type.includes("farm")) return "farmer";
   return "product";
 }
@@ -209,7 +205,9 @@ function normalizeFavorite(row: any, customer: CustomerSession | null = null): F
     customerId,
     customer_email: clean(row.customer_email || row.customerEmail || customer?.email),
     customerEmail: clean(row.customer_email || row.customerEmail || customer?.email),
+    customer_name: clean(row.customer_name || row.customerName || getCustomerName(customer)),
     type,
+    item_type: type,
     farmer_id: farmerId,
     farmerId,
     farm_name: farmName,
@@ -222,6 +220,7 @@ function normalizeFavorite(row: any, customer: CustomerSession | null = null): F
     productName: getProductName(row),
     product_image: getImage(row),
     productImage: getImage(row),
+    image_url: getImage(row),
     image: getImage(row),
     imageUrl: getImage(row),
     price: Number(row.price || row.unit_price || 0),
@@ -377,10 +376,10 @@ export default function CustomerFavorites() {
   async function loadFavorites(activeCustomer: CustomerSession | null) {
     const customerId = getCustomerId(activeCustomer);
     const customerEmail = normalize(activeCustomer?.email);
+
     const loaded: FavoriteItem[] = [];
 
     const localRaw = await AsyncStorage.getItem("customerFavorites");
-
     if (localRaw) {
       try {
         const parsed = JSON.parse(localRaw);
@@ -392,39 +391,33 @@ export default function CustomerFavorites() {
       }
     }
 
-    const tables = ["customer_favorites", "favorites", "customer_saved_items"];
+    try {
+      let query = supabase
+        .from(FAVORITES_TABLE)
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(200);
 
-    for (const table of tables) {
-      try {
-        let query = supabase
-          .from(table)
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(200);
-
-        if (customerId && customerEmail) {
-          query = query.or(
-            `customer_id.eq.${customerId},customerId.eq.${customerId},customer_email.eq.${customerEmail},customerEmail.eq.${customerEmail},email.eq.${customerEmail}`
-          );
-        } else if (customerId) {
-          query = query.or(`customer_id.eq.${customerId},customerId.eq.${customerId}`);
-        } else if (customerEmail) {
-          query = query.or(
-            `customer_email.eq.${customerEmail},customerEmail.eq.${customerEmail},email.eq.${customerEmail}`
-          );
-        } else {
-          continue;
-        }
-
-        const { data, error } = await query;
-
-        if (!error && Array.isArray(data)) {
-          loaded.push(...data.map((row) => normalizeFavorite(row, activeCustomer)));
-          break;
-        }
-      } catch {
-        // Try next table.
+      if (customerId && customerEmail) {
+        query = query.or(`customer_id.eq.${customerId},customer_email.eq.${customerEmail}`);
+      } else if (customerId) {
+        query = query.eq("customer_id", customerId);
+      } else if (customerEmail) {
+        query = query.eq("customer_email", customerEmail);
+      } else {
+        setFavorites([]);
+        return;
       }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      if (Array.isArray(data)) {
+        loaded.push(...data.map((row) => normalizeFavorite(row, activeCustomer)));
+      }
+    } catch (error: any) {
+      console.log("Load customer_favorites error:", error?.message || error);
     }
 
     const unique = Array.from(new Map(loaded.map((item) => [item.id, item])).values()).sort(
@@ -454,14 +447,10 @@ export default function CustomerFavorites() {
           const next = favorites.filter((fav) => fav.id !== item.id);
           await saveFavoritesLocal(next);
 
-          const tables = ["customer_favorites", "favorites", "customer_saved_items"];
-
-          for (const table of tables) {
-            try {
-              await supabase.from(table).delete().eq("id", item.id);
-            } catch {
-              // Skip missing table.
-            }
+          try {
+            await supabase.from(FAVORITES_TABLE).delete().eq("id", item.id);
+          } catch (error: any) {
+            console.log("Remove customer_favorites error:", error?.message || error);
           }
         },
       },
@@ -638,9 +627,7 @@ export default function CustomerFavorites() {
             ]}
           >
             <Text style={styles.favoriteInitial}>
-              {(isProduct ? getProductName(item) : getFarmName(item))
-                .slice(0, 1)
-                .toUpperCase()}
+              {(isProduct ? getProductName(item) : getFarmName(item)).slice(0, 1).toUpperCase()}
             </Text>
           </View>
         )}
@@ -789,30 +776,16 @@ function MetricCard({
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 12,
-  },
-  centerText: {
-    color: COLORS.muted,
-    fontWeight: "800",
-  },
-  listContent: {
-    paddingBottom: 70,
-  },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  center: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
+  centerText: { color: COLORS.muted, fontWeight: "800" },
+  listContent: { paddingBottom: 70 },
 
   hero: {
     backgroundColor: COLORS.red,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 28,
-
     shadowColor: COLORS.red,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.18,
@@ -830,10 +803,7 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 18,
   },
-  backButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
+  backButtonText: { color: COLORS.white, fontWeight: "900" },
   heroIcon: {
     width: 64,
     height: 64,
@@ -876,7 +846,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: 20,
     padding: 14,
-
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
@@ -891,17 +860,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 8,
   },
-  metricValue: {
-    color: COLORS.text,
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  metricLabel: {
-    color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: "900",
-    marginTop: 2,
-  },
+  metricValue: { color: COLORS.text, fontSize: 22, fontWeight: "900" },
+  metricLabel: { color: COLORS.muted, fontSize: 12, fontWeight: "900", marginTop: 2 },
 
   searchCard: {
     backgroundColor: COLORS.card,
@@ -915,19 +875,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
     shadowRadius: 6,
     elevation: 2,
   },
-  searchInput: {
-    flex: 1,
-    minHeight: 44,
-    color: COLORS.text,
-    fontWeight: "800",
-  },
+  searchInput: { flex: 1, minHeight: 44, color: COLORS.text, fontWeight: "800" },
 
   filterRow: {
     gap: 8,
@@ -943,17 +897,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
-  filterChipActive: {
-    backgroundColor: COLORS.red,
-    borderColor: COLORS.red,
-  },
-  filterText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
-  filterTextActive: {
-    color: COLORS.white,
-  },
+  filterChipActive: { backgroundColor: COLORS.red, borderColor: COLORS.red },
+  filterText: { color: COLORS.red, fontWeight: "900" },
+  filterTextActive: { color: COLORS.white },
 
   sectionHeader: {
     paddingHorizontal: 18,
@@ -964,16 +910,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
   },
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  sectionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900" },
+  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
   shopButton: {
     backgroundColor: "#EEF2FF",
     paddingHorizontal: 12,
@@ -985,10 +923,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  shopButtonText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
+  shopButtonText: { color: COLORS.red, fontWeight: "900" },
 
   favoriteCard: {
     backgroundColor: COLORS.card,
@@ -1000,7 +935,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     flexDirection: "row",
     gap: 12,
-
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.06,
@@ -1020,36 +954,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  productPlaceholder: {
-    backgroundColor: COLORS.greenSoft,
-  },
-  farmPlaceholder: {
-    backgroundColor: COLORS.blueSoft,
-  },
-  favoriteInitial: {
-    color: COLORS.black,
-    fontWeight: "900",
-    fontSize: 30,
-  },
-  favoriteContent: {
-    flex: 1,
-  },
-  favoriteTopRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-  },
+  productPlaceholder: { backgroundColor: COLORS.greenSoft },
+  farmPlaceholder: { backgroundColor: COLORS.blueSoft },
+  favoriteInitial: { color: COLORS.black, fontWeight: "900", fontSize: 30 },
+  favoriteContent: { flex: 1 },
+  favoriteTopRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   favoriteTitle: {
     color: COLORS.text,
     fontWeight: "900",
     fontSize: 17,
     lineHeight: 21,
   },
-  favoriteSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
+  favoriteSubtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   typeBadge: {
     borderRadius: 999,
     paddingHorizontal: 8,
@@ -1058,22 +974,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
   },
-  productBadge: {
-    backgroundColor: COLORS.greenSoft,
-  },
-  farmerBadge: {
-    backgroundColor: COLORS.blueSoft,
-  },
-  typeBadgeText: {
-    fontWeight: "900",
-    fontSize: 10,
-  },
-  productBadgeText: {
-    color: COLORS.greenDark,
-  },
-  farmerBadgeText: {
-    color: COLORS.blue,
-  },
+  productBadge: { backgroundColor: COLORS.greenSoft },
+  farmerBadge: { backgroundColor: COLORS.blueSoft },
+  typeBadgeText: { fontWeight: "900", fontSize: 10 },
+  productBadgeText: { color: COLORS.greenDark },
+  farmerBadgeText: { color: COLORS.blue },
 
   productMetaRow: {
     flexDirection: "row",
@@ -1082,20 +987,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
   },
-  priceText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
-  categoryText: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    fontSize: 12,
-  },
-  savedText: {
-    color: COLORS.muted,
-    fontWeight: "800",
-    marginTop: 8,
-  },
+  priceText: { color: COLORS.red, fontWeight: "900" },
+  categoryText: { color: COLORS.muted, fontWeight: "800", fontSize: 12 },
+  savedText: { color: COLORS.muted, fontWeight: "800", marginTop: 8 },
   accountText: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -1103,11 +997,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
-  actionRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 11,
-  },
+  actionRow: { flexDirection: "row", gap: 8, marginTop: 11 },
   primaryAction: {
     flex: 1,
     backgroundColor: COLORS.red,
@@ -1119,10 +1009,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
   },
-  primaryActionText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
+  primaryActionText: { color: COLORS.white, fontWeight: "900" },
   secondaryAction: {
     width: 44,
     borderRadius: 15,
@@ -1140,7 +1027,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginTop: 14,
     alignItems: "center",
-
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.06,
@@ -1176,8 +1062,5 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     marginTop: 18,
   },
-  emptyButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
+  emptyButtonText: { color: COLORS.white, fontWeight: "900" },
 });
