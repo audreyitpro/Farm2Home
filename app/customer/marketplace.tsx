@@ -29,40 +29,38 @@ import { supabase } from "../data/supabaseClient";
 /**
  * app/customer/marketplace.tsx
  *
- * Grocerly / Agri style customer marketplace.
+ * Fina-style Customer Marketplace.
  *
- * Main UI flow:
- * - Each farmer has its own row/section.
- * - Farmer card on left/top.
- * - Farmer products scroll horizontally like a grocery app row.
- * - Products have image, category, price, stock, Add button.
- * - Cart, search, filters, farmer store, and product add all work.
- *
- * Customer access:
- * - Requires saved currentCustomer with id/account_id/cus_/sub_.
- * - If not ready, redirects to customer register to fix membership.
+ * Updates:
+ * - Color scheme matches Freight/Fina UI: navy + purple, soft cards, light surfaces.
+ * - Removed red/black marketplace theme.
+ * - Keeps existing marketplace logic and routes.
+ * - Still groups each farmer into its own grocery row.
  */
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F6F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
+  surface: "#F8FAFC",
+  surface2: "#F1F5F9",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  primarySoft: "#EEF2FF",
+  accent: "#10B981",
+  accentDark: "#047857",
+  accentSoft: "#D1FAE5",
+  warning: "#F59E0B",
+  warningSoft: "#FEF3C7",
+  danger: "#EF4444",
+  dangerSoft: "#FEE2E2",
   blue: "#2563EB",
   blueSoft: "#DBEAFE",
-  purple: "#7C3AED",
-  purpleSoft: "#EDE9FE",
+  text: "#101828",
+  muted: "#667085",
+  border: "#E5E7EB",
   white: "#FFFFFF",
+  navy: "#020617",
+  navyCard: "#111827",
 };
 
 const DEFAULT_CATEGORIES = [
@@ -190,10 +188,6 @@ function isSub(value: any) {
   return clean(value).startsWith("sub_");
 }
 
-function isAcct(value: any) {
-  return clean(value).startsWith("acct_");
-}
-
 function getCustomerId(customer: CustomerSession | null) {
   return clean(customer?.id || customer?.customer_id || customer?.customerId);
 }
@@ -224,7 +218,6 @@ function statusBlocked(value: any) {
 function customerReady(customer: CustomerSession | null) {
   return Boolean(
     getCustomerId(customer) &&
-      clean(customer?.account_id || customer?.accountId) &&
       isCus(getStripeCustomer(customer)) &&
       isSub(getStripeSubscription(customer)) &&
       customer?.account_active !== false &&
@@ -392,7 +385,7 @@ function normalizeFarmers(inputFarmers: Farmer[]): Farmer[] {
 
 function mapProductRow(row: any): Product {
   const farmerId = clean(row.farmer_id || row.farmerId || row.owner_id || "");
-  const image = clean(row.image_url || row.image || row.imageUrl || "");
+  const image = clean(row.image_url || row.image || row.imageUrl || row.photo_url || "");
 
   return {
     id: clean(row.id || `product_${Date.now()}_${Math.random()}`),
@@ -414,9 +407,9 @@ function mapProductRow(row: any): Product {
     farmer_stripe_account_id: clean(row.farmer_stripe_account_id || row.stripe_account_id || ""),
     stripeAccountId: clean(row.stripe_account_id || ""),
     stripe_account_id: clean(row.stripe_account_id || ""),
-    stock: Number(row.stock ?? row.quantity ?? row.inventory ?? row.stock_qty ?? 0),
-    quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? row.stock_qty ?? 0),
-    inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? row.stock_qty ?? 0),
+    stock: Number(row.stock ?? row.quantity ?? row.inventory ?? row.stock_qty ?? row.inventory_quantity ?? 0),
+    quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? row.stock_qty ?? row.inventory_quantity ?? 0),
+    inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? row.stock_qty ?? row.inventory_quantity ?? 0),
     available: row.available !== false,
     active: row.active !== false,
     marketplace_visible: row.marketplace_visible !== false,
@@ -649,7 +642,7 @@ export default function MarketplaceScreen() {
       const { data, error } = await supabase
         .from("customers")
         .select("*")
-        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId},customer_id.eq.${lookupId}`)
         .limit(1);
 
       if (!error && Array.isArray(data) && data[0]) return data[0];
@@ -906,13 +899,17 @@ export default function MarketplaceScreen() {
         id: `${farmer.id}_${product.id}`,
         cartItemId: `${farmer.id}_${product.id}`,
         productId: product.id,
+        product_id: product.id,
         name: product.name,
         productName: product.name,
+        product_name: product.name,
         price: Number(product.price || 0),
         quantity: 1,
         image: getProductImage(product),
         imageUrl: getProductImage(product),
+        image_url: getProductImage(product),
         farmName: getFarmerName(farmer),
+        farm_name: getFarmerName(farmer),
         farmerName: getFarmerName(farmer),
         farmerId: farmer.id,
         farmer_id: farmer.id,
@@ -1081,7 +1078,7 @@ export default function MarketplaceScreen() {
             activeOpacity={0.85}
           >
             <Text style={styles.viewStoreText}>Store</Text>
-            <Ionicons name="chevron-forward-outline" size={15} color={COLORS.red} />
+            <Ionicons name="chevron-forward-outline" size={15} color={COLORS.primary} />
           </TouchableOpacity>
         </View>
 
@@ -1100,6 +1097,10 @@ export default function MarketplaceScreen() {
     return (
       <View>
         <View style={styles.topBar}>
+          <View style={styles.brandIcon}>
+            <Ionicons name="storefront-outline" size={24} color={COLORS.white} />
+          </View>
+
           <View style={{ flex: 1 }}>
             <Text style={styles.greeting}>Hello, {getCustomerName(customer)}</Text>
             <Text style={styles.locationLine}>
@@ -1111,7 +1112,7 @@ export default function MarketplaceScreen() {
             style={({ pressed }) => [styles.cartTopButton, pressed && styles.pressedButton]}
             onPress={openCart}
           >
-            <Ionicons name="cart-outline" size={21} color={COLORS.white} />
+            <Ionicons name="cart-outline" size={21} color={COLORS.primary} />
             {cartCount > 0 && (
               <View style={styles.cartBadge}>
                 <Text style={styles.cartBadgeText}>{cartCount}</Text>
@@ -1120,9 +1121,9 @@ export default function MarketplaceScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.heroCard}>
+        <View style={styles.heroWrap}>
           <View style={styles.heroContent}>
-            <Text style={styles.heroBadge}>Fresh Harvest</Text>
+            <Text style={styles.heroBadge}>Fresh Marketplace</Text>
             <Text style={styles.heroTitle}>Groceries directly from local farmers</Text>
             <Text style={styles.heroSubtitle}>
               Browse each farm row like a grocery aisle. Add produce, eggs, honey, meat, hay, flowers, and seasonal goods.
@@ -1133,6 +1134,7 @@ export default function MarketplaceScreen() {
                 style={({ pressed }) => [styles.heroButton, pressed && styles.pressedButton]}
                 onPress={openCart}
               >
+                <Ionicons name="cart-outline" size={16} color={COLORS.white} />
                 <Text style={styles.heroButtonText}>Cart ({cartCount})</Text>
               </Pressable>
 
@@ -1140,6 +1142,7 @@ export default function MarketplaceScreen() {
                 style={({ pressed }) => [styles.heroButtonLight, pressed && styles.pressedButton]}
                 onPress={() => router.push("/customer/my-orders" as any)}
               >
+                <Ionicons name="receipt-outline" size={16} color={COLORS.primary} />
                 <Text style={styles.heroButtonLightText}>Orders</Text>
               </Pressable>
             </View>
@@ -1148,16 +1151,25 @@ export default function MarketplaceScreen() {
 
         <View style={styles.quickStatsRow}>
           <View style={styles.quickStat}>
+            <View style={styles.quickStatIcon}>
+              <Ionicons name="business-outline" size={18} color={COLORS.primary} />
+            </View>
             <Text style={styles.quickStatValue}>{farmers.length}</Text>
             <Text style={styles.quickStatLabel}>Farms</Text>
           </View>
 
           <View style={styles.quickStat}>
+            <View style={styles.quickStatIcon}>
+              <Ionicons name="leaf-outline" size={18} color={COLORS.primary} />
+            </View>
             <Text style={styles.quickStatValue}>{allProductCount}</Text>
             <Text style={styles.quickStatLabel}>Products</Text>
           </View>
 
           <View style={styles.quickStat}>
+            <View style={styles.quickStatIcon}>
+              <Ionicons name="grid-outline" size={18} color={COLORS.primary} />
+            </View>
             <Text style={styles.quickStatValue}>{Math.max(categories.length - 1, 0)}</Text>
             <Text style={styles.quickStatLabel}>Categories</Text>
           </View>
@@ -1237,7 +1249,7 @@ export default function MarketplaceScreen() {
             </Text>
           </View>
 
-          {loading && <ActivityIndicator size="small" color={COLORS.red} />}
+          {loading && <ActivityIndicator size="small" color={COLORS.primary} />}
         </View>
       </View>
     );
@@ -1246,9 +1258,9 @@ export default function MarketplaceScreen() {
   if (accessChecking) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
         <View style={styles.loadingPage}>
-          <ActivityIndicator size="large" color={COLORS.red} />
+          <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={styles.loadingText}>Checking marketplace access...</Text>
         </View>
       </SafeAreaView>
@@ -1258,7 +1270,7 @@ export default function MarketplaceScreen() {
   if (!accessAllowed) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
         <View style={styles.loadingPage}>
           <Text style={styles.lockedTitle}>Membership Required</Text>
           <Text style={styles.loadingText}>Complete customer membership to shop local farms.</Text>
@@ -1284,7 +1296,7 @@ export default function MarketplaceScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       <FlatList
         data={filteredFarmers}
@@ -1293,10 +1305,14 @@ export default function MarketplaceScreen() {
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={renderHeader}
         refreshControl={
-          <RefreshControl refreshing={loading} onRefresh={loadMarketplace} tintColor={COLORS.red} />
+          <RefreshControl refreshing={loading} onRefresh={loadMarketplace} tintColor={COLORS.primary} />
         }
         ListEmptyComponent={
           <View style={styles.emptyBox}>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="cube-outline" size={34} color={COLORS.primary} />
+            </View>
+
             <Text style={styles.emptyTitle}>
               {loading ? "Loading marketplace..." : "No farm rows found"}
             </Text>
@@ -1339,13 +1355,13 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   lockedTitle: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
   },
   lockedButton: {
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     paddingHorizontal: 18,
     paddingVertical: 13,
     borderRadius: 16,
@@ -1357,7 +1373,7 @@ const styles = StyleSheet.create({
   },
   listContent: { paddingBottom: 120 },
   topBar: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.navy,
     paddingTop: 18,
     paddingHorizontal: 18,
     paddingBottom: 14,
@@ -1366,9 +1382,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 14,
   },
+  brandIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   greeting: { color: COLORS.white, fontSize: 22, fontWeight: "900" },
   locationLine: {
-    color: "#CBD5E1",
+    color: "#A5B4FC",
     fontSize: 13,
     fontWeight: "700",
     marginTop: 4,
@@ -1377,7 +1401,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 18,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primarySoft,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1385,7 +1409,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: -7,
     right: -7,
-    backgroundColor: COLORS.amber,
+    backgroundColor: COLORS.warning,
     minWidth: 23,
     height: 23,
     borderRadius: 999,
@@ -1393,16 +1417,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 6,
     borderWidth: 2,
-    borderColor: COLORS.black,
+    borderColor: COLORS.navy,
   },
-  cartBadgeText: { color: COLORS.black, fontWeight: "900", fontSize: 12 },
-  heroCard: {
-    backgroundColor: COLORS.black,
+  cartBadgeText: { color: COLORS.navy, fontWeight: "900", fontSize: 12 },
+  heroWrap: {
+    backgroundColor: COLORS.navy,
     paddingHorizontal: 18,
     paddingBottom: 20,
   },
   heroContent: {
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     borderRadius: 26,
     padding: 20,
   },
@@ -1425,7 +1449,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   heroSubtitle: {
-    color: "#FFE4E6",
+    color: "#E0E7FF",
     marginTop: 8,
     fontSize: 14,
     lineHeight: 21,
@@ -1437,10 +1461,13 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   heroButton: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.navy,
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   heroButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 13 },
   heroButtonLight: {
@@ -1448,8 +1475,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
-  heroButtonLightText: { color: COLORS.red, fontWeight: "900", fontSize: 13 },
+  heroButtonLightText: { color: COLORS.primary, fontWeight: "900", fontSize: 13 },
   quickStatsRow: {
     flexDirection: "row",
     gap: 10,
@@ -1464,7 +1494,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  quickStatValue: { color: COLORS.red, fontWeight: "900", fontSize: 22 },
+  quickStatIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 13,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  quickStatValue: { color: COLORS.primary, fontWeight: "900", fontSize: 22 },
   quickStatLabel: {
     color: COLORS.muted,
     fontWeight: "800",
@@ -1506,11 +1545,11 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   categoryChipActive: {
-    backgroundColor: COLORS.red,
-    borderColor: COLORS.red,
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
   categoryChipText: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontWeight: "900",
     fontSize: 13,
   },
@@ -1562,13 +1601,13 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 19,
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: COLORS.accentSoft,
   },
   logoPlaceholder: {
     width: 56,
     height: 56,
     borderRadius: 19,
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.primary,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1595,12 +1634,12 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   farmMeta: {
-    color: COLORS.redDark,
+    color: COLORS.primaryDark,
     fontSize: 12,
     fontWeight: "900",
   },
   viewStoreButton: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primarySoft,
     borderRadius: 999,
     paddingHorizontal: 11,
     paddingVertical: 8,
@@ -1609,7 +1648,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   viewStoreText: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontWeight: "900",
     fontSize: 12,
   },
@@ -1629,19 +1668,19 @@ const styles = StyleSheet.create({
     height: 116,
     borderRadius: 15,
     marginBottom: 10,
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: COLORS.accentSoft,
   },
   productPlaceholder: {
     width: "100%",
     height: 116,
     borderRadius: 15,
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: COLORS.accentSoft,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 10,
   },
   productInitial: {
-    color: COLORS.greenDark,
+    color: COLORS.accentDark,
     fontSize: 34,
     fontWeight: "900",
   },
@@ -1656,7 +1695,7 @@ const styles = StyleSheet.create({
     maxWidth: 130,
   },
   categoryBadgeText: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontSize: 10,
     fontWeight: "900",
   },
@@ -1664,12 +1703,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 8,
     right: 8,
-    backgroundColor: COLORS.amber,
+    backgroundColor: COLORS.warning,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
   },
-  featuredBadgeText: { color: COLORS.black, fontSize: 10, fontWeight: "900" },
+  featuredBadgeText: { color: COLORS.navy, fontSize: 10, fontWeight: "900" },
   productName: { fontWeight: "900", fontSize: 15, color: COLORS.text },
   productFarmName: {
     color: COLORS.muted,
@@ -1685,8 +1724,8 @@ const styles = StyleSheet.create({
     minHeight: 20,
   },
   miniTag: {
-    backgroundColor: COLORS.greenSoft,
-    color: COLORS.greenDark,
+    backgroundColor: COLORS.accentSoft,
+    color: COLORS.accentDark,
     fontSize: 10,
     fontWeight: "900",
     paddingHorizontal: 7,
@@ -1698,7 +1737,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     gap: 8,
   },
-  productPrice: { fontWeight: "900", fontSize: 18, color: COLORS.red },
+  productPrice: { fontWeight: "900", fontSize: 18, color: COLORS.primary },
   productUnit: {
     color: COLORS.muted,
     marginTop: 2,
@@ -1706,7 +1745,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   addButton: {
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     borderRadius: 12,
     paddingVertical: 9,
     alignItems: "center",
@@ -1730,6 +1769,15 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     alignItems: "center",
   },
+  emptyIcon: {
+    width: 68,
+    height: 68,
+    borderRadius: 24,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
   emptyTitle: {
     fontWeight: "900",
     fontSize: 20,
@@ -1745,7 +1793,7 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   emptyButton: {
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 14,
@@ -1759,14 +1807,14 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: 20,
     right: 20,
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.navy,
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderRadius: 999,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    shadowColor: COLORS.black,
+    shadowColor: COLORS.navy,
     shadowOpacity: Platform.OS === "ios" ? 0.25 : 0,
     shadowOffset: { width: 0, height: 6 },
     shadowRadius: 12,

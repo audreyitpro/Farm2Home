@@ -1,6 +1,6 @@
 // app/driver/login.tsx
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,80 +21,185 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
 
-function normalize(value: any) {
-  return String(value || "").trim().toLowerCase();
+const COLORS = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  surface: "#F8FAFC",
+  surface2: "#F1F5F9",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  primarySoft: "#EEF2FF",
+  accent: "#10B981",
+  warning: "#F59E0B",
+  danger: "#EF4444",
+  text: "#101828",
+  muted: "#667085",
+  border: "#E5E7EB",
+  dark: "#111827",
+  white: "#FFFFFF",
+  navy: "#020617",
+};
+
+function clean(value: any) {
+  return String(value ?? "").trim();
 }
 
-function mapDriver(driver: any, profile?: any) {
-  const id = driver?.id || profile?.auth_user_id || "";
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function isStripeCustomerId(value: any) {
+  return clean(value).startsWith("cus_");
+}
+
+function isStripeSubscriptionId(value: any) {
+  return clean(value).startsWith("sub_");
+}
+
+function isValidDriverSubscriptionStatus(value: any) {
+  return ["active", "trialing", "past_due"].includes(normalize(value));
+}
+
+function maskId(value: string, fallback = "Missing") {
+  const id = clean(value);
+  if (!id) return fallback;
+  if (id.length <= 14) return id;
+  return `${id.slice(0, 8)}...${id.slice(-5)}`;
+}
+
+function pickStripeCustomerId(...values: any[]) {
+  const found = values.find((value) => isStripeCustomerId(value));
+  return found ? clean(found) : "";
+}
+
+function pickStripeSubscriptionId(...values: any[]) {
+  const found = values.find((value) => isStripeSubscriptionId(value));
+  return found ? clean(found) : "";
+}
+
+function mapDriver(driver: any, profile?: any, subscription?: any) {
+  const id = clean(
+    driver?.id ||
+      driver?.driver_id ||
+      profile?.auth_user_id ||
+      profile?.id ||
+      subscription?.driver_id
+  );
+
+  const stripeCustomerId = pickStripeCustomerId(
+    driver?.stripe_customer_id,
+    driver?.stripeCustomerId,
+    profile?.stripe_customer_id,
+    subscription?.stripe_customer_id
+  );
+
+  const stripeSubscriptionId = pickStripeSubscriptionId(
+    driver?.stripe_subscription_id,
+    driver?.subscription_id,
+    driver?.stripeSubscriptionId,
+    driver?.subscriptionId,
+    profile?.stripe_subscription_id,
+    profile?.subscription_id,
+    subscription?.stripe_subscription_id
+  );
+
+  const subscriptionStatus = clean(
+    driver?.subscription_status ||
+      driver?.subscriptionStatus ||
+      subscription?.subscription_status ||
+      profile?.subscription_status ||
+      (stripeSubscriptionId ? "active" : "pending_payment")
+  );
+
+  const active =
+    Boolean(id) &&
+    isStripeCustomerId(stripeCustomerId) &&
+    isStripeSubscriptionId(stripeSubscriptionId) &&
+    isValidDriverSubscriptionStatus(subscriptionStatus) &&
+    driver?.account_active !== false;
 
   return {
+    ...driver,
+    ...(profile || {}),
+    ...(subscription || {}),
+
     id,
     driverId: id,
-    profileId: driver?.profile_id || profile?.id || "",
-    profile_id: driver?.profile_id || profile?.id || "",
-    authUserId: driver?.auth_user_id || profile?.auth_user_id || id,
+    driver_id: id,
+    profileId: clean(driver?.profile_id || profile?.id || profile?.profile_id || id),
+    profile_id: clean(driver?.profile_id || profile?.id || profile?.profile_id || id),
+    authUserId: clean(driver?.auth_user_id || profile?.auth_user_id || id),
+    auth_user_id: clean(driver?.auth_user_id || profile?.auth_user_id || id),
     role: "driver",
 
     fullName:
-      driver?.full_name ||
-      driver?.fullName ||
-      driver?.name ||
-      driver?.driver_name ||
-      profile?.full_name ||
-      profile?.name ||
+      clean(driver?.full_name || driver?.fullName || driver?.name || driver?.driver_name || profile?.full_name || profile?.name) ||
       "Farm2Home Driver",
-
+    full_name:
+      clean(driver?.full_name || driver?.fullName || driver?.name || driver?.driver_name || profile?.full_name || profile?.name) ||
+      "Farm2Home Driver",
     name:
-      driver?.name ||
-      driver?.full_name ||
-      profile?.full_name ||
+      clean(driver?.name || driver?.full_name || profile?.full_name || profile?.name) ||
       "Farm2Home Driver",
 
-    email: normalize(driver?.email || driver?.driver_email || profile?.email),
-    username: driver?.username || profile?.username || "",
-    phone: driver?.phone || profile?.phone || "",
+    email: normalize(driver?.email || driver?.driver_email || profile?.email || subscription?.driver_email),
+    driver_email: normalize(driver?.email || driver?.driver_email || profile?.email || subscription?.driver_email),
+    username: clean(driver?.username || profile?.username || subscription?.username),
+    phone: clean(driver?.phone || profile?.phone),
 
-    vehicleType: driver?.vehicle_type || driver?.vehicleType || "",
-    licenseNumber: driver?.license_number || driver?.licenseNumber || "",
-    serviceArea: driver?.service_area || driver?.serviceArea || "",
+    accountId: clean(driver?.account_id || profile?.account_id),
+    account_id: clean(driver?.account_id || profile?.account_id),
 
-    accountActive: driver?.account_active ?? profile?.account_active ?? true,
+    vehicleType: clean(driver?.vehicle_type || driver?.vehicleType),
+    vehicle_type: clean(driver?.vehicle_type || driver?.vehicleType),
+    licenseNumber: clean(driver?.license_number || driver?.licenseNumber),
+    license_number: clean(driver?.license_number || driver?.licenseNumber),
+    serviceArea: clean(driver?.service_area || driver?.serviceArea),
+    service_area: clean(driver?.service_area || driver?.serviceArea),
 
-    membershipStatus:
-      driver?.membership_status || driver?.membershipStatus || "Active",
+    stripeCustomerId,
+    stripe_customer_id: stripeCustomerId,
+    stripeSubscriptionId,
+    stripe_subscription_id: stripeSubscriptionId,
+    subscriptionId: stripeSubscriptionId,
+    subscription_id: stripeSubscriptionId,
 
-    subscriptionStatus:
-      driver?.subscription_status || driver?.subscriptionStatus || "active",
+    accountActive: active,
+    account_active: active,
+    membershipStatus: active ? "active" : clean(driver?.membership_status || "pending_payment"),
+    membership_status: active ? "active" : clean(driver?.membership_status || "pending_payment"),
+    subscriptionStatus,
+    subscription_status: subscriptionStatus,
+    driverMembershipPaid: active,
+    driver_membership_paid: active,
 
-    approved: driver?.approved ?? true,
-    verified: driver?.verified ?? true,
+    approved: driver?.approved ?? active,
+    verified: driver?.verified ?? active,
 
     expoPushToken: driver?.expo_push_token || driver?.expoPushToken || "",
+    expo_push_token: driver?.expo_push_token || driver?.expoPushToken || "",
 
     notificationsEnabled:
       driver?.notifications_enabled ?? driver?.notificationsEnabled ?? false,
+    notifications_enabled:
+      driver?.notifications_enabled ?? driver?.notificationsEnabled ?? false,
 
     createdAt: driver?.created_at || driver?.createdAt || profile?.created_at || "",
-    updatedAt:
-      driver?.updated_at || driver?.updatedAt || new Date().toISOString(),
+    created_at: driver?.created_at || driver?.createdAt || profile?.created_at || "",
+    updatedAt: driver?.updated_at || driver?.updatedAt || new Date().toISOString(),
+    updated_at: driver?.updated_at || driver?.updatedAt || new Date().toISOString(),
   };
 }
 
 function isDriverActive(driver: any) {
-  if (driver.accountActive === false) return false;
-
-  const membershipStatus = normalize(driver.membershipStatus);
-  const subscriptionStatus = normalize(driver.subscriptionStatus);
-
-  if (membershipStatus === "canceled") return false;
-  if (subscriptionStatus === "canceled") return false;
-  if (subscriptionStatus === "past_due") return false;
-  if (subscriptionStatus === "unpaid") return false;
-
-  return true;
+  return Boolean(
+    driver?.id &&
+      driver?.accountActive !== false &&
+      isStripeCustomerId(driver?.stripe_customer_id || driver?.stripeCustomerId) &&
+      isStripeSubscriptionId(driver?.subscription_id || driver?.stripe_subscription_id) &&
+      isValidDriverSubscriptionStatus(driver?.subscription_status || driver?.subscriptionStatus)
+  );
 }
 
 export default function DriverLoginScreen() {
@@ -102,18 +207,62 @@ export default function DriverLoginScreen() {
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [lastCheckedDriver, setLastCheckedDriver] = useState<any>(null);
 
   const [resetVisible, setResetVisible] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
 
+  const accessStatus = useMemo(() => {
+    if (!lastCheckedDriver) {
+      return [
+        { label: "Driver Profile", complete: false, value: "Login to check" },
+        { label: "Stripe Customer", complete: false, value: "Login to check" },
+        { label: "Subscription", complete: false, value: "Login to check" },
+        { label: "Membership Status", complete: false, value: "Login to check" },
+      ];
+    }
+
+    return [
+      {
+        label: "Driver Profile",
+        complete: Boolean(lastCheckedDriver.id),
+        value: lastCheckedDriver.id ? "Found" : "Missing",
+      },
+      {
+        label: "Stripe Customer",
+        complete: isStripeCustomerId(lastCheckedDriver.stripe_customer_id),
+        value: maskId(lastCheckedDriver.stripe_customer_id),
+      },
+      {
+        label: "Subscription",
+        complete: isStripeSubscriptionId(lastCheckedDriver.subscription_id),
+        value: maskId(lastCheckedDriver.subscription_id),
+      },
+      {
+        label: "Membership Status",
+        complete: isValidDriverSubscriptionStatus(lastCheckedDriver.subscription_status),
+        value: lastCheckedDriver.subscription_status || "Missing",
+      },
+    ];
+  }, [lastCheckedDriver]);
+
+  const accessScore = useMemo(
+    () => accessStatus.filter((item) => item.complete).length,
+    [accessStatus]
+  );
+
   async function saveLoggedInDriver(driver: any) {
-    await AsyncStorage.setItem("currentDriver", JSON.stringify(driver));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(driver));
-    await AsyncStorage.setItem("farm2homeCurrentDriver", JSON.stringify(driver));
-    await AsyncStorage.setItem("farm2homeDriverSession", JSON.stringify(driver));
-    await AsyncStorage.setItem("userRole", "driver");
-    await AsyncStorage.setItem("currentUserRole", "driver");
+    await AsyncStorage.multiSet([
+      ["currentDriver", JSON.stringify(driver)],
+      ["currentUser", JSON.stringify(driver)],
+      ["farm2homeCurrentDriver", JSON.stringify(driver)],
+      ["farm2homeDriverSession", JSON.stringify(driver)],
+      ["userRole", "driver"],
+      ["currentUserRole", "driver"],
+      ["lastLoginRole", "driver"],
+      ["lastDriverDashboardReady", isDriverActive(driver) ? "true" : "false"],
+    ]);
 
     return driver;
   }
@@ -123,7 +272,7 @@ export default function DriverLoginScreen() {
       const byAuth = await supabase
         .from("profiles")
         .select("*")
-        .eq("auth_user_id", userId)
+        .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
         .eq("role", "driver")
         .maybeSingle();
 
@@ -144,6 +293,139 @@ export default function DriverLoginScreen() {
     return null;
   }
 
+  async function getBestDriverSubscription(driverId?: string, targetEmail?: string) {
+    const id = clean(driverId);
+    const cleanEmail = normalize(targetEmail);
+
+    const filters = [
+      id ? `driver_id.eq.${id}` : "",
+      cleanEmail ? `driver_email.eq.${cleanEmail}` : "",
+      cleanEmail ? `email.eq.${cleanEmail}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from("driver_subscriptions")
+        .select("*")
+        .or(filters)
+        .order("updated_at", { ascending: false })
+        .limit(10);
+
+      if (error) {
+        console.log("driver_subscriptions lookup skipped:", error.message);
+        return null;
+      }
+
+      if (!Array.isArray(data) || data.length === 0) return null;
+
+      const complete = data.find(
+        (row) =>
+          pickStripeCustomerId(row?.stripe_customer_id) &&
+          pickStripeSubscriptionId(row?.stripe_subscription_id) &&
+          isValidDriverSubscriptionStatus(row?.subscription_status)
+      );
+
+      return complete || data[0];
+    } catch (error) {
+      console.log("driver_subscriptions lookup exception:", error);
+      return null;
+    }
+  }
+
+  async function syncDriverSubscription(driverId: string, cleanEmail: string, driverRow: any) {
+    let backendSync: any = null;
+
+    try {
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_API_URL || process.env.EXPO_PUBLIC_API_BASE_URL || "https://farm2home-production-e4bd.up.railway.app"}/payments/sync-stripe-by-email`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: "driver",
+            email: cleanEmail,
+            name: driverRow?.name || driverRow?.full_name || "Farm2Home Driver",
+            username: driverRow?.username || "",
+            userId: driverId,
+            driverId,
+            driver_id: driverId,
+          }),
+        }
+      );
+
+      const json = await response.json();
+      console.log("DRIVER STRIPE SYNC RESPONSE:", json);
+      if (response.ok && json.success) backendSync = json;
+    } catch (error) {
+      console.log("backend driver stripe sync skipped:", error);
+    }
+
+    const subRow = await getBestDriverSubscription(driverId, cleanEmail);
+
+    const finalStripeCustomer = pickStripeCustomerId(
+      driverRow?.stripe_customer_id,
+      backendSync?.stripeCustomerId,
+      backendSync?.stripe_customer_id,
+      subRow?.stripe_customer_id
+    );
+
+    const finalStripeSub = pickStripeSubscriptionId(
+      driverRow?.stripe_subscription_id,
+      driverRow?.subscription_id,
+      backendSync?.stripeSubscriptionId,
+      backendSync?.stripe_subscription_id,
+      subRow?.stripe_subscription_id
+    );
+
+    const finalStatus = clean(
+      backendSync?.subscriptionStatus ||
+        backendSync?.subscription_status ||
+        subRow?.subscription_status ||
+        driverRow?.subscription_status ||
+        (finalStripeSub ? "active" : "pending_payment")
+    );
+
+    const active =
+      isStripeCustomerId(finalStripeCustomer) &&
+      isStripeSubscriptionId(finalStripeSub) &&
+      isValidDriverSubscriptionStatus(finalStatus);
+
+    if (driverId && (finalStripeCustomer || finalStripeSub)) {
+      try {
+        await supabase
+          .from("drivers")
+          .update({
+            stripe_customer_id: finalStripeCustomer || null,
+            stripe_subscription_id: finalStripeSub || null,
+            subscription_id: finalStripeSub || null,
+            subscription_status: finalStatus,
+            membership_status: active ? "active" : "pending_payment",
+            driver_membership_paid: active,
+            account_active: active,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", driverId);
+      } catch (error) {
+        console.log("drivers subscription update skipped:", error);
+      }
+    }
+
+    return {
+      ...driverRow,
+      stripe_customer_id: finalStripeCustomer,
+      stripe_subscription_id: finalStripeSub,
+      subscription_id: finalStripeSub,
+      subscription_status: finalStatus,
+      membership_status: active ? "active" : "pending_payment",
+      driver_membership_paid: active,
+      account_active: active,
+    };
+  }
+
   async function findDriverProfile(userId: string, cleanEmail: string) {
     let driver: any = null;
     let profile: any = null;
@@ -152,7 +434,7 @@ export default function DriverLoginScreen() {
       const byId = await supabase
         .from("drivers")
         .select("*")
-        .eq("id", userId)
+        .or(`id.eq.${userId},driver_id.eq.${userId},auth_user_id.eq.${userId},profile_id.eq.${userId}`)
         .maybeSingle();
 
       if (!byId.error && byId.data) driver = byId.data;
@@ -162,22 +444,10 @@ export default function DriverLoginScreen() {
       const byEmail = await supabase
         .from("drivers")
         .select("*")
-        .eq("email", cleanEmail)
+        .or(`email.eq.${cleanEmail},driver_email.eq.${cleanEmail}`)
         .maybeSingle();
 
       if (!byEmail.error && byEmail.data) driver = byEmail.data;
-    }
-
-    if (!driver && cleanEmail) {
-      const byDriverEmail = await supabase
-        .from("drivers")
-        .select("*")
-        .eq("driver_email", cleanEmail)
-        .maybeSingle();
-
-      if (!byDriverEmail.error && byDriverEmail.data) {
-        driver = byDriverEmail.data;
-      }
     }
 
     profile = await findProfile(userId, cleanEmail);
@@ -195,6 +465,7 @@ export default function DriverLoginScreen() {
     if (!driver && profile) {
       driver = {
         id: userId || profile.auth_user_id || profile.id,
+        driver_id: userId || profile.auth_user_id || profile.id,
         auth_user_id: userId || profile.auth_user_id || "",
         profile_id: profile.id,
         role: "driver",
@@ -203,22 +474,21 @@ export default function DriverLoginScreen() {
         email: profile.email || cleanEmail,
         phone: profile.phone || "",
         username: profile.username || "",
-        account_active: profile.account_active ?? true,
-        membership_status: "Active",
-        subscription_status: "active",
-        approved: true,
-        verified: true,
+        account_id: profile.account_id || "",
       };
     }
 
     if (!driver) return null;
 
-    return mapDriver(driver, profile);
+    const syncedDriver = await syncDriverSubscription(driver.id || userId, cleanEmail, driver);
+    const subscription = await getBestDriverSubscription(driver.id || userId, cleanEmail);
+
+    return mapDriver(syncedDriver, profile, subscription);
   }
 
   async function handleLogin() {
     const cleanEmail = normalize(email);
-    const cleanPassword = String(password || "").trim();
+    const cleanPassword = clean(password);
 
     if (!cleanEmail || !cleanPassword) {
       Alert.alert("Missing Information", "Enter email and password.");
@@ -246,6 +516,7 @@ export default function DriverLoginScreen() {
       }
 
       const normalizedDriver = await findDriverProfile(userId, cleanEmail);
+      setLastCheckedDriver(normalizedDriver);
 
       if (!normalizedDriver) {
         Alert.alert(
@@ -258,8 +529,8 @@ export default function DriverLoginScreen() {
 
       if (!isDriverActive(normalizedDriver)) {
         Alert.alert(
-          "Account Disabled",
-          "This driver account is disabled or subscription is not active."
+          "Membership Required",
+          "Driver access requires a saved profile, cus_ Stripe customer, sub_ subscription, and active/trialing/past_due subscription status."
         );
         return;
       }
@@ -314,124 +585,153 @@ export default function DriverLoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.hero}>
-            <View style={styles.heroTop}>
-              <View style={styles.heroIcon}>
-                <Ionicons name="car-outline" size={32} color="#FFFFFF" />
+          <View style={styles.shell}>
+            <View style={styles.sidebar}>
+              <View style={styles.brandRow}>
+                <View style={styles.brandIcon}>
+                  <Ionicons name="car-outline" size={28} color={COLORS.white} />
+                </View>
+                <View>
+                  <Text style={styles.brandTitle}>Farm2Home</Text>
+                  <Text style={styles.brandSubtitle}>Driver Portal</Text>
+                </View>
               </View>
 
+              <View style={styles.sideDivider} />
+
+              <View style={styles.scoreCard}>
+                <Text style={styles.scoreLabel}>Access Progress</Text>
+                <Text style={styles.scoreValue}>{accessScore}/4</Text>
+                <Text style={styles.scoreHint}>
+                  Driver profile, Stripe customer, subscription, and valid membership status.
+                </Text>
+              </View>
+
+              {accessStatus.map((item) => (
+                <View key={item.label} style={styles.stepNav}>
+                  <View style={[styles.stepNavIcon, item.complete && styles.stepNavIconDone]}>
+                    <Ionicons
+                      name={item.complete ? "checkmark-outline" : "ellipse-outline"}
+                      size={18}
+                      color={item.complete ? COLORS.white : COLORS.primary}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.stepNavText}>{item.label}</Text>
+                    <Text style={styles.stepNavSubText}>{item.value}</Text>
+                  </View>
+                </View>
+              ))}
+
               <TouchableOpacity
-                style={styles.homeChip}
+                style={styles.homeButton}
                 onPress={() => router.replace("/" as any)}
+                activeOpacity={0.9}
               >
-                <Ionicons name="home-outline" size={15} color="#CBD5E1" />
-                <Text style={styles.homeChipText}>Home</Text>
+                <Ionicons name="home-outline" size={18} color={COLORS.primary} />
+                <Text style={styles.homeButtonText}>Back to Home</Text>
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.kicker}>Farm2Home Driver Portal</Text>
-            <Text style={styles.title}>Driver Login</Text>
-            <Text style={styles.subtitle}>
-              Access delivery orders, routes, GPS tracking, proof of delivery,
-              customer drop-offs, and driver earnings.
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Driver Access</Text>
-            <Text style={styles.cardSubtitle}>
-              Sign in with the email and password used during driver
-              registration.
-            </Text>
-
-            <Text style={styles.inputLabel}>Email Address</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="driver@email.com"
-              placeholderTextColor="#94A3B8"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-            />
-
-            <Text style={styles.inputLabel}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter password"
-              placeholderTextColor="#94A3B8"
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={password}
-              onChangeText={setPassword}
-            />
-
-            <TouchableOpacity
-              style={[styles.loginButton, loading && styles.disabledButton]}
-              onPress={handleLogin}
-              disabled={loading}
-              activeOpacity={0.85}
-            >
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
-                  <Text style={styles.loginButtonText}>
-                    Login to Driver Portal
+            <View style={styles.main}>
+              <View style={styles.topPanel}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.eyebrow}>Driver Login</Text>
+                  <Text style={styles.pageTitle}>Driver Access Center</Text>
+                  <Text style={styles.pageSubtitle}>
+                    Access routes, available deliveries, proof of pickup, proof of delivery, and driver earnings.
                   </Text>
-                </>
-              )}
-            </TouchableOpacity>
+                </View>
 
-            <TouchableOpacity
-              style={styles.linkButton}
-              onPress={() => {
-                setResetEmail(email);
-                setResetVisible(true);
-              }}
-              disabled={loading}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.linkText}>Forgot Password?</Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.registerTopButton}
+                  onPress={() => router.push("/driver/register" as any)}
+                  disabled={loading}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="person-add-outline" size={18} color={COLORS.primary} />
+                  <Text style={styles.registerTopButtonText}>Register</Text>
+                </TouchableOpacity>
+              </View>
 
-            <View style={styles.divider} />
+              <View style={styles.metricsRow}>
+                <MetricCard icon="person-outline" label="Profile" value={lastCheckedDriver?.id ? "Found" : "Pending"} />
+                <MetricCard icon="card-outline" label="Subscription" value={isStripeSubscriptionId(lastCheckedDriver?.subscription_id) ? "Saved" : "Check login"} />
+                <MetricCard icon="navigate-outline" label="Driver Board" value={isDriverActive(lastCheckedDriver) ? "Ready" : "Locked"} />
+              </View>
 
-            <TouchableOpacity
-              style={styles.registerButton}
-              onPress={() => router.push("/driver/register" as any)}
-              disabled={loading}
-              activeOpacity={0.85}
-            >
-              <Ionicons
-                name="person-add-outline"
-                size={18}
-                color={freightTheme.colors.primary}
-              />
-              <Text style={styles.registerButtonText}>Register as Driver</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={styles.card}>
+                <SectionTitle
+                  title="Driver Sign In"
+                  subtitle="Use the email and password from driver registration."
+                />
 
-          <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Driver Board Access</Text>
-            <Text style={styles.infoText}>
-              Drivers can view local delivery opportunities, accept open orders,
-              track routes, and support Farm2Home farmers and customers.
-            </Text>
+                <Field
+                  label="Email Address"
+                  value={email}
+                  onChangeText={(value) => setEmail(normalize(value))}
+                  placeholder="driver@email.com"
+                  icon="mail-outline"
+                  keyboardType="email-address"
+                />
+
+                <Field
+                  label="Password"
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Enter password"
+                  icon="lock-closed-outline"
+                  secureTextEntry
+                />
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, loading && styles.disabledButton]}
+                  onPress={handleLogin}
+                  disabled={loading}
+                  activeOpacity={0.9}
+                >
+                  {loading ? (
+                    <ActivityIndicator color={COLORS.white} />
+                  ) : (
+                    <>
+                      <Ionicons name="log-in-outline" size={18} color={COLORS.white} />
+                      <Text style={styles.primaryButtonText}>Login to Driver Portal</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => {
+                    setResetEmail(email);
+                    setResetVisible(true);
+                  }}
+                  disabled={loading}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="key-outline" size={18} color={COLORS.primary} />
+                  <Text style={styles.secondaryButtonText}>Forgot Password?</Text>
+                </TouchableOpacity>
+
+                <View style={styles.noticeBox}>
+                  <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.primary} />
+                  <Text style={styles.noticeText}>
+                    Driver portal unlocks after your driver profile and membership subscription are synced.
+                  </Text>
+                </View>
+              </View>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -441,40 +741,36 @@ export default function DriverLoginScreen() {
           <View style={styles.modalCard}>
             <ScrollView keyboardShouldPersistTaps="handled">
               <View style={styles.modalIcon}>
-                <Ionicons name="key-outline" size={28} color="#FFFFFF" />
+                <Ionicons name="key-outline" size={28} color={COLORS.white} />
               </View>
 
               <Text style={styles.modalTitle}>Reset Driver Password</Text>
 
               <Text style={styles.modalSubtitle}>
-                Enter your driver email. Farm2Home will send a secure reset link
-                if the Auth account exists.
+                Enter your driver email. Farm2Home will send a secure reset link if the Auth account exists.
               </Text>
 
-              <Text style={styles.inputLabelDark}>Driver Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Driver Email"
-                placeholderTextColor="#94A3B8"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
+              <Field
+                label="Driver Email"
                 value={resetEmail}
-                onChangeText={setResetEmail}
+                onChangeText={(value) => setResetEmail(normalize(value))}
+                placeholder="driver@email.com"
+                icon="mail-outline"
+                keyboardType="email-address"
               />
 
               <TouchableOpacity
-                style={[styles.loginButton, resetLoading && styles.disabledButton]}
+                style={[styles.primaryButton, resetLoading && styles.disabledButton]}
                 onPress={handlePasswordReset}
                 disabled={resetLoading}
-                activeOpacity={0.85}
+                activeOpacity={0.9}
               >
                 {resetLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={COLORS.white} />
                 ) : (
                   <>
-                    <Ionicons name="mail-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.loginButtonText}>Send Reset Link</Text>
+                    <Ionicons name="mail-outline" size={18} color={COLORS.white} />
+                    <Text style={styles.primaryButtonText}>Send Reset Link</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -497,171 +793,366 @@ export default function DriverLoginScreen() {
   );
 }
 
+function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+    </View>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  icon,
+  keyboardType,
+  secureTextEntry,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  keyboardType?: any;
+  secureTextEntry?: boolean;
+}) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <View style={styles.inputShell}>
+        <Ionicons name={icon} size={18} color={COLORS.muted} />
+        <TextInput
+          style={styles.input}
+          placeholder={placeholder}
+          placeholderTextColor="#94A3B8"
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType={keyboardType}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry={secureTextEntry}
+        />
+      </View>
+    </View>
+  );
+}
+
+function MetricCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.metricCard}>
+      <View style={styles.metricIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.primary} />
+      </View>
+      <View>
+        <Text style={styles.metricLabel}>{label}</Text>
+        <Text style={styles.metricValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
-  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
-  scrollContent: { flexGrow: 1, paddingBottom: 80 },
-  hero: {
-    backgroundColor: "#020617",
-    paddingTop: 26,
-    paddingHorizontal: 20,
-    paddingBottom: 28,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+  content: { flexGrow: 1 },
+  shell: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    minHeight: "100%",
   },
-  heroTop: {
+  sidebar: {
+    width: Platform.OS === "web" ? 270 : "100%",
+    backgroundColor: COLORS.navy,
+    padding: 16,
+    gap: 10,
+  },
+  brandRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14,
+    gap: 12,
+    paddingVertical: 14,
   },
-  heroIcon: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    backgroundColor: "#064E3B",
+  brandIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#10B981",
   },
-  homeChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#334155",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 999,
-  },
-  homeChipText: {
-    color: "#CBD5E1",
+  brandTitle: {
+    color: COLORS.white,
+    fontSize: 18,
     fontWeight: "900",
+  },
+  brandSubtitle: {
+    color: "#A5B4FC",
     fontSize: 12,
-  },
-  kicker: {
-    color: "#10B981",
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    marginTop: 6,
-  },
-  subtitle: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    lineHeight: 23,
-    marginTop: 8,
-    maxWidth: 600,
-  },
-  card: {
-    backgroundColor: freightTheme.colors.card,
-    margin: 18,
-    borderRadius: 24,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-  },
-  cardTitle: {
-    color: freightTheme.colors.text,
-    fontSize: 27,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  cardSubtitle: {
-    textAlign: "center",
-    color: freightTheme.colors.mutedText,
-    lineHeight: 22,
-    marginTop: 8,
-    marginBottom: 22,
-    fontWeight: "700",
-  },
-  inputLabel: {
-    color: freightTheme.colors.text,
-    fontWeight: "900",
-    marginBottom: 7,
-  },
-  inputLabelDark: {
-    color: "#111827",
-    fontWeight: "900",
-    marginBottom: 7,
-  },
-  input: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    marginBottom: 14,
-    color: "#111827",
     fontWeight: "800",
   },
-  loginButton: {
-    backgroundColor: freightTheme.colors.primary,
+  sideDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    marginVertical: 8,
+  },
+  scoreCard: {
+    backgroundColor: "#111827",
+    borderRadius: 18,
     padding: 16,
+    marginBottom: 2,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  scoreLabel: {
+    color: "#CBD5E1",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  scoreValue: {
+    color: COLORS.white,
+    fontSize: 32,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  scoreHint: {
+    color: "#A5B4FC",
+    lineHeight: 18,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  stepNav: {
+    backgroundColor: "#111827",
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  stepNavIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepNavIconDone: {
+    backgroundColor: COLORS.accent,
+  },
+  stepNavText: {
+    color: "#CBD5E1",
+    fontWeight: "900",
+  },
+  stepNavSubText: {
+    color: "#94A3B8",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  homeButton: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "rgba(99,91,255,0.55)",
+    borderRadius: 14,
+    padding: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  homeButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
+  main: {
+    flex: 1,
+    padding: 16,
+  },
+  topPanel: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 22,
+    padding: 18,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    alignItems: Platform.OS === "web" ? "center" : "stretch",
+    marginBottom: 14,
+  },
+  eyebrow: {
+    color: COLORS.primary,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  pageTitle: {
+    color: COLORS.text,
+    fontSize: 30,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  pageSubtitle: {
+    color: COLORS.muted,
+    lineHeight: 20,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  registerTopButton: {
+    backgroundColor: COLORS.primarySoft,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    gap: 7,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  registerTopButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+  metricsRow: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    marginBottom: 14,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  metricIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  metricLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  card: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 22,
+    padding: 18,
+  },
+  sectionHeader: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  sectionSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 4,
+    lineHeight: 20,
+  },
+  fieldWrap: {
+    marginBottom: 13,
+  },
+  inputLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginBottom: 7,
+  },
+  inputShell: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 15,
+    paddingHorizontal: 12,
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  input: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "700",
+    paddingVertical: 12,
+  },
+  primaryButton: {
+    backgroundColor: COLORS.primary,
+    padding: 15,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
+    marginTop: 4,
+  },
+  primaryButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
+  secondaryButton: {
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: "#C7D2FE",
+    padding: 15,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  secondaryButtonText: {
+    color: COLORS.primary,
+    fontWeight: "900",
   },
   disabledButton: { opacity: 0.6 },
-  loginButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  linkButton: { marginTop: 16 },
-  linkText: {
-    textAlign: "center",
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: freightTheme.colors.border,
-    marginVertical: 18,
-  },
-  registerButton: {
-    backgroundColor: freightTheme.colors.surface,
+  noticeBox: {
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: freightTheme.colors.primary,
+    borderColor: COLORS.border,
     borderRadius: 16,
-    padding: 15,
-    alignItems: "center",
-    justifyContent: "center",
+    padding: 13,
     flexDirection: "row",
-    gap: 8,
+    gap: 9,
+    alignItems: "center",
+    marginTop: 14,
   },
-  registerButtonText: {
-    color: freightTheme.colors.primary,
-    fontWeight: "900",
-  },
-  infoCard: {
-    marginHorizontal: 18,
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#1E293B",
-    borderRadius: 22,
-    padding: 16,
-  },
-  infoTitle: {
-    color: "#10B981",
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  infoText: {
-    color: "#CBD5E1",
+  noticeText: {
+    color: COLORS.muted,
+    flex: 1,
     fontWeight: "700",
-    lineHeight: 21,
+    lineHeight: 19,
   },
   modalOverlay: {
     flex: 1,
@@ -670,7 +1161,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   modalCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.white,
     borderRadius: 24,
     padding: 22,
     maxHeight: "90%",
@@ -678,8 +1169,8 @@ const styles = StyleSheet.create({
   modalIcon: {
     width: 54,
     height: 54,
-    borderRadius: 27,
-    backgroundColor: freightTheme.colors.primary,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "center",
@@ -690,15 +1181,15 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textAlign: "center",
     marginBottom: 8,
-    color: "#111827",
+    color: COLORS.text,
   },
   modalSubtitle: {
     textAlign: "center",
-    color: "#64748B",
+    color: COLORS.muted,
     lineHeight: 22,
     marginBottom: 18,
     fontWeight: "700",
   },
   closeButton: { marginTop: 18, alignItems: "center" },
-  closeText: { color: "#B91C1C", fontWeight: "900" },
+  closeText: { color: COLORS.danger, fontWeight: "900" },
 });

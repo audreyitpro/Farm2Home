@@ -19,25 +19,42 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
+/**
+ * app/customer/dashboard.tsx
+ *
+ * Fina-style Customer Dashboard.
+ *
+ * Updates:
+ * - Matches Freight/Fina UI color system: navy + purple, soft cards, light surfaces.
+ * - Removes red/black customer dashboard theme.
+ * - Customer marketplace access DOES NOT require account_id.
+ * - Supabase order count queries use snake_case only: customer_id/customer_email.
+ * - Avoids camelCase database filters like customerId/customerEmail.
+ */
+
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F6F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
+  surface: "#F8FAFC",
+  surface2: "#F1F5F9",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  primarySoft: "#EEF2FF",
+  accent: "#10B981",
+  accentDark: "#047857",
+  accentSoft: "#D1FAE5",
+  warning: "#F59E0B",
+  warningSoft: "#FEF3C7",
+  danger: "#EF4444",
+  dangerSoft: "#FEE2E2",
   blue: "#2563EB",
   blueSoft: "#DBEAFE",
-  purple: "#7C3AED",
-  purpleSoft: "#EDE9FE",
+  text: "#101828",
+  muted: "#667085",
+  border: "#E5E7EB",
   white: "#FFFFFF",
+  navy: "#020617",
+  navyCard: "#111827",
 };
 
 type CustomerSession = {
@@ -50,6 +67,7 @@ type CustomerSession = {
   fullName?: string;
   name?: string;
   email?: string;
+  customer_email?: string;
   phone?: string;
   username?: string;
   stripe_customer_id?: string;
@@ -64,6 +82,7 @@ type CustomerSession = {
   subscriptionStatus?: string;
   account_active?: boolean;
   accountActive?: boolean;
+  role?: string;
 };
 
 function clean(value: any) {
@@ -82,12 +101,23 @@ function isSub(value: any) {
   return clean(value).startsWith("sub_");
 }
 
+function maskId(value: any, fallback = "Missing") {
+  const id = clean(value);
+  if (!id) return fallback;
+  if (id.length <= 14) return id;
+  return `${id.slice(0, 8)}...${id.slice(-5)}`;
+}
+
 function getCustomerId(customer: CustomerSession | null) {
   return clean(customer?.id || customer?.customer_id || customer?.customerId);
 }
 
 function getAccountId(customer: CustomerSession | null) {
   return clean(customer?.account_id || customer?.accountId);
+}
+
+function getCustomerEmail(customer: CustomerSession | null) {
+  return normalize(customer?.email || customer?.customer_email);
 }
 
 function getCustomerName(customer: CustomerSession | null) {
@@ -107,23 +137,39 @@ function getStripeSubscription(customer: CustomerSession | null) {
   );
 }
 
+function getMembershipStatus(customer: CustomerSession | null) {
+  return clean(customer?.membership_status || customer?.membershipStatus || "pending_payment");
+}
+
+function getSubscriptionStatus(customer: CustomerSession | null) {
+  return clean(customer?.subscription_status || customer?.subscriptionStatus || "pending_payment");
+}
+
 function statusIsBlocked(value: any) {
   const status = normalize(value);
   return ["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(status);
 }
 
+function statusIsAllowed(value: any) {
+  const status = normalize(value);
+  return ["active", "trialing", "past_due", "paid"].includes(status);
+}
+
 function hasMarketplaceAccess(customer: CustomerSession | null) {
   if (!customer) return false;
 
+  const subscriptionStatus = getSubscriptionStatus(customer);
+  const membershipStatus = getMembershipStatus(customer);
+
   return Boolean(
     getCustomerId(customer) &&
-      getAccountId(customer) &&
       isCus(getStripeCustomer(customer)) &&
       isSub(getStripeSubscription(customer)) &&
       customer.account_active !== false &&
       customer.accountActive !== false &&
-      !statusIsBlocked(customer.membership_status || customer.membershipStatus) &&
-      !statusIsBlocked(customer.subscription_status || customer.subscriptionStatus)
+      !statusIsBlocked(membershipStatus) &&
+      !statusIsBlocked(subscriptionStatus) &&
+      (statusIsAllowed(subscriptionStatus) || statusIsAllowed(membershipStatus))
   );
 }
 
@@ -138,6 +184,10 @@ function buildSession(row: any): CustomerSession {
       row?.stripeSubscriptionId
   );
 
+  const hasSub = isSub(stripeSubscription);
+  const status = clean(row?.subscription_status || row?.subscriptionStatus || (hasSub ? "active" : "pending_payment"));
+  const membership = clean(row?.membership_status || row?.membershipStatus || (hasSub ? "active" : "pending_payment"));
+
   return {
     ...row,
     id,
@@ -150,16 +200,17 @@ function buildSession(row: any): CustomerSession {
     fullName: clean(row?.full_name || row?.fullName || row?.name || "Customer"),
     name: clean(row?.name || row?.full_name || row?.fullName || "Customer"),
     email: normalize(row?.email || row?.customer_email),
+    customer_email: normalize(row?.customer_email || row?.email),
     stripe_customer_id: isCus(stripeCustomer) ? stripeCustomer : "",
     stripeCustomerId: isCus(stripeCustomer) ? stripeCustomer : "",
-    subscription_id: isSub(stripeSubscription) ? stripeSubscription : "",
-    subscriptionId: isSub(stripeSubscription) ? stripeSubscription : "",
-    stripe_subscription_id: isSub(stripeSubscription) ? stripeSubscription : "",
-    stripeSubscriptionId: isSub(stripeSubscription) ? stripeSubscription : "",
-    membership_status: clean(row?.membership_status || row?.membershipStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
-    membershipStatus: clean(row?.membership_status || row?.membershipStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
-    subscription_status: clean(row?.subscription_status || row?.subscriptionStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
-    subscriptionStatus: clean(row?.subscription_status || row?.subscriptionStatus || (isSub(stripeSubscription) ? "active" : "pending_payment")),
+    subscription_id: hasSub ? stripeSubscription : "",
+    subscriptionId: hasSub ? stripeSubscription : "",
+    stripe_subscription_id: hasSub ? stripeSubscription : "",
+    stripeSubscriptionId: hasSub ? stripeSubscription : "",
+    membership_status: membership,
+    membershipStatus: membership,
+    subscription_status: status,
+    subscriptionStatus: status,
     account_active: row?.account_active !== false,
     accountActive: row?.account_active !== false,
   };
@@ -231,6 +282,12 @@ export default function CustomerDashboard() {
           stripe_subscription_id: dbCustomer.stripe_subscription_id || dbCustomer.subscription_id || sub?.stripe_subscription_id,
           subscription_id: dbCustomer.subscription_id || dbCustomer.stripe_subscription_id || sub?.stripe_subscription_id,
           subscription_status: dbCustomer.subscription_status || sub?.subscription_status,
+          membership_status:
+            dbCustomer.membership_status ||
+            (sub?.subscription_status && ["active", "trialing", "past_due"].includes(normalize(sub.subscription_status))
+              ? "active"
+              : dbCustomer.membership_status),
+          current_period_end: sub?.current_period_end,
         });
 
         await saveCustomerSession(merged);
@@ -256,7 +313,7 @@ export default function CustomerDashboard() {
       const { data, error } = await supabase
         .from("customers")
         .select("*")
-        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId},customer_id.eq.${lookupId}`)
         .limit(1);
 
       if (!error && Array.isArray(data) && data[0]) return data[0];
@@ -309,35 +366,55 @@ export default function CustomerDashboard() {
 
   async function loadCounts(activeCustomer: CustomerSession) {
     const id = getCustomerId(activeCustomer);
+    const email = getCustomerEmail(activeCustomer);
 
     await loadCartCount();
 
-    if (!id) return;
+    if (!id && !email) return;
 
     const orderTables = ["orders", "customer_orders", "farm_orders"];
 
     for (const table of orderTables) {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from(table)
-          .select("id,status")
-          .or(`customer_id.eq.${id},customerId.eq.${id}`)
+          .select("id,status,order_status,fulfillment_status,payment_status,customer_id,customer_email")
           .limit(100);
+
+        if (id && email) {
+          query = query.or(`customer_id.eq.${id},customer_email.eq.${email}`);
+        } else if (id) {
+          query = query.eq("customer_id", id);
+        } else if (email) {
+          query = query.eq("customer_email", email);
+        }
+
+        const { data, error } = await query;
 
         if (!error && Array.isArray(data)) {
           setOrdersCount(data.length);
           setActiveOrdersCount(
             data.filter((order) => {
-              const status = normalize(order?.status);
+              const status = normalize(
+                order?.order_status ||
+                  order?.fulfillment_status ||
+                  order?.status ||
+                  order?.payment_status
+              );
               return !["delivered", "complete", "completed", "cancelled", "canceled"].includes(status);
             }).length
           );
           return;
         }
+
+        if (error) console.log(`${table} count skipped:`, error.message);
       } catch (error) {
-        console.log(`${table} count skipped:`, error);
+        console.log(`${table} count exception:`, error);
       }
     }
+
+    setOrdersCount(0);
+    setActiveOrdersCount(0);
   }
 
   async function loadCartCount() {
@@ -369,7 +446,7 @@ export default function CustomerDashboard() {
     }
   }
 
-  function requireAccess(route: string, label: string) {
+  function requireAccess(route: string) {
     if (!customer) {
       Alert.alert("Login Required", "Please login as a customer first.");
       router.replace("/customer/login" as any);
@@ -428,9 +505,9 @@ export default function CustomerDashboard() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
         <View style={styles.center}>
-          <ActivityIndicator color={COLORS.red} size="large" />
+          <ActivityIndicator color={COLORS.primary} size="large" />
           <Text style={styles.centerText}>Loading customer dashboard...</Text>
         </View>
       </SafeAreaView>
@@ -439,7 +516,7 @@ export default function CustomerDashboard() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       <ScrollView
         style={styles.page}
@@ -449,7 +526,7 @@ export default function CustomerDashboard() {
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={styles.heroIcon}>
-              <Ionicons name="basket-outline" size={36} color="#FFFFFF" />
+              <Ionicons name="basket-outline" size={34} color={COLORS.white} />
             </View>
 
             <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.85}>
@@ -458,7 +535,7 @@ export default function CustomerDashboard() {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.kicker}>Farm2Home Customer</Text>
+          <Text style={styles.kicker}>Fina Customer Operations</Text>
           <Text style={styles.title}>Welcome Back</Text>
           <Text style={styles.customerName}>{customerName}</Text>
 
@@ -471,7 +548,7 @@ export default function CustomerDashboard() {
               <Ionicons
                 name={ready ? "checkmark-circle-outline" : "warning-outline"}
                 size={17}
-                color={ready ? "#166534" : "#92400E"}
+                color={ready ? COLORS.accentDark : "#92400E"}
               />
               <Text style={[styles.statusPillText, ready ? styles.statusPillTextGood : styles.statusPillTextWarn]}>
                 {ready ? "Marketplace Ready" : "Membership Needs Attention"}
@@ -483,42 +560,43 @@ export default function CustomerDashboard() {
         <View style={styles.metricsRow}>
           <MetricCard icon="cart-outline" label="Cart" value={`${cartCount} items`} tone="green" />
           <MetricCard icon="receipt-outline" label="Orders" value={`${ordersCount}`} tone="blue" />
-          <MetricCard icon="navigate-outline" label="Active" value={`${activeOrdersCount}`} tone="purple" />
+          <MetricCard icon="navigate-outline" label="Active" value={`${activeOrdersCount}`} tone="primary" />
         </View>
 
         <View style={styles.accessCard}>
           <View style={styles.accessHeader}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Account Access</Text>
-              <Text style={styles.sectionSubtitle}>Customer Marketplace requirements.</Text>
+              <Text style={styles.sectionSubtitle}>Customer marketplace requirements. Account ID is optional.</Text>
             </View>
             <Text style={styles.accessScore}>
               {[
                 getCustomerId(customer),
-                getAccountId(customer),
                 isCus(getStripeCustomer(customer)),
                 isSub(getStripeSubscription(customer)),
+                ready,
               ].filter(Boolean).length}
               /4
             </Text>
           </View>
 
           <ChecklistRow label="Customer Profile" value={getCustomerId(customer) ? "Found" : "Missing"} complete={Boolean(getCustomerId(customer))} />
-          <ChecklistRow label="Static Account" value={getAccountId(customer) || "Missing"} complete={Boolean(getAccountId(customer))} />
-          <ChecklistRow label="Stripe Customer" value={isCus(getStripeCustomer(customer)) ? "Saved" : "Missing"} complete={isCus(getStripeCustomer(customer))} />
-          <ChecklistRow label="Subscription" value={isSub(getStripeSubscription(customer)) ? "Active/Saved" : "Missing"} complete={isSub(getStripeSubscription(customer))} />
+          <ChecklistRow label="Static Account" value={getAccountId(customer) || "Optional"} complete={Boolean(getAccountId(customer))} optional />
+          <ChecklistRow label="Stripe Customer" value={maskId(getStripeCustomer(customer))} complete={isCus(getStripeCustomer(customer))} />
+          <ChecklistRow label="Subscription" value={maskId(getStripeSubscription(customer))} complete={isSub(getStripeSubscription(customer))} />
+          <ChecklistRow label="Membership Status" value={getSubscriptionStatus(customer)} complete={ready} />
         </View>
 
         <View style={styles.quickActions}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <Text style={styles.sectionSubtitle}>Every button below routes to a real customer workflow.</Text>
+          <Text style={styles.sectionSubtitle}>Every button below routes to a customer workflow.</Text>
 
           <ActionButton
             primary
             icon="storefront-outline"
             title="Shop Marketplace"
             subtitle="Browse farmers, products, produce, and local grocery items."
-            onPress={() => requireAccess("/customer/marketplace", "Marketplace")}
+            onPress={() => requireAccess("/customer/marketplace")}
           />
 
           <View style={styles.actionGrid}>
@@ -526,31 +604,43 @@ export default function CustomerDashboard() {
               icon="cart-outline"
               title="Cart"
               subtitle={`${cartCount} saved items`}
-              onPress={() => requireAccess("/customer/cart", "Cart")}
+              onPress={() => requireAccess("/customer/cart")}
             />
             <ActionButton
               icon="receipt-outline"
               title="My Orders"
               subtitle="View order history"
-              onPress={() => requireAccess("/customer/my-orders", "My Orders")}
+              onPress={() => requireAccess("/customer/my-orders")}
             />
             <ActionButton
               icon="navigate-outline"
               title="Tracking"
               subtitle="Track active deliveries"
-              onPress={() => requireAccess("/customer/tracking", "Tracking")}
+              onPress={() => requireAccess("/customer/order-tracking")}
             />
             <ActionButton
               icon="chatbubbles-outline"
-              title="Chat Center"
-              subtitle="Farmer and driver messages"
-              onPress={() => requireAccess("/customer/chat-center", "Chat Center")}
+              title="Farmer Chat"
+              subtitle="Message farmers"
+              onPress={() => requireAccess("/customer/farmer-chat")}
+            />
+            <ActionButton
+              icon="car-outline"
+              title="Driver Chat"
+              subtitle="Message delivery driver"
+              onPress={() => requireAccess("/customer/driver-chat")}
             />
             <ActionButton
               icon="person-outline"
               title="Profile"
               subtitle="Address, phone, membership"
-              onPress={() => requireAccess("/customer/profile", "Profile")}
+              onPress={() => requireAccess("/customer/profile")}
+            />
+            <ActionButton
+              icon="heart-outline"
+              title="Favorites"
+              subtitle="Saved farms and products"
+              onPress={() => requireAccess("/customer/favorites")}
             />
             <ActionButton
               icon="card-outline"
@@ -571,11 +661,13 @@ export default function CustomerDashboard() {
 
         <View style={styles.infoCard}>
           <View style={styles.infoIcon}>
-            <Ionicons name="leaf-outline" size={22} color="#92400E" />
+            <Ionicons name="leaf-outline" size={22} color={COLORS.accentDark} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.infoTitle}>Farm2Home Benefits</Text>
-            <Text style={styles.infoText}>Buy directly from local farmers, shop fresh produce and farm goods, choose pickup or delivery, and track your order from checkout to delivery.</Text>
+            <Text style={styles.infoText}>
+              Buy directly from local farmers, shop fresh produce and farm goods, choose pickup or delivery, and track your order from checkout to delivery.
+            </Text>
           </View>
         </View>
       </ScrollView>
@@ -592,10 +684,10 @@ function MetricCard({
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   value: string;
-  tone: "green" | "blue" | "purple";
+  tone: "green" | "blue" | "primary";
 }) {
-  const color = tone === "green" ? COLORS.green : tone === "blue" ? COLORS.blue : COLORS.purple;
-  const bg = tone === "green" ? COLORS.greenSoft : tone === "blue" ? COLORS.blueSoft : COLORS.purpleSoft;
+  const color = tone === "green" ? COLORS.accent : tone === "blue" ? COLORS.blue : COLORS.primary;
+  const bg = tone === "green" ? COLORS.accentSoft : tone === "blue" ? COLORS.blueSoft : COLORS.primarySoft;
 
   return (
     <View style={styles.metricCard}>
@@ -610,14 +702,24 @@ function MetricCard({
   );
 }
 
-function ChecklistRow({ label, value, complete }: { label: string; value: string; complete: boolean }) {
+function ChecklistRow({
+  label,
+  value,
+  complete,
+  optional,
+}: {
+  label: string;
+  value: string;
+  complete: boolean;
+  optional?: boolean;
+}) {
   return (
     <View style={styles.checkRow}>
-      <View style={[styles.checkIcon, complete ? styles.checkGood : styles.checkMissing]}>
+      <View style={[styles.checkIcon, complete ? styles.checkGood : optional ? styles.checkOptional : styles.checkMissing]}>
         <Ionicons
-          name={complete ? "checkmark-outline" : "ellipse-outline"}
+          name={complete ? "checkmark-outline" : optional ? "remove-outline" : "ellipse-outline"}
           size={15}
-          color={complete ? COLORS.white : COLORS.muted}
+          color={complete || optional ? COLORS.white : COLORS.muted}
         />
       </View>
       <View style={{ flex: 1 }}>
@@ -648,7 +750,7 @@ function ActionButton({
       activeOpacity={0.88}
     >
       <View style={[styles.actionIcon, primary && styles.primaryActionIcon]}>
-        <Ionicons name={icon} size={22} color={primary ? COLORS.white : COLORS.red} />
+        <Ionicons name={icon} size={22} color={primary ? COLORS.white : COLORS.primary} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={[styles.actionTitle, primary && styles.primaryActionTitle]}>{title}</Text>
@@ -682,7 +784,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   hero: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.navy,
     paddingTop: 22,
     paddingHorizontal: 20,
     paddingBottom: 28,
@@ -697,7 +799,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 24,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -717,14 +819,14 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   kicker: {
-    color: "#FCA5A5",
+    color: "#A5B4FC",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 1,
   },
   title: {
-    color: COLORS.white,
+    color: "#E0E7FF",
     fontSize: 18,
     fontWeight: "800",
     marginTop: 8,
@@ -754,16 +856,16 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   statusPillGood: {
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: COLORS.accentSoft,
   },
   statusPillWarn: {
-    backgroundColor: COLORS.amberSoft,
+    backgroundColor: COLORS.warningSoft,
   },
   statusPillText: {
     fontWeight: "900",
   },
   statusPillTextGood: {
-    color: "#166534",
+    color: COLORS.accentDark,
   },
   statusPillTextWarn: {
     color: "#92400E",
@@ -820,7 +922,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   accessScore: {
-    color: COLORS.red,
+    color: COLORS.primary,
     fontSize: 24,
     fontWeight: "900",
   },
@@ -843,7 +945,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   checkGood: {
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.accent,
+  },
+  checkOptional: {
+    backgroundColor: COLORS.primary,
   },
   checkMissing: {
     backgroundColor: "#E5E7EB",
@@ -897,15 +1002,15 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   primaryAction: {
-    backgroundColor: COLORS.red,
-    borderColor: COLORS.red,
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
     marginBottom: 12,
   },
   actionIcon: {
     width: 42,
     height: 42,
     borderRadius: 16,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primarySoft,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -927,12 +1032,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   primaryActionSubtitle: {
-    color: "#FFE4E6",
+    color: "#E0E7FF",
   },
   infoCard: {
-    backgroundColor: "#FFFBEB",
+    backgroundColor: COLORS.accentSoft,
     borderWidth: 1,
-    borderColor: "#FDE68A",
+    borderColor: "#A7F3D0",
     borderRadius: 22,
     padding: 16,
     marginHorizontal: 18,
@@ -944,18 +1049,18 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 16,
-    backgroundColor: "#FEF3C7",
+    backgroundColor: COLORS.white,
     alignItems: "center",
     justifyContent: "center",
   },
   infoTitle: {
-    color: "#92400E",
+    color: COLORS.accentDark,
     fontWeight: "900",
     marginBottom: 6,
     fontSize: 17,
   },
   infoText: {
-    color: "#78350F",
+    color: "#065F46",
     fontWeight: "700",
     lineHeight: 21,
   },

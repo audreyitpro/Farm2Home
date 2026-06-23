@@ -34,6 +34,10 @@ import { supabase } from "../data/supabaseClient";
  * - Pickup/dropoff route timeline
  * - Multi-farmer order sections
  *
+ * Fina UI update:
+ * - Navy header, purple primary actions, soft operational cards.
+ * - Keeps existing routes and multi-farmer tracking logic.
+ *
  * Working routes:
  * - Back to My Orders
  * - Order Details
@@ -43,27 +47,38 @@ import { supabase } from "../data/supabaseClient";
  */
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F6F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
+  surface: "#F8FAFC",
+  surface2: "#F1F5F9",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  primarySoft: "#EEF2FF",
+  accent: "#10B981",
+  accentDark: "#047857",
+  accentSoft: "#D1FAE5",
+  warning: "#F59E0B",
+  warningSoft: "#FEF3C7",
+  danger: "#EF4444",
+  dangerSoft: "#FEE2E2",
   blue: "#2563EB",
   blueSoft: "#DBEAFE",
-  purple: "#7C3AED",
-  purpleSoft: "#EDE9FE",
-  danger: "#DC2626",
-  dangerSoft: "#FEE2E2",
+  text: "#101828",
+  muted: "#667085",
+  border: "#E5E7EB",
   white: "#FFFFFF",
+  navy: "#020617",
+  navyCard: "#111827",
+  black: "#020617",
+  red: "#635BFF",
+  redDark: "#4638D8",
+  green: "#10B981",
+  greenDark: "#047857",
+  greenSoft: "#D1FAE5",
+  amber: "#F59E0B",
+  amberSoft: "#FEF3C7",
+  purple: "#635BFF",
+  purpleSoft: "#EEF2FF",
 };
 
 type CustomerSession = {
@@ -524,7 +539,7 @@ export default function CustomerTracking() {
       const { data, error } = await supabase
         .from("customers")
         .select("*")
-        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+        .or(`id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId},customer_id.eq.${lookupId}`)
         .limit(1);
 
       if (!error && Array.isArray(data) && data[0]) return data[0];
@@ -575,12 +590,12 @@ export default function CustomerTracking() {
           query = query.eq("id", paramOrderId);
         } else if (customerId && customerEmail) {
           query = query.or(
-            `customer_id.eq.${customerId},customerId.eq.${customerId},customer_email.eq.${customerEmail},customerEmail.eq.${customerEmail}`
+            `customer_id.eq.${customerId},customer_email.eq.${customerEmail}`
           );
         } else if (customerId) {
-          query = query.or(`customer_id.eq.${customerId},customerId.eq.${customerId}`);
+          query = query.eq("customer_id", customerId);
         } else if (customerEmail) {
-          query = query.or(`customer_email.eq.${customerEmail},customerEmail.eq.${customerEmail}`);
+          query = query.eq("customer_email", customerEmail);
         } else {
           continue;
         }
@@ -685,7 +700,7 @@ export default function CustomerTracking() {
         const { data, error } = await supabase
           .from(table)
           .select("*")
-          .or(`order_id.eq.${orderId},orderId.eq.${orderId}`)
+          .eq("order_id", orderId)
           .limit(100);
 
         if (!error && Array.isArray(data)) {
@@ -773,10 +788,10 @@ export default function CustomerTracking() {
             <Ionicons name="navigate-outline" size={34} color={COLORS.white} />
           </View>
 
-          <Text style={styles.kicker}>Farm2Home Tracking</Text>
-          <Text style={styles.heroTitle}>Track Your Order</Text>
+          <Text style={styles.kicker}>Fina Customer Tracking</Text>
+          <Text style={styles.heroTitle}>Order Tracking</Text>
           <Text style={styles.heroText}>
-            Follow payment, farmer preparation, driver pickup, and delivery status.
+            Monitor order payment, farmer fulfillment, driver pickup, route movement, and delivery status.
           </Text>
         </View>
 
@@ -821,7 +836,7 @@ export default function CustomerTracking() {
               </View>
 
               <View style={styles.addressBox}>
-                <Ionicons name="location-outline" size={18} color={COLORS.red} />
+                <Ionicons name="location-outline" size={18} color={COLORS.primary} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.addressLabel}>Destination</Text>
                   <Text style={styles.addressText}>{deliveryAddress || "Not listed"}</Text>
@@ -899,12 +914,12 @@ export default function CustomerTracking() {
 
         <View style={styles.farmButtonRow}>
           <Pressable style={styles.farmButton} onPress={() => openFarmerChat(item)}>
-            <Ionicons name="chatbubble-outline" size={16} color={COLORS.red} />
+            <Ionicons name="chatbubble-outline" size={16} color={COLORS.primary} />
             <Text style={styles.farmButtonText}>Farmer</Text>
           </Pressable>
 
           <Pressable style={styles.farmButton} onPress={() => openDriverChat(item)}>
-            <Ionicons name="car-outline" size={16} color={COLORS.red} />
+            <Ionicons name="car-outline" size={16} color={COLORS.primary} />
             <Text style={styles.farmButtonText}>Driver</Text>
           </Pressable>
         </View>
@@ -915,9 +930,9 @@ export default function CustomerTracking() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
         <View style={styles.center}>
-          <ActivityIndicator color={COLORS.red} size="large" />
+          <ActivityIndicator color={COLORS.primary} size="large" />
           <Text style={styles.centerText}>Loading tracking...</Text>
         </View>
       </SafeAreaView>
@@ -926,7 +941,7 @@ export default function CustomerTracking() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       <FlatList
         data={farmTracking}
@@ -940,7 +955,7 @@ export default function CustomerTracking() {
         ListEmptyComponent={
           <View style={styles.emptyCard}>
             <View style={styles.emptyIcon}>
-              <Ionicons name="navigate-outline" size={34} color={COLORS.red} />
+              <Ionicons name="navigate-outline" size={34} color={COLORS.primary} />
             </View>
             <Text style={styles.emptyTitle}>No tracking found</Text>
             <Text style={styles.emptyText}>
@@ -962,8 +977,8 @@ export default function CustomerTracking() {
 
 function StatusBadge({ status, tone }: { status: string; tone: "green" | "amber" | "blue" | "danger" }) {
   const config = {
-    green: { bg: COLORS.greenSoft, color: COLORS.greenDark },
-    amber: { bg: COLORS.amberSoft, color: "#92400E" },
+    green: { bg: COLORS.accentSoft, color: COLORS.accentDark },
+    amber: { bg: COLORS.warningSoft, color: "#92400E" },
     blue: { bg: COLORS.blueSoft, color: COLORS.blue },
     danger: { bg: COLORS.dangerSoft, color: COLORS.danger },
   }[tone];
@@ -1028,7 +1043,7 @@ function ActionButton({
 }) {
   return (
     <Pressable style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]} onPress={onPress}>
-      <Ionicons name={icon} size={18} color={COLORS.red} />
+      <Ionicons name={icon} size={18} color={COLORS.primary} />
       <Text style={styles.actionText}>{label}</Text>
     </Pressable>
   );
@@ -1045,7 +1060,7 @@ function InfoRow({
 }) {
   return (
     <View style={styles.infoRow}>
-      <Ionicons name={icon} size={17} color={COLORS.red} />
+      <Ionicons name={icon} size={17} color={COLORS.primary} />
       <View style={{ flex: 1 }}>
         <Text style={styles.infoLabel}>{label}</Text>
         <Text style={styles.infoValue}>{value}</Text>
@@ -1060,14 +1075,14 @@ const styles = StyleSheet.create({
   centerText: { color: COLORS.muted, fontWeight: "800" },
   listContent: { paddingBottom: 70 },
   hero: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.navy,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 28,
   },
   backButton: {
     alignSelf: "flex-start",
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
@@ -1081,13 +1096,13 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 24,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
   kicker: {
-    color: "#FCA5A5",
+    color: "#A5B4FC",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1,
@@ -1104,8 +1119,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
-  orderChipActive: { backgroundColor: COLORS.red, borderColor: COLORS.red },
-  orderChipText: { color: COLORS.red, fontWeight: "900" },
+  orderChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  orderChipText: { color: COLORS.primary, fontWeight: "900" },
   orderChipTextActive: { color: COLORS.white },
   statusCard: {
     backgroundColor: COLORS.card,
@@ -1130,7 +1145,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 10,
   },
-  summaryPillValue: { color: COLORS.red, fontWeight: "900", fontSize: 15 },
+  summaryPillValue: { color: COLORS.primary, fontWeight: "900", fontSize: 15 },
   summaryPillLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11, marginTop: 2 },
   addressBox: {
     backgroundColor: COLORS.surface,
@@ -1160,13 +1175,13 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 12,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: COLORS.surface2,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 2,
   },
   timelineDotComplete: { backgroundColor: COLORS.red },
-  timelineLine: { width: 2, flex: 1, backgroundColor: "#E5E7EB" },
+  timelineLine: { width: 2, flex: 1, backgroundColor: COLORS.surface2 },
   timelineLineComplete: { backgroundColor: COLORS.red },
   timelineContent: { flex: 1, paddingLeft: 8, paddingTop: 5 },
   timelineLabel: { color: COLORS.muted, fontWeight: "800" },
@@ -1179,7 +1194,7 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primarySoft,
     borderRadius: 16,
     padding: 13,
     alignItems: "center",
@@ -1187,7 +1202,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  actionText: { color: COLORS.red, fontWeight: "900" },
+  actionText: { color: COLORS.primary, fontWeight: "900" },
   sectionHeader: { marginHorizontal: 18, marginTop: 18, marginBottom: 10 },
   farmCard: {
     backgroundColor: COLORS.card,
@@ -1203,7 +1218,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 18,
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.navy,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1237,7 +1252,7 @@ const styles = StyleSheet.create({
   farmButtonRow: { flexDirection: "row", gap: 10, marginTop: 12 },
   farmButton: {
     flex: 1,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primarySoft,
     borderRadius: 15,
     padding: 12,
     alignItems: "center",
@@ -1245,7 +1260,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 6,
   },
-  farmButtonText: { color: COLORS.red, fontWeight: "900" },
+  farmButtonText: { color: COLORS.primary, fontWeight: "900" },
   emptyCard: {
     backgroundColor: COLORS.card,
     marginHorizontal: 18,
@@ -1260,7 +1275,7 @@ const styles = StyleSheet.create({
     width: 68,
     height: 68,
     borderRadius: 24,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
@@ -1268,7 +1283,7 @@ const styles = StyleSheet.create({
   emptyTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
   emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", lineHeight: 22, marginTop: 8 },
   emptyButton: {
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 13,
