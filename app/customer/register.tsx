@@ -201,7 +201,9 @@ function getStripeLaunchUrl(data: any) {
       data?.checkout_session_url ||
       data?.paymentUrl ||
       data?.payment_url ||
-      data?.link
+      data?.link ||
+      data?.data?.url ||
+      data?.result?.url
   );
 }
 
@@ -1477,7 +1479,7 @@ export default function CustomerRegister() {
       const data = await parseApiResponse(response);
       console.log("CUSTOMER STRIPE CHECKOUT RESPONSE:", data);
 
-      const checkoutUrl = getStripeLaunchUrl(data);
+      const checkoutUrl = data?.url || getStripeLaunchUrl(data);
 
       if (!response.ok || (!data.success && !checkoutUrl && !data.alreadySubscribed)) {
         console.log("CUSTOMER STRIPE ERROR RESPONSE:", data);

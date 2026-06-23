@@ -175,39 +175,40 @@ async function parseApiResponse(response: Response) {
 }
 
 function getStripeLaunchUrl(data: any) {
-  const direct =
+  return clean(
     data?.url ||
-    data?.checkoutUrl ||
-    data?.checkout_url ||
-    data?.sessionUrl ||
-    data?.session_url ||
-    data?.checkoutSessionUrl ||
-    data?.checkout_session_url ||
-    data?.accountLink ||
-    data?.account_link ||
-    data?.accountLinkUrl ||
-    data?.account_link_url ||
-    data?.onboardingUrl ||
-    data?.onboarding_url ||
-    data?.connectUrl ||
-    data?.connect_url ||
-    data?.link;
-
-  const nested =
-    data?.accountLink?.url ||
-    data?.account_link?.url ||
-    data?.data?.url ||
-    data?.data?.accountLink ||
-    data?.data?.account_link ||
-    data?.data?.accountLink?.url ||
-    data?.data?.account_link?.url ||
-    data?.result?.url ||
-    data?.result?.accountLink ||
-    data?.result?.account_link ||
-    data?.result?.accountLink?.url ||
-    data?.result?.account_link?.url;
-
-  return clean(direct || nested);
+      data?.onboardingUrl ||
+      data?.onboarding_url ||
+      data?.accountLink ||
+      data?.account_link ||
+      data?.accountLinkUrl ||
+      data?.account_link_url ||
+      data?.connectUrl ||
+      data?.connect_url ||
+      data?.checkoutUrl ||
+      data?.checkout_url ||
+      data?.sessionUrl ||
+      data?.session_url ||
+      data?.checkoutSessionUrl ||
+      data?.checkout_session_url ||
+      data?.link ||
+      data?.accountLink?.url ||
+      data?.account_link?.url ||
+      data?.data?.url ||
+      data?.data?.onboardingUrl ||
+      data?.data?.onboarding_url ||
+      data?.data?.accountLink ||
+      data?.data?.account_link ||
+      data?.data?.accountLink?.url ||
+      data?.data?.account_link?.url ||
+      data?.result?.url ||
+      data?.result?.onboardingUrl ||
+      data?.result?.onboarding_url ||
+      data?.result?.accountLink ||
+      data?.result?.account_link ||
+      data?.result?.accountLink?.url ||
+      data?.result?.account_link?.url
+  );
 }
 
 async function openUrl(url: string) {
@@ -1414,13 +1415,24 @@ export default function FreightRegister() {
       const saved = await saveFreightProfile(false);
       if (!saved?.id) return;
 
+      const finalFreightId = clean(saved.id || saved.freight_id || freightId || savedCarrierId);
+      const finalEmail = normalize(saved.email || email);
+      const finalAccountId = clean(saved.account_id || accountId);
+      const finalBusinessName = clean(
+        saved.company_name ||
+          saved.business_name ||
+          companyName ||
+          saved.name ||
+          "Farm2Home Carrier"
+      );
+
       const returnUrl = `${APP_URL}/freight/connect-bank?success=true&freightId=${encodeURIComponent(
-        saved.id
-      )}&email=${encodeURIComponent(saved.email)}`;
+        finalFreightId
+      )}&email=${encodeURIComponent(finalEmail)}`;
 
       const refreshUrl = `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(
-        saved.id
-      )}&email=${encodeURIComponent(saved.email)}`;
+        finalFreightId
+      )}&email=${encodeURIComponent(finalEmail)}`;
 
       const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
         method: "POST",
@@ -1428,23 +1440,30 @@ export default function FreightRegister() {
         body: JSON.stringify({
           role: "freight",
 
-          userId: saved.id,
-          freightId: saved.id,
-          freight_id: saved.id,
+          userId: finalFreightId,
+          freightId: finalFreightId,
+          freight_id: finalFreightId,
+          profileId: finalFreightId,
+          authUserId: finalFreightId,
 
-          accountId: saved.account_id,
-          account_id: saved.account_id,
+          accountId: finalAccountId,
+          account_id: finalAccountId,
 
-          email: saved.email,
-          freight_email: saved.email,
+          email: finalEmail,
+          freight_email: finalEmail,
 
-          businessName: saved.company_name || saved.business_name,
-          business_name: saved.business_name || saved.company_name,
-          companyName: saved.company_name || saved.business_name,
-          company_name: saved.company_name || saved.business_name,
+          businessName: finalBusinessName,
+          business_name: finalBusinessName,
+          companyName: finalBusinessName,
+          company_name: finalBusinessName,
+          name: finalBusinessName,
+          username: normalize(saved.username || username),
 
-          name: saved.company_name || saved.business_name || saved.name,
-          username: saved.username,
+          stripeCustomerId: stripeCustomerId || saved.stripe_customer_id || saved.stripeCustomerId,
+          stripe_customer_id: stripeCustomerId || saved.stripe_customer_id || saved.stripeCustomerId,
+
+          stripeAccountId: freightAccount || saved.freight_account || saved.stripe_account_id,
+          stripe_account_id: freightAccount || saved.freight_account || saved.stripe_account_id,
 
           returnUrl,
           return_url: returnUrl,
@@ -1456,16 +1475,7 @@ export default function FreightRegister() {
       const data = await parseApiResponse(response);
       console.log("FREIGHT CONNECT RESPONSE:", data);
 
-      const connectAccount = pickStripeConnectAccountId(
-        data.stripeAccountId,
-        data.stripe_account_id,
-        data.accountId,
-        data.account_id,
-        data.account,
-        data.freight_account
-      );
-
-      const launchUrl = getStripeLaunchUrl(data);
+      const launchUrl = data?.url || data?.onboardingUrl || getStripeLaunchUrl(data);
 
       if (!response.ok || !data.success || !launchUrl) {
         Alert.alert(
@@ -1474,6 +1484,14 @@ export default function FreightRegister() {
         );
         return;
       }
+
+      const connectAccount = pickStripeConnectAccountId(
+        data.stripeAccountId,
+        data.stripe_account_id,
+        data.freight_account,
+        data.account,
+        data.account_id
+      );
 
       if (connectAccount) {
         setFreightAccount(connectAccount);
@@ -1484,24 +1502,30 @@ export default function FreightRegister() {
             .update({
               freight_account: connectAccount,
               stripe_account_id: connectAccount,
+              stripe_connect_status: data.onboardingComplete ? "complete" : "started",
+              payouts_enabled: Boolean(data.payoutsEnabled),
+              charges_enabled: Boolean(data.chargesEnabled),
+              stripe_payouts_enabled: Boolean(data.payoutsEnabled),
+              stripe_charges_enabled: Boolean(data.chargesEnabled),
+              stripe_onboarding_complete: Boolean(data.onboardingComplete),
               updated_at: new Date().toISOString(),
             })
-            .eq("id", saved.id);
+            .eq("id", finalFreightId);
         } catch (updateError) {
           console.log("freight_users connect update skipped:", updateError);
         }
 
         await upsertFreightSubscriptionRow({
-          freightId: saved.id,
-          emailValue: saved.email,
+          freightId: finalFreightId,
+          emailValue: finalEmail,
           customerId: stripeCustomerId || saved.stripe_customer_id,
-          subscriptionValue: subscriptionId || saved.subscription_id,
+          subscriptionValue: subscriptionId || saved.subscription_id || saved.stripe_subscription_id,
           connectValue: connectAccount,
           subscriptionStatusValue:
             subscriptionStatus || saved.subscription_status || "active",
         });
 
-        await saveFreightUserRow(saved.id, saved.account_id);
+        await saveFreightUserRow(finalFreightId, finalAccountId);
       }
 
       await openUrl(launchUrl);
