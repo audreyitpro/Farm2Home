@@ -99,6 +99,10 @@ function isStripeSubscriptionId(value: any) {
   return clean(value).startsWith("sub_");
 }
 
+function isStripeConnectAccountId(value: any) {
+  return clean(value).startsWith("acct_");
+}
+
 function isDriverAccountId(value: any) {
   return /^Driver_\d{3,}$/i.test(clean(value));
 }
@@ -233,7 +237,8 @@ function hasCompleteDashboardAccess(row: any) {
           row?.stripeSubscriptionId ||
           row?.subscription_id ||
           row?.subscriptionId
-      )
+      ) &&
+      isStripeConnectAccountId(row?.stripe_account_id || row?.stripeAccountId)
   );
 }
 
@@ -243,6 +248,7 @@ export default function DriverRegisterScreen() {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [stripeLoading, setStripeLoading] = useState(false);
+  const [connectLoading, setConnectLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
 
@@ -251,6 +257,7 @@ export default function DriverRegisterScreen() {
   const [accountId, setAccountId] = useState("");
   const [stripeCustomerId, setStripeCustomerId] = useState("");
   const [stripeSubscriptionId, setStripeSubscriptionId] = useState("");
+  const [stripeAccountId, setStripeAccountId] = useState("");
   const [subscriptionStatus, setSubscriptionStatus] = useState("");
 
   const [fullName, setFullName] = useState("");
@@ -314,12 +321,17 @@ export default function DriverRegisterScreen() {
         value: maskId(stripeSubscriptionId),
       },
       {
+        label: "Stripe Account",
+        complete: isStripeConnectAccountId(stripeAccountId),
+        value: maskId(stripeAccountId),
+      },
+      {
         label: "Documents",
         complete: Boolean(licenseDocument && insuranceDocument),
         value: licenseDocument && insuranceDocument ? "Uploaded" : "Missing",
       },
     ];
-  }, [savedDriverId, accountId, stripeCustomerId, stripeSubscriptionId, licenseDocument, insuranceDocument]);
+  }, [savedDriverId, accountId, stripeCustomerId, stripeSubscriptionId, stripeAccountId, licenseDocument, insuranceDocument]);
 
   const setupScore = useMemo(() => setupStatus.filter((item) => item.complete).length, [setupStatus]);
 
@@ -333,7 +345,7 @@ export default function DriverRegisterScreen() {
           licenseDocument &&
           insuranceDocument
       ),
-    [savedDriverId, accountId, stripeCustomerId, stripeSubscriptionId, licenseDocument, insuranceDocument]
+    [savedDriverId, accountId, stripeCustomerId, stripeSubscriptionId, stripeAccountId, licenseDocument, insuranceDocument]
   );
 
   useEffect(() => {
@@ -378,6 +390,9 @@ export default function DriverRegisterScreen() {
     if (rowAccountId) setAccountId(rowAccountId);
     if (rowCustomerId) setStripeCustomerId(rowCustomerId);
     if (rowSubId) setStripeSubscriptionId(rowSubId);
+    if (isStripeConnectAccountId(row?.stripe_account_id || row?.stripeAccountId)) {
+      setStripeAccountId(clean(row?.stripe_account_id || row?.stripeAccountId));
+    }
 
     setSubscriptionStatus(row?.subscription_status || row?.subscriptionStatus || subscriptionStatus || "");
 
@@ -963,6 +978,17 @@ export default function DriverRegisterScreen() {
         stripe_subscription_id: finalSubscriptionId || null,
         subscription_id: finalSubscriptionId || null,
         stripe_checkout_session_id: existing?.stripe_checkout_session_id || null,
+        stripe_account_id: isStripeConnectAccountId(stripeAccountId)
+          ? stripeAccountId
+          : isStripeConnectAccountId(existing?.stripe_account_id)
+            ? existing.stripe_account_id
+            : null,
+        stripe_connect_status: isStripeConnectAccountId(stripeAccountId || existing?.stripe_account_id) ? "started" : "not_started",
+        payouts_enabled: Boolean(existing?.payouts_enabled),
+        charges_enabled: Boolean(existing?.charges_enabled),
+        stripe_payouts_enabled: Boolean(existing?.stripe_payouts_enabled),
+        stripe_charges_enabled: Boolean(existing?.stripe_charges_enabled),
+        stripe_onboarding_complete: Boolean(existing?.stripe_onboarding_complete),
 
         subscription_status: finalStatus,
         membership_status: paid ? "active" : "pending_payment",
@@ -1013,6 +1039,7 @@ export default function DriverRegisterScreen() {
       setStripeSubscriptionId(
         pickStripeSubscriptionId(savedDriver.stripe_subscription_id, savedDriver.subscription_id)
       );
+      if (isStripeConnectAccountId(savedDriver.stripe_account_id)) setStripeAccountId(savedDriver.stripe_account_id);
       setSubscriptionStatus(savedDriver.subscription_status || finalStatus);
 
       setHasSavedSecurityAnswer1(Boolean(savedDriver.security_answer_1));
@@ -1379,6 +1406,127 @@ export default function DriverRegisterScreen() {
     }
   }
 
+
+  async function handleConnectBank() {
+    if (connectLoading) return;
+
+    try {
+      setConnectLoading(true);
+
+      const saved = await saveDriverProfile(false);
+      if (!saved?.id) return;
+
+      const driverId = clean(saved.id || saved.driver_id);
+      const driverEmail = normalize(saved.email || email);
+      const finalAccountId = clean(saved.account_id || accountId);
+      const finalName = clean(saved.full_name || saved.name || fullName || "Farm2Home Driver");
+
+      const returnUrl = `${APP_URL}/driver/register?connect=success&driverId=${encodeURIComponent(driverId)}&email=${encodeURIComponent(driverEmail)}`;
+      const refreshUrl = `${APP_URL}/driver/register?connect=refresh&driverId=${encodeURIComponent(driverId)}&email=${encodeURIComponent(driverEmail)}`;
+
+      const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "driver",
+          userId: driverId,
+          driverId,
+          driver_id: driverId,
+          profileId: driverId,
+          authUserId: driverId,
+          accountId: finalAccountId,
+          account_id: finalAccountId,
+          email: driverEmail,
+          driver_email: driverEmail,
+          name: finalName,
+          username: normalize(saved.username || username),
+          stripeCustomerId: saved.stripe_customer_id || stripeCustomerId,
+          stripe_customer_id: saved.stripe_customer_id || stripeCustomerId,
+          stripeAccountId: saved.stripe_account_id || stripeAccountId,
+          stripe_account_id: saved.stripe_account_id || stripeAccountId,
+          returnUrl,
+          return_url: returnUrl,
+          refreshUrl,
+          refresh_url: refreshUrl,
+          metadata: {
+            role: "driver",
+            driver_id: driverId,
+            account_id: finalAccountId,
+            driver_email: driverEmail,
+            email: driverEmail,
+          },
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+      const launchUrl =
+        data?.url ||
+        data?.onboardingUrl ||
+        data?.onboarding_url ||
+        data?.accountLink ||
+        data?.account_link ||
+        data?.accountLinkUrl ||
+        data?.account_link_url ||
+        data?.data?.url ||
+        data?.result?.url ||
+        "";
+
+      if (!response.ok || !data.success || !launchUrl) {
+        Alert.alert("Connect Error", data.error || data.message || "Stripe Connect onboarding URL was not returned.");
+        return;
+      }
+
+      const connectAccount =
+        data.stripeAccountId ||
+        data.stripe_account_id ||
+        data.account ||
+        data.account_id ||
+        data.connectedAccountId ||
+        data.connected_account_id ||
+        "";
+
+      if (isStripeConnectAccountId(connectAccount)) {
+        setStripeAccountId(connectAccount);
+
+        await supabase
+          .from("drivers")
+          .update({
+            stripe_account_id: connectAccount,
+            stripe_connect_status: data.onboardingComplete ? "complete" : "started",
+            payouts_enabled: Boolean(data.payoutsEnabled),
+            charges_enabled: Boolean(data.chargesEnabled),
+            stripe_payouts_enabled: Boolean(data.payoutsEnabled),
+            stripe_charges_enabled: Boolean(data.chargesEnabled),
+            stripe_onboarding_complete: Boolean(data.onboardingComplete),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", driverId);
+
+        await supabase
+          .from("profiles")
+          .update({
+            stripe_account_id: connectAccount,
+            account_id: finalAccountId,
+            driver_account: finalAccountId,
+          })
+          .eq("auth_user_id", driverId);
+
+        await saveDriverSession({
+          ...saved,
+          stripe_account_id: connectAccount,
+          stripeAccountId: connectAccount,
+        });
+      }
+
+      await openUrl(launchUrl);
+    } catch (error: any) {
+      console.log("handleConnectBank error:", error);
+      Alert.alert("Connect Error", error?.message || "Unable to connect Stripe payouts.");
+    } finally {
+      setConnectLoading(false);
+    }
+  }
+
   async function markDriverApplicationSubmittedAndOpenDashboard(driverId: string) {
     const now = new Date().toISOString();
 
@@ -1414,7 +1562,7 @@ export default function DriverRegisterScreen() {
         role: "driver",
         driver_account: driverRow?.account_id || null,
         account_id: driverRow?.account_id || null,
-        stripe_account_id: driverRow?.stripe_customer_id || null,
+        stripe_account_id: driverRow?.stripe_account_id || null,
       })
       .eq("auth_user_id", driverId);
 
@@ -1648,6 +1796,7 @@ export default function DriverRegisterScreen() {
           <ReadOnlyId label="Account ID" value={accountId || "Generated automatically"} />
           <ReadOnlyId label="Stripe Customer ID" value={stripeCustomerId || "Captured after Stripe checkout/sync"} />
           <ReadOnlyId label="Subscription ID" value={stripeSubscriptionId || "Captured after Stripe checkout/sync"} />
+          <ReadOnlyId label="Stripe Account ID" value={stripeAccountId || "Captured after Stripe Connect payouts"} />
 
           <ActionButton
             title="Save Profile"
@@ -1675,6 +1824,15 @@ export default function DriverRegisterScreen() {
           />
 
           <ActionButton
+            title="Connect Stripe Payouts"
+            subtitle="Open Stripe Connect onboarding and save stripe_account_id for driver payouts."
+            icon="wallet-outline"
+            loading={connectLoading}
+            onPress={handleConnectBank}
+            secondary
+          />
+
+          <ActionButton
             title="Refresh Without Clearing Form"
             subtitle="Reload Supabase and Stripe info without wiping form fields."
             icon="refresh-outline"
@@ -1699,6 +1857,7 @@ export default function DriverRegisterScreen() {
         <ReviewRow label="Driver ID" value={maskId(savedDriverId)} />
         <ReviewRow label="Stripe Customer" value={maskId(stripeCustomerId)} />
         <ReviewRow label="Subscription" value={maskId(stripeSubscriptionId)} />
+        <ReviewRow label="Stripe Account" value={maskId(stripeAccountId)} />
 
         <View style={styles.noticeBox}>
           <Ionicons
