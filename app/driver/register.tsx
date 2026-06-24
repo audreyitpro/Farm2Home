@@ -117,6 +117,11 @@ function pickStripeSubscriptionId(...values: any[]) {
   return found ? clean(found) : "";
 }
 
+function pickStripeConnectAccountId(...values: any[]) {
+  const found = values.find((value) => isStripeConnectAccountId(value));
+  return found ? clean(found) : "";
+}
+
 function maskId(value: string, fallback = "Missing") {
   const id = clean(value);
   if (!id) return fallback;
@@ -204,6 +209,8 @@ async function saveDriverSession(driver: any) {
       driver.stripeSubscriptionId || driver.stripe_subscription_id || driver.subscription_id,
     stripe_subscription_id:
       driver.stripe_subscription_id || driver.stripeSubscriptionId || driver.subscription_id,
+    stripeAccountId: driver.stripeAccountId || driver.stripe_account_id,
+    stripe_account_id: driver.stripe_account_id || driver.stripeAccountId,
     subscriptionId:
       driver.subscriptionId || driver.subscription_id || driver.stripe_subscription_id,
     subscription_id:
@@ -342,6 +349,7 @@ export default function DriverRegisterScreen() {
           accountId &&
           isStripeCustomerId(stripeCustomerId) &&
           isStripeSubscriptionId(stripeSubscriptionId) &&
+          isStripeConnectAccountId(stripeAccountId) &&
           licenseDocument &&
           insuranceDocument
       ),
@@ -363,7 +371,13 @@ export default function DriverRegisterScreen() {
     if (stripeStatus === "success") {
       handleStripeSuccessReturn(returnedDriverId);
     }
-  }, [params?.stripe, params?.payment, params?.driverId, params?.driver_id, params?.email]);
+
+    const connectStatus = String(params?.connect || "");
+    if (connectStatus === "success") {
+      setStep(4);
+      void forceRefreshDriverRegister();
+    }
+  }, [params?.stripe, params?.payment, params?.connect, params?.driverId, params?.driver_id, params?.email]);
 
   function goNext() {
     setStep((prev) => Math.min(prev + 1, STEPS.length - 1));
@@ -376,7 +390,8 @@ export default function DriverRegisterScreen() {
   function hydrateForm(row: any) {
     const rowDriverId = clean(row?.id || row?.driver_id || row?.driverId || "");
     const rowProfileId = clean(row?.profile_id || row?.profileId || "");
-    const rowAccountId = clean(row?.account_id || row?.accountId || "");
+    const rawAccountId = clean(row?.account_id || row?.accountId || "");
+    const rowAccountId = isDriverAccountId(rawAccountId) ? rawAccountId : "";
     const rowCustomerId = pickStripeCustomerId(row?.stripe_customer_id, row?.stripeCustomerId);
     const rowSubId = pickStripeSubscriptionId(
       row?.stripe_subscription_id,
@@ -678,7 +693,7 @@ export default function DriverRegisterScreen() {
       username: normalize(username),
       account_id: accountValue,
       driver_account: accountValue,
-      stripe_account_id: stripeCustomerId || null,
+      stripe_account_id: isStripeConnectAccountId(stripeAccountId) ? stripeAccountId : null,
     };
 
     if (existing?.id) {
@@ -1128,7 +1143,7 @@ export default function DriverRegisterScreen() {
       if (!dbDriver && !subRow) {
         const backendSynced = await syncStripeFromBackend(true);
         if (backendSynced && routeWhenReady && hasCompleteDashboardAccess(backendSynced)) {
-          router.replace("/driver/dashboard" as any);
+          router.replace("/driver/mobile-driver-app" as any);
         }
         if (!backendSynced) Alert.alert("Not Found", "No driver Stripe records were found.");
         return backendSynced;
@@ -1153,7 +1168,7 @@ export default function DriverRegisterScreen() {
       const saved = await saveDriverProfile(false);
 
       if (routeWhenReady && saved && hasCompleteDashboardAccess(saved)) {
-        router.replace("/driver/dashboard" as any);
+        router.replace("/driver/mobile-driver-app" as any);
       } else if (saved) {
         Alert.alert("Stripe Info Retrieved", "Missing Stripe fields were synced and saved.");
       }
@@ -1584,7 +1599,7 @@ export default function DriverRegisterScreen() {
       });
     }
 
-    router.replace("/driver/dashboard" as any);
+    router.replace("/driver/mobile-driver-app" as any);
   }
 
   async function handleSubmitAndDashboard() {
@@ -1597,6 +1612,7 @@ export default function DriverRegisterScreen() {
         !saved.account_id ? "Static Account ID" : "",
         !isStripeCustomerId(saved.stripe_customer_id) ? "Stripe Customer ID" : "",
         !isStripeSubscriptionId(saved.stripe_subscription_id || saved.subscription_id) ? "Subscription ID" : "",
+        !isStripeConnectAccountId(saved.stripe_account_id) ? "Stripe Account ID" : "",
       ].filter(Boolean);
 
       Alert.alert("Setup Incomplete", `Missing: ${missing.join(", ")}.`);
@@ -1867,7 +1883,7 @@ export default function DriverRegisterScreen() {
           />
           <Text style={styles.noticeText}>
             {allRequirementsFound
-              ? "Driver profile, documents, Stripe customer, and subscription are saved."
+              ? "Driver profile, documents, Stripe customer, subscription, and Stripe account are saved."
               : "Membership and required profile data must be saved before dashboard routing."}
           </Text>
         </View>
@@ -1913,8 +1929,8 @@ export default function DriverRegisterScreen() {
 
               <View style={styles.scoreCard}>
                 <Text style={styles.scoreLabel}>Setup Progress</Text>
-                <Text style={styles.scoreValue}>{setupScore}/5</Text>
-                <Text style={styles.scoreHint}>Profile, static account, Stripe customer, subscription, and documents.</Text>
+                <Text style={styles.scoreValue}>{setupScore}/6</Text>
+                <Text style={styles.scoreHint}>Profile, static account, Stripe customer, subscription, Connect account, and documents.</Text>
               </View>
 
               {STEPS.map((item, index) => {
