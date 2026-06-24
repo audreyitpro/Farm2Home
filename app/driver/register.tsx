@@ -108,6 +108,7 @@ export default function DriverRegisterScreen() {
 
   const [loading, setLoading] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
+  const [savingStripeIds, setSavingStripeIds] = useState(false);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -120,6 +121,10 @@ export default function DriverRegisterScreen() {
   const [vehicleType, setVehicleType] = useState("");
   const [licenseNumber, setLicenseNumber] = useState("");
   const [serviceArea, setServiceArea] = useState("");
+
+  const [driverIdManual, setDriverIdManual] = useState("");
+  const [stripeCustomerIdManual, setStripeCustomerIdManual] = useState("");
+  const [stripeSubscriptionIdManual, setStripeSubscriptionIdManual] = useState("");
 
   const [licenseDocument, setLicenseDocument] = useState<UploadedDocument | null>(null);
   const [insuranceDocument, setInsuranceDocument] = useState<UploadedDocument | null>(null);
@@ -285,7 +290,6 @@ export default function DriverRegisterScreen() {
     const { firstName, lastName } = splitName(payload.full_name || payload.name || "");
 
     const profilePayload = {
-      id: payload.id,
       auth_user_id: payload.id,
       role: "driver",
       full_name: payload.full_name,
@@ -297,13 +301,13 @@ export default function DriverRegisterScreen() {
       username: payload.username,
       account_id: payload.account_id,
       driver_account: payload.account_id,
-      stripe_account_id: payload.stripe_account_id || null,
+      stripe_account_id: payload.stripe_account_id || payload.stripe_customer_id || null,
       created_at: payload.created_at || now,
     };
 
     const { data, error } = await supabase
       .from("profiles")
-      .upsert(profilePayload, { onConflict: "id" })
+      .upsert(profilePayload, { onConflict: "auth_user_id" })
       .select("*")
       .single();
 
@@ -419,6 +423,7 @@ export default function DriverRegisterScreen() {
     }
 
     if (data) {
+      setDriverIdManual(data.id || "");
       Alert.alert("Account Exists", "A driver account already exists with this email or username.");
       return true;
     }
@@ -551,6 +556,91 @@ export default function DriverRegisterScreen() {
     return data;
   }
 
+  async function saveStripeDriverIds() {
+    const cleanDriverId = driverIdManual.trim();
+    const cleanStripeCustomerId = stripeCustomerIdManual.trim();
+    const cleanStripeSubscriptionId = stripeSubscriptionIdManual.trim();
+
+    if (!cleanDriverId) {
+      Alert.alert("Missing Driver ID", "Enter the driver_id before saving.");
+      return;
+    }
+
+    if (!cleanStripeCustomerId && !cleanStripeSubscriptionId) {
+      Alert.alert("Missing Stripe Info", "Enter Stripe customer ID or subscription ID.");
+      return;
+    }
+
+    try {
+      setSavingStripeIds(true);
+
+      const { data: driverRow, error: findError } = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", cleanDriverId)
+        .maybeSingle();
+
+      if (findError) throw findError;
+
+      if (!driverRow) {
+        Alert.alert("Driver Not Found", "No driver row exists for this driver_id.");
+        return;
+      }
+
+      const finalStripeCustomerId = cleanStripeCustomerId || driverRow?.stripe_customer_id || null;
+      const finalStripeSubscriptionId = cleanStripeSubscriptionId || driverRow?.stripe_subscription_id || driverRow?.subscription_id || null;
+      const paid = Boolean(finalStripeSubscriptionId);
+
+      const { error: updateError } = await supabase
+        .from("drivers")
+        .update({
+          stripe_customer_id: finalStripeCustomerId,
+          stripe_subscription_id: finalStripeSubscriptionId,
+          subscription_id: finalStripeSubscriptionId,
+          subscription_status: paid ? "active" : driverRow?.subscription_status || "pending",
+          membership_status: paid ? "active" : driverRow?.membership_status || "pending",
+          driver_membership_paid: paid,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", cleanDriverId);
+
+      if (updateError) throw updateError;
+
+      await supabase
+        .from("profiles")
+        .update({
+          stripe_account_id: finalStripeCustomerId,
+          driver_account: driverRow?.account_id || null,
+          account_id: driverRow?.account_id || null,
+        })
+        .eq("auth_user_id", cleanDriverId);
+
+      const { data: updatedDriver } = await supabase
+        .from("drivers")
+        .select("*")
+        .eq("id", cleanDriverId)
+        .maybeSingle();
+
+      if (updatedDriver) {
+        await saveDriverSession({
+          ...updatedDriver,
+          role: "driver",
+          driverId: updatedDriver.id,
+          accountId: updatedDriver.account_id,
+          stripeCustomerId: updatedDriver.stripe_customer_id,
+          stripeSubscriptionId: updatedDriver.stripe_subscription_id || updatedDriver.subscription_id,
+        });
+      }
+
+      Alert.alert("Saved", "Driver Stripe IDs were saved successfully.");
+    } catch (error: any) {
+      console.log("Manual Stripe ID save error:", error);
+      Alert.alert("Save Error", error?.message || "Unable to save Stripe IDs.");
+    } finally {
+      setSavingStripeIds(false);
+    }
+  }
+
   async function forceSyncDriverSubscription(driverId: string, localDriver?: any) {
     try {
       const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
@@ -580,6 +670,10 @@ export default function DriverRegisterScreen() {
       const stripeCustomerId = json.stripeCustomerId || json.stripe_customer_id || "";
       const stripeSubscriptionId = json.stripeSubscriptionId || json.stripe_subscription_id || "";
       const subscriptionStatus = json.subscriptionStatus || json.subscription_status || "active";
+
+      setDriverIdManual(driverId);
+      setStripeCustomerIdManual(stripeCustomerId);
+      setStripeSubscriptionIdManual(stripeSubscriptionId);
 
       if (stripeCustomerId || stripeSubscriptionId) {
         await supabase
@@ -637,9 +731,9 @@ export default function DriverRegisterScreen() {
         role: "driver",
         driver_account: driverRow?.account_id || null,
         account_id: driverRow?.account_id || null,
-        stripe_account_id: driverRow?.stripe_account_id || null,
+        stripe_account_id: driverRow?.stripe_customer_id || driverRow?.stripe_account_id || null,
       })
-      .eq("id", driverId);
+      .eq("auth_user_id", driverId);
 
     await supabase.from("admin_verifications").upsert(
       {
@@ -733,6 +827,7 @@ export default function DriverRegisterScreen() {
       }
 
       const driverId = authData?.user?.id;
+      setDriverIdManual(driverId || "");
 
       if (!driverId) {
         Alert.alert("Signup Error", "Unable to create driver account. Please try again.");
@@ -871,15 +966,32 @@ export default function DriverRegisterScreen() {
         data.customer_id ||
         "";
 
+      const stripeSubscriptionId =
+        data.stripeSubscriptionId ||
+        data.stripe_subscription_id ||
+        data.subscriptionId ||
+        data.subscription_id ||
+        "";
+
       const stripeCheckoutSessionId = data.id || data.sessionId || data.session_id || "";
+
+      setDriverIdManual(driverId);
+      setStripeCustomerIdManual(stripeCustomerId);
+      setStripeSubscriptionIdManual(stripeSubscriptionId);
 
       await supabase
         .from("drivers")
         .update({
           stripe_customer_id: stripeCustomerId || null,
+          stripe_subscription_id: stripeSubscriptionId || null,
+          subscription_id: stripeSubscriptionId || null,
           stripe_checkout_session_id: stripeCheckoutSessionId || null,
-          membership_status: data.alreadySubscribed ? "active" : "pending_payment",
-          subscription_status: data.subscriptionStatus || (data.alreadySubscribed ? "active" : "pending_payment"),
+          membership_status: data.alreadySubscribed || stripeSubscriptionId ? "active" : "pending_payment",
+          subscription_status:
+            data.subscriptionStatus ||
+            data.subscription_status ||
+            (data.alreadySubscribed || stripeSubscriptionId ? "active" : "pending_payment"),
+          driver_membership_paid: Boolean(data.alreadySubscribed || stripeSubscriptionId),
           updated_at: new Date().toISOString(),
         })
         .eq("id", driverId);
@@ -887,9 +999,13 @@ export default function DriverRegisterScreen() {
       await saveDriverSession({
         ...localDriver,
         stripeCustomerId,
+        stripeSubscriptionId,
         stripeCheckoutSessionId,
-        membershipStatus: data.alreadySubscribed ? "active" : "pending_payment",
-        subscriptionStatus: data.subscriptionStatus || (data.alreadySubscribed ? "active" : "pending_payment"),
+        membershipStatus: data.alreadySubscribed || stripeSubscriptionId ? "active" : "pending_payment",
+        subscriptionStatus:
+          data.subscriptionStatus ||
+          data.subscription_status ||
+          (data.alreadySubscribed || stripeSubscriptionId ? "active" : "pending_payment"),
         updatedAt: new Date().toISOString(),
       });
 
@@ -1079,7 +1195,7 @@ export default function DriverRegisterScreen() {
                   <Text style={styles.noticeText}>
                     {processingReturn
                       ? "Please wait while we sync Stripe, submit your application, and open your dashboard."
-                      : "Your driver profile saves to Supabase before Stripe checkout. Customer and subscription IDs sync after payment."}
+                      : "Your driver profile saves to Supabase before Stripe checkout. Customer and subscription IDs sync after payment or can be saved manually."}
                   </Text>
                 </View>
               </View>
@@ -1124,6 +1240,54 @@ export default function DriverRegisterScreen() {
                 {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
                 {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
                 {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
+              </View>
+
+              <View style={styles.card}>
+                <SectionHeader
+                  title="Manual Stripe ID Save"
+                  icon="card-outline"
+                  subtitle="Use this to save driver_id, Stripe customer ID, and subscription ID directly to Supabase."
+                />
+
+                <Field
+                  label="Driver ID"
+                  value={driverIdManual}
+                  onChangeText={setDriverIdManual}
+                  placeholder="driver uuid / auth user id"
+                  icon="id-card-outline"
+                />
+
+                <Field
+                  label="Stripe Customer ID"
+                  value={stripeCustomerIdManual}
+                  onChangeText={setStripeCustomerIdManual}
+                  placeholder="cus_..."
+                  icon="card-outline"
+                />
+
+                <Field
+                  label="Stripe Subscription ID"
+                  value={stripeSubscriptionIdManual}
+                  onChangeText={setStripeSubscriptionIdManual}
+                  placeholder="sub_..."
+                  icon="receipt-outline"
+                />
+
+                <TouchableOpacity
+                  style={[styles.secondaryButton, savingStripeIds && styles.disabledButton]}
+                  onPress={saveStripeDriverIds}
+                  disabled={savingStripeIds}
+                  activeOpacity={0.9}
+                >
+                  {savingStripeIds ? (
+                    <ActivityIndicator color={COLORS.primary} />
+                  ) : (
+                    <>
+                      <Ionicons name="save-outline" size={18} color={COLORS.primary} />
+                      <Text style={styles.secondaryButtonText}>Save Stripe IDs</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               </View>
 
               <TouchableOpacity
