@@ -298,7 +298,6 @@ export default function DriverRegisterScreen() {
           email: payload.email,
           phone: payload.phone,
           username: payload.username,
-          account_active: true,
           updated_at: payload.updated_at || now,
           created_at: payload.created_at || now,
         },
@@ -591,17 +590,8 @@ export default function DriverRegisterScreen() {
           })
           .eq("id", driverId);
 
-        await supabase
-          .from("profiles")
-          .update({
-            stripe_customer_id: stripeCustomerId || null,
-            stripe_subscription_id: stripeSubscriptionId || null,
-            subscription_id: stripeSubscriptionId || null,
-            subscription_status: subscriptionStatus,
-            membership_status: stripeSubscriptionId ? "active" : "pending",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", driverId);
+        // Profiles table may not contain Stripe/membership columns.
+        // Stripe membership data is stored on drivers and driver_subscriptions.
       }
 
       return json;
@@ -642,9 +632,6 @@ export default function DriverRegisterScreen() {
     await supabase
       .from("profiles")
       .update({
-        account_active: true,
-        membership_status: paid ? "active" : "pending",
-        subscription_status: driverRow?.subscription_status || (paid ? "active" : "pending"),
         updated_at: now,
       })
       .eq("id", driverId);
