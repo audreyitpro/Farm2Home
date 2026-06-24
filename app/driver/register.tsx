@@ -31,34 +31,25 @@ const COLORS = {
   card: "#FFFFFF",
   surface: "#F8FAFC",
   surface2: "#F1F5F9",
-
   primary: "#635BFF",
   primaryDark: "#4638D8",
   primarySoft: "#EEF2FF",
-
   accent: "#10B981",
   accentDark: "#047857",
   accentSoft: "#D1FAE5",
-
   warning: "#F59E0B",
   warningSoft: "#FEF3C7",
-
   danger: "#EF4444",
   dangerSoft: "#FEE2E2",
-
   blue: "#2563EB",
   blueSoft: "#DBEAFE",
-
   text: "#101828",
   muted: "#667085",
   border: "#E5E7EB",
-
   navy: "#020617",
   navyCard: "#111827",
   dark: "#111827",
   white: "#FFFFFF",
-
-  // Backward-compatible names used by older code in this file
   black: "#020617",
   red: "#635BFF",
   redDark: "#4638D8",
@@ -92,6 +83,14 @@ function normalize(value: string) {
 
 function normalizeAnswer(value: string) {
   return String(value || "").trim().toLowerCase();
+}
+
+function splitName(fullName: string) {
+  const parts = fullName.trim().split(/\s+/);
+  return {
+    firstName: parts[0] || "",
+    lastName: parts.slice(1).join(" ") || "",
+  };
 }
 
 async function saveDriverSession(driver: any) {
@@ -283,30 +282,36 @@ export default function DriverRegisterScreen() {
 
   async function upsertProfile(payload: any) {
     const now = new Date().toISOString();
+    const { firstName, lastName } = splitName(payload.full_name || payload.name || "");
+
+    const profilePayload = {
+      id: payload.id,
+      auth_user_id: payload.id,
+      role: "driver",
+      full_name: payload.full_name,
+      name: payload.name || payload.full_name,
+      first_name: firstName,
+      last_name: lastName,
+      email: payload.email,
+      phone: payload.phone,
+      username: payload.username,
+      account_id: payload.account_id,
+      driver_account: payload.account_id,
+      stripe_account_id: payload.stripe_account_id || null,
+      created_at: payload.created_at || now,
+    };
 
     const { data, error } = await supabase
       .from("profiles")
-      .upsert(
-        {
-          id: payload.id,
-          auth_user_id: payload.id,
-          profile_id: payload.id,
-          account_id: payload.account_id,
-          role: "driver",
-          full_name: payload.full_name,
-          name: payload.name,
-          email: payload.email,
-          phone: payload.phone,
-          username: payload.username,
-          updated_at: payload.updated_at || now,
-          created_at: payload.created_at || now,
-        },
-        { onConflict: "id" }
-      )
+      .upsert(profilePayload, { onConflict: "id" })
       .select("*")
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.log("Profile upsert error:", error);
+      throw error;
+    }
+
     return data;
   }
 
@@ -589,9 +594,6 @@ export default function DriverRegisterScreen() {
             updated_at: new Date().toISOString(),
           })
           .eq("id", driverId);
-
-        // Profiles table may not contain Stripe/membership columns.
-        // Stripe membership data is stored on drivers and driver_subscriptions.
       }
 
       return json;
@@ -632,7 +634,10 @@ export default function DriverRegisterScreen() {
     await supabase
       .from("profiles")
       .update({
-        updated_at: now,
+        role: "driver",
+        driver_account: driverRow?.account_id || null,
+        account_id: driverRow?.account_id || null,
+        stripe_account_id: driverRow?.stripe_account_id || null,
       })
       .eq("id", driverId);
 
@@ -1061,83 +1066,52 @@ export default function DriverRegisterScreen() {
                 <MetricCard icon="card-outline" label="Stripe" value="Checkout" />
               </View>
 
-              {processingReturn ? (
-                <View style={styles.noticeBox}>
-                  <Ionicons name="sync-outline" size={20} color={COLORS.primary} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.noticeTitle}>Completing Driver Registration</Text>
-                    <Text style={styles.noticeText}>
-                      Please wait while we sync Stripe, submit your application, and open your dashboard.
-                    </Text>
-                  </View>
+              <View style={styles.noticeBox}>
+                <Ionicons
+                  name={processingReturn ? "sync-outline" : "shield-checkmark-outline"}
+                  size={20}
+                  color={COLORS.primary}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.noticeTitle}>
+                    {processingReturn ? "Completing Driver Registration" : "Permanent Profile Setup"}
+                  </Text>
+                  <Text style={styles.noticeText}>
+                    {processingReturn
+                      ? "Please wait while we sync Stripe, submit your application, and open your dashboard."
+                      : "Your driver profile saves to Supabase before Stripe checkout. Customer and subscription IDs sync after payment."}
+                  </Text>
                 </View>
-              ) : (
-                <View style={styles.noticeBox}>
-                  <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.primary} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.noticeTitle}>Permanent Profile Setup</Text>
-                    <Text style={styles.noticeText}>
-                      Your driver profile saves to Supabase before Stripe checkout. Customer and subscription IDs sync after payment.
-                    </Text>
-                  </View>
-                </View>
-              )}
+              </View>
 
               <View style={styles.card}>
-                <SectionHeader
-                  title="Driver Information"
-                  icon="person-outline"
-                  subtitle="Basic contact details for your driver profile."
-                />
-
+                <SectionHeader title="Driver Information" icon="person-outline" subtitle="Basic contact details for your driver profile." />
                 <Field label="Full Name" value={fullName} onChangeText={setFullName} placeholder="Full name" icon="person-outline" />
                 <Field label="Email" value={email} onChangeText={setEmail} placeholder="driver@email.com" icon="mail-outline" keyboardType="email-address" />
                 <Field label="Phone" value={phone} onChangeText={setPhone} placeholder="Phone number" icon="call-outline" keyboardType="phone-pad" />
               </View>
 
               <View style={styles.card}>
-                <SectionHeader
-                  title="Create Driver Login"
-                  icon="lock-closed-outline"
-                  subtitle="Create credentials for the Driver Portal."
-                />
-
+                <SectionHeader title="Create Driver Login" icon="lock-closed-outline" subtitle="Create credentials for the Driver Portal." />
                 <Field label="Username" value={username} onChangeText={setUsername} placeholder="Create username" icon="person-circle-outline" />
                 <Field label="Password" value={password} onChangeText={setPassword} placeholder="Create password" icon="lock-closed-outline" secureTextEntry />
                 <Field label="Confirm Password" value={confirmPassword} onChangeText={setConfirmPassword} placeholder="Confirm password" icon="shield-checkmark-outline" secureTextEntry />
               </View>
 
               <View style={styles.card}>
-                <SectionHeader
-                  title="Driver Verification"
-                  icon="shield-checkmark-outline"
-                  subtitle="Vehicle, license, insurance, and service area."
-                />
-
+                <SectionHeader title="Driver Verification" icon="shield-checkmark-outline" subtitle="Vehicle, license, insurance, and service area." />
                 <Field label="Vehicle Type" value={vehicleType} onChangeText={setVehicleType} placeholder="Car, van, truck, box truck..." icon="car-outline" />
                 <Field label="Driver License Number" value={licenseNumber} onChangeText={setLicenseNumber} placeholder="License number" icon="id-card-outline" />
                 <Field label="Service Area" value={serviceArea} onChangeText={setServiceArea} placeholder="Detroit Metro, Sterling Heights..." icon="map-outline" />
 
                 <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("license")} activeOpacity={0.9}>
-                  <Ionicons
-                    name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"}
-                    size={20}
-                    color={licenseDocument ? COLORS.accentDark : COLORS.primary}
-                  />
-                  <Text style={styles.uploadText}>
-                    {licenseDocument ? `License: ${licenseDocument.name}` : "Upload Driver License"}
-                  </Text>
+                  <Ionicons name={licenseDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={licenseDocument ? COLORS.accentDark : COLORS.primary} />
+                  <Text style={styles.uploadText}>{licenseDocument ? `License: ${licenseDocument.name}` : "Upload Driver License"}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.uploadButton} onPress={() => pickDocument("insurance")} activeOpacity={0.9}>
-                  <Ionicons
-                    name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"}
-                    size={20}
-                    color={insuranceDocument ? COLORS.accentDark : COLORS.primary}
-                  />
-                  <Text style={styles.uploadText}>
-                    {insuranceDocument ? `Insurance: ${insuranceDocument.name}` : "Upload Insurance"}
-                  </Text>
+                  <Ionicons name={insuranceDocument ? "checkmark-circle" : "cloud-upload-outline"} size={20} color={insuranceDocument ? COLORS.accentDark : COLORS.primary} />
+                  <Text style={styles.uploadText}>{insuranceDocument ? `Insurance: ${insuranceDocument.name}` : "Upload Insurance"}</Text>
                 </TouchableOpacity>
 
                 <ToggleRow label="I have active auto insurance" value={hasInsurance} onValueChange={setHasInsurance} />
@@ -1146,12 +1120,7 @@ export default function DriverRegisterScreen() {
               </View>
 
               <View style={styles.card}>
-                <SectionHeader
-                  title="Security Questions"
-                  icon="key-outline"
-                  subtitle="Choose 3 different questions for account verification."
-                />
-
+                <SectionHeader title="Security Questions" icon="key-outline" subtitle="Choose 3 different questions for account verification." />
                 {renderQuestionPicker("Security Question 1", securityQuestion1, setSecurityQuestion1, securityAnswer1, setSecurityAnswer1)}
                 {renderQuestionPicker("Security Question 2", securityQuestion2, setSecurityQuestion2, securityAnswer2, setSecurityAnswer2)}
                 {renderQuestionPicker("Security Question 3", securityQuestion3, setSecurityQuestion3, securityAnswer3, setSecurityAnswer3)}
@@ -1228,15 +1197,7 @@ function Field({
   );
 }
 
-function ToggleRow({
-  label,
-  value,
-  onValueChange,
-}: {
-  label: string;
-  value: boolean;
-  onValueChange: (value: boolean) => void;
-}) {
+function ToggleRow({ label, value, onValueChange }: { label: string; value: boolean; onValueChange: (value: boolean) => void }) {
   return (
     <View style={styles.switchRow}>
       <View style={{ flex: 1 }}>
@@ -1247,15 +1208,7 @@ function ToggleRow({
   );
 }
 
-function MetricCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
+function MetricCard({ icon, label, value }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }) {
   return (
     <View style={styles.metricCard}>
       <View style={styles.metricIcon}>
@@ -1277,19 +1230,13 @@ const styles = StyleSheet.create({
     flexDirection: Platform.OS === "web" ? "row" : "column",
     minHeight: "100%",
   },
-
   sidebar: {
     width: Platform.OS === "web" ? 286 : "100%",
     backgroundColor: COLORS.navy,
     padding: 16,
     gap: 10,
   },
-  brandRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 14,
-  },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 14 },
   brandIcon: {
     width: 48,
     height: 48,
@@ -1298,21 +1245,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  brandTitle: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: "900",
-  },
-  brandSubtitle: {
-    color: "#A5B4FC",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  sideDivider: {
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    marginVertical: 8,
-  },
+  brandTitle: { color: COLORS.white, fontSize: 18, fontWeight: "900" },
+  brandSubtitle: { color: "#A5B4FC", fontSize: 12, fontWeight: "800" },
+  sideDivider: { height: 1, backgroundColor: "rgba(255,255,255,0.12)", marginVertical: 8 },
   scoreCard: {
     backgroundColor: COLORS.navyCard,
     borderRadius: 18,
@@ -1321,24 +1256,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
   },
-  scoreLabel: {
-    color: "#CBD5E1",
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  scoreValue: {
-    color: COLORS.white,
-    fontSize: 32,
-    fontWeight: "900",
-    marginTop: 6,
-  },
-  scoreHint: {
-    color: "#A5B4FC",
-    lineHeight: 18,
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  scoreLabel: { color: "#CBD5E1", fontSize: 12, fontWeight: "900" },
+  scoreValue: { color: COLORS.white, fontSize: 32, fontWeight: "900", marginTop: 6 },
+  scoreHint: { color: "#A5B4FC", lineHeight: 18, fontSize: 12, fontWeight: "700", marginTop: 4 },
   stepNav: {
     backgroundColor: COLORS.navyCard,
     borderRadius: 14,
@@ -1357,19 +1277,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  stepNavIconDone: {
-    backgroundColor: COLORS.accent,
-  },
-  stepNavText: {
-    color: "#CBD5E1",
-    fontWeight: "900",
-  },
-  stepNavSubText: {
-    color: "#94A3B8",
-    fontSize: 11,
-    fontWeight: "700",
-    marginTop: 2,
-  },
+  stepNavIconDone: { backgroundColor: COLORS.accent },
+  stepNavText: { color: "#CBD5E1", fontWeight: "900" },
+  stepNavSubText: { color: "#94A3B8", fontSize: 11, fontWeight: "700", marginTop: 2 },
   homeButton: {
     marginTop: 10,
     borderWidth: 1,
@@ -1381,10 +1291,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  homeButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
+  homeButtonText: { color: COLORS.white, fontWeight: "900" },
   loginSideButton: {
     backgroundColor: COLORS.primary,
     borderRadius: 14,
@@ -1394,16 +1301,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  loginSideButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
-
-  main: {
-    flex: 1,
-    padding: 16,
-    paddingBottom: 80,
-  },
+  loginSideButtonText: { color: COLORS.white, fontWeight: "900" },
+  main: { flex: 1, padding: 16, paddingBottom: 80 },
   topPanel: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1415,25 +1314,9 @@ const styles = StyleSheet.create({
     alignItems: Platform.OS === "web" ? "center" : "stretch",
     marginBottom: 14,
   },
-  eyebrow: {
-    color: COLORS.primary,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  pageTitle: {
-    color: COLORS.text,
-    fontSize: 30,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-  pageSubtitle: {
-    color: COLORS.muted,
-    lineHeight: 20,
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  eyebrow: { color: COLORS.primary, textTransform: "uppercase", letterSpacing: 1, fontSize: 12, fontWeight: "900" },
+  pageTitle: { color: COLORS.text, fontSize: 30, fontWeight: "900", marginTop: 4 },
+  pageSubtitle: { color: COLORS.muted, lineHeight: 20, fontWeight: "700", marginTop: 4 },
   pricePill: {
     backgroundColor: COLORS.primary,
     borderRadius: 18,
@@ -1442,23 +1325,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  pricePillValue: {
-    color: COLORS.white,
-    fontSize: 24,
-    fontWeight: "900",
-  },
-  pricePillLabel: {
-    color: "#E0E7FF",
-    fontSize: 12,
-    fontWeight: "800",
-    marginTop: 2,
-  },
-
-  metricsRow: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 12,
-    marginBottom: 14,
-  },
+  pricePillValue: { color: COLORS.white, fontSize: 24, fontWeight: "900" },
+  pricePillLabel: { color: "#E0E7FF", fontSize: 12, fontWeight: "800", marginTop: 2 },
+  metricsRow: { flexDirection: Platform.OS === "web" ? "row" : "column", gap: 12, marginBottom: 14 },
   metricCard: {
     flex: 1,
     backgroundColor: COLORS.card,
@@ -1478,18 +1347,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  metricLabel: {
-    color: COLORS.muted,
-    fontSize: 11,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  metricValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: 3,
-  },
-
+  metricLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
+  metricValue: { color: COLORS.text, fontWeight: "900", marginTop: 3 },
   noticeBox: {
     backgroundColor: COLORS.card,
     borderColor: COLORS.border,
@@ -1501,18 +1360,8 @@ const styles = StyleSheet.create({
     gap: 10,
     alignItems: "flex-start",
   },
-  noticeTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  noticeText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 4,
-  },
-
+  noticeTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  noticeText: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 4 },
   card: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1521,12 +1370,7 @@ const styles = StyleSheet.create({
     padding: 18,
     marginBottom: 14,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 16,
-  },
+  sectionHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 16 },
   sectionIcon: {
     width: 40,
     height: 40,
@@ -1535,26 +1379,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  section: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-  sectionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 3,
-  },
-
-  fieldWrap: {
-    marginBottom: 13,
-  },
-  inputLabel: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginBottom: 7,
-  },
+  section: { fontSize: 20, fontWeight: "900", color: COLORS.text },
+  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
+  fieldWrap: { marginBottom: 13 },
+  inputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 7 },
   inputShell: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -1566,14 +1394,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
-  input: {
-    flex: 1,
-    color: COLORS.text,
-    fontWeight: "700",
-    paddingVertical: 12,
-    minHeight: 48,
-  },
-
+  input: { flex: 1, color: COLORS.text, fontWeight: "700", paddingVertical: 12, minHeight: 48 },
   uploadButton: {
     backgroundColor: COLORS.primarySoft,
     borderWidth: 1,
@@ -1585,11 +1406,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  uploadText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    flex: 1,
-  },
+  uploadText: { color: COLORS.primary, fontWeight: "900", flex: 1 },
   switchRow: {
     backgroundColor: COLORS.surface,
     padding: 14,
@@ -1601,21 +1418,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  switchText: {
-    flex: 1,
-    fontWeight: "800",
-    paddingRight: 12,
-    color: COLORS.text,
-  },
-
-  questionBox: {
-    marginBottom: 12,
-  },
-  questionLabel: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginBottom: 8,
-  },
+  switchText: { flex: 1, fontWeight: "800", paddingRight: 12, color: COLORS.text },
+  questionBox: { marginBottom: 12 },
+  questionLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
   questionChip: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -1627,18 +1432,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     maxWidth: 280,
   },
-  questionChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  questionChipText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-  },
-  questionChipTextActive: {
-    color: COLORS.white,
-  },
-
+  questionChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  questionChipText: { color: COLORS.primary, fontWeight: "900" },
+  questionChipTextActive: { color: COLORS.white },
   primaryButton: {
     backgroundColor: COLORS.primary,
     padding: 16,
@@ -1649,12 +1445,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
-  primaryButtonText: {
-    color: COLORS.white,
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 16,
-  },
+  primaryButtonText: { color: COLORS.white, textAlign: "center", fontWeight: "900", fontSize: 16 },
   secondaryButton: {
     backgroundColor: COLORS.primarySoft,
     borderWidth: 1,
@@ -1667,96 +1458,6 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
   },
-  secondaryButtonText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-  },
-  disabledButton: {
-    opacity: 0.6,
-  },
-
-  // Backward-compatible style names kept for older helper usage.
-  page: { flex: 1, backgroundColor: COLORS.bg },
-  heroCard: { backgroundColor: COLORS.navy, padding: 20 },
-  heroIcon: {
-    width: 62,
-    height: 62,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 14,
-  },
-  kicker: {
-    color: "#A5B4FC",
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: "900",
-    marginTop: 6,
-    color: COLORS.white,
-  },
-  subtitle: {
-    color: "#CBD5E1",
-    fontSize: 15,
-    lineHeight: 23,
-    fontWeight: "700",
-    marginTop: 8,
-  },
-  priceBox: { backgroundColor: COLORS.primary },
-  price: { fontSize: 26, fontWeight: "900", color: COLORS.white },
-  priceSub: { color: "#E0E7FF", marginTop: 4, fontWeight: "800" },
-  priceBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 18,
-    backgroundColor: COLORS.navy,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  formCard: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 18,
-    marginBottom: 16,
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  securityCard: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 18,
-    marginBottom: 16,
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  button: {
-    backgroundColor: COLORS.primary,
-    padding: 16,
-    borderRadius: 16,
-    marginHorizontal: 18,
-    marginTop: 4,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  buttonText: {
-    color: COLORS.white,
-    textAlign: "center",
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  link: {
-    color: COLORS.primary,
-    textAlign: "center",
-    fontWeight: "900",
-    marginTop: 18,
-  },
+  secondaryButtonText: { color: COLORS.primary, fontWeight: "900" },
+  disabledButton: { opacity: 0.6 },
 });
