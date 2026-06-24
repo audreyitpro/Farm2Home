@@ -99,6 +99,10 @@ function isStripeSubscriptionId(value: any) {
   return clean(value).startsWith("sub_");
 }
 
+function isDriverAccountId(value: any) {
+  return /^Driver_\d{3,}$/i.test(clean(value));
+}
+
 function pickStripeCustomerId(...values: any[]) {
   const found = values.find((value) => isStripeCustomerId(value));
   return found ? clean(found) : "";
@@ -493,17 +497,26 @@ export default function DriverRegisterScreen() {
 
   async function generateDriverAccountId() {
     try {
-      const { data, error } = await supabase.rpc("next_account_id", {
-        p_role: "driver",
-        p_prefix: "Driver",
-      });
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("account_id")
+        .like("account_id", "Driver_%");
 
-      if (!error && data) return String(data);
+      if (error) throw error;
+
+      const maxNumber = Array.isArray(data)
+        ? data.reduce((max, row: any) => {
+            const match = String(row?.account_id || "").match(/^Driver_(\d+)$/i);
+            const value = match ? Number(match[1]) : 0;
+            return Number.isFinite(value) && value > max ? value : max;
+          }, 0)
+        : 0;
+
+      return `Driver_${String(maxNumber + 1).padStart(3, "0")}`;
     } catch (error) {
-      console.log("next_account_id skipped:", error);
+      console.log("generateDriverAccountId fallback:", error);
+      return makeFallbackAccountId();
     }
-
-    return makeFallbackAccountId();
   }
 
   async function getOrCreateAuthUser() {
@@ -863,7 +876,13 @@ export default function DriverRegisterScreen() {
       const subRow = await getBestDriverSubscription(authId, normalize(email));
       const now = new Date().toISOString();
 
-      const finalAccountId = clean(existing?.account_id || accountId || (await generateDriverAccountId()));
+      const existingAccountId = clean(existing?.account_id || "");
+      const currentAccountId = clean(accountId || "");
+      const finalAccountId = isDriverAccountId(existingAccountId)
+        ? existingAccountId
+        : isDriverAccountId(currentAccountId)
+          ? currentAccountId
+          : await generateDriverAccountId();
       const finalCustomerId = pickStripeCustomerId(stripeCustomerId, existing?.stripe_customer_id, subRow?.stripe_customer_id);
       const finalSubscriptionId = pickStripeSubscriptionId(
         stripeSubscriptionId,
