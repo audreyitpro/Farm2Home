@@ -69,20 +69,44 @@ type DriverProfile = {
 };
 
 const COLORS = {
-  bg: "#F6F7FB",
+  bg: "#F8F8FB",
   card: "#FFFFFF",
-  text: "#151922",
-  muted: "#7B8494",
-  border: "#E6E8EF",
-  red: "#E1122D",
-  redDark: "#B80F25",
-  redSoft: "#FFE6EA",
-  black: "#111827",
-  soft: "#F3F4F8",
-  green: "#10B981",
-  blue: "#2563EB",
-  orange: "#F59E0B",
-  purple: "#7C3AED",
+  surface: "#FFFFFF",
+  surface2: "#F8FAFC",
+
+  text: "#495057",
+  muted: "#74788D",
+  border: "#EFF2F7",
+
+  primary: "#556EE6",
+  primaryDark: "#485EC4",
+  primarySoft: "#EEF2FF",
+
+  green: "#34C38F",
+  greenDark: "#2CA67A",
+  greenSoft: "#E8FBF3",
+
+  blue: "#50A5F1",
+  blueSoft: "#EAF5FE",
+
+  amber: "#F1B44C",
+  amberSoft: "#FFF6E5",
+
+  danger: "#F46A6A",
+  dangerSoft: "#FFECEC",
+
+  navy: "#2A3042",
+  navyCard: "#32394E",
+  soft: "#F8FAFC",
+  white: "#FFFFFF",
+
+  // Keep old names so existing style references keep working.
+  red: "#556EE6",
+  redDark: "#485EC4",
+  redSoft: "#EEF2FF",
+  black: "#2A3042",
+  orange: "#F1B44C",
+  purple: "#556EE6",
 };
 
 function normalize(value: any) {
@@ -261,8 +285,8 @@ export default function DriverBoardScreen() {
     const subscriptionStatus = normalize(currentDriver.subscriptionStatus);
 
     if (currentDriver.accountActive === false) return false;
-    if (membershipStatus === "canceled") return false;
-    if (["canceled", "past_due", "unpaid"].includes(subscriptionStatus)) return false;
+    if (["canceled", "cancelled", "inactive", "disabled", "rejected"].includes(membershipStatus)) return false;
+    if (["canceled", "cancelled", "unpaid", "inactive", "disabled"].includes(subscriptionStatus)) return false;
 
     return true;
   }
@@ -392,24 +416,44 @@ export default function DriverBoardScreen() {
         console.log("Driver board API fallback to Supabase:", apiError);
       }
 
-      const { data: deliveryRows, error: deliveryError } = await supabase
-        .from("delivery_orders")
-        .select("*")
-        .in("status", ["available", "posted", "open"])
-        .order("created_at", { ascending: false });
+      const availableStatuses = ["available", "posted", "open", "new"];
 
-      if (!deliveryError && Array.isArray(deliveryRows)) {
-        allJobs = [...allJobs, ...deliveryRows.map(mapDeliveryOrder)];
+      try {
+        const { data: deliveryRows, error: deliveryError } = await supabase
+          .from("delivery_orders")
+          .select("*");
+
+        if (!deliveryError && Array.isArray(deliveryRows)) {
+          allJobs = [
+            ...allJobs,
+            ...deliveryRows
+              .map(mapDeliveryOrder)
+              .filter((job) => availableStatuses.includes(normalize(job.status || "available"))),
+          ];
+        } else if (deliveryError) {
+          console.log("delivery_orders board query skipped:", deliveryError.message);
+        }
+      } catch (error) {
+        console.log("delivery_orders board lookup skipped:", error);
       }
 
-      const { data: freightRows, error: freightError } = await supabase
-        .from("freight_loads")
-        .select("*")
-        .in("status", ["available", "posted", "open"])
-        .order("created_at", { ascending: false });
+      try {
+        const { data: freightRows, error: freightError } = await supabase
+          .from("freight_loads")
+          .select("*");
 
-      if (!freightError && Array.isArray(freightRows)) {
-        allJobs = [...allJobs, ...freightRows.map(mapFreightLoad)];
+        if (!freightError && Array.isArray(freightRows)) {
+          allJobs = [
+            ...allJobs,
+            ...freightRows
+              .map(mapFreightLoad)
+              .filter((job) => availableStatuses.includes(normalize(job.status || "available"))),
+          ];
+        } else if (freightError) {
+          console.log("freight_loads board query skipped:", freightError.message);
+        }
+      } catch (error) {
+        console.log("freight_loads board lookup skipped:", error);
       }
 
       const filtered = allJobs.filter((job) => {
@@ -790,7 +834,7 @@ export default function DriverBoardScreen() {
   if (accessChecking) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.red} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={COLORS.red} />
           <Text style={styles.centeredText}>Loading Driver Board...</Text>
@@ -816,10 +860,10 @@ export default function DriverBoardScreen() {
               <View style={styles.hero}>
                 <View style={styles.heroTop}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.eyebrow}>Farm2Driver</Text>
+                    <Text style={styles.eyebrow}>Farm2Driver Load Board</Text>
                     <Text style={styles.header}>Driver Board</Text>
                     <Text style={styles.subheader}>
-                      Select available farm delivery, grocery, and freight shipments.
+                      Find, batch-select, and accept available Farm2Home deliveries.
                     </Text>
                   </View>
 

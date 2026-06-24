@@ -1,4 +1,5 @@
 // app/driver/profile.tsx
+// Fina UI full replacement
 
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -24,20 +25,44 @@ import { getBackendUrl } from "../services/apiConfig";
 import { supabase } from "../services/supabaseClient";
 
 const COLORS = {
-  bg: "#F4F5F7",
+  // Fina UI palette
+  bg: "#F6F7FB",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  white: "#FFFFFF",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  amber: "#D97706",
+  surface: "#F8FAFC",
+  surface2: "#F1F5F9",
+
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  primarySoft: "#EEF2FF",
+
+  accent: "#10B981",
+  accentDark: "#047857",
+  accentSoft: "#D1FAE5",
+
+  warning: "#F59E0B",
+  warningSoft: "#FEF3C7",
+
+  danger: "#EF4444",
+  dangerSoft: "#FEE2E2",
+
   blue: "#2563EB",
+  blueSoft: "#DBEAFE",
+
+  navy: "#020617",
+  navyCard: "#111827",
+
+  white: "#FFFFFF",
+  text: "#101828",
+  muted: "#667085",
+  border: "#E5E7EB",
   slate: "#475569",
+
+  // Legacy aliases used throughout this file
+  black: "#020617",
+  red: "#635BFF",
+  redDark: "#4638D8",
+  green: "#10B981",
+  amber: "#F59E0B",
 };
 
 function normalize(value: any) {
@@ -966,7 +991,7 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: "#FFFFFF", fontSize: 23, fontWeight: "900" },
   eyebrow: {
-    color: "#FCA5A5",
+    color: "#A5B4FC",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -1082,11 +1107,11 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
   vehicleCard: {
-    backgroundColor: "#FFF1F2",
+    backgroundColor: COLORS.primarySoft,
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: "#FDA4AF",
+    borderColor: "#C7D2FE",
     marginBottom: 12,
   },
   vehicleTitle: {
@@ -1231,7 +1256,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   logoutButton: {
-    backgroundColor: "#64748B",
+    backgroundColor: COLORS.slate,
     padding: 15,
     borderRadius: 14,
     alignItems: "center",
