@@ -605,7 +605,6 @@ export default function DriverRegisterScreen() {
     const filters = [
       id ? `driver_id.eq.${id}` : "",
       emailValue ? `driver_email.eq.${emailValue}` : "",
-      emailValue ? `email.eq.${emailValue}` : "",
     ]
       .filter(Boolean)
       .join(",");
@@ -685,32 +684,32 @@ export default function DriverRegisterScreen() {
     customerId?: string;
     subscriptionValue?: string;
     subscriptionStatusValue?: string;
+    currentPeriodEnd?: string | null;
   }) {
     const now = new Date().toISOString();
     const customer = pickStripeCustomerId(values.customerId);
     const sub = pickStripeSubscriptionId(values.subscriptionValue);
 
-    const payload: any = {
+    const payload = {
       driver_id: values.driverId,
       driver_email: normalize(values.emailValue),
-      email: normalize(values.emailValue),
-      name: fullName.trim(),
-      username: normalize(username),
       stripe_customer_id: customer || null,
       stripe_subscription_id: sub || null,
-      subscription_id: sub || null,
       subscription_status: values.subscriptionStatusValue || (sub ? "active" : "pending_payment"),
+      plan_name: "Driver Membership",
+      monthly_amount: 4.99,
+      current_period_end: values.currentPeriodEnd || null,
       updated_at: now,
     };
 
     const { data: existing, error: lookupError } = await supabase
       .from("driver_subscriptions")
       .select("id")
-      .or(`driver_id.eq.${values.driverId},driver_email.eq.${normalize(values.emailValue)},email.eq.${normalize(values.emailValue)}`)
+      .or(`driver_id.eq.${values.driverId},driver_email.eq.${normalize(values.emailValue)}`)
       .limit(1);
 
     if (lookupError) {
-      console.log("driver_subscriptions lookup before save skipped:", lookupError.message);
+      console.log("driver_subscriptions lookup skipped:", lookupError.message);
       return;
     }
 
