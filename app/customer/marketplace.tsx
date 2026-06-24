@@ -23,7 +23,6 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { addToCart, getCartItemCount } from "../data/cartStore";
-import { getApprovedFarmers } from "../data/farmerStore";
 import { supabase } from "../data/supabaseClient";
 
 /**
@@ -261,8 +260,21 @@ function getProductImage(product: Product) {
   return clean(product.image || product.imageUrl || product.image_url || "");
 }
 
-function getProductStock(product: Product) {
-  const stock = Number(product.stock ?? product.quantity ?? product.inventory ?? 0);
+function getProductStock(product: any) {
+  const rawStock =
+    product.stock ??
+    product.quantity ??
+    product.inventory;
+
+  if (
+    rawStock === undefined ||
+    rawStock === null ||
+    String(rawStock).trim() === ""
+  ) {
+    return 999;
+  }
+
+  const stock = Number(rawStock);
   return Number.isFinite(stock) ? stock : 0;
 }
 
@@ -467,14 +479,62 @@ function mapFarmerRow(row: any, fallbackId = ""): Farmer {
 
 async function queryProductTable(tableName: string): Promise<Product[]> {
   try {
-    const { data, error } = await supabase
-      .from(tableName)
-      .select("*")
-      .order("created_at", { ascending: false });
+    // Do not order by created_at here because some Farm2Home product tables do not have that column.
+    const { data, error } = await supabase.from(tableName).select("*");
 
     if (error || !Array.isArray(data)) return [];
     return data.map(mapProductRow).filter((p) => p.farmerId && isProductAvailable(p));
   } catch {
+    return [];
+  }
+}
+
+async function loadApprovedFarmersFromSupabase(): Promise<Farmer[]> {
+  try {
+    const { data, error } = await supabase
+      .from("farmers")
+      .select("*")
+      .eq("approved", true)
+      .eq("farmer_active", true)
+      .eq("store_unlocked", true);
+
+    if (error || !Array.isArray(data)) {
+      if (error) console.log("farmers marketplace query skipped:", error.message);
+      return [];
+    }
+
+    return data.map((row) => {
+      const farmer = mapFarmerRow(row);
+      const rawProducts = Array.isArray(row.products)
+        ? row.products
+        : Array.isArray(row.selected_products)
+          ? row.selected_products
+          : Array.isArray(row.selected_produce)
+            ? row.selected_produce
+            : [];
+
+      return {
+        ...farmer,
+        products: rawProducts
+          .map((product: any) =>
+            normalizeProduct(
+              {
+                ...product,
+                farmer_id: product.farmer_id || product.farmerId || farmer.id,
+                farm_name: product.farm_name || product.farmName || getFarmerName(farmer),
+                farmer_stripe_account_id:
+                  product.farmer_stripe_account_id ||
+                  product.stripe_account_id ||
+                  getFarmerStripeAccountId(farmer),
+              },
+              farmer
+            )
+          )
+          .filter(isProductAvailable),
+      };
+    });
+  } catch (error) {
+    console.log("loadApprovedFarmersFromSupabase skipped:", error);
     return [];
   }
 }
@@ -730,7 +790,7 @@ export default function MarketplaceScreen() {
     try {
       setLoading(true);
 
-      const approvedFarmers = (await getApprovedFarmers()) || [];
+      const approvedFarmers = await loadApprovedFarmersFromSupabase();
       const supabaseFarmers = await loadProductsFromSupabase();
 
       const localFarmerRaw =
@@ -765,9 +825,7 @@ export default function MarketplaceScreen() {
         ...(Array.isArray(approvedFarmers) ? approvedFarmers : []),
       ];
 
-      const normalizedFarmers = normalizeFarmers(mergedFarmers).filter(
-        (farmer) => farmer.id && farmer.products && farmer.products.length > 0
-      );
+      const normalizedFarmers = normalizeFarmers(mergedFarmers).filter((farmer) => farmer.id);
 
       const farmerMap = new Map<string, Farmer>();
 
@@ -883,7 +941,10 @@ export default function MarketplaceScreen() {
 
         return { ...farmer, products: filteredProducts };
       })
-      .filter((farmer) => farmer.products && farmer.products.length > 0);
+      .filter((farmer) => {
+        if (farmer.products && farmer.products.length > 0) return true;
+        return selectedCategory === "All" && !search;
+      });
   }, [farmers, selectedCategory, searchText]);
 
   async function handleAddToCart(farmer: Farmer, product: Product) {
@@ -1082,13 +1143,22 @@ export default function MarketplaceScreen() {
           </TouchableOpacity>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.productsRow}
-        >
-          {products.map((product) => renderProductCard(item, product))}
-        </ScrollView>
+        {products.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.productsRow}
+          >
+            {products.map((product) => renderProductCard(item, product))}
+          </ScrollView>
+        ) : (
+          <View style={styles.noProductsBox}>
+            <Ionicons name="leaf-outline" size={20} color={COLORS.muted} />
+            <Text style={styles.noProductsText}>
+              This farm is approved and unlocked, but no marketplace products are listed yet.
+            </Text>
+          </View>
+        )}
       </View>
     );
   }
@@ -1651,6 +1721,22 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontWeight: "900",
     fontSize: 12,
+  },
+  noProductsBox: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  noProductsText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    lineHeight: 20,
+    flex: 1,
   },
   productsRow: { gap: 12, paddingRight: 6 },
   productCard: {

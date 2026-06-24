@@ -364,57 +364,62 @@ export default function CustomerDashboard() {
     return null;
   }
 
+  async function safeOrderCount(
+    table: string,
+    id: string,
+    email: string
+  ): Promise<number> {
+    try {
+      let query = supabase.from(table).select("id", { count: "exact", head: true });
+
+      if (id && email) {
+        query = query.or(`customer_id.eq.${id},customer_email.eq.${email}`);
+      } else if (id) {
+        query = query.eq("customer_id", id);
+      } else if (email) {
+        query = query.eq("customer_email", email);
+      }
+
+      const { count, error } = await query;
+
+      if (error) {
+        console.log(`${table} count skipped:`, error.message);
+        return 0;
+      }
+
+      return count || 0;
+    } catch (error: any) {
+      console.log(`${table} count exception:`, error?.message || error);
+      return 0;
+    }
+  }
+
   async function loadCounts(activeCustomer: CustomerSession) {
     const id = getCustomerId(activeCustomer);
     const email = getCustomerEmail(activeCustomer);
 
     await loadCartCount();
 
-    if (!id && !email) return;
+    if (!id && !email) {
+      setOrdersCount(0);
+      setActiveOrdersCount(0);
+      return;
+    }
 
     const orderTables = ["orders", "customer_orders", "farm_orders"];
 
-    for (const table of orderTables) {
-      try {
-        let query = supabase
-          .from(table)
-          .select("id,status,order_status,fulfillment_status,payment_status,customer_id,customer_email")
-          .limit(100);
+    const counts = await Promise.all(
+      orderTables.map((table) => safeOrderCount(table, id, email))
+    );
 
-        if (id && email) {
-          query = query.or(`customer_id.eq.${id},customer_email.eq.${email}`);
-        } else if (id) {
-          query = query.eq("customer_id", id);
-        } else if (email) {
-          query = query.eq("customer_email", email);
-        }
+    const totalOrders = counts.reduce((sum, value) => sum + value, 0);
 
-        const { data, error } = await query;
+    setOrdersCount(totalOrders);
 
-        if (!error && Array.isArray(data)) {
-          setOrdersCount(data.length);
-          setActiveOrdersCount(
-            data.filter((order) => {
-              const status = normalize(
-                order?.order_status ||
-                  order?.fulfillment_status ||
-                  order?.status ||
-                  order?.payment_status
-              );
-              return !["delivered", "complete", "completed", "cancelled", "canceled"].includes(status);
-            }).length
-          );
-          return;
-        }
-
-        if (error) console.log(`${table} count skipped:`, error.message);
-      } catch (error) {
-        console.log(`${table} count exception:`, error);
-      }
-    }
-
-    setOrdersCount(0);
-    setActiveOrdersCount(0);
+    // These tables currently do not share a reliable status column.
+    // To prevent Supabase 400 errors, active count uses total order count
+    // until a shared order status column is added across all order tables.
+    setActiveOrdersCount(totalOrders);
   }
 
   async function loadCartCount() {
