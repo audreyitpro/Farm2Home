@@ -112,12 +112,17 @@ function mapDriver(driver: any, profile?: any, subscription?: any) {
       (stripeSubscriptionId ? "active" : "pending_payment")
   );
 
+  const accountId = clean(driver?.account_id || profile?.account_id);
+
   const active =
     Boolean(id) &&
-    isStripeCustomerId(stripeCustomerId) &&
-    isStripeSubscriptionId(stripeSubscriptionId) &&
-    isValidDriverSubscriptionStatus(subscriptionStatus) &&
-    driver?.account_active !== false;
+    accountId.startsWith("Driver_") &&
+    driver?.account_active !== false &&
+    (
+      isValidDriverSubscriptionStatus(subscriptionStatus) ||
+      Boolean(driver?.driver_membership_paid) ||
+      isStripeSubscriptionId(stripeSubscriptionId)
+    );
 
   return {
     ...driver,
@@ -148,8 +153,8 @@ function mapDriver(driver: any, profile?: any, subscription?: any) {
     username: clean(driver?.username || profile?.username || subscription?.username),
     phone: clean(driver?.phone || profile?.phone),
 
-    accountId: clean(driver?.account_id || profile?.account_id),
-    account_id: clean(driver?.account_id || profile?.account_id),
+    accountId,
+    account_id: accountId,
 
     vehicleType: clean(driver?.vehicle_type || driver?.vehicleType),
     vehicle_type: clean(driver?.vehicle_type || driver?.vehicleType),
@@ -193,12 +198,31 @@ function mapDriver(driver: any, profile?: any, subscription?: any) {
 }
 
 function isDriverActive(driver: any) {
+  if (!driver?.id) return false;
+
+  const membershipStatus = normalize(
+    driver?.membership_status ||
+      driver?.membershipStatus ||
+      driver?.subscription_status ||
+      driver?.subscriptionStatus ||
+      "pending"
+  );
+
+  const hasDriverAccount =
+    clean(driver?.account_id || driver?.accountId).startsWith("Driver_");
+
+  const hasMembership =
+    membershipStatus === "active" ||
+    membershipStatus === "trialing" ||
+    membershipStatus === "past_due" ||
+    Boolean(driver?.driver_membership_paid || driver?.driverMembershipPaid) ||
+    isStripeSubscriptionId(driver?.subscription_id || driver?.stripe_subscription_id);
+
   return Boolean(
-    driver?.id &&
-      driver?.accountActive !== false &&
-      isStripeCustomerId(driver?.stripe_customer_id || driver?.stripeCustomerId) &&
-      isStripeSubscriptionId(driver?.subscription_id || driver?.stripe_subscription_id) &&
-      isValidDriverSubscriptionStatus(driver?.subscription_status || driver?.subscriptionStatus)
+    driver.account_active !== false &&
+      driver.accountActive !== false &&
+      hasDriverAccount &&
+      hasMembership
   );
 }
 
@@ -300,7 +324,6 @@ export default function DriverLoginScreen() {
     const filters = [
       id ? `driver_id.eq.${id}` : "",
       cleanEmail ? `driver_email.eq.${cleanEmail}` : "",
-      cleanEmail ? `email.eq.${cleanEmail}` : "",
     ]
       .filter(Boolean)
       .join(",");
@@ -403,9 +426,9 @@ export default function DriverLoginScreen() {
             stripe_subscription_id: finalStripeSub || null,
             subscription_id: finalStripeSub || null,
             subscription_status: finalStatus,
-            membership_status: active ? "active" : "pending_payment",
-            driver_membership_paid: active,
-            account_active: active,
+            membership_status: active ? "active" : clean(driverRow?.membership_status || "active"),
+            driver_membership_paid: active || Boolean(driverRow?.driver_membership_paid),
+            account_active: driverRow?.account_active !== false,
             updated_at: new Date().toISOString(),
           })
           .eq("id", driverId);
@@ -420,9 +443,9 @@ export default function DriverLoginScreen() {
       stripe_subscription_id: finalStripeSub,
       subscription_id: finalStripeSub,
       subscription_status: finalStatus,
-      membership_status: active ? "active" : "pending_payment",
-      driver_membership_paid: active,
-      account_active: active,
+      membership_status: active ? "active" : clean(driverRow?.membership_status || "active"),
+      driver_membership_paid: active || Boolean(driverRow?.driver_membership_paid),
+      account_active: driverRow?.account_active !== false,
     };
   }
 
@@ -444,7 +467,7 @@ export default function DriverLoginScreen() {
       const byEmail = await supabase
         .from("drivers")
         .select("*")
-        .or(`email.eq.${cleanEmail},driver_email.eq.${cleanEmail}`)
+        .eq("email", cleanEmail)
         .maybeSingle();
 
       if (!byEmail.error && byEmail.data) driver = byEmail.data;
@@ -530,12 +553,23 @@ export default function DriverLoginScreen() {
       if (!isDriverActive(normalizedDriver)) {
         Alert.alert(
           "Membership Required",
-          "Driver access requires a saved profile, cus_ Stripe customer, sub_ subscription, and active/trialing/past_due subscription status."
+          "Driver access requires a saved driver profile, Driver_ account ID, and active membership/subscription status."
         );
         return;
       }
 
       await saveLoggedInDriver(normalizedDriver);
+
+      console.log("FINAL DRIVER OBJECT", {
+        id: normalizedDriver.id,
+        account_id: normalizedDriver.account_id,
+        membership_status: normalizedDriver.membership_status,
+        subscription_status: normalizedDriver.subscription_status,
+        stripe_customer_id: normalizedDriver.stripe_customer_id,
+        stripe_subscription_id: normalizedDriver.stripe_subscription_id,
+        stripe_account_id: normalizedDriver.stripe_account_id,
+        active: isDriverActive(normalizedDriver),
+      });
 
       router.replace("/driver/mobile-driver-app" as any);
     } catch (error: any) {
