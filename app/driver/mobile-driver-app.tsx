@@ -77,6 +77,8 @@ const COLORS = {
   bg: "#F6F7FB",
   card: "#FFFFFF",
   text: "#151922",
+  surface: "#F8FAFC",
+  white: "#FFFFFF",
   muted: "#7B8494",
   border: "#E6E8EF",
   red: "#E1122D",
@@ -1109,6 +1111,8 @@ export default function MobileDriverApp() {
               )}
             </TouchableOpacity>
 
+            <DriverActionHub />
+
             <Text style={styles.sectionTitle}>My Shipments</Text>
 
             <FlatList
@@ -1159,6 +1163,181 @@ function QuickButton({
     </TouchableOpacity>
   );
 }
+
+
+function DriverActionHub() {
+  const actions: Array<{
+    title: string;
+    subtitle: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    route: string;
+    primary?: boolean;
+  }> = [
+    {
+      title: "Driver Board",
+      subtitle: "Find, select, and accept available deliveries.",
+      icon: "grid-outline",
+      route: "/driver/board",
+      primary: true,
+    },
+    {
+      title: "My Deliveries",
+      subtitle: "Manage active shipments and route progress.",
+      icon: "cube-outline",
+      route: "/driver/my-deliveries",
+      primary: true,
+    },
+    {
+      title: "Earnings",
+      subtitle: "View wallet, settlement, and payout totals.",
+      icon: "wallet-outline",
+      route: "/driver/earnings",
+      primary: true,
+    },
+    {
+      title: "Driver Profile",
+      subtitle: "Manage profile, compliance, Stripe, and account.",
+      icon: "person-circle-outline",
+      route: "/driver/profile",
+      primary: true,
+    },
+    {
+      title: "Live Deliveries",
+      subtitle: "Track live delivery movement.",
+      icon: "navigate-circle-outline",
+      route: "/driver/live-deliveries",
+    },
+    {
+      title: "Live Location Provider",
+      subtitle: "Start or stop driver location sharing.",
+      icon: "location-outline",
+      route: "/driver/live-location-provider",
+    },
+    {
+      title: "Load Details",
+      subtitle: "Review delivery pickup, dropoff, and load notes.",
+      icon: "document-text-outline",
+      route: "/driver/load-details",
+    },
+    {
+      title: "Delivery History",
+      subtitle: "View completed and previous deliveries.",
+      icon: "time-outline",
+      route: "/driver/delivery-history",
+    },
+    {
+      title: "Proof of Pickup",
+      subtitle: "Capture pickup photo, signature, and confirmation.",
+      icon: "camera-outline",
+      route: "/driver/proof-of-pickup",
+    },
+    {
+      title: "Proof of Delivery",
+      subtitle: "Capture final proof and delivery confirmation.",
+      icon: "checkmark-done-outline",
+      route: "/driver/proof-of-delivery",
+    },
+    {
+      title: "Navigation Assistant",
+      subtitle: "Open route and dispatch navigation support.",
+      icon: "map-outline",
+      route: "/driver/navigation-assistant",
+    },
+    {
+      title: "Notifications",
+      subtitle: "Dispatch alerts, messages, and delivery updates.",
+      icon: "notifications-outline",
+      route: "/driver/notifications",
+    },
+    {
+      title: "Customer Chat",
+      subtitle: "Message customers on assigned orders.",
+      icon: "chatbubble-ellipses-outline",
+      route: "/driver/customer-chat",
+    },
+    {
+      title: "Farmer Chat",
+      subtitle: "Message farms and pickup contacts.",
+      icon: "leaf-outline",
+      route: "/driver/farmer-chat",
+    },
+    {
+      title: "Subscription",
+      subtitle: "Manage driver membership status.",
+      icon: "card-outline",
+      route: "/driver/subscription",
+    },
+    {
+      title: "Settings",
+      subtitle: "Update driver app and notification settings.",
+      icon: "settings-outline",
+      route: "/driver/settings",
+    },
+    {
+      title: "Support",
+      subtitle: "Contact Farm2Home driver support.",
+      icon: "help-circle-outline",
+      route: "/driver/support",
+    },
+    {
+      title: "Help",
+      subtitle: "Open driver help and workflow guidance.",
+      icon: "information-circle-outline",
+      route: "/driver/help",
+    },
+  ];
+
+  return (
+    <View style={styles.actionHub}>
+      <View style={styles.actionHubHeader}>
+        <View style={styles.actionHubIcon}>
+          <Ionicons name="apps-outline" size={22} color={COLORS.red} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.actionHubTitle}>Driver Tools</Text>
+          <Text style={styles.actionHubSubtitle}>
+            Quick access to dispatch, routes, proof screens, chats, wallet, and settings.
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.actionHubGrid}>
+        {actions.map((item) => (
+          <TouchableOpacity
+            key={item.route}
+            style={[styles.actionCard, item.primary && styles.actionCardPrimary]}
+            onPress={() => router.push(item.route as any)}
+            activeOpacity={0.9}
+          >
+            <View style={[styles.actionIcon, item.primary && styles.actionIconPrimary]}>
+              <Ionicons
+                name={item.icon}
+                size={20}
+                color={item.primary ? COLORS.white : COLORS.red}
+              />
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.actionTitle, item.primary && styles.actionTitlePrimary]}>
+                {item.title}
+              </Text>
+              <Text style={[styles.actionSubtitle, item.primary && styles.actionSubtitlePrimary]}>
+                {item.subtitle}
+              </Text>
+            </View>
+
+            <Ionicons
+              name="chevron-forward-outline"
+              size={18}
+              color={item.primary ? COLORS.white : COLORS.muted}
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 
 function SummaryCard({
   label,
@@ -1213,6 +1392,91 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
+  actionHub: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  actionHubHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 14,
+  },
+  actionHubIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionHubTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  actionHubSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    lineHeight: 19,
+  },
+  actionHubGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  actionCard: {
+    width: Platform.OS === "web" ? "32.5%" : "100%",
+    minWidth: Platform.OS === "web" ? 250 : undefined,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  actionCardPrimary: {
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
+  },
+  actionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionIconPrimary: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  actionTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 14,
+  },
+  actionTitlePrimary: {
+    color: COLORS.white,
+  },
+  actionSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  actionSubtitlePrimary: {
+    color: "rgba(255,255,255,0.86)",
+  },
+
   safe: { flex: 1, backgroundColor: COLORS.bg },
   container: { flex: 1, backgroundColor: COLORS.bg },
   hero: {
