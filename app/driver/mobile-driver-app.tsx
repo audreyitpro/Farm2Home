@@ -325,6 +325,7 @@ export default function MobileDriverApp() {
 
   async function loadAllDriverLoads(activeDriverId: string) {
     const all: DriverLoad[] = [];
+    const openStatuses = ["available", "posted", "open", "new", "AVAILABLE", "POSTED", "OPEN", "NEW"];
 
     try {
       const response = await fetch(`${getBackendUrl()}/orders`);
@@ -353,26 +354,76 @@ export default function MobileDriverApp() {
       console.log("Backend orders skipped:", error);
     }
 
-    const { data: deliveryRows, error: deliveryError } = await supabase
-      .from("delivery_orders")
-      .select("*")
-      .or(
-        `driver_id.eq.${activeDriverId},assigned_driver_id.eq.${activeDriverId},status.in.(available,posted,open)`
-      )
-      .order("created_at", { ascending: false });
+    try {
+      const { data: assignedDeliveryRows, error: assignedDeliveryError } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .or(`driver_id.eq.${activeDriverId},assigned_driver_id.eq.${activeDriverId}`)
+        .order("created_at", { ascending: false });
 
-    if (!deliveryError && Array.isArray(deliveryRows)) {
-      all.push(...deliveryRows.map(mapDeliveryOrder));
+      if (assignedDeliveryError) {
+        console.log("delivery_orders assigned query skipped:", assignedDeliveryError.message);
+      }
+
+      if (Array.isArray(assignedDeliveryRows)) {
+        all.push(...assignedDeliveryRows.map(mapDeliveryOrder));
+      }
+    } catch (error) {
+      console.log("delivery_orders assigned skipped:", error);
     }
 
-    const { data: freightRows, error: freightError } = await supabase
-      .from("freight_loads")
-      .select("*")
-      .or(`assigned_driver_id.eq.${activeDriverId},status.in.(available,posted,open)`)
-      .order("created_at", { ascending: false });
+    try {
+      const { data: openDeliveryRows, error: openDeliveryError } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .in("status", openStatuses)
+        .order("created_at", { ascending: false });
 
-    if (!freightError && Array.isArray(freightRows)) {
-      all.push(...freightRows.map(mapFreightLoad));
+      if (openDeliveryError) {
+        console.log("delivery_orders open query skipped:", openDeliveryError.message);
+      }
+
+      if (Array.isArray(openDeliveryRows)) {
+        all.push(...openDeliveryRows.map(mapDeliveryOrder));
+      }
+    } catch (error) {
+      console.log("delivery_orders open skipped:", error);
+    }
+
+    try {
+      const { data: assignedFreightRows, error: assignedFreightError } = await supabase
+        .from("freight_loads")
+        .select("*")
+        .eq("assigned_driver_id", activeDriverId)
+        .order("created_at", { ascending: false });
+
+      if (assignedFreightError) {
+        console.log("freight_loads assigned query skipped:", assignedFreightError.message);
+      }
+
+      if (Array.isArray(assignedFreightRows)) {
+        all.push(...assignedFreightRows.map(mapFreightLoad));
+      }
+    } catch (error) {
+      console.log("freight_loads assigned skipped:", error);
+    }
+
+    try {
+      const { data: openFreightRows, error: openFreightError } = await supabase
+        .from("freight_loads")
+        .select("*")
+        .in("status", openStatuses)
+        .order("created_at", { ascending: false });
+
+      if (openFreightError) {
+        console.log("freight_loads open query skipped:", openFreightError.message);
+      }
+
+      if (Array.isArray(openFreightRows)) {
+        all.push(...openFreightRows.map(mapFreightLoad));
+      }
+    } catch (error) {
+      console.log("freight_loads open skipped:", error);
     }
 
     return Array.from(
