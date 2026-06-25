@@ -509,19 +509,9 @@ export default function DriverMyDeliveriesScreen() {
   async function loadDriverDeliveries(activeDriverId: string) {
     const all: DriverDelivery[] = [];
 
-    try {
-      const response = await fetch(
-        `${getBackendUrl()}/driver/my-deliveries?driverId=${encodeURIComponent(activeDriverId)}`
-      );
+    // Backend route is optional. Supabase is the source of truth for this screen.
+    // Do not call /driver/my-deliveries here because the deployed backend currently returns 404.
 
-      if (response.ok) {
-        const json = await response.json();
-        const rows = Array.isArray(json) ? json : json.deliveries || json.data || [];
-        all.push(...rows.map(normalizeDelivery));
-      }
-    } catch (error) {
-      console.log("Backend my-deliveries skipped:", error);
-    }
 
     try {
       const { data, error } = await supabase
@@ -821,6 +811,13 @@ export default function DriverMyDeliveriesScreen() {
           <SmallAction icon="radio-outline" label="Track" onPress={() => openLiveTracking(item)} />
           <SmallAction icon="camera-outline" label="Pickup Proof" onPress={() => openProofPickup(item)} />
           <SmallAction icon="checkmark-done-outline" label="Delivery Proof" onPress={() => openProofDelivery(item)} />
+          <SmallAction
+            icon="warning-outline"
+            label="Emergency"
+            onPress={() =>
+              Alert.alert("Emergency Support", "Call Farm2Home Dispatch or local emergency services if this is urgent.")
+            }
+          />
         </View>
 
         <View style={styles.actionRow}>
@@ -919,20 +916,60 @@ export default function DriverMyDeliveriesScreen() {
               <SummaryTile label="Orders" value={totals.customer} icon="bag-handle-outline" />
               <SummaryTile label="Freight" value={totals.freight} icon="cube-outline" />
               <SummaryTile label="Done" value={totals.completed} icon="checkmark-circle-outline" />
+              <SummaryTile label="Revenue" value={money(totals.completedPayout)} icon="cash-outline" />
             </View>
 
             {currentRoute ? (
-              <TouchableOpacity style={styles.currentRouteCard} onPress={() => openLiveTracking(currentRoute)} activeOpacity={0.9}>
-                <View style={styles.currentRouteIcon}>
-                  <Ionicons name="navigate-circle-outline" size={24} color={COLORS.primary} />
+              <>
+                <TouchableOpacity style={styles.currentRouteCard} onPress={() => openLiveTracking(currentRoute)} activeOpacity={0.9}>
+                  <View style={styles.currentRouteIcon}>
+                    <Ionicons name="navigate-circle-outline" size={24} color={COLORS.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.currentRouteLabel}>Current Route</Text>
+                    <Text style={styles.currentRouteTitle}>{currentRoute.title}</Text>
+                    <Text style={styles.currentRouteSub}>{STATUS_LABELS[currentRoute.status] || statusLabel(currentRoute.status)}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward-outline" size={22} color={COLORS.muted} />
+                </TouchableOpacity>
+
+                <View style={styles.timelineCard}>
+                  <Text style={styles.timelineTitle}>Route Progress</Text>
+                  <View style={styles.timelineRow}>
+                    <View style={styles.timelineNode}>
+                      <Ionicons name="location-outline" size={16} color={COLORS.white} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timelineLabel}>Pickup</Text>
+                      <Text style={styles.timelineText}>{currentRoute.pickupName || "Pickup location"}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.timelineConnector} />
+
+                  <View style={styles.timelineRow}>
+                    <View style={[styles.timelineNode, styles.timelineNodeMid]}>
+                      <Ionicons name="car-outline" size={16} color={COLORS.white} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timelineLabel}>Current Status</Text>
+                      <Text style={styles.timelineText}>{STATUS_LABELS[currentRoute.status] || statusLabel(currentRoute.status)}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.timelineConnector} />
+
+                  <View style={styles.timelineRow}>
+                    <View style={[styles.timelineNode, styles.timelineNodeEnd]}>
+                      <Ionicons name="flag-outline" size={16} color={COLORS.white} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timelineLabel}>Dropoff</Text>
+                      <Text style={styles.timelineText}>{currentRoute.dropoffName || currentRoute.customerName || "Dropoff location"}</Text>
+                    </View>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.currentRouteLabel}>Current Route</Text>
-                  <Text style={styles.currentRouteTitle}>{currentRoute.title}</Text>
-                  <Text style={styles.currentRouteSub}>{STATUS_LABELS[currentRoute.status] || statusLabel(currentRoute.status)}</Text>
-                </View>
-                <Ionicons name="chevron-forward-outline" size={22} color={COLORS.muted} />
-              </TouchableOpacity>
+              </>
             ) : null}
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
@@ -1163,6 +1200,54 @@ const styles = StyleSheet.create({
   currentRouteLabel: { color: COLORS.primary, fontWeight: "900", fontSize: 12, textTransform: "uppercase" },
   currentRouteTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16, marginTop: 2 },
   currentRouteSub: { color: COLORS.muted, fontWeight: "800", marginTop: 2 },
+
+  timelineCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  timelineTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: "900",
+    marginBottom: 12,
+  },
+  timelineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  timelineNode: {
+    width: 34,
+    height: 34,
+    borderRadius: 13,
+    backgroundColor: COLORS.blue,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timelineNodeMid: { backgroundColor: COLORS.primary },
+  timelineNodeEnd: { backgroundColor: COLORS.green },
+  timelineLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  timelineText: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  timelineConnector: {
+    width: 2,
+    height: 22,
+    backgroundColor: COLORS.border,
+    marginLeft: 16,
+    marginVertical: 5,
+  },
 
   filters: { gap: 10, paddingBottom: 14 },
   filterButton: {
