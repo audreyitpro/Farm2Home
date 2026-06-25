@@ -358,11 +358,11 @@ export default function MobileDriverApp() {
       const { data: assignedDeliveryRows, error: assignedDeliveryError } = await supabase
         .from("delivery_orders")
         .select("*")
-        .or(`driver_id.eq.${activeDriverId},assigned_driver_id.eq.${activeDriverId}`)
+        .eq("driver_id", activeDriverId)
         .order("created_at", { ascending: false });
 
       if (assignedDeliveryError) {
-        console.log("delivery_orders assigned query skipped:", assignedDeliveryError.message);
+        console.log("delivery_orders driver_id query skipped:", assignedDeliveryError.message);
       }
 
       if (Array.isArray(assignedDeliveryRows)) {
@@ -611,7 +611,6 @@ export default function MobileDriverApp() {
       .update({
         status: "accepted",
         driver_id: driver.id,
-        assigned_driver_id: driver.id,
         driver_name: getDriverDisplayName(driver),
         driver_email: driver.email || "",
         assigned_at: new Date().toISOString(),
@@ -628,7 +627,6 @@ export default function MobileDriverApp() {
       .from("freight_loads")
       .update({
         status: "accepted",
-        assigned_driver_id: driver.id,
         driver_name: getDriverDisplayName(driver),
         driver_email: driver.email || "",
         accepted_at: new Date().toISOString(),
@@ -643,7 +641,6 @@ export default function MobileDriverApp() {
       farmer_id: load.farmer_id || null,
       customer_id: load.customer_id || null,
       driver_id: driver.id,
-      assigned_driver_id: driver.id,
       driver_name: getDriverDisplayName(driver),
       driver_email: driver.email || "",
       pickup_address: load.pickupAddress || "",

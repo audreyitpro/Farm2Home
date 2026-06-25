@@ -527,7 +527,7 @@ export default function DriverMyDeliveriesScreen() {
       const { data, error } = await supabase
         .from("delivery_orders")
         .select("*")
-        .or(`driver_id.eq.${activeDriverId},assigned_driver_id.eq.${activeDriverId}`)
+        .eq("driver_id", activeDriverId)
         .order("created_at", { ascending: false });
 
       if (error) console.log("delivery_orders skipped:", error.message);
