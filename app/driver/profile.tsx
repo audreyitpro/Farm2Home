@@ -521,27 +521,23 @@ export default function DriverProfileScreen() {
 
       const updatedDriver = await safeUpdateById("drivers", driver.id, driverPayload);
 
-      const profilePayload = {
-        id: driver.profile_id || driver.id,
-        role: "driver",
+      const profilePayload: Record<string, any> = {
+  role: "driver",
+  full_name: fullName.trim(),
+  name: fullName.trim(),
+  first_name: firstName,
+  last_name: lastName,
+  email: normalize(email),
+  phone: phone.trim(),
+  username: normalize(username),
 
-        full_name: fullName.trim(),
-        first_name: firstName,
-        last_name: lastName,
+  account_id: driver.account_id || "",
+  driver_account: driver.account_id || "",
 
-        email: normalize(email),
-        phone: phone.trim(),
-        username: normalize(username),
+  stripe_account_id: driver.stripe_account_id || null,
+  auth_user_id: driver.auth_user_id || driver.id,
+};
 
-        account_id: driver.account_id || "",
-        driver_account: driver.account_id || "",
-
-        stripe_account_id: driver.stripe_account_id || null,
-
-        auth_user_id: driver.auth_user_id || driver.id,
-
-        updated_at: new Date().toISOString(),
-      };
       if (driver.auth_user_id || driver.id) {
         await safeUpdateProfileByAuthId(driver.auth_user_id || driver.id, profilePayload);
       }
