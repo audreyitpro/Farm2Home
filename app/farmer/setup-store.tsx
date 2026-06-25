@@ -8,54 +8,132 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useLocalSearchParams, router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
-import {
-  Farmer,
-  addFarmer,
-  getFarmerById,
-  updateFarmerStore,
-} from "../data/farmerStore";
 import { supabase } from "../data/supabaseClient";
 
 const LOGO_BUCKET = "farm-logos";
 
 const COLORS = {
-  primary: "#2E7D32",
-  primaryDark: "#14532D",
-  secondary: "#F9A825",
-  background: "#F8FAF5",
+  bg: "#F6F8F2",
   card: "#FFFFFF",
-  text: "#172017",
-  muted: "#75806F",
-  border: "#E2E8DA",
-  softGreen: "#EAF5E6",
-  lightGreen: "#F1FAED",
-  danger: "#DC2626",
-  dark: "#111827",
-  blue: "#2563EB",
+  surface: "#F9FBF4",
+  green: "#1FA463",
+  greenDark: "#0B5D35",
+  greenSoft: "#E9F8EF",
+  lime: "#DDF8C8",
+  orange: "#FFB74A",
+  orangeSoft: "#FFF3DE",
+  red: "#EF4444",
+  text: "#162115",
+  muted: "#667085",
+  border: "#E3E8DD",
+  white: "#FFFFFF",
 };
+
+type FarmerRecord = {
+  id?: string;
+  farmerId?: string;
+  auth_user_id?: string;
+  profile_id?: string;
+  role?: string;
+  owner_name?: string;
+  ownerName?: string;
+  full_name?: string;
+  name?: string;
+  farm_name?: string;
+  farmName?: string;
+  business_name?: string;
+  businessName?: string;
+  email?: string;
+  phone?: string;
+  username?: string;
+  farm_location?: string;
+  farmLocation?: string;
+  location?: string;
+  city?: string;
+  state?: string;
+  about?: string;
+  logo_url?: string;
+  farm_logo_url?: string;
+  logoUrl?: string;
+  farmLogoUrl?: string;
+  pickup?: boolean;
+  delivery?: boolean;
+  account_active?: boolean;
+  approved?: boolean;
+  reviewed?: boolean;
+  rejected?: boolean;
+  store_unlocked?: boolean;
+  compliance_status?: string;
+  admin_review_status?: string;
+  review_decision?: string;
+  stripe_account_id?: string;
+  farmer_stripe_account_id?: string;
+};
+
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
+
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function firstParam(value: any) {
+  if (Array.isArray(value)) return value[0] || "";
+  return value ? String(value) : "";
+}
+
+function getFarmerId(farmer?: FarmerRecord | null) {
+  return clean(farmer?.id || farmer?.farmerId || farmer?.profile_id || farmer?.auth_user_id);
+}
+
+function getFarmName(farmer?: FarmerRecord | null) {
+  return (
+    clean(farmer?.farm_name || farmer?.farmName) ||
+    clean(farmer?.business_name || farmer?.businessName) ||
+    clean(farmer?.owner_name || farmer?.ownerName) ||
+    clean(farmer?.full_name || farmer?.name) ||
+    ""
+  );
+}
+
+function getLogo(farmer?: FarmerRecord | null) {
+  return clean(farmer?.logo_url || farmer?.farm_logo_url || farmer?.logoUrl || farmer?.farmLogoUrl);
+}
+
+function getStripeAccount(farmer?: FarmerRecord | null) {
+  return clean(farmer?.stripe_account_id || farmer?.farmer_stripe_account_id);
+}
+
+function isValidEmail(value: string) {
+  return /\S+@\S+\.\S+/.test(value);
+}
 
 export default function FarmerSetupStoreScreen() {
   const params = useLocalSearchParams();
 
   const farmerIdFromParams = useMemo(() => {
-    const value = params.farmerId || params.id;
-    return Array.isArray(value) ? value[0] : value ? String(value) : "";
+    return firstParam(params.farmerId || params.id);
   }, [params]);
 
   const [loading, setLoading] = useState(false);
   const [logoUploading, setLogoUploading] = useState(false);
-  const [currentFarmer, setCurrentFarmer] = useState<Farmer | null>(null);
+  const [currentFarmer, setCurrentFarmer] = useState<FarmerRecord | null>(null);
 
   const [ownerName, setOwnerName] = useState("");
   const [farmName, setFarmName] = useState("");
@@ -64,9 +142,22 @@ export default function FarmerSetupStoreScreen() {
   const [farmLocation, setFarmLocation] = useState("");
   const [about, setAbout] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
-
   const [pickup, setPickup] = useState(true);
   const [delivery, setDelivery] = useState(true);
+
+  const farmerId = getFarmerId(currentFarmer);
+  const stripeConnected = Boolean(getStripeAccount(currentFarmer));
+
+  const completion = useMemo(() => {
+    return [
+      ownerName.trim(),
+      farmName.trim(),
+      isValidEmail(email),
+      farmLocation.trim(),
+      logoUrl.trim(),
+      pickup || delivery,
+    ].filter(Boolean).length;
+  }, [ownerName, farmName, email, farmLocation, logoUrl, pickup, delivery]);
 
   useEffect(() => {
     initializeScreen();
@@ -74,182 +165,117 @@ export default function FarmerSetupStoreScreen() {
 
   async function initializeScreen() {
     try {
-      const saved =
-        (await AsyncStorage.getItem("currentFarmer")) ||
-        (await AsyncStorage.getItem("currentUser"));
+      setLoading(true);
 
-      if (!saved && !farmerIdFromParams) {
+      const local = await readLocalFarmer();
+      const dbFarmer = await findSupabaseFarmer(local);
+
+      const merged: FarmerRecord = {
+        ...(local || {}),
+        ...(dbFarmer || {}),
+        id: clean(dbFarmer?.id || local?.id || local?.farmerId || farmerIdFromParams),
+        farmerId: clean(dbFarmer?.id || local?.id || local?.farmerId || farmerIdFromParams),
+        role: "farmer",
+      };
+
+      if (!getFarmerId(merged)) {
         Alert.alert("Session Needed", "Please login again.");
         router.replace("/farmer/login" as any);
         return;
       }
 
-      await loadFarmer();
-    } catch (error) {
+      hydrate(merged);
+      await saveFarmerSession(merged);
+    } catch (error: any) {
       console.log("Initialize setup store error:", error);
-      Alert.alert("Access Error", "Unable to verify farmer profile.");
+      Alert.alert("Access Error", error?.message || "Unable to verify farmer profile.");
+    } finally {
+      setLoading(false);
     }
   }
 
-  function mapSupabaseFarmer(row: any): Farmer {
-    return {
-      id: row.id,
-      farmerId: row.id,
-      ownerName: row.owner_name || row.ownerName || "",
-      farmName: row.farm_name || row.farmName || row.business_name || "",
-      businessName: row.business_name || row.businessName || row.farm_name || "",
-      email: row.email || "",
-      phone: row.phone || "",
-      username: row.username || row.email || "",
-      password: "",
-      accountActive: Boolean(row.account_active || row.accountActive),
-      approved: Boolean(row.approved),
-      rejected: Boolean(row.rejected),
-      reviewed: Boolean(row.reviewed),
-      needsMoreInfo: Boolean(row.needs_more_info || row.needsMoreInfo),
-      storeUnlocked: Boolean(row.store_unlocked || row.storeUnlocked),
-      complianceSubmitted: Boolean(row.compliance_submitted || row.complianceSubmitted),
-      complianceStatus: row.compliance_status || row.complianceStatus || "",
-      adminReviewStatus: row.admin_review_status || row.adminReviewStatus || "",
-      reviewDecision: row.review_decision || row.reviewDecision || "",
-      applicationFeePaid: Boolean(row.application_fee_paid || row.applicationFeePaid),
-      farmerMembershipPaid: Boolean(row.farmer_membership_paid || row.farmerMembershipPaid),
-      monthlyMembershipStarted: Boolean(
-        row.monthly_membership_started || row.monthlyMembershipStarted
-      ),
-      farmLocation: row.farm_location || row.farmLocation || row.location || "",
-      location: row.location || row.farm_location || row.farmLocation || "",
-      about: row.about || "",
-      logoUrl: row.logo_url || row.farm_logo_url || row.logoUrl || row.farmLogoUrl || "",
-      farmLogoUrl: row.farm_logo_url || row.logo_url || row.farmLogoUrl || row.logoUrl || "",
-      logo_url: row.logo_url || row.farm_logo_url || row.logoUrl || row.farmLogoUrl || "",
-      farm_logo_url: row.farm_logo_url || row.logo_url || row.farmLogoUrl || row.logoUrl || "",
-      pickup: row.pickup !== false,
-      delivery: row.delivery !== false,
-      stripeAccountId: row.stripe_account_id || row.farmer_stripe_account_id || "",
-      farmerStripeAccountId: row.farmer_stripe_account_id || row.stripe_account_id || "",
-      stripePayoutAccount: row.stripe_payout_account || "",
-      stripePayoutAccountLast4: row.stripe_payout_account_last4 || "",
-      stripePayoutBankName: row.stripe_payout_bank_name || "",
-      stripeOnboardingComplete: Boolean(row.stripe_onboarding_complete),
-      stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
-      stripePayoutsEnabled: Boolean(row.stripe_payouts_enabled),
-      products: row.products || [],
-      reviews: row.reviews || 0,
-      rating: row.rating || 4.8,
-      distanceMiles: row.distance_miles || row.distanceMiles || 5,
-      itemsSold: row.items_sold || row.itemsSold || 0,
-      revenue: row.revenue || 0,
-      createdAt: row.created_at || row.createdAt || new Date().toISOString(),
-      updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
-    } as any;
+  async function readLocalFarmer() {
+    const raw =
+      (await AsyncStorage.getItem("currentFarmer")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
+      (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!raw) return null;
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
-  async function getFarmerFromSupabase(activeFarmerId: string, savedEmail?: string) {
-    if (activeFarmerId) {
+  async function findSupabaseFarmer(local: any) {
+    const { data: authData } = await supabase.auth.getUser();
+    const authUser = authData?.user;
+
+    const activeId = clean(farmerIdFromParams || local?.id || local?.farmerId || authUser?.id);
+    const activeEmail = normalize(local?.email || authUser?.email);
+
+    if (activeId) {
       const { data, error } = await supabase
         .from("farmers")
         .select("*")
-        .eq("id", activeFarmerId)
-        .maybeSingle();
+        .or(`id.eq.${activeId},farmer_id.eq.${activeId},profile_id.eq.${activeId},auth_user_id.eq.${activeId}`)
+        .limit(1);
 
-      if (!error && data) return mapSupabaseFarmer(data);
+      if (!error && Array.isArray(data) && data[0]) return data[0];
     }
 
-    if (savedEmail) {
+    if (activeEmail) {
       const { data, error } = await supabase
         .from("farmers")
         .select("*")
-        .eq("email", String(savedEmail).trim().toLowerCase())
+        .eq("email", activeEmail)
         .maybeSingle();
 
-      if (!error && data) return mapSupabaseFarmer(data);
+      if (!error && data) return data;
     }
 
     return null;
   }
 
-  async function loadFarmer() {
-    try {
-      const saved =
-        (await AsyncStorage.getItem("currentFarmer")) ||
-        (await AsyncStorage.getItem("currentUser"));
+  function hydrate(farmer: FarmerRecord) {
+    const loadedName = getFarmName(farmer);
+    const loadedLogo = getLogo(farmer);
 
-      const parsed = saved ? JSON.parse(saved) : null;
-      const activeFarmerId = farmerIdFromParams || parsed?.id || parsed?.farmerId || "";
+    setCurrentFarmer(farmer);
+    setOwnerName(clean(farmer.owner_name || farmer.ownerName || farmer.full_name || farmer.name));
+    setFarmName(loadedName);
+    setEmail(normalize(farmer.email));
+    setPhone(clean(farmer.phone));
+    setFarmLocation(clean(farmer.farm_location || farmer.farmLocation || farmer.location || [farmer.city, farmer.state].filter(Boolean).join(", ")));
+    setAbout(clean(farmer.about));
+    setLogoUrl(loadedLogo);
+    setPickup(farmer.pickup !== false);
+    setDelivery(farmer.delivery !== false);
+  }
 
-      let farmer: Farmer | null =
-        (await getFarmerFromSupabase(activeFarmerId, parsed?.email)) || null;
+  async function saveFarmerSession(farmer: FarmerRecord) {
+    const normalized = {
+      ...farmer,
+      id: getFarmerId(farmer),
+      farmerId: getFarmerId(farmer),
+      role: "farmer",
+      email: normalize(farmer.email),
+    };
 
-      if (!farmer && activeFarmerId) {
-        farmer = (await getFarmerById(activeFarmerId)) || null;
-      }
+    await AsyncStorage.multiSet([
+      ["currentFarmer", JSON.stringify(normalized)],
+      ["farm2homeCurrentFarmer", JSON.stringify(normalized)],
+      ["farm2homeFarmerSession", JSON.stringify(normalized)],
+      ["currentUser", JSON.stringify(normalized)],
+      ["userRole", "farmer"],
+      ["currentUserRole", "farmer"],
+    ]);
 
-      if (!farmer && parsed?.id) {
-        farmer = parsed;
-      }
-
-      if (!farmer) {
-        Alert.alert("Farmer Not Found", "Please login again.");
-        router.replace("/farmer/login" as any);
-        return;
-      }
-
-      const farmerAny = farmer as any;
-
-      const loadedLogo =
-        farmerAny.logoUrl ||
-        farmerAny.farmLogoUrl ||
-        farmerAny.logo_url ||
-        farmerAny.farm_logo_url ||
-        "";
-
-      const fixedFarmer = {
-        ...farmer,
-        id: farmer.id || farmerAny.farmerId || activeFarmerId,
-        farmerId: farmerAny.farmerId || farmer.id || activeFarmerId,
-        role: "farmer",
-        logoUrl: loadedLogo,
-        farmLogoUrl: loadedLogo,
-        logo_url: loadedLogo,
-        farm_logo_url: loadedLogo,
-        accountActive: true,
-        account_active: true,
-        storeUnlocked: true,
-        store_unlocked: true,
-      } as any;
-
-      setCurrentFarmer(fixedFarmer);
-
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(fixedFarmer));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(fixedFarmer));
-      await AsyncStorage.setItem("userRole", "farmer");
-      await AsyncStorage.setItem("currentUserRole", "farmer");
-
-      setOwnerName(fixedFarmer.ownerName || fixedFarmer.owner_name || "");
-      setFarmName(
-        fixedFarmer.farmName ||
-          fixedFarmer.farm_name ||
-          fixedFarmer.businessName ||
-          fixedFarmer.business_name ||
-          ""
-      );
-      setEmail(String(fixedFarmer.email || "").trim().toLowerCase());
-      setPhone(fixedFarmer.phone || "");
-      setFarmLocation(
-        fixedFarmer.farmLocation ||
-          fixedFarmer.farm_location ||
-          fixedFarmer.location ||
-          ""
-      );
-      setAbout(fixedFarmer.about || "");
-      setLogoUrl(loadedLogo);
-      setPickup(fixedFarmer.pickup !== false);
-      setDelivery(fixedFarmer.delivery !== false);
-    } catch (error: any) {
-      console.log("Load farmer error:", error);
-      Alert.alert("Error", error?.message || "Unable to load farmer setup.");
-    }
+    setCurrentFarmer(normalized);
+    return normalized;
   }
 
   async function uriToBlob(uri: string): Promise<Blob> {
@@ -258,18 +284,18 @@ export default function FarmerSetupStoreScreen() {
   }
 
   function getFileExt(uri: string) {
-    const clean = uri.split("?")[0];
-    const ext = clean.split(".").pop()?.toLowerCase();
-    if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "webp") {
-      return ext === "jpg" ? "jpeg" : ext;
-    }
+    const cleanUri = uri.split("?")[0];
+    const ext = cleanUri.split(".").pop()?.toLowerCase();
+    if (["jpg", "jpeg", "png", "webp"].includes(ext || "")) return ext === "jpg" ? "jpeg" : ext || "jpeg";
     return "jpeg";
   }
 
   async function uploadLogoToStorage(localUri: string) {
     if (!localUri || localUri.startsWith("http")) return localUri;
 
-    if (!currentFarmer?.id) {
+    const activeFarmerId = getFarmerId(currentFarmer);
+
+    if (!activeFarmerId) {
       throw new Error("Farmer ID missing. Please login again.");
     }
 
@@ -277,7 +303,7 @@ export default function FarmerSetupStoreScreen() {
 
     const ext = getFileExt(localUri);
     const contentType = `image/${ext}`;
-    const filePath = `${currentFarmer.id}/farm-logo-${Date.now()}.${ext}`;
+    const filePath = `${activeFarmerId}/farm-logo-${Date.now()}.${ext}`;
     const blob = await uriToBlob(localUri);
 
     const { error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, blob, {
@@ -285,9 +311,7 @@ export default function FarmerSetupStoreScreen() {
       upsert: true,
     });
 
-    if (error) {
-      throw new Error(error.message || "Unable to upload logo.");
-    }
+    if (error) throw new Error(error.message || "Unable to upload logo.");
 
     const { data } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(filePath);
 
@@ -295,7 +319,6 @@ export default function FarmerSetupStoreScreen() {
       throw new Error("Logo uploaded but public URL was not returned.");
     }
 
-    setLogoUploading(false);
     return data.publicUrl;
   }
 
@@ -323,7 +346,7 @@ export default function FarmerSetupStoreScreen() {
     }
   }
 
-  function validateRequiredFields() {
+  function validateForm() {
     if (!ownerName.trim()) {
       Alert.alert("Missing Owner Name", "Please enter the owner name.");
       return false;
@@ -334,8 +357,8 @@ export default function FarmerSetupStoreScreen() {
       return false;
     }
 
-    if (!email.trim()) {
-      Alert.alert("Missing Email", "Please enter the farmer email.");
+    if (!isValidEmail(email)) {
+      Alert.alert("Valid Email Required", "Please enter a valid farmer email.");
       return false;
     }
 
@@ -344,15 +367,48 @@ export default function FarmerSetupStoreScreen() {
       return false;
     }
 
+    if (!pickup && !delivery) {
+      Alert.alert("Pickup or Delivery Required", "Enable pickup, delivery, or both.");
+      return false;
+    }
+
     return true;
   }
 
-  async function saveFarmerProfile(): Promise<Farmer | null> {
-    try {
-      if (loading) return null;
-      if (!validateRequiredFields()) return null;
+  async function safeUpdateFarmers(id: string, payload: Record<string, any>) {
+    let nextPayload = { ...payload };
 
-      if (!currentFarmer?.id) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .update(nextPayload)
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+
+      if (!error) return data;
+
+      const missing = String(error.message || "").match(/Could not find the '([^']+)' column/i)?.[1];
+
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        delete nextPayload[missing];
+        continue;
+      }
+
+      throw error;
+    }
+
+    return null;
+  }
+
+  async function saveFarmerProfile(showAlert = true): Promise<FarmerRecord | null> {
+    try {
+      if (loading || logoUploading) return null;
+      if (!validateForm()) return null;
+
+      const activeFarmerId = getFarmerId(currentFarmer);
+
+      if (!activeFarmerId) {
         Alert.alert("Session Error", "Please login again.");
         router.replace("/farmer/login" as any);
         return null;
@@ -368,68 +424,31 @@ export default function FarmerSetupStoreScreen() {
       }
 
       const now = new Date().toISOString();
+      const finalEmail = normalize(email);
+      const finalOwner = ownerName.trim();
+      const finalFarmName = farmName.trim();
+      const finalLocation = farmLocation.trim();
 
-      const farmerPayload: Farmer = {
-        ...currentFarmer,
-        id: currentFarmer.id,
-        farmerId: (currentFarmer as any).farmerId || currentFarmer.id,
-        role: "farmer",
-        ownerName: ownerName.trim(),
-        farmName: farmName.trim(),
-        businessName: farmName.trim(),
-        email: email.trim().toLowerCase(),
+      const payload: Record<string, any> = {
+        owner_name: finalOwner,
+        full_name: finalOwner,
+        name: finalOwner,
+        farm_name: finalFarmName,
+        business_name: finalFarmName,
+        email: finalEmail,
         phone: phone.trim(),
-        username: (currentFarmer as any).username || email.trim().toLowerCase(),
-        password: (currentFarmer as any).password || "",
-        accountActive: true,
-        account_active: true,
-        approved: true,
-        reviewed: true,
-        rejected: false,
-        complianceStatus: "ACTIVE",
-        compliance_status: "ACTIVE",
-        adminReviewStatus: "ACTIVE",
-        admin_review_status: "ACTIVE",
-        reviewDecision: "APPROVED",
-        review_decision: "APPROVED",
-        storeUnlocked: true,
-        store_unlocked: true,
-        farmLocation: farmLocation.trim(),
-        location: farmLocation.trim(),
-        about: about.trim(),
-        logoUrl: finalLogoUrl,
-        farmLogoUrl: finalLogoUrl,
-        logo_url: finalLogoUrl,
-        farm_logo_url: finalLogoUrl,
-        pickup,
-        delivery,
-        products: (currentFarmer as any).products || [],
-        reviews: (currentFarmer as any).reviews || 0,
-        rating: (currentFarmer as any).rating || 4.8,
-        distanceMiles: (currentFarmer as any).distanceMiles || 5,
-        itemsSold: (currentFarmer as any).itemsSold || 0,
-        revenue: (currentFarmer as any).revenue || 0,
-        createdAt: (currentFarmer as any).createdAt || (currentFarmer as any).created_at || now,
-        updatedAt: now,
-      } as any;
-
-      const supabasePayload = {
-        owner_name: ownerName.trim(),
-        farm_name: farmName.trim(),
-        business_name: farmName.trim(),
-        email: email.trim().toLowerCase(),
-        phone: phone.trim(),
-        farm_location: farmLocation.trim(),
-        location: farmLocation.trim(),
+        username: normalize((currentFarmer as any)?.username || finalEmail),
+        farm_location: finalLocation,
+        location: finalLocation,
         about: about.trim(),
         logo_url: finalLogoUrl,
         farm_logo_url: finalLogoUrl,
         pickup,
         delivery,
+        account_active: true,
         approved: true,
         reviewed: true,
         rejected: false,
-        account_active: true,
         store_unlocked: true,
         compliance_status: "ACTIVE",
         admin_review_status: "ACTIVE",
@@ -437,54 +456,63 @@ export default function FarmerSetupStoreScreen() {
         updated_at: now,
       };
 
-      const { data: updatedRows, error } = await supabase
-        .from("farmers")
-        .update(supabasePayload)
-        .eq("id", currentFarmer.id)
-        .select("*");
+      let updated = await safeUpdateFarmers(activeFarmerId, payload);
 
-      if (error) throw error;
+      if (!updated) {
+        const { data, error } = await supabase
+          .from("farmers")
+          .upsert(
+            {
+              id: activeFarmerId,
+              ...payload,
+              created_at: (currentFarmer as any)?.created_at || now,
+            },
+            { onConflict: "id" }
+          )
+          .select("*")
+          .maybeSingle();
 
-      if (!updatedRows || updatedRows.length === 0) {
-        const { error: upsertError } = await supabase.from("farmers").upsert(
-          {
-            id: currentFarmer.id,
-            ...supabasePayload,
-            created_at:
-              (currentFarmer as any).createdAt ||
-              (currentFarmer as any).created_at ||
-              now,
-          },
-          { onConflict: "id" }
-        );
-
-        if (upsertError) throw upsertError;
+        if (error) throw error;
+        updated = data;
       }
 
-      let savedFarmer = farmerPayload;
+      const savedFarmer: FarmerRecord = {
+        ...(currentFarmer || {}),
+        ...(updated || {}),
+        id: activeFarmerId,
+        farmerId: activeFarmerId,
+        role: "farmer",
+        owner_name: finalOwner,
+        ownerName: finalOwner,
+        farm_name: finalFarmName,
+        farmName: finalFarmName,
+        business_name: finalFarmName,
+        businessName: finalFarmName,
+        email: finalEmail,
+        phone: phone.trim(),
+        farm_location: finalLocation,
+        farmLocation: finalLocation,
+        location: finalLocation,
+        about: about.trim(),
+        logo_url: finalLogoUrl,
+        farm_logo_url: finalLogoUrl,
+        logoUrl: finalLogoUrl,
+        farmLogoUrl: finalLogoUrl,
+        pickup,
+        delivery,
+        account_active: true,
+        approved: true,
+        store_unlocked: true,
+      };
 
-      try {
-        const updated = await updateFarmerStore(currentFarmer.id, farmerPayload);
-        savedFarmer =
-          updated.find((item) => item.id === currentFarmer.id) || farmerPayload;
-      } catch {
-        const updated = await addFarmer(farmerPayload);
-        savedFarmer =
-          updated.find((item) => item.id === farmerPayload.id) || farmerPayload;
-      }
+      hydrate(savedFarmer);
+      await saveFarmerSession(savedFarmer);
 
-      setCurrentFarmer(savedFarmer);
-
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(savedFarmer));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(savedFarmer));
-      await AsyncStorage.setItem("userRole", "farmer");
-      await AsyncStorage.setItem("currentUserRole", "farmer");
-
-      Alert.alert("Saved", "Farmer store setup saved.");
+      if (showAlert) Alert.alert("Store Saved", "Farmer store setup saved.");
       return savedFarmer;
     } catch (error: any) {
       console.log("Save farmer profile error:", error);
-      Alert.alert("Save Error", error?.message || "Unable to save farmer.");
+      Alert.alert("Save Error", error?.message || "Unable to save farmer store.");
       return null;
     } finally {
       setLoading(false);
@@ -492,436 +520,461 @@ export default function FarmerSetupStoreScreen() {
     }
   }
 
-  async function saveAndGoToProduce() {
-    const farmer = await saveFarmerProfile();
-    if (!farmer?.id) return;
+  async function saveAndRoute(pathname: string) {
+    const saved = await saveFarmerProfile(false);
+    if (!saved?.id) return;
 
     router.push({
-      pathname: "/farmer/select-produce",
-      params: { farmerId: farmer.id },
+      pathname,
+      params: { farmerId: saved.id },
     } as any);
   }
 
-  async function saveAndGoToCustomProduct() {
-    const farmer = await saveFarmerProfile();
-    if (!farmer?.id) return;
-
-    router.push({
-      pathname: "/farmer/add-product",
-      params: { farmerId: farmer.id },
-    } as any);
+  if (loading && !currentFarmer) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+        <View style={styles.loadingCenter}>
+          <ActivityIndicator size="large" color={COLORS.green} />
+          <Text style={styles.loadingText}>Loading store setup...</Text>
+        </View>
+      </SafeAreaView>
+    );
   }
-
-  async function saveAndGoToDashboard() {
-    const farmer = await saveFarmerProfile();
-    if (!farmer?.id) return;
-
-    router.push({
-      pathname: "/farmer/dashboard",
-      params: { farmerId: farmer.id },
-    } as any);
-  }
-
-  const stripeConnected = Boolean(
-    (currentFarmer as any)?.stripeAccountId ||
-      (currentFarmer as any)?.farmerStripeAccountId
-  );
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.topBar}>
-          <Pressable
-            style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={styles.backCircleText}>‹</Text>
-          </Pressable>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
-          <View style={styles.topTitleBlock}>
-            <Text style={styles.title}>Store Setup</Text>
-            <Text style={styles.subtitle}>Compact seller profile</Text>
+      <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.topBar}>
+            <TouchableOpacity style={styles.backButton} onPress={() => router.back()} activeOpacity={0.9}>
+              <Ionicons name="arrow-back-outline" size={21} color={COLORS.text} />
+            </TouchableOpacity>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>Grocerly Store</Text>
+              <Text style={styles.pageTitle}>Setup Farmer Store</Text>
+            </View>
+
+            <View style={styles.scorePill}>
+              <Text style={styles.scoreText}>{completion}/6</Text>
+            </View>
           </View>
-        </View>
 
-        <View style={styles.statusStrip}>
-          <Text style={styles.statusDot}>●</Text>
-          <Text style={styles.statusStripText}>Store Active</Text>
-          <Text style={styles.statusDivider}>•</Text>
-          <Text style={styles.statusStripText}>
-            Stripe {stripeConnected ? "Connected" : "Pending"}
-          </Text>
-          <Text style={styles.statusDivider}>•</Text>
-          <Text style={styles.statusStripText}>
-            Logo {logoUrl ? "Ready" : "Needed"}
-          </Text>
-        </View>
+          <View style={styles.hero}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.heroBadge}>Fresh Local Market</Text>
+              <Text style={styles.heroTitle}>Create a clean grocery storefront customers can shop.</Text>
+              <Text style={styles.heroSub}>Add farm details, logo, pickup, and delivery preferences.</Text>
+            </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Farm Logo</Text>
+            <View style={styles.heroImage}>
+              <Text style={styles.heroEmoji}>🥦</Text>
+            </View>
+          </View>
 
-          <View style={styles.logoRow}>
-            {logoUrl ? (
-              <Image source={{ uri: logoUrl }} style={styles.logoPreview} />
-            ) : (
-              <View style={styles.logoEmpty}>
-                <Text style={styles.logoEmptyText}>🚜</Text>
-              </View>
-            )}
+          <View style={styles.statusRow}>
+            <StatusChip label="Store" value="Active" good />
+            <StatusChip label="Stripe" value={stripeConnected ? "Connected" : "Pending"} good={stripeConnected} />
+            <StatusChip label="Logo" value={logoUrl ? "Ready" : "Needed"} good={Boolean(logoUrl)} />
+          </View>
 
-            <View style={styles.logoTextBlock}>
-              <Text style={styles.logoTitle}>Store Logo</Text>
-              <Text style={styles.logoSubtitle}>
-                Small logo shown in customer marketplace.
-              </Text>
+          <View style={styles.card}>
+            <SectionHeader title="Store Logo" subtitle="Shown in the customer marketplace." icon="image-outline" />
 
-              <Pressable
-                style={({ pressed }) => [
-                  styles.smallOutlineButton,
-                  pressed && styles.pressed,
-                  logoUploading && styles.disabledButton,
-                ]}
-                onPress={pickLogo}
-                disabled={logoUploading || loading}
-              >
-                <Text style={styles.smallOutlineText}>
-                  {logoUploading ? "Uploading..." : logoUrl ? "Change Logo" : "Upload Logo"}
-                </Text>
+            <View style={styles.logoRow}>
+              <Pressable style={styles.logoPreviewWrap} onPress={pickLogo}>
+                {logoUrl ? (
+                  <Image source={{ uri: logoUrl }} style={styles.logoPreview} />
+                ) : (
+                  <View style={styles.logoEmpty}>
+                    <Text style={styles.logoEmoji}>🚜</Text>
+                  </View>
+                )}
               </Pressable>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.logoTitle}>Farm Logo</Text>
+                <Text style={styles.logoText}>Upload a square logo for your Grocerly-style farm store.</Text>
+
+                <TouchableOpacity
+                  style={[styles.outlineButton, (logoUploading || loading) && styles.disabled]}
+                  onPress={pickLogo}
+                  disabled={logoUploading || loading}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="cloud-upload-outline" size={17} color={COLORS.greenDark} />
+                  <Text style={styles.outlineButtonText}>
+                    {logoUploading ? "Uploading..." : logoUrl ? "Change Logo" : "Upload Logo"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Farm Profile</Text>
+          <View style={styles.card}>
+            <SectionHeader title="Farm Profile" subtitle="This information appears in marketplace search." icon="storefront-outline" />
 
-          <Text style={styles.label}>Owner Name</Text>
-          <TextInput
-            style={styles.input}
-            value={ownerName}
-            onChangeText={setOwnerName}
-            placeholder="Owner name"
-            placeholderTextColor="#8A9482"
-          />
+            <Field label="Owner Name" value={ownerName} onChangeText={setOwnerName} placeholder="Owner name" icon="person-outline" />
+            <Field label="Farm Name" value={farmName} onChangeText={setFarmName} placeholder="Farm name" icon="leaf-outline" />
+            <Field
+              label="Email"
+              value={email}
+              onChangeText={(value) => setEmail(normalize(value))}
+              placeholder="farmer@email.com"
+              icon="mail-outline"
+              keyboardType="email-address"
+            />
+            <Field label="Phone" value={phone} onChangeText={setPhone} placeholder="Phone number" icon="call-outline" keyboardType="phone-pad" />
+            <Field label="Farm Location" value={farmLocation} onChangeText={setFarmLocation} placeholder="City, State" icon="location-outline" />
 
-          <Text style={styles.label}>Farm Name</Text>
-          <TextInput
-            style={styles.input}
-            value={farmName}
-            onChangeText={setFarmName}
-            placeholder="Farm name"
-            placeholderTextColor="#8A9482"
-          />
-
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            value={email}
-            onChangeText={setEmail}
-            placeholder="farmer@email.com"
-            placeholderTextColor="#8A9482"
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-
-          <Text style={styles.label}>Phone</Text>
-          <TextInput
-            style={styles.input}
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="Phone number"
-            placeholderTextColor="#8A9482"
-            keyboardType="phone-pad"
-          />
-
-          <Text style={styles.label}>Farm Location</Text>
-          <TextInput
-            style={styles.input}
-            value={farmLocation}
-            onChangeText={setFarmLocation}
-            placeholder="City, State"
-            placeholderTextColor="#8A9482"
-          />
-
-          <Text style={styles.label}>About Farm</Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            value={about}
-            onChangeText={setAbout}
-            placeholder="Tell customers about your farm"
-            placeholderTextColor="#8A9482"
-            multiline
-          />
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Pickup / Delivery</Text>
-
-          <View style={styles.optionRow}>
-            <View style={styles.optionTextBlock}>
-              <Text style={styles.optionTitle}>Allow Pickup</Text>
-              <Text style={styles.optionSubtitle}>Customers can pick up from your farm.</Text>
+            <Text style={styles.inputLabel}>About Farm</Text>
+            <View style={[styles.inputShell, styles.textAreaShell]}>
+              <Ionicons name="document-text-outline" size={18} color={COLORS.muted} />
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={about}
+                onChangeText={setAbout}
+                placeholder="Tell customers about your farm"
+                placeholderTextColor="#94A3B8"
+                multiline
+              />
             </View>
-            <Switch value={pickup} onValueChange={setPickup} />
           </View>
 
-          <View style={styles.optionRow}>
-            <View style={styles.optionTextBlock}>
-              <Text style={styles.optionTitle}>Allow Delivery</Text>
-              <Text style={styles.optionSubtitle}>Orders can be delivered by your team or drivers.</Text>
-            </View>
-            <Switch value={delivery} onValueChange={setDelivery} />
+          <View style={styles.card}>
+            <SectionHeader title="Pickup / Delivery" subtitle="Choose how customers receive groceries." icon="bicycle-outline" />
+
+            <ToggleRow
+              title="Allow Pickup"
+              subtitle="Customers can pick up orders from your farm."
+              value={pickup}
+              onValueChange={setPickup}
+              icon="bag-handle-outline"
+            />
+
+            <ToggleRow
+              title="Allow Delivery"
+              subtitle="Orders can be delivered by your team or Farm2Home drivers."
+              value={delivery}
+              onValueChange={setDelivery}
+              icon="car-outline"
+            />
           </View>
-        </View>
 
-        <View style={styles.actionRow}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.compactButton,
-              pressed && styles.pressed,
-              loading && styles.disabledButton,
-            ]}
-            onPress={saveFarmerProfile}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.compactButtonText}>Save</Text>
-            )}
-          </Pressable>
+          <View style={styles.actionGrid}>
+            <TouchableOpacity
+              style={[styles.primaryButton, loading && styles.disabled]}
+              onPress={() => saveFarmerProfile(true)}
+              disabled={loading}
+              activeOpacity={0.9}
+            >
+              {loading ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <>
+                  <Ionicons name="save-outline" size={18} color={COLORS.white} />
+                  <Text style={styles.primaryButtonText}>Save Store</Text>
+                </>
+              )}
+            </TouchableOpacity>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.compactButton,
-              pressed && styles.pressed,
-              loading && styles.disabledButton,
-            ]}
-            onPress={saveAndGoToProduce}
-            disabled={loading}
-          >
-            <Text style={styles.compactButtonText}>Produce</Text>
-          </Pressable>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => saveAndRoute("/farmer/select-produce")}
+              disabled={loading}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="nutrition-outline" size={18} color={COLORS.greenDark} />
+              <Text style={styles.secondaryButtonText}>Save + Add Produce</Text>
+            </TouchableOpacity>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.compactButton,
-              pressed && styles.pressed,
-              loading && styles.disabledButton,
-            ]}
-            onPress={saveAndGoToDashboard}
-            disabled={loading}
-          >
-            <Text style={styles.compactButtonText}>Dashboard</Text>
-          </Pressable>
-        </View>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => saveAndRoute("/farmer/add-product")}
+              disabled={loading}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="add-circle-outline" size={18} color={COLORS.greenDark} />
+              <Text style={styles.secondaryButtonText}>Save + Custom Product</Text>
+            </TouchableOpacity>
 
-        <Pressable
-          style={({ pressed }) => [styles.customProductButton, pressed && styles.pressed]}
-          onPress={saveAndGoToCustomProduct}
-          disabled={loading}
-        >
-          <Text style={styles.customProductText}>Add Custom Product</Text>
-        </Pressable>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => saveAndRoute("/farmer/dashboard")}
+              disabled={loading}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="grid-outline" size={18} color={COLORS.greenDark} />
+              <Text style={styles.secondaryButtonText}>Save + Dashboard</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
 
-        <Pressable
-          style={({ pressed }) => [styles.backTextButton, pressed && styles.pressed]}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backTextButtonText}>Go Back</Text>
-        </Pressable>
-      </ScrollView>
-    </KeyboardAvoidingView>
+function StatusChip({ label, value, good }: { label: string; value: string; good: boolean }) {
+  return (
+    <View style={[styles.statusChip, good ? styles.statusChipGood : styles.statusChipWarn]}>
+      <Text style={styles.statusChipLabel}>{label}</Text>
+      <Text style={[styles.statusChipValue, good ? styles.statusChipValueGood : styles.statusChipValueWarn]}>{value}</Text>
+    </View>
+  );
+}
+
+function SectionHeader({
+  title,
+  subtitle,
+  icon,
+}: {
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons name={icon} size={21} color={COLORS.greenDark} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text style={styles.sectionSub}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  icon,
+  keyboardType,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  keyboardType?: any;
+}) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <View style={styles.inputShell}>
+        <Ionicons name={icon} size={18} color={COLORS.muted} />
+        <TextInput
+          style={styles.input}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor="#94A3B8"
+          keyboardType={keyboardType}
+          autoCapitalize={keyboardType === "email-address" ? "none" : "words"}
+          autoCorrect={false}
+        />
+      </View>
+    </View>
+  );
+}
+
+function ToggleRow({
+  title,
+  subtitle,
+  value,
+  onValueChange,
+  icon,
+}: {
+  title: string;
+  subtitle: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={styles.toggleCard}>
+      <View style={styles.toggleIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.greenDark} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.toggleTitle}>{title}</Text>
+        <Text style={styles.toggleSub}>{subtitle}</Text>
+      </View>
+      <Switch value={value} onValueChange={onValueChange} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.background },
-  container: { padding: 14, paddingBottom: 34 },
-
-  topBar: {
-    flexDirection: "row",
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
+  loadingText: { marginTop: 10, color: COLORS.muted, fontWeight: "800" },
+  content: { padding: 16, paddingBottom: 110 },
+  topBar: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16 },
+  backButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 17,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
-    marginBottom: 12,
-    gap: 10,
-  },
-  backCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 13,
-    backgroundColor: COLORS.card,
     justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
-  backCircleText: {
-    fontSize: 28,
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: -4,
+  eyebrow: { color: COLORS.green, fontWeight: "900", letterSpacing: 1, textTransform: "uppercase", fontSize: 12 },
+  pageTitle: { color: COLORS.text, fontSize: 24, fontWeight: "900", marginTop: 2 },
+  scorePill: {
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
-  topTitleBlock: { flex: 1 },
-  title: { fontSize: 24, fontWeight: "900", color: COLORS.text },
-  subtitle: { color: COLORS.muted, fontWeight: "700", marginTop: 2, fontSize: 12 },
-
-  statusStrip: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
+  scoreText: { color: COLORS.greenDark, fontWeight: "900" },
+  hero: {
+    backgroundColor: COLORS.green,
+    borderRadius: 30,
+    padding: 20,
     flexDirection: "row",
-    flexWrap: "wrap",
     alignItems: "center",
-    gap: 6,
+    gap: 12,
+    marginBottom: 14,
   },
-  statusDot: { color: COLORS.primary, fontSize: 12 },
-  statusStripText: { color: COLORS.text, fontWeight: "900", fontSize: 12 },
-  statusDivider: { color: COLORS.muted, fontWeight: "900" },
-
+  heroBadge: { color: COLORS.lime, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1, fontSize: 11 },
+  heroTitle: { color: COLORS.white, fontSize: 25, fontWeight: "900", lineHeight: 31, marginTop: 7 },
+  heroSub: { color: COLORS.white, opacity: 0.92, fontWeight: "700", lineHeight: 20, marginTop: 7 },
+  heroImage: {
+    width: 76,
+    height: 76,
+    borderRadius: 28,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroEmoji: { fontSize: 42 },
+  statusRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
+  statusChip: {
+    flex: 1,
+    borderRadius: 18,
+    padding: 12,
+    borderWidth: 1,
+  },
+  statusChipGood: { backgroundColor: COLORS.greenSoft, borderColor: "#BDECCF" },
+  statusChipWarn: { backgroundColor: COLORS.orangeSoft, borderColor: "#FED7AA" },
+  statusChipLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11, textTransform: "uppercase" },
+  statusChipValue: { fontWeight: "900", marginTop: 4 },
+  statusChipValueGood: { color: COLORS.greenDark },
+  statusChipValueWarn: { color: "#92400E" },
   card: {
     backgroundColor: COLORS.card,
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 24,
+    padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
+    marginBottom: 14,
   },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: COLORS.text,
-    marginBottom: 10,
-  },
-
-  logoRow: { flexDirection: "row", gap: 12, alignItems: "center" },
-  logoPreview: {
-    width: 60,
-    height: 60,
-    borderRadius: 14,
-    backgroundColor: COLORS.softGreen,
-  },
-  logoEmpty: {
-    width: 60,
-    height: 60,
-    borderRadius: 14,
-    backgroundColor: COLORS.softGreen,
+  sectionHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  sectionIcon: {
+    width: 43,
+    height: 43,
+    borderRadius: 16,
+    backgroundColor: COLORS.greenSoft,
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
   },
-  logoEmptyText: { fontSize: 25 },
-  logoTextBlock: { flex: 1 },
-  logoTitle: { color: COLORS.text, fontWeight: "900", fontSize: 15 },
-  logoSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 17,
-    marginTop: 3,
-    fontSize: 12,
+  sectionTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
+  sectionSub: { color: COLORS.muted, fontWeight: "700", lineHeight: 18, marginTop: 3 },
+  logoRow: { flexDirection: "row", gap: 14, alignItems: "center" },
+  logoPreviewWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 26,
+    backgroundColor: COLORS.greenSoft,
+    overflow: "hidden",
   },
-  smallOutlineButton: {
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    borderRadius: 12,
-    paddingVertical: 9,
-    alignItems: "center",
-    marginTop: 9,
+  logoPreview: { width: "100%", height: "100%" },
+  logoEmpty: { flex: 1, alignItems: "center", justifyContent: "center" },
+  logoEmoji: { fontSize: 38 },
+  logoTitle: { color: COLORS.text, fontWeight: "900", fontSize: 17 },
+  logoText: { color: COLORS.muted, fontWeight: "700", lineHeight: 19, marginTop: 4 },
+  outlineButton: {
+    marginTop: 12,
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    flexDirection: "row",
+    gap: 7,
+    alignSelf: "flex-start",
   },
-  smallOutlineText: { color: COLORS.primaryDark, fontWeight: "900", fontSize: 13 },
-
-  label: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: COLORS.muted,
-    marginBottom: 5,
-    marginTop: 4,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.lightGreen,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    fontSize: 14,
-    color: COLORS.text,
-    marginBottom: 8,
-    fontWeight: "700",
-  },
-  textArea: { height: 82, textAlignVertical: "top" },
-
-  optionRow: {
-    backgroundColor: COLORS.lightGreen,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
+  outlineButtonText: { color: COLORS.greenDark, fontWeight: "900" },
+  fieldWrap: { marginBottom: 12 },
+  inputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 7, fontSize: 13 },
+  inputShell: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
+    minHeight: 54,
+    paddingHorizontal: 13,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 9,
   },
-  optionTextBlock: { flex: 1 },
-  optionTitle: { fontSize: 14, color: COLORS.text, fontWeight: "900" },
-  optionSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 16,
-    marginTop: 2,
-    fontSize: 11,
+  input: { flex: 1, minHeight: 52, color: COLORS.text, fontWeight: "800" },
+  textAreaShell: { minHeight: 104, alignItems: "flex-start", paddingTop: 13 },
+  textArea: { minHeight: 90, textAlignVertical: "top" },
+  toggleCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
   },
-
-  actionRow: {
+  toggleIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 15,
+    backgroundColor: COLORS.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toggleTitle: { color: COLORS.text, fontWeight: "900" },
+  toggleSub: { color: COLORS.muted, fontWeight: "700", lineHeight: 18, marginTop: 3 },
+  actionGrid: { gap: 10 },
+  primaryButton: {
+    backgroundColor: COLORS.green,
+    borderRadius: 18,
+    minHeight: 56,
+    alignItems: "center",
+    justifyContent: "center",
     flexDirection: "row",
     gap: 8,
-    marginTop: 4,
-    marginBottom: 10,
   },
-  compactButton: {
-    flex: 1,
-    backgroundColor: COLORS.primary,
-    borderRadius: 14,
-    paddingVertical: 12,
+  primaryButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
+  secondaryButton: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    minHeight: 56,
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 44,
+    flexDirection: "row",
+    gap: 8,
   },
-  compactButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 14,
-  },
-  customProductButton: {
-    backgroundColor: COLORS.primaryDark,
-    borderRadius: 14,
-    paddingVertical: 12,
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  customProductText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 14,
-  },
-  backTextButton: {
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  backTextButtonText: {
-    color: COLORS.primary,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  disabledButton: { opacity: 0.6 },
-  pressed: { opacity: 0.75 },
+  secondaryButtonText: { color: COLORS.greenDark, fontWeight: "900", fontSize: 15 },
+  disabled: { opacity: 0.62 },
 });
