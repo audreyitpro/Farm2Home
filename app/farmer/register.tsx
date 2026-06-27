@@ -16,6 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -24,42 +25,23 @@ import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 
 /**
- * Farmer registration updated to fit the Freight registration flow.
+ * Farm2Home Farmer Registration
  *
- * Flow:
- * 1. Account
- * 2. Farm
- * 3. Location
- * 4. Products
- * 5. Documents
- * 6. Legal
- * 7. Stripe
- * 8. Review
+ * Freight-style flow:
+ * Account -> Farm -> Location -> Products -> Documents -> Legal -> Stripe -> Review
  *
- * Required farmer_subscriptions columns already provided:
- * - farmer_id text
- * - farmer_email text
- * - name text
- * - username text
- * - stripe_customer_id text
- * - stripe_subscription_id text
- * - subscription_status text
- * - current_period_end timestamptz
- * - created_at timestamptz
- * - updated_at timestamptz
+ * Important:
+ * - Profiles save is intentionally minimal to avoid POST /profiles 400 errors.
+ * - Farmers save is schema-safe and removes missing columns automatically.
+ * - Admin verification save is optional and non-blocking.
+ * - Farmer document upload uses Supabase Storage bucket: farmer-documents
  *
- * Add farmer document columns to public.farmers and admin_verifications if you want admin review there too:
- * - farm_business_license_document text
- * - food_safety_document text
- * - product_liability_insurance_document text
- * - w9_document text
- * - farm_permit_document text
- * - organic_certification_document text
- * - meat_dairy_license_document text
- * - produce_safety_certificate_document text
+ * Install if needed:
+ * npx expo install expo-document-picker
  */
 
 const PENDING_FARMER_KEY = "pendingFarmerApplication";
+const FARMER_DOC_BUCKET = "farmer-documents";
 
 const COLORS = {
   bg: "#F4F5F7",
@@ -68,7 +50,6 @@ const COLORS = {
   surface2: "#F1F5F9",
   black: "#050505",
   red: "#D71920",
-  redDark: "#9F1117",
   text: "#111827",
   muted: "#6B7280",
   border: "#E5E7EB",
@@ -135,6 +116,8 @@ const agreements = [
   "I accept Farm2Home service fees, membership fees, payout terms, and platform policies.",
 ];
 
+type StepKey = (typeof STEPS)[number]["key"];
+
 function clean(value: any) {
   return String(value ?? "").trim();
 }
@@ -185,8 +168,33 @@ function makeFallbackAccountId() {
   return `Farmer_${stamp}`;
 }
 
+function firstParam(value: any) {
+  if (Array.isArray(value)) return clean(value[0]);
+  return clean(value);
+}
+
+function getMissingColumnName(error: any): string {
+  const message = String(error?.message || error?.details || "");
+
+  const patterns = [
+    /Could not find the '([^']+)' column/i,
+    /column '([^']+)' of relation/i,
+    /'([^']+)' column of '([^']+)'/i,
+    /schema cache.*?'([^']+)'/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  console.log("UNMATCHED SUPABASE ERROR:", message);
+  return "";
+}
+
 async function parseApiResponse(response: Response) {
   const text = await response.text();
+
   try {
     return text ? JSON.parse(text) : {};
   } catch {
@@ -213,6 +221,7 @@ function getStripeLaunchUrl(data: any) {
 
 async function openUrl(url: string) {
   const finalUrl = clean(url);
+
   if (!finalUrl || !finalUrl.startsWith("http")) {
     Alert.alert("Stripe Error", "No valid Stripe URL was returned.");
     return;
@@ -225,16 +234,19 @@ async function openUrl(url: string) {
 
   try {
     const result = await WebBrowser.openBrowserAsync(finalUrl);
+
     if (result?.type === "cancel" || result?.type === "dismiss") {
       await Linking.openURL(finalUrl);
     }
   } catch (browserError) {
     console.log("WebBrowser open failed, trying Linking:", browserError);
+
     const canOpen = await Linking.canOpenURL(finalUrl);
     if (!canOpen) {
       Alert.alert("Stripe Error", "This device cannot open the Stripe URL.");
       return;
     }
+
     await Linking.openURL(finalUrl);
   }
 }
@@ -244,10 +256,17 @@ function hasCompleteDashboardAccess(row: any) {
     clean(row?.id || row?.farmer_id || row?.farmerId) &&
       clean(row?.account_id || row?.accountId) &&
       isStripeCustomerId(row?.stripe_customer_id || row?.stripeCustomerId) &&
-      isStripeSubscriptionId(row?.subscription_id || row?.stripe_subscription_id || row?.stripeSubscriptionId) &&
+      isStripeSubscriptionId(
+        row?.subscription_id ||
+          row?.stripe_subscription_id ||
+          row?.stripeSubscriptionId
+      ) &&
       clean(row?.farm_business_license_document || row?.farmBusinessLicenseDocument) &&
       clean(row?.food_safety_document || row?.foodSafetyDocument) &&
-      clean(row?.product_liability_insurance_document || row?.productLiabilityInsuranceDocument) &&
+      clean(
+        row?.product_liability_insurance_document ||
+          row?.productLiabilityInsuranceDocument
+      ) &&
       clean(row?.w9_document || row?.w9Document) &&
       clean(row?.farm_permit_document || row?.farmPermitDocument)
   );
@@ -269,10 +288,22 @@ async function saveFarmerSession(farmer: any) {
     business_name: farmer.business_name || farmer.businessName || farmer.farm_name || farmer.farmName,
     stripeCustomerId: farmer.stripe_customer_id || farmer.stripeCustomerId,
     stripe_customer_id: farmer.stripe_customer_id || farmer.stripeCustomerId,
-    stripeSubscriptionId: farmer.stripe_subscription_id || farmer.subscription_id || farmer.stripeSubscriptionId,
-    stripe_subscription_id: farmer.stripe_subscription_id || farmer.subscription_id || farmer.stripeSubscriptionId,
-    subscriptionId: farmer.subscription_id || farmer.stripe_subscription_id || farmer.subscriptionId,
-    subscription_id: farmer.subscription_id || farmer.stripe_subscription_id || farmer.subscriptionId,
+    stripeSubscriptionId:
+      farmer.stripe_subscription_id ||
+      farmer.subscription_id ||
+      farmer.stripeSubscriptionId,
+    stripe_subscription_id:
+      farmer.stripe_subscription_id ||
+      farmer.subscription_id ||
+      farmer.stripeSubscriptionId,
+    subscriptionId:
+      farmer.subscription_id ||
+      farmer.stripe_subscription_id ||
+      farmer.subscriptionId,
+    subscription_id:
+      farmer.subscription_id ||
+      farmer.stripe_subscription_id ||
+      farmer.subscriptionId,
     accountActive: farmer.account_active,
     account_active: farmer.account_active,
     membershipStatus: farmer.membership_status,
@@ -303,6 +334,7 @@ export default function FarmerRegister() {
   const [saving, setSaving] = useState(false);
   const [stripeLoading, setStripeLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
+  const [uploadingField, setUploadingField] = useState("");
 
   const [savedFarmerId, setSavedFarmerId] = useState("");
   const [profileId, setProfileId] = useState("");
@@ -340,17 +372,36 @@ export default function FarmerRegister() {
   const [produceSafetyCertificateDocument, setProduceSafetyCertificateDocument] = useState("");
 
   const businessComplete = useMemo(
-    () => Boolean(ownerName.trim() && farmName.trim() && businessName.trim() && isValidEmail(email) && phone.trim()),
+    () =>
+      Boolean(
+        ownerName.trim() &&
+          farmName.trim() &&
+          businessName.trim() &&
+          isValidEmail(email) &&
+          phone.trim()
+      ),
     [ownerName, farmName, businessName, email, phone]
   );
 
   const loginComplete = useMemo(
-    () => Boolean(username.trim() && password.trim().length >= 6 && confirmPassword.trim() && password.trim() === confirmPassword.trim()),
+    () =>
+      Boolean(
+        username.trim() &&
+          password.trim().length >= 6 &&
+          confirmPassword.trim() &&
+          password.trim() === confirmPassword.trim()
+      ),
     [username, password, confirmPassword]
   );
 
   const locationComplete = useMemo(
-    () => Boolean(businessAddress.trim() && city.trim() && stateValue.trim() && zipCode.trim()),
+    () =>
+      Boolean(
+        businessAddress.trim() &&
+          city.trim() &&
+          stateValue.trim() &&
+          zipCode.trim()
+      ),
     [businessAddress, city, stateValue, zipCode]
   );
 
@@ -366,23 +417,60 @@ export default function FarmerRegister() {
           w9Document.trim() &&
           farmPermitDocument.trim()
       ),
-    [farmBusinessLicenseDocument, foodSafetyDocument, productLiabilityInsuranceDocument, w9Document, farmPermitDocument]
+    [
+      farmBusinessLicenseDocument,
+      foodSafetyDocument,
+      productLiabilityInsuranceDocument,
+      w9Document,
+      farmPermitDocument,
+    ]
   );
 
   const setupStatus = useMemo(
     () => [
-      { label: "Farmer Profile", complete: Boolean(savedFarmerId || farmerId), value: savedFarmerId || farmerId ? "Found" : "Missing" },
-      { label: "Static Account", complete: Boolean(accountId), value: accountId || "Missing" },
-      { label: "Stripe Customer", complete: isStripeCustomerId(stripeCustomerId), value: maskId(stripeCustomerId) },
-      { label: "Subscription", complete: isStripeSubscriptionId(subscriptionId), value: maskId(subscriptionId) },
-      { label: "Documents", complete: documentsComplete, value: documentsComplete ? "Complete" : "Missing" },
+      {
+        label: "Farmer Profile",
+        complete: Boolean(savedFarmerId || farmerId),
+        value: savedFarmerId || farmerId ? "Found" : "Missing",
+      },
+      {
+        label: "Static Account",
+        complete: Boolean(accountId),
+        value: accountId || "Missing",
+      },
+      {
+        label: "Stripe Customer",
+        complete: isStripeCustomerId(stripeCustomerId),
+        value: maskId(stripeCustomerId),
+      },
+      {
+        label: "Subscription",
+        complete: isStripeSubscriptionId(subscriptionId),
+        value: maskId(subscriptionId),
+      },
+      {
+        label: "Documents",
+        complete: documentsComplete,
+        value: documentsComplete ? "Complete" : "Missing",
+      },
     ],
     [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete]
   );
 
-  const setupScore = useMemo(() => setupStatus.filter((item) => item.complete).length, [setupStatus]);
+  const setupScore = useMemo(
+    () => setupStatus.filter((item) => item.complete).length,
+    [setupStatus]
+  );
+
   const allFiveRequirementsFound = useMemo(
-    () => Boolean((savedFarmerId || farmerId) && accountId && isStripeCustomerId(stripeCustomerId) && isStripeSubscriptionId(subscriptionId) && documentsComplete),
+    () =>
+      Boolean(
+        (savedFarmerId || farmerId) &&
+          accountId &&
+          isStripeCustomerId(stripeCustomerId) &&
+          isStripeSubscriptionId(subscriptionId) &&
+          documentsComplete
+      ),
     [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete]
   );
 
@@ -391,11 +479,12 @@ export default function FarmerRegister() {
   }, []);
 
   useEffect(() => {
-    const stripeStatus = String(params?.stripe || params?.payment || "");
-    const returnedFarmerId = String(params?.farmerId || params?.farmer_id || "");
-    const returnedEmail = String(params?.email || "");
+    const stripeStatus = firstParam(params?.stripe || params?.payment || "");
+    const returnedFarmerId = firstParam(params?.farmerId || params?.farmer_id || "");
+    const returnedEmail = firstParam(params?.email || "");
 
     if (returnedEmail) setEmail(normalizeEmail(returnedEmail));
+
     if (returnedFarmerId) {
       setFarmerId(returnedFarmerId);
       setSavedFarmerId(returnedFarmerId);
@@ -419,7 +508,11 @@ export default function FarmerRegister() {
   }
 
   function toggleProduct(product: string) {
-    setSelectedProducts((prev) => (prev.includes(product) ? prev.filter((item) => item !== product) : [...prev, product]));
+    setSelectedProducts((prev) =>
+      prev.includes(product)
+        ? prev.filter((item) => item !== product)
+        : [...prev, product]
+    );
   }
 
   function hydrateForm(row: any) {
@@ -427,12 +520,17 @@ export default function FarmerRegister() {
     const rowProfileId = clean(row?.profile_id || row?.profileId || "");
     const rowAccountId = clean(row?.account_id || row?.accountId || "");
     const rowCustomerId = pickStripeCustomerId(row?.stripe_customer_id, row?.stripeCustomerId);
-    const rowSubId = pickStripeSubscriptionId(row?.subscription_id, row?.stripe_subscription_id, row?.stripeSubscriptionId);
+    const rowSubId = pickStripeSubscriptionId(
+      row?.subscription_id,
+      row?.stripe_subscription_id,
+      row?.stripeSubscriptionId
+    );
 
     if (rowFarmerId) {
       setFarmerId(rowFarmerId);
       setSavedFarmerId(rowFarmerId);
     }
+
     if (rowProfileId) setProfileId(rowProfileId);
     if (rowAccountId) setAccountId(rowAccountId);
     if (rowCustomerId) setStripeCustomerId(rowCustomerId);
@@ -440,34 +538,66 @@ export default function FarmerRegister() {
 
     setSubscriptionStatus(row?.subscription_status || row?.subscriptionStatus || subscriptionStatus || "");
 
-    if (row?.owner_name || row?.ownerName || row?.full_name || row?.name) setOwnerName(clean(row.owner_name || row.ownerName || row.full_name || row.name));
+    if (row?.owner_name || row?.ownerName || row?.full_name || row?.name) {
+      setOwnerName(clean(row.owner_name || row.ownerName || row.full_name || row.name));
+    }
+
     if (row?.farm_name || row?.farmName) setFarmName(clean(row.farm_name || row.farmName));
-    if (row?.business_name || row?.businessName || row?.company_name) setBusinessName(clean(row.business_name || row.businessName || row.company_name));
+    if (row?.business_name || row?.businessName || row?.company_name) {
+      setBusinessName(clean(row.business_name || row.businessName || row.company_name));
+    }
+
     if (row?.email || row?.farmer_email) setEmail(normalizeEmail(row.email || row.farmer_email));
     if (row?.phone) setPhone(clean(row.phone));
     if (row?.username) setUsername(clean(row.username));
 
-    if (row?.business_address || row?.address) setBusinessAddress(clean(row.business_address || row.address));
+    if (row?.business_address || row?.address) {
+      setBusinessAddress(clean(row.business_address || row.address));
+    }
+
     if (row?.city) setCity(clean(row.city));
     if (row?.state) setStateValue(clean(row.state).toUpperCase().slice(0, 2));
     if (row?.zip_code) setZipCode(clean(row.zip_code));
 
-    if (row?.farm_business_license_document) setFarmBusinessLicenseDocument(clean(row.farm_business_license_document));
+    if (row?.farm_business_license_document) {
+      setFarmBusinessLicenseDocument(clean(row.farm_business_license_document));
+    }
+
     if (row?.food_safety_document) setFoodSafetyDocument(clean(row.food_safety_document));
-    if (row?.product_liability_insurance_document) setProductLiabilityInsuranceDocument(clean(row.product_liability_insurance_document));
+
+    if (row?.product_liability_insurance_document) {
+      setProductLiabilityInsuranceDocument(clean(row.product_liability_insurance_document));
+    }
+
     if (row?.w9_document) setW9Document(clean(row.w9_document));
     if (row?.farm_permit_document) setFarmPermitDocument(clean(row.farm_permit_document));
-    if (row?.organic_certification_document) setOrganicCertificationDocument(clean(row.organic_certification_document));
-    if (row?.meat_dairy_license_document) setMeatDairyLicenseDocument(clean(row.meat_dairy_license_document));
-    if (row?.produce_safety_certificate_document) setProduceSafetyCertificateDocument(clean(row.produce_safety_certificate_document));
+
+    if (row?.organic_certification_document) {
+      setOrganicCertificationDocument(clean(row.organic_certification_document));
+    }
+
+    if (row?.meat_dairy_license_document) {
+      setMeatDairyLicenseDocument(clean(row.meat_dairy_license_document));
+    }
+
+    if (row?.produce_safety_certificate_document) {
+      setProduceSafetyCertificateDocument(clean(row.produce_safety_certificate_document));
+    }
 
     const products = row?.selected_products || row?.selected_product_categories || row?.product_categories;
-    if (Array.isArray(products)) setSelectedProducts(products.map((item) => clean(item)).filter(Boolean));
+
+    if (Array.isArray(products)) {
+      setSelectedProducts(products.map((item) => clean(item)).filter(Boolean));
+    }
   }
 
   function buildCurrentSnapshot(base: any = {}) {
     const id = clean(base.id || base.farmer_id || savedFarmerId || farmerId);
-    const finalSub = pickStripeSubscriptionId(base.subscription_id, base.stripe_subscription_id, subscriptionId);
+    const finalSub = pickStripeSubscriptionId(
+      base.subscription_id,
+      base.stripe_subscription_id,
+      subscriptionId
+    );
     const finalCustomer = pickStripeCustomerId(base.stripe_customer_id, stripeCustomerId);
 
     return {
@@ -484,7 +614,6 @@ export default function FarmerRegister() {
       owner_name: clean(base.owner_name || ownerName),
       ownerName: clean(base.owner_name || ownerName),
       full_name: clean(base.full_name || ownerName),
-      name: clean(base.name || ownerName),
       farm_name: clean(base.farm_name || farmName),
       farmName: clean(base.farm_name || farmName),
       business_name: clean(base.business_name || businessName),
@@ -497,13 +626,30 @@ export default function FarmerRegister() {
       subscriptionId: finalSub,
       stripe_subscription_id: finalSub,
       stripeSubscriptionId: finalSub,
-      subscription_status: clean(base.subscription_status || subscriptionStatus || (finalSub ? "active" : "pending_payment")),
+      subscription_status: clean(
+        base.subscription_status ||
+          subscriptionStatus ||
+          (finalSub ? "active" : "pending_payment")
+      ),
       membership_status: finalSub ? "active" : "pending_payment",
-      farm_business_license_document: clean(base.farm_business_license_document || farmBusinessLicenseDocument),
+      farm_business_license_document: clean(
+        base.farm_business_license_document || farmBusinessLicenseDocument
+      ),
       food_safety_document: clean(base.food_safety_document || foodSafetyDocument),
-      product_liability_insurance_document: clean(base.product_liability_insurance_document || productLiabilityInsuranceDocument),
+      product_liability_insurance_document: clean(
+        base.product_liability_insurance_document || productLiabilityInsuranceDocument
+      ),
       w9_document: clean(base.w9_document || w9Document),
       farm_permit_document: clean(base.farm_permit_document || farmPermitDocument),
+      organic_certification_document: clean(
+        base.organic_certification_document || organicCertificationDocument
+      ),
+      meat_dairy_license_document: clean(
+        base.meat_dairy_license_document || meatDairyLicenseDocument
+      ),
+      produce_safety_certificate_document: clean(
+        base.produce_safety_certificate_document || produceSafetyCertificateDocument
+      ),
       account_active: Boolean(id && accountId && finalCustomer && finalSub && documentsComplete),
       updated_at: new Date().toISOString(),
     };
@@ -511,21 +657,28 @@ export default function FarmerRegister() {
 
   function validateForm({ full = true }: { full?: boolean } = {}) {
     if (!businessComplete) {
-      Alert.alert("Business Info Required", "Complete owner name, farm name, business name, email, and phone.");
+      Alert.alert(
+        "Business Info Required",
+        "Complete owner name, farm name, business name, email, and phone."
+      );
       setStep(0);
       return false;
     }
 
-    if (!savedFarmerId && !farmerId) {
-      if (!loginComplete) {
-        Alert.alert("Login Required", "Create a username and matching password with at least 6 characters.");
-        setStep(0);
-        return false;
-      }
+    if (!savedFarmerId && !farmerId && !loginComplete) {
+      Alert.alert(
+        "Login Required",
+        "Create a username and matching password with at least 6 characters."
+      );
+      setStep(0);
+      return false;
     }
 
     if (!locationComplete) {
-      Alert.alert("Location Required", "Complete business address, city, state, and zip code.");
+      Alert.alert(
+        "Location Required",
+        "Complete business address, city, state, and zip code."
+      );
       setStep(2);
       return false;
     }
@@ -539,13 +692,19 @@ export default function FarmerRegister() {
     }
 
     if (!documentsComplete) {
-      Alert.alert("Documents Required", "Upload or paste links for all required farmer documents.");
+      Alert.alert(
+        "Documents Required",
+        "Upload all required farmer documents."
+      );
       setStep(4);
       return false;
     }
 
     if (!legalComplete) {
-      Alert.alert("Agreement Required", "Accept all Farmer Seller Agreement items before continuing.");
+      Alert.alert(
+        "Agreement Required",
+        "Accept all Farmer Seller Agreement items before continuing."
+      );
       setStep(5);
       return false;
     }
@@ -555,11 +714,16 @@ export default function FarmerRegister() {
 
   async function generateFarmerAccountId() {
     try {
-      const { data, error } = await supabase.rpc("next_account_id", { p_role: "farmer", p_prefix: "Farmer" });
+      const { data, error } = await supabase.rpc("next_account_id", {
+        p_role: "farmer",
+        p_prefix: "Farmer",
+      });
+
       if (!error && data) return String(data);
     } catch (error) {
       console.log("next_account_id skipped:", error);
     }
+
     return makeFallbackAccountId();
   }
 
@@ -571,15 +735,20 @@ export default function FarmerRegister() {
       const { data, error } = await supabase
         .from("farmers")
         .select("*")
-        .or(`id.eq.${id},farmer_id.eq.${id},profile_id.eq.${id}`)
-        .maybeSingle();
+        .or(`id.eq.${id},farmer_id.eq.${id},profile_id.eq.${id},auth_user_id.eq.${id}`)
+        .limit(1);
 
-      if (!error && data) return data;
+      if (!error && Array.isArray(data) && data[0]) return data[0];
       if (error) console.log("farmer lookup by id:", error.message);
     }
 
     if (emailValue) {
-      const { data, error } = await supabase.from("farmers").select("*").eq("email", emailValue).maybeSingle();
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("email", emailValue)
+        .maybeSingle();
+
       if (!error && data) return data;
       if (error) console.log("farmer lookup by email:", error.message);
     }
@@ -591,22 +760,34 @@ export default function FarmerRegister() {
     const emailValue = normalizeEmail(targetEmail);
     if (!emailValue) return null;
 
-    const { data, error } = await supabase.from("profiles").select("*").eq("email", emailValue).maybeSingle();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", emailValue)
+      .maybeSingle();
+
     if (error) {
       console.log("profile lookup error:", error.message);
       return null;
     }
+
     return data || null;
   }
 
   async function findProfileByAuthId(authId: string) {
     if (!isUuid(authId)) return null;
 
-    const { data, error } = await supabase.from("profiles").select("*").or(`id.eq.${authId},auth_user_id.eq.${authId}`).maybeSingle();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .or(`id.eq.${authId},auth_user_id.eq.${authId}`)
+      .maybeSingle();
+
     if (error) {
       console.log("profile lookup auth error:", error.message);
       return null;
     }
+
     return data || null;
   }
 
@@ -614,7 +795,13 @@ export default function FarmerRegister() {
     const id = clean(targetId);
     const emailValue = normalizeEmail(targetEmail);
 
-    const filters = [id ? `farmer_id.eq.${id}` : "", emailValue ? `farmer_email.eq.${emailValue}` : ""].filter(Boolean).join(",");
+    const filters = [
+      id ? `farmer_id.eq.${id}` : "",
+      emailValue ? `farmer_email.eq.${emailValue}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
     if (!filters) return null;
 
     const { data, error } = await supabase
@@ -631,33 +818,52 @@ export default function FarmerRegister() {
 
     if (!Array.isArray(data) || data.length === 0) return null;
 
-    const completeRow = data.find((row) => pickStripeCustomerId(row?.stripe_customer_id) && pickStripeSubscriptionId(row?.stripe_subscription_id));
+    const completeRow = data.find(
+      (row) =>
+        pickStripeCustomerId(row?.stripe_customer_id) &&
+        pickStripeSubscriptionId(row?.stripe_subscription_id)
+    );
+
     return completeRow || data[0];
   }
 
-  function getMissingColumnName(error: any): string {
-    const message = String(error?.message || error?.details || error?.hint || "");
+  async function safeTableUpsert(tableName: string, payload: Record<string, any>, logLabel: string) {
+    let nextPayload: any = { ...payload };
 
-    const patterns = [
-      /Could not find the '([^']+)' column/i,
-      /column '([^']+)' of relation/i,
-      /'([^']+)' column of '([^']+)'/i,
-      /schema cache.*?'([^']+)'/i,
-    ];
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const { data, error } = await supabase
+        .from(tableName)
+        .upsert(nextPayload, { onConflict: "id" })
+        .select("*")
+        .maybeSingle();
 
-    for (const pattern of patterns) {
-      const match = message.match(pattern);
-      if (match?.[1]) return match[1];
+      if (!error) return data;
+
+      console.log(`${logLabel} UPSERT ERROR:`, error.message);
+
+      const missing = getMissingColumnName(error);
+
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        console.log(`Removing missing ${logLabel.toLowerCase()} column: ${missing}`);
+
+        const copy: any = { ...nextPayload };
+        delete copy[missing];
+        nextPayload = copy;
+
+        continue;
+      }
+
+      console.log(`${logLabel} FAILED PAYLOAD KEYS:`, Object.keys(nextPayload));
+      throw error;
     }
 
-    console.log("UNMATCHED SUPABASE ERROR:", message);
-    return "";
+    return null;
   }
 
   async function safeProfileUpdate(profileIdValue: string, payload: Record<string, any>) {
-    let nextPayload = { ...payload };
+    let nextPayload: any = { ...payload };
 
-    for (let attempt = 0; attempt < 15; attempt += 1) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
       const { data, error } = await supabase
         .from("profiles")
         .update(nextPayload)
@@ -668,6 +874,7 @@ export default function FarmerRegister() {
       if (!error) return data;
 
       const missing = getMissingColumnName(error);
+
       if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
         const copy: any = { ...nextPayload };
         delete copy[missing];
@@ -675,6 +882,7 @@ export default function FarmerRegister() {
         continue;
       }
 
+      console.log("PROFILE UPDATE ERROR:", error.message);
       throw error;
     }
 
@@ -682,9 +890,9 @@ export default function FarmerRegister() {
   }
 
   async function safeProfileInsert(payload: Record<string, any>) {
-    let nextPayload = { ...payload };
+    let nextPayload: any = { ...payload };
 
-    for (let attempt = 0; attempt < 15; attempt += 1) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
       const { data, error } = await supabase
         .from("profiles")
         .insert(nextPayload)
@@ -694,6 +902,7 @@ export default function FarmerRegister() {
       if (!error) return data;
 
       const missing = getMissingColumnName(error);
+
       if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
         const copy: any = { ...nextPayload };
         delete copy[missing];
@@ -701,80 +910,55 @@ export default function FarmerRegister() {
         continue;
       }
 
+      console.log("PROFILE INSERT ERROR:", error.message);
       throw error;
     }
 
     return null;
   }
 
-  async function upsertProfileForFarmer(authId: string, emailValue: string, accountValue: string) {
+  async function upsertProfileForFarmer(
+    authId: string,
+    emailValue: string,
+    accountValue: string
+  ) {
     const existingByEmail = await findProfileByEmail(emailValue);
     const existingByAuth = existingByEmail ? null : await findProfileByAuthId(authId);
     const existing = existingByEmail || existingByAuth;
     const now = new Date().toISOString();
 
-    // Keep this payload aligned with the real profiles table used by the freight flow.
-    // Extra columns such as name, username, company_name, and account_active caused
-    // POST /rest/v1/profiles 400 errors when those columns were not present.
     const payload = {
+      id: authId,
       auth_user_id: authId,
       role: "farmer",
       full_name: ownerName.trim(),
       email: normalizeEmail(emailValue),
       phone: phone.trim(),
       account_id: accountValue,
+      created_at: now,
     };
 
     if (existing?.id) {
-      const data = await safeProfileUpdate(existing.id, payload);
-      return data || { ...existing, ...payload };
+      const updatePayload = {
+        auth_user_id: authId,
+        role: "farmer",
+        full_name: ownerName.trim(),
+        email: normalizeEmail(emailValue),
+        phone: phone.trim(),
+        account_id: accountValue,
+      };
+
+      const data = await safeProfileUpdate(existing.id, updatePayload);
+      return data || { ...existing, ...updatePayload };
     }
 
-    const data = await safeProfileInsert({
-      id: authId,
-      ...payload,
-      created_at: now,
-    });
+    const data = await safeProfileInsert(payload);
 
     if (!data?.id) {
-      return {
-        id: authId,
-        ...payload,
-        created_at: now,
-      };
+      return payload;
     }
 
     return data;
-  }
-
-  async function safeFarmerUpsert(payload: Record<string, any>) {
-    let nextPayload: any = { ...payload };
-
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .upsert(nextPayload, { onConflict: "id" })
-        .select("*")
-        .maybeSingle();
-
-      if (!error) return data;
-
-      console.log("FARMER UPSERT ERROR:", error.message);
-
-      const missing = getMissingColumnName(error);
-      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-        console.log(`Removing missing farmer column: ${missing}`);
-        const copy: any = { ...nextPayload };
-        delete copy[missing];
-        nextPayload = copy;
-        continue;
-      }
-
-      console.log("FAILED FARMER PAYLOAD KEYS:", Object.keys(nextPayload));
-      throw error;
-    }
-
-    return null;
   }
 
   async function upsertFarmerSubscriptionRow(values: {
@@ -795,47 +979,120 @@ export default function FarmerRegister() {
       username: normalizeUsername(username),
       stripe_customer_id: customer || null,
       stripe_subscription_id: sub || null,
-      subscription_status: values.subscriptionStatusValue || (sub ? "active" : "pending_payment"),
+      subscription_status:
+        values.subscriptionStatusValue || (sub ? "active" : "pending_payment"),
       updated_at: now,
     };
 
-    try {
-      const { data: existing, error: lookupError } = await supabase
-        .from("farmer_subscriptions")
-        .select("id")
-        .or(`farmer_id.eq.${values.farmerId},farmer_email.eq.${normalizeEmail(values.emailValue)}`)
-        .limit(1);
+    const { data: existing, error: lookupError } = await supabase
+      .from("farmer_subscriptions")
+      .select("id")
+      .or(
+        `farmer_id.eq.${values.farmerId},farmer_email.eq.${normalizeEmail(
+          values.emailValue
+        )}`
+      )
+      .limit(1);
 
-      if (lookupError) {
-        console.log("farmer_subscriptions lookup skipped:", lookupError.message);
-        return;
-      }
+    if (lookupError) {
+      console.log("farmer subscription lookup before save failed:", lookupError.message);
+    }
 
-      if (Array.isArray(existing) && existing[0]?.id) {
-        const { error } = await supabase
-          .from("farmer_subscriptions")
-          .update(payload)
-          .eq("id", existing[0].id);
-
-        if (error) console.log("farmer_subscriptions update skipped:", error.message);
-        return;
-      }
-
+    if (Array.isArray(existing) && existing[0]?.id) {
       const { error } = await supabase
         .from("farmer_subscriptions")
-        .insert({ ...payload, created_at: now });
+        .update(payload)
+        .eq("id", existing[0].id);
 
-      if (error) console.log("farmer_subscriptions insert skipped:", error.message);
-    } catch (error: any) {
-      console.log("farmer_subscriptions save skipped:", error?.message || error);
+      if (error) {
+        console.log("farmer_subscriptions update skipped:", error.message);
+      }
+
+      return;
+    }
+
+    const { error } = await supabase
+      .from("farmer_subscriptions")
+      .insert({ ...payload, created_at: now });
+
+    if (error) {
+      console.log("farmer_subscriptions insert skipped:", error.message);
     }
   }
 
-  async function saveAdminVerificationIfTableExists(farmerAuthId: string, savedFarmer: any) {
-    // Skipped intentionally: your current admin_verifications table schema does not
-    // match the farmer registration payload and was causing repeated 400 errors.
-    // The farmer record itself is the source of truth for this registration flow.
-    console.log("admin_verifications save skipped for farmer:", farmerAuthId || savedFarmer?.id || "unknown");
+  async function saveAdminVerificationIfTableExists(
+    farmerAuthId: string,
+    savedFarmer: any
+  ) {
+    const now = new Date().toISOString();
+    const paid = Boolean(savedFarmer.subscription_id || savedFarmer.stripe_subscription_id);
+    const docsComplete = hasCompleteDashboardAccess(savedFarmer) || documentsComplete;
+
+    const payload = {
+      id: farmerAuthId,
+      account_id: savedFarmer.account_id,
+      farmer_id: farmerAuthId,
+      profile_id: savedFarmer.profile_id,
+      account_type: "FARMER",
+      role: "farmer",
+      type: "FARMER",
+      farm_name: farmName.trim(),
+      business_name: businessName.trim(),
+      company_name: businessName.trim(),
+      owner_name: ownerName.trim(),
+      email: normalizeEmail(email),
+      phone: phone.trim(),
+      username: normalizeUsername(username),
+      business_address: businessAddress.trim(),
+      address: businessAddress.trim(),
+      city: city.trim(),
+      state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
+      zip_code: zipCode.trim(),
+      selected_products: selectedProducts,
+      selected_product_categories: selectedProducts,
+      legal_agreements: accepted,
+      farm_business_license_document: farmBusinessLicenseDocument.trim(),
+      food_safety_document: foodSafetyDocument.trim(),
+      product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
+      w9_document: w9Document.trim(),
+      farm_permit_document: farmPermitDocument.trim(),
+      organic_certification_document: organicCertificationDocument.trim() || null,
+      meat_dairy_license_document: meatDairyLicenseDocument.trim() || null,
+      produce_safety_certificate_document:
+        produceSafetyCertificateDocument.trim() || null,
+      status: paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
+      compliance_status:
+        paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
+      admin_review_status:
+        paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
+      review_decision:
+        paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
+      approved: paid && docsComplete,
+      rejected: false,
+      reviewed: false,
+      needs_more_info: false,
+      account_active: paid && docsComplete,
+      store_unlocked: paid && docsComplete,
+      compliance_submitted: docsComplete,
+      has_completed_compliance: docsComplete,
+      farmer_membership_paid: paid,
+      monthly_membership_started: paid,
+      membership_status: paid ? "active" : "pending_payment",
+      subscription_status: subscriptionStatus || (paid ? "active" : "pending_payment"),
+      stripe_customer_id: savedFarmer.stripe_customer_id || null,
+      stripe_subscription_id:
+        savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
+      subscription_id:
+        savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
+      updated_at: now,
+      created_at: now,
+    };
+
+    try {
+      await safeTableUpsert("admin_verifications", payload, "ADMIN_VERIFICATIONS");
+    } catch (error: any) {
+      console.log("admin_verifications skipped:", error?.message || error);
+    }
   }
 
   async function saveFarmerUserRow(authId: string, passedAccountId?: string) {
@@ -844,15 +1101,44 @@ export default function FarmerRegister() {
     const existing = await findFarmerByIdOrEmail(authId, emailValue);
     const subRow = await getBestFarmerSubscription(authId, emailValue);
 
-    const finalAccountId = clean(existing?.account_id || passedAccountId || accountId || (await generateFarmerAccountId()));
-    const finalCustomerId = pickStripeCustomerId(stripeCustomerId, existing?.stripe_customer_id, subRow?.stripe_customer_id);
-    const finalSubscriptionId = pickStripeSubscriptionId(subscriptionId, existing?.subscription_id, existing?.stripe_subscription_id, subRow?.stripe_subscription_id);
-    const finalStatus = subscriptionStatus || subRow?.subscription_status || (finalSubscriptionId ? "active" : "pending_payment");
-    const complete = Boolean(authId && finalAccountId && finalCustomerId && finalSubscriptionId && documentsComplete);
+    const finalAccountId = clean(
+      existing?.account_id ||
+        passedAccountId ||
+        accountId ||
+        (await generateFarmerAccountId())
+    );
+
+    const finalCustomerId = pickStripeCustomerId(
+      stripeCustomerId,
+      existing?.stripe_customer_id,
+      subRow?.stripe_customer_id
+    );
+
+    const finalSubscriptionId = pickStripeSubscriptionId(
+      subscriptionId,
+      existing?.subscription_id,
+      existing?.stripe_subscription_id,
+      subRow?.stripe_subscription_id
+    );
+
+    const finalStatus =
+      subscriptionStatus ||
+      subRow?.subscription_status ||
+      (finalSubscriptionId ? "active" : "pending_payment");
+
+    const complete = Boolean(
+      authId &&
+        finalAccountId &&
+        finalCustomerId &&
+        finalSubscriptionId &&
+        documentsComplete
+    );
 
     const profile = await upsertProfileForFarmer(authId, emailValue, finalAccountId);
     if (!profile?.id) throw new Error("Profile could not be created.");
 
+    // Start with a useful payload. safeTableUpsert removes columns that do not exist
+    // in your current farmers table, so it will not keep crashing on schema differences.
     const farmerPayload: any = {
       id: authId,
       farmer_id: authId,
@@ -864,10 +1150,13 @@ export default function FarmerRegister() {
       phone: phone.trim(),
 
       owner_name: ownerName.trim(),
+      full_name: ownerName.trim(),
       farm_name: farmName.trim(),
       business_name: businessName.trim(),
+      company_name: businessName.trim(),
 
       business_address: businessAddress.trim(),
+      address: businessAddress.trim(),
       city: city.trim(),
       state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
       zip_code: zipCode.trim(),
@@ -878,12 +1167,14 @@ export default function FarmerRegister() {
 
       farm_business_license_document: farmBusinessLicenseDocument.trim(),
       food_safety_document: foodSafetyDocument.trim(),
-      product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
+      product_liability_insurance_document:
+        productLiabilityInsuranceDocument.trim(),
       w9_document: w9Document.trim(),
       farm_permit_document: farmPermitDocument.trim(),
       organic_certification_document: organicCertificationDocument.trim() || null,
       meat_dairy_license_document: meatDairyLicenseDocument.trim() || null,
-      produce_safety_certificate_document: produceSafetyCertificateDocument.trim() || null,
+      produce_safety_certificate_document:
+        produceSafetyCertificateDocument.trim() || null,
 
       account_id: finalAccountId,
       stripe_customer_id: finalCustomerId || null,
@@ -903,17 +1194,36 @@ export default function FarmerRegister() {
       farmer_membership_paid: Boolean(finalSubscriptionId),
       monthly_membership_started: Boolean(finalSubscriptionId),
 
-      verification_status: complete ? "SUBMITTED" : finalSubscriptionId ? "PENDING_DOCUMENTS" : "REGISTERED",
-      compliance_status: complete ? "SUBMITTED" : finalSubscriptionId ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
-      admin_review_status: complete ? "submitted" : finalSubscriptionId ? "pending_documents" : "pending_payment",
-      review_decision: complete ? "submitted" : finalSubscriptionId ? "pending_documents" : "pending_payment",
+      verification_status: complete
+        ? "SUBMITTED"
+        : finalSubscriptionId
+          ? "PENDING_DOCUMENTS"
+          : "REGISTERED",
+      compliance_status: complete
+        ? "SUBMITTED"
+        : finalSubscriptionId
+          ? "PENDING_DOCUMENTS"
+          : "PENDING_PAYMENT",
+      admin_review_status: complete
+        ? "submitted"
+        : finalSubscriptionId
+          ? "pending_documents"
+          : "pending_payment",
+      review_decision: complete
+        ? "submitted"
+        : finalSubscriptionId
+          ? "pending_documents"
+          : "pending_payment",
 
-      created_at: now,
       updated_at: now,
+      created_at: existing?.id ? existing?.created_at || now : now,
     };
 
-    const savedFarmer = await safeFarmerUpsert(farmerPayload);
-    if (!savedFarmer?.id) throw new Error("Farmer registration did not save.");
+    const savedFarmer = await safeTableUpsert("farmers", farmerPayload, "FARMER");
+
+    if (!savedFarmer?.id) {
+      throw new Error("Farmer registration did not save.");
+    }
 
     await upsertFarmerSubscriptionRow({
       farmerId: authId,
@@ -927,7 +1237,8 @@ export default function FarmerRegister() {
 
     const finalRow = {
       ...savedFarmer,
-      stripe_subscription_id: savedFarmer.subscription_id || savedFarmer.stripe_subscription_id,
+      stripe_subscription_id:
+        savedFarmer.subscription_id || savedFarmer.stripe_subscription_id,
       subscription_status: finalStatus,
     };
 
@@ -939,7 +1250,12 @@ export default function FarmerRegister() {
     setProfileId(clean(savedFarmer.profile_id));
     setAccountId(clean(savedFarmer.account_id));
     setStripeCustomerId(pickStripeCustomerId(savedFarmer.stripe_customer_id));
-    setSubscriptionId(pickStripeSubscriptionId(savedFarmer.subscription_id, savedFarmer.stripe_subscription_id));
+    setSubscriptionId(
+      pickStripeSubscriptionId(
+        savedFarmer.subscription_id,
+        savedFarmer.stripe_subscription_id
+      )
+    );
     setSubscriptionStatus(finalStatus);
 
     return finalRow;
@@ -949,7 +1265,10 @@ export default function FarmerRegister() {
     const emailValue = normalizeEmail(email);
 
     const { data: currentUserData } = await supabase.auth.getUser();
-    if (currentUserData?.user?.id) return currentUserData.user.id;
+
+    if (currentUserData?.user?.id) {
+      return currentUserData.user.id;
+    }
 
     const existingFarmer = await findFarmerByIdOrEmail("", emailValue);
     if (existingFarmer?.id) return existingFarmer.id;
@@ -963,7 +1282,6 @@ export default function FarmerRegister() {
           username: normalizeUsername(username),
           owner_name: ownerName.trim(),
           full_name: ownerName.trim(),
-          name: ownerName.trim(),
           business_name: businessName.trim(),
           farm_name: farmName.trim(),
         },
@@ -982,11 +1300,14 @@ export default function FarmerRegister() {
 
     try {
       setSaving(true);
+
       const authId = savedFarmerId || farmerId || (await getOrCreateAuthUser());
       const saved = await saveFarmerUserRow(authId, accountId || undefined);
+
       Alert.alert("Saved", "Farmer registration was saved.");
       return saved;
     } catch (error: any) {
+      console.log("SAVE FARMER ERROR:", error);
       Alert.alert("Save Error", error?.message || "Unable to save farmer registration.");
       return null;
     } finally {
@@ -1024,12 +1345,20 @@ export default function FarmerRegister() {
       const json = await parseApiResponse(response);
 
       if (!response.ok || !json.success) {
-        if (!silent) Alert.alert("Stripe Sync Not Found", json.error || "No Stripe customer/subscription was found.");
+        if (!silent) {
+          Alert.alert(
+            "Stripe Sync Not Found",
+            json.error || "No Stripe customer/subscription was found."
+          );
+        }
         return null;
       }
 
       const customer = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id);
-      const sub = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id);
+      const sub = pickStripeSubscriptionId(
+        json.stripeSubscriptionId,
+        json.stripe_subscription_id
+      );
       const status = json.subscriptionStatus || json.subscription_status || "active";
 
       if (customer) setStripeCustomerId(customer);
@@ -1039,10 +1368,13 @@ export default function FarmerRegister() {
       const authId = id || (await getOrCreateAuthUser());
       const saved = await saveFarmerUserRow(authId, accountId || undefined);
 
-      if (!silent) Alert.alert("Stripe Retrieved", "Stripe customer and subscription data were saved.");
+      if (!silent) Alert.alert("Stripe Retrieved", "Stripe payment data was saved.");
+
       return saved;
     } catch (error: any) {
-      if (!silent) Alert.alert("Retrieve Error", error?.message || "Unable to retrieve Stripe information.");
+      if (!silent) {
+        Alert.alert("Retrieve Error", error?.message || "Unable to retrieve Stripe information.");
+      }
       return null;
     } finally {
       setSyncingStripe(false);
@@ -1053,37 +1385,73 @@ export default function FarmerRegister() {
     try {
       setSyncingStripe(true);
 
-      const id = savedFarmerId || farmerId || clean(String(params?.farmerId || params?.farmer_id || ""));
-      const emailValue = normalizeEmail(email || String(params?.email || ""));
+      const id =
+        savedFarmerId ||
+        farmerId ||
+        firstParam(params?.farmerId || params?.farmer_id || "");
+      const emailValue = normalizeEmail(email || firstParam(params?.email || ""));
 
       const dbFarmer = await findFarmerByIdOrEmail(id, emailValue);
-      const subRow = await getBestFarmerSubscription(dbFarmer?.id || id, dbFarmer?.email || emailValue);
+      const subRow = await getBestFarmerSubscription(
+        dbFarmer?.id || id,
+        dbFarmer?.email || emailValue
+      );
 
       if (!dbFarmer && !subRow) {
         const backendSynced = await syncStripeFromBackend(true);
+
         if (!backendSynced) {
           Alert.alert("Not Found", "No farmer profile or Stripe subscription was found yet.");
           return null;
         }
+
         if (routeWhenReady && hasCompleteDashboardAccess(backendSynced)) goDashboard();
+
         return backendSynced;
       }
 
-      const merged = buildCurrentSnapshot({ ...(dbFarmer || {}), ...(subRow || {}) });
-      const customer = pickStripeCustomerId(dbFarmer?.stripe_customer_id, subRow?.stripe_customer_id, stripeCustomerId);
-      const sub = pickStripeSubscriptionId(dbFarmer?.subscription_id, dbFarmer?.stripe_subscription_id, subRow?.stripe_subscription_id, subscriptionId);
-      const status = subRow?.subscription_status || dbFarmer?.subscription_status || subscriptionStatus || (sub ? "active" : "pending_payment");
+      const customer = pickStripeCustomerId(
+        dbFarmer?.stripe_customer_id,
+        subRow?.stripe_customer_id,
+        stripeCustomerId
+      );
+      const sub = pickStripeSubscriptionId(
+        dbFarmer?.subscription_id,
+        dbFarmer?.stripe_subscription_id,
+        subRow?.stripe_subscription_id,
+        subscriptionId
+      );
+      const status =
+        subRow?.subscription_status ||
+        dbFarmer?.subscription_status ||
+        subscriptionStatus ||
+        (sub ? "active" : "pending_payment");
 
       if (customer) setStripeCustomerId(customer);
       if (sub) setSubscriptionId(sub);
       setSubscriptionStatus(status);
 
-      hydrateForm({ ...merged, stripe_customer_id: customer, subscription_id: sub, stripe_subscription_id: sub, subscription_status: status });
+      const merged = buildCurrentSnapshot({
+        ...(dbFarmer || {}),
+        ...(subRow || {}),
+        stripe_customer_id: customer,
+        subscription_id: sub,
+        stripe_subscription_id: sub,
+        subscription_status: status,
+      });
+
+      hydrateForm(merged);
 
       const authId = clean(dbFarmer?.id || subRow?.farmer_id || id);
+
       if (authId) {
-        const saved = await saveFarmerUserRow(authId, dbFarmer?.account_id || accountId || undefined);
+        const saved = await saveFarmerUserRow(
+          authId,
+          dbFarmer?.account_id || accountId || undefined
+        );
+
         if (routeWhenReady && hasCompleteDashboardAccess(saved)) goDashboard();
+
         return saved;
       }
 
@@ -1099,9 +1467,14 @@ export default function FarmerRegister() {
   async function handleStripeSuccessReturn(returnedFarmerId?: string) {
     try {
       setStripeLoading(true);
+
       const saved = await retrieveMissingStripeInfo(false);
+
       if (saved && hasCompleteDashboardAccess(saved)) {
-        Alert.alert("Payment Complete", "Farmer payment was confirmed. Your farmer dashboard is ready.");
+        Alert.alert(
+          "Payment Complete",
+          "Farmer payment was confirmed. Your farmer dashboard is ready."
+        );
       }
     } finally {
       setStripeLoading(false);
@@ -1114,6 +1487,7 @@ export default function FarmerRegister() {
 
     try {
       setStripeLoading(true);
+
       const authId = savedFarmerId || farmerId || (await getOrCreateAuthUser());
       const saved = await saveFarmerUserRow(authId, accountId || undefined);
       const finalId = clean(saved?.id || authId);
@@ -1142,7 +1516,12 @@ export default function FarmerRegister() {
       });
 
       const json = await parseApiResponse(response);
-      if (!response.ok) throw new Error(json?.error || json?.message || "Unable to create farmer Stripe checkout session.");
+
+      if (!response.ok) {
+        throw new Error(
+          json?.error || json?.message || "Unable to create farmer Stripe checkout session."
+        );
+      }
 
       const checkoutUrl = getStripeLaunchUrl(json);
       if (!checkoutUrl) throw new Error("Stripe checkout URL was not returned from backend.");
@@ -1152,6 +1531,76 @@ export default function FarmerRegister() {
       Alert.alert("Stripe Error", error?.message || "Unable to continue to farmer payment.");
     } finally {
       setStripeLoading(false);
+    }
+  }
+
+  async function uploadFarmerDocument(
+    fieldName: string,
+    setValue: (value: string) => void
+  ) {
+    try {
+      const currentId = savedFarmerId || farmerId || firstParam(params?.farmerId || params?.farmer_id);
+      const emailKey = normalizeEmail(email || firstParam(params?.email || ""));
+      const farmerKey = clean(currentId || emailKey || "pending");
+
+      setUploadingField(fieldName);
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/*"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled) return;
+
+      const file = result.assets?.[0];
+
+      if (!file?.uri) {
+        Alert.alert("Upload Error", "No file was selected.");
+        return;
+      }
+
+      const fileExt = clean(file.name?.split(".").pop()) || "pdf";
+      const safeField = fieldName.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const safeName = clean(file.name || `${safeField}.${fileExt}`).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `${farmerKey}/${safeField}-${Date.now()}-${safeName}`;
+
+      let uploadBody: any;
+      let contentType = file.mimeType || "application/octet-stream";
+
+      if (Platform.OS === "web") {
+        const response = await fetch(file.uri);
+        uploadBody = await response.blob();
+        contentType = uploadBody.type || contentType;
+      } else {
+        const response = await fetch(file.uri);
+        uploadBody = await response.blob();
+      }
+
+      const { error } = await supabase.storage
+        .from(FARMER_DOC_BUCKET)
+        .upload(path, uploadBody, {
+          contentType,
+          upsert: true,
+        });
+
+      if (error) throw error;
+
+      const { data } = supabase.storage.from(FARMER_DOC_BUCKET).getPublicUrl(path);
+
+      const publicUrl = data?.publicUrl || path;
+      setValue(publicUrl);
+
+      Alert.alert("Uploaded", "Document uploaded successfully.");
+    } catch (error: any) {
+      console.log("DOCUMENT UPLOAD ERROR:", error);
+      Alert.alert(
+        "Upload Error",
+        error?.message ||
+          `Unable to upload document. Confirm Supabase Storage bucket "${FARMER_DOC_BUCKET}" exists.`
+      );
+    } finally {
+      setUploadingField("");
     }
   }
 
@@ -1165,12 +1614,17 @@ export default function FarmerRegister() {
 
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed?.role === "farmer" || parsed?.farmerId || parsed?.id) hydrateForm(parsed);
+
+        if (parsed?.role === "farmer" || parsed?.farmerId || parsed?.id) {
+          hydrateForm(parsed);
+        }
       }
 
-      const paramId = clean(String(params?.farmerId || params?.farmer_id || ""));
-      const paramEmail = normalizeEmail(String(params?.email || ""));
+      const paramId = firstParam(params?.farmerId || params?.farmer_id || "");
+      const paramEmail = normalizeEmail(firstParam(params?.email || ""));
+
       if (paramEmail) setEmail(paramEmail);
+
       if (paramId) {
         const dbFarmer = await findFarmerByIdOrEmail(paramId, paramEmail);
         if (dbFarmer) hydrateForm(dbFarmer);
@@ -1186,19 +1640,65 @@ export default function FarmerRegister() {
   }
 
   function renderStepBody() {
-    const key = STEPS[step].key;
+    const key = STEPS[step].key as StepKey;
 
     if (key === "account") {
       return (
-        <SectionCard icon="person-outline" title="Account" subtitle="Create the farmer login." done={businessComplete && (savedFarmerId || farmerId ? true : loginComplete)}>
-          <TextInput style={styles.input} placeholder="Owner Name" value={ownerName} onChangeText={setOwnerName} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Email Address" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-          <TextInput style={styles.input} placeholder="Create Username" autoCapitalize="none" value={username} onChangeText={setUsername} autoCorrect={false} />
+        <SectionCard
+          icon="person-outline"
+          title="Account"
+          subtitle="Create the farmer login."
+          done={businessComplete && (savedFarmerId || farmerId ? true : loginComplete)}
+        >
+          <TextInput
+            style={styles.input}
+            placeholder="Owner Name"
+            value={ownerName}
+            onChangeText={setOwnerName}
+            autoCorrect={false}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Email Address"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            autoCorrect={false}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Phone Number"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={setPhone}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Create Username"
+            autoCapitalize="none"
+            value={username}
+            onChangeText={setUsername}
+            autoCorrect={false}
+          />
           {!savedFarmerId && !farmerId ? (
             <>
-              <TextInput style={styles.input} placeholder="Create Password" secureTextEntry value={password} onChangeText={setPassword} autoCorrect={false} />
-              <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} autoCorrect={false} />
+              <TextInput
+                style={styles.input}
+                placeholder="Create Password"
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+                autoCorrect={false}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Confirm Password"
+                secureTextEntry
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                autoCorrect={false}
+              />
             </>
           ) : null}
         </SectionCard>
@@ -1207,33 +1707,94 @@ export default function FarmerRegister() {
 
     if (key === "farm") {
       return (
-        <SectionCard icon="business-outline" title="Farm Business Info" subtitle="Basic farm and business details." done={Boolean(farmName.trim() && businessName.trim())}>
-          <TextInput style={styles.input} placeholder="Farm Name" value={farmName} onChangeText={setFarmName} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Business Name" value={businessName} onChangeText={setBusinessName} autoCorrect={false} />
+        <SectionCard
+          icon="business-outline"
+          title="Farm Business Info"
+          subtitle="Basic farm and business details."
+          done={Boolean(farmName.trim() && businessName.trim())}
+        >
+          <TextInput
+            style={styles.input}
+            placeholder="Farm Name"
+            value={farmName}
+            onChangeText={setFarmName}
+            autoCorrect={false}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Business Name"
+            value={businessName}
+            onChangeText={setBusinessName}
+            autoCorrect={false}
+          />
         </SectionCard>
       );
     }
 
     if (key === "location") {
       return (
-        <SectionCard icon="location-outline" title="Farm Location" subtitle="Used for local customer discovery." done={locationComplete}>
-          <TextInput style={styles.input} placeholder="Business Address" value={businessAddress} onChangeText={setBusinessAddress} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="City" value={city} onChangeText={setCity} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="State" value={stateValue} onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))} maxLength={2} autoCapitalize="characters" autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Zip Code" keyboardType="numeric" value={zipCode} onChangeText={setZipCode} />
+        <SectionCard
+          icon="location-outline"
+          title="Farm Location"
+          subtitle="Used for local customer discovery."
+          done={locationComplete}
+        >
+          <TextInput
+            style={styles.input}
+            placeholder="Business Address"
+            value={businessAddress}
+            onChangeText={setBusinessAddress}
+            autoCorrect={false}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="City"
+            value={city}
+            onChangeText={setCity}
+            autoCorrect={false}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="State"
+            value={stateValue}
+            onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))}
+            maxLength={2}
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Zip Code"
+            keyboardType="numeric"
+            value={zipCode}
+            onChangeText={setZipCode}
+          />
         </SectionCard>
       );
     }
 
     if (key === "products") {
       return (
-        <SectionCard icon="leaf-outline" title="Products You Sell" subtitle="Select at least one category." done={productsComplete}>
+        <SectionCard
+          icon="leaf-outline"
+          title="Products You Sell"
+          subtitle="Select at least one category."
+          done={productsComplete}
+        >
           <View style={styles.grid}>
             {productOptions.map((product) => {
               const active = selectedProducts.includes(product);
+
               return (
-                <TouchableOpacity key={product} style={[styles.productChip, active && styles.productChipActive]} onPress={() => toggleProduct(product)} activeOpacity={0.85}>
-                  <Text style={[styles.productText, active && styles.productTextActive]}>{product}</Text>
+                <TouchableOpacity
+                  key={product}
+                  style={[styles.productChip, active && styles.productChipActive]}
+                  onPress={() => toggleProduct(product)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.productText, active && styles.productTextActive]}>
+                    {product}
+                  </Text>
                 </TouchableOpacity>
               );
             })}
@@ -1244,26 +1805,108 @@ export default function FarmerRegister() {
 
     if (key === "documents") {
       return (
-        <SectionCard icon="document-text-outline" title="Required Farmer Documents" subtitle="Paste document URLs or storage paths. These are verified at login." done={documentsComplete}>
-          <DocumentInput label="Farm Business License / Registration" required value={farmBusinessLicenseDocument} onChangeText={setFarmBusinessLicenseDocument} />
-          <DocumentInput label="Food Safety / Cottage Food Document" required value={foodSafetyDocument} onChangeText={setFoodSafetyDocument} />
-          <DocumentInput label="Product Liability Insurance" required value={productLiabilityInsuranceDocument} onChangeText={setProductLiabilityInsuranceDocument} />
-          <DocumentInput label="W-9 Form" required value={w9Document} onChangeText={setW9Document} />
-          <DocumentInput label="Farm Permit / Producer Certificate" required value={farmPermitDocument} onChangeText={setFarmPermitDocument} />
-          <DocumentInput label="Organic Certification" value={organicCertificationDocument} onChangeText={setOrganicCertificationDocument} />
-          <DocumentInput label="Meat / Dairy License" value={meatDairyLicenseDocument} onChangeText={setMeatDairyLicenseDocument} />
-          <DocumentInput label="Produce Safety Certificate" value={produceSafetyCertificateDocument} onChangeText={setProduceSafetyCertificateDocument} />
+        <SectionCard
+          icon="document-text-outline"
+          title="Required Farmer Documents"
+          subtitle="Upload PDF or image files. These are verified at login."
+          done={documentsComplete}
+        >
+          <DocumentInput
+            label="Farm Business License / Registration"
+            required
+            value={farmBusinessLicenseDocument}
+            fieldName="farm_business_license_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setFarmBusinessLicenseDocument}
+          />
+          <DocumentInput
+            label="Food Safety / Cottage Food Document"
+            required
+            value={foodSafetyDocument}
+            fieldName="food_safety_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setFoodSafetyDocument}
+          />
+          <DocumentInput
+            label="Product Liability Insurance"
+            required
+            value={productLiabilityInsuranceDocument}
+            fieldName="product_liability_insurance_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setProductLiabilityInsuranceDocument}
+          />
+          <DocumentInput
+            label="W-9 Form"
+            required
+            value={w9Document}
+            fieldName="w9_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setW9Document}
+          />
+          <DocumentInput
+            label="Farm Permit / Producer Certificate"
+            required
+            value={farmPermitDocument}
+            fieldName="farm_permit_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setFarmPermitDocument}
+          />
+          <DocumentInput
+            label="Organic Certification"
+            value={organicCertificationDocument}
+            fieldName="organic_certification_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setOrganicCertificationDocument}
+          />
+          <DocumentInput
+            label="Meat / Dairy License"
+            value={meatDairyLicenseDocument}
+            fieldName="meat_dairy_license_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setMeatDairyLicenseDocument}
+          />
+          <DocumentInput
+            label="Produce Safety Certificate"
+            value={produceSafetyCertificateDocument}
+            fieldName="produce_safety_certificate_document"
+            uploadingField={uploadingField}
+            onUpload={uploadFarmerDocument}
+            onChangeText={setProduceSafetyCertificateDocument}
+          />
         </SectionCard>
       );
     }
 
     if (key === "legal") {
       return (
-        <SectionCard icon="shield-checkmark-outline" title="Farmer Seller Agreement" subtitle="Accept all items before continuing." done={legalComplete}>
+        <SectionCard
+          icon="shield-checkmark-outline"
+          title="Farmer Seller Agreement"
+          subtitle="Accept all items before continuing."
+          done={legalComplete}
+        >
           {agreements.map((item, index) => {
             const checked = Boolean(accepted[index]);
+
             return (
-              <TouchableOpacity key={item} style={styles.legalRow} onPress={() => setAccepted((prev) => ({ ...prev, [index]: !prev[index] }))} activeOpacity={0.85}>
+              <TouchableOpacity
+                key={item}
+                style={styles.legalRow}
+                onPress={() =>
+                  setAccepted((prev) => ({
+                    ...prev,
+                    [index]: !prev[index],
+                  }))
+                }
+                activeOpacity={0.85}
+              >
                 <View style={[styles.checkbox, checked && styles.checkboxOn]}>
                   <Text style={styles.checkText}>{checked ? "✓" : ""}</Text>
                 </View>
@@ -1277,45 +1920,99 @@ export default function FarmerRegister() {
 
     if (key === "stripe") {
       return (
-        <SectionCard icon="card-outline" title="Stripe Membership" subtitle="Retrieve payment status or open checkout." done={isStripeCustomerId(stripeCustomerId) && isStripeSubscriptionId(subscriptionId)}>
+        <SectionCard
+          icon="card-outline"
+          title="Stripe Membership"
+          subtitle="Retrieve payment status or open checkout."
+          done={isStripeCustomerId(stripeCustomerId) && isStripeSubscriptionId(subscriptionId)}
+        >
           <View style={styles.statusBox}>
             {setupStatus.map((item) => (
               <View key={item.label} style={styles.statusRow}>
-                <Ionicons name={item.complete ? "checkmark-circle" : "ellipse-outline"} size={18} color={item.complete ? COLORS.green : COLORS.muted} />
+                <Ionicons
+                  name={item.complete ? "checkmark-circle" : "ellipse-outline"}
+                  size={18}
+                  color={item.complete ? COLORS.green : COLORS.muted}
+                />
                 <Text style={styles.statusLabel}>{item.label}</Text>
-                <Text style={[styles.statusValue, item.complete && styles.statusValueGood]}>{item.value}</Text>
+                <Text style={[styles.statusValue, item.complete && styles.statusValueGood]}>
+                  {item.value}
+                </Text>
               </View>
             ))}
           </View>
 
-          <TouchableOpacity style={[styles.actionBtn, syncingStripe && styles.disabled]} onPress={() => retrieveMissingStripeInfo(false)} disabled={syncingStripe}>
-            {syncingStripe ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.actionText}>Retrieve Stripe Payment</Text>}
+          <TouchableOpacity
+            style={[styles.actionBtn, syncingStripe && styles.disabled]}
+            onPress={() => retrieveMissingStripeInfo(false)}
+            disabled={syncingStripe}
+          >
+            {syncingStripe ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.actionText}>Retrieve Stripe Payment</Text>
+            )}
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.submitBtn, stripeLoading && styles.disabled]} onPress={createFarmerCheckout} disabled={stripeLoading} activeOpacity={0.85}>
-            {stripeLoading ? <ActivityIndicator color="#FFFFFF" /> : <><Ionicons name="card-outline" size={20} color="#FFFFFF" /><Text style={styles.submitText}>Continue to Secure Payment</Text></>}
+          <TouchableOpacity
+            style={[styles.submitBtn, stripeLoading && styles.disabled]}
+            onPress={createFarmerCheckout}
+            disabled={stripeLoading}
+            activeOpacity={0.85}
+          >
+            {stripeLoading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="card-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.submitText}>Continue to Secure Payment</Text>
+              </>
+            )}
           </TouchableOpacity>
         </SectionCard>
       );
     }
 
     return (
-      <SectionCard icon="checkmark-done-outline" title="Review Farmer Setup" subtitle={`${setupScore}/5 dashboard requirements complete.`} done={allFiveRequirementsFound}>
+      <SectionCard
+        icon="checkmark-done-outline"
+        title="Review Farmer Setup"
+        subtitle={`${setupScore}/5 dashboard requirements complete.`}
+        done={allFiveRequirementsFound}
+      >
         <View style={styles.statusBox}>
           {setupStatus.map((item) => (
             <View key={item.label} style={styles.statusRow}>
-              <Ionicons name={item.complete ? "checkmark-circle" : "ellipse-outline"} size={18} color={item.complete ? COLORS.green : COLORS.muted} />
+              <Ionicons
+                name={item.complete ? "checkmark-circle" : "ellipse-outline"}
+                size={18}
+                color={item.complete ? COLORS.green : COLORS.muted}
+              />
               <Text style={styles.statusLabel}>{item.label}</Text>
-              <Text style={[styles.statusValue, item.complete && styles.statusValueGood]}>{item.value}</Text>
+              <Text style={[styles.statusValue, item.complete && styles.statusValueGood]}>
+                {item.value}
+              </Text>
             </View>
           ))}
         </View>
 
-        <TouchableOpacity style={[styles.actionBtn, saving && styles.disabled]} onPress={() => saveFarmerProfile(true)} disabled={saving}>
-          {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.actionText}>Save Farmer Setup</Text>}
+        <TouchableOpacity
+          style={[styles.actionBtn, saving && styles.disabled]}
+          onPress={() => saveFarmerProfile(true)}
+          disabled={saving}
+        >
+          {saving ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.actionText}>Save Farmer Setup</Text>
+          )}
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.dashboardBtn, !allFiveRequirementsFound && styles.disabled]} onPress={goDashboard} disabled={!allFiveRequirementsFound}>
+        <TouchableOpacity
+          style={[styles.dashboardBtn, !allFiveRequirementsFound && styles.disabled]}
+          onPress={goDashboard}
+          disabled={!allFiveRequirementsFound}
+        >
           <Text style={styles.dashboardText}>Open Farmer Dashboard</Text>
         </TouchableOpacity>
       </SectionCard>
@@ -1326,14 +2023,22 @@ export default function FarmerRegister() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="none" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.hero}>
           <View style={styles.heroIcon}>
             <Ionicons name="leaf-outline" size={34} color="#FFFFFF" />
           </View>
           <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
           <Text style={styles.heroTitle}>Create Your Farmer Account</Text>
-          <Text style={styles.heroSub}>Farmer registration now matches the freight setup pattern: profile, documents, Stripe subscription, then verified dashboard access.</Text>
+          <Text style={styles.heroSub}>
+            Farmer registration now matches the freight setup pattern: profile,
+            documents, Stripe subscription, then verified dashboard access.
+          </Text>
         </View>
 
         <View style={styles.priceCard}>
@@ -1347,10 +2052,25 @@ export default function FarmerRegister() {
           {STEPS.map((item, index) => {
             const active = index === step;
             const done = index < step;
+
             return (
-              <TouchableOpacity key={item.key} style={[styles.stepPill, active && styles.stepPillActive, done && styles.stepPillDone]} onPress={() => setStep(index)}>
-                <Ionicons name={item.icon as any} size={14} color={active || done ? "#FFFFFF" : COLORS.muted} />
-                <Text style={[styles.stepText, (active || done) && styles.stepTextActive]}>{item.title}</Text>
+              <TouchableOpacity
+                key={item.key}
+                style={[
+                  styles.stepPill,
+                  active && styles.stepPillActive,
+                  done && styles.stepPillDone,
+                ]}
+                onPress={() => setStep(index)}
+              >
+                <Ionicons
+                  name={item.icon as any}
+                  size={14}
+                  color={active || done ? "#FFFFFF" : COLORS.muted}
+                />
+                <Text style={[styles.stepText, (active || done) && styles.stepTextActive]}>
+                  {item.title}
+                </Text>
               </TouchableOpacity>
             );
           })}
@@ -1359,22 +2079,46 @@ export default function FarmerRegister() {
         {renderStepBody()}
 
         <View style={styles.navRow}>
-          <TouchableOpacity style={[styles.navButton, step === 0 && styles.disabled]} onPress={goBack} disabled={step === 0}>
+          <TouchableOpacity
+            style={[styles.navButton, step === 0 && styles.disabled]}
+            onPress={goBack}
+            disabled={step === 0}
+          >
             <Text style={styles.navButtonText}>Back</Text>
           </TouchableOpacity>
 
           {step < STEPS.length - 1 ? (
-            <TouchableOpacity style={styles.navButtonPrimary} onPress={handleSaveAndContinue} disabled={saving}>
-              {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.navButtonPrimaryText}>Save & Next</Text>}
+            <TouchableOpacity
+              style={styles.navButtonPrimary}
+              onPress={handleSaveAndContinue}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.navButtonPrimaryText}>Save & Next</Text>
+              )}
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.navButtonPrimary} onPress={() => saveFarmerProfile(true)} disabled={saving}>
-              {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.navButtonPrimaryText}>Save Final</Text>}
+            <TouchableOpacity
+              style={styles.navButtonPrimary}
+              onPress={() => saveFarmerProfile(true)}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.navButtonPrimaryText}>Save Final</Text>
+              )}
             </TouchableOpacity>
           )}
         </View>
 
-        <TouchableOpacity style={styles.loginBtn} onPress={() => router.push("/farmer/login" as any)} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={styles.loginBtn}
+          onPress={() => router.push("/farmer/login" as any)}
+          activeOpacity={0.85}
+        >
           <Text style={styles.loginText}>Already have account? Farmer Login</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -1385,12 +2129,26 @@ export default function FarmerRegister() {
 function StatusPill({ done }: { done: boolean }) {
   return (
     <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
-      <Text style={[styles.pillText, done ? styles.pillTextDone : styles.pillTextMissing]}>{done ? "Complete" : "Needed"}</Text>
+      <Text style={[styles.pillText, done ? styles.pillTextDone : styles.pillTextMissing]}>
+        {done ? "Complete" : "Needed"}
+      </Text>
     </View>
   );
 }
 
-function SectionCard({ icon, title, subtitle, done, children }: { icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string; done: boolean; children: React.ReactNode }) {
+function SectionCard({
+  icon,
+  title,
+  subtitle,
+  done,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  done: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <View style={styles.card}>
       <View style={styles.cardTop}>
@@ -1408,11 +2166,69 @@ function SectionCard({ icon, title, subtitle, done, children }: { icon: keyof ty
   );
 }
 
-function DocumentInput({ label, value, onChangeText, required = false }: { label: string; value: string; onChangeText: (value: string) => void; required?: boolean }) {
+function DocumentInput({
+  label,
+  value,
+  onChangeText,
+  fieldName,
+  uploadingField,
+  onUpload,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  fieldName: string;
+  uploadingField: string;
+  onUpload: (fieldName: string, setValue: (value: string) => void) => Promise<void>;
+  required?: boolean;
+}) {
+  const isUploading = uploadingField === fieldName;
+
   return (
     <View style={styles.docWrap}>
-      <Text style={styles.docLabel}>{label} {required ? <Text style={styles.required}>*</Text> : <Text style={styles.optional}>(optional)</Text>}</Text>
-      <TextInput style={styles.input} placeholder="Paste file URL or Supabase Storage path" value={value} onChangeText={onChangeText} autoCapitalize="none" autoCorrect={false} />
+      <Text style={styles.docLabel}>
+        {label}{" "}
+        {required ? (
+          <Text style={styles.required}>*</Text>
+        ) : (
+          <Text style={styles.optional}>(optional)</Text>
+        )}
+      </Text>
+
+      <TouchableOpacity
+        style={[styles.uploadButton, isUploading && styles.disabled]}
+        onPress={() => onUpload(fieldName, onChangeText)}
+        disabled={Boolean(uploadingField)}
+        activeOpacity={0.85}
+      >
+        {isUploading ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <>
+            <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.uploadButtonText}>
+              {value ? "Replace Uploaded File" : "Upload Document"}
+            </Text>
+          </>
+        )}
+      </TouchableOpacity>
+
+      {value ? (
+        <View style={styles.uploadedPill}>
+          <Ionicons name="checkmark-circle-outline" size={16} color={COLORS.green} />
+          <Text style={styles.uploadedText}>Uploaded</Text>
+        </View>
+      ) : null}
+
+      <TextInput
+        style={styles.hiddenDocInput}
+        placeholder="Uploaded URL will appear here"
+        value={value}
+        onChangeText={onChangeText}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
     </View>
   );
 }
@@ -1420,63 +2236,346 @@ function DocumentInput({ label, value, onChangeText, required = false }: { label
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 90 },
-  hero: { backgroundColor: COLORS.black, paddingHorizontal: 20, paddingTop: 28, paddingBottom: 32 },
-  heroIcon: { width: 64, height: 64, borderRadius: 24, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", marginBottom: 14 },
-  kicker: { color: "#BBF7D0", fontWeight: "900", fontSize: 12, textTransform: "uppercase", letterSpacing: 1 },
-  heroTitle: { color: "#FFFFFF", fontSize: 33, fontWeight: "900", marginTop: 8 },
-  heroSub: { color: "#CBD5E1", fontWeight: "700", lineHeight: 22, marginTop: 8 },
-  priceCard: { backgroundColor: COLORS.primary, marginHorizontal: 16, marginTop: 16, borderRadius: 24, padding: 16 },
-  priceTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", marginBottom: 8 },
-  priceLine: { color: "#DCFCE7", fontWeight: "800", marginBottom: 4 },
-  stepBar: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginHorizontal: 16, marginTop: 16 },
-  stepPill: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8 },
-  stepPillActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  stepPillDone: { backgroundColor: COLORS.green, borderColor: COLORS.green },
-  stepText: { color: COLORS.muted, fontSize: 11, fontWeight: "900" },
+
+  hero: {
+    backgroundColor: COLORS.black,
+    paddingHorizontal: 20,
+    paddingTop: 28,
+    paddingBottom: 32,
+  },
+  heroIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  kicker: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 33,
+    fontWeight: "900",
+    marginTop: 8,
+  },
+  heroSub: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+
+  priceCard: {
+    backgroundColor: COLORS.primary,
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 16,
+  },
+  priceTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  priceLine: {
+    color: "#DCFCE7",
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+
+  stepBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 16,
+  },
+  stepPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  stepPillActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  stepPillDone: {
+    backgroundColor: COLORS.green,
+    borderColor: COLORS.green,
+  },
+  stepText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
   stepTextActive: { color: "#FFFFFF" },
-  card: { backgroundColor: COLORS.card, marginHorizontal: 16, marginTop: 16, borderRadius: 24, padding: 16, borderWidth: 1, borderColor: COLORS.border },
-  cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 14 },
-  iconBox: { width: 44, height: 44, borderRadius: 16, backgroundColor: COLORS.black, alignItems: "center", justifyContent: "center" },
-  cardTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
-  cardSub: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 2 },
-  pill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+
+  card: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 14,
+  },
+  iconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: COLORS.black,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  cardSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 2,
+  },
+
+  pill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   pillDone: { backgroundColor: "#DCFCE7" },
   pillMissing: { backgroundColor: "#FEE2E2" },
   pillText: { fontSize: 11, fontWeight: "900" },
   pillTextDone: { color: "#166534" },
   pillTextMissing: { color: "#B91C1C" },
-  input: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, padding: 14, fontWeight: "800", marginBottom: 10, color: COLORS.text },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  productChip: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: 13, paddingVertical: 11, borderRadius: 999 },
-  productChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  productText: { color: COLORS.text, fontWeight: "900" },
+
+  input: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 14,
+    fontWeight: "800",
+    marginBottom: 10,
+    color: COLORS.text,
+  },
+
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  productChip: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderRadius: 999,
+  },
+  productChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  productText: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
   productTextActive: { color: "#FFFFFF" },
-  legalRow: { flexDirection: "row", gap: 10, alignItems: "flex-start", paddingVertical: 10, borderTopWidth: 1, borderTopColor: COLORS.border },
-  checkbox: { width: 28, height: 28, borderRadius: 9, borderWidth: 2, borderColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+
+  legalRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  checkbox: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   checkboxOn: { backgroundColor: COLORS.primary },
   checkText: { color: "#FFFFFF", fontWeight: "900" },
-  legalText: { flex: 1, color: COLORS.text, fontWeight: "800", lineHeight: 21 },
-  docWrap: { marginBottom: 4 },
-  docLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 6 },
+  legalText: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+    lineHeight: 21,
+  },
+
+  docWrap: { marginBottom: 14 },
+  docLabel: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
   required: { color: COLORS.red },
   optional: { color: COLORS.muted, fontWeight: "700" },
-  statusBox: { backgroundColor: COLORS.surface2, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 14, marginBottom: 12 },
-  statusRow: { flexDirection: "row", alignItems: "center", paddingVertical: 6, gap: 8 },
-  statusLabel: { flex: 1, color: COLORS.text, fontWeight: "800" },
-  statusValue: { color: COLORS.muted, fontWeight: "900", fontSize: 12 },
+  uploadButton: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  uploadButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+  uploadedPill: {
+    alignSelf: "flex-start",
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: 8,
+  },
+  uploadedText: {
+    color: COLORS.green,
+    fontWeight: "900",
+  },
+  hiddenDocInput: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    padding: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
+    fontSize: 12,
+  },
+
+  statusBox: {
+    backgroundColor: COLORS.surface2,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 12,
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+    gap: 8,
+  },
+  statusLabel: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+  },
+  statusValue: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 12,
+  },
   statusValueGood: { color: COLORS.green },
-  actionBtn: { backgroundColor: COLORS.black, borderRadius: 18, paddingVertical: 16, alignItems: "center", marginBottom: 10 },
+
+  actionBtn: {
+    backgroundColor: COLORS.black,
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginBottom: 10,
+  },
   actionText: { color: "#FFFFFF", fontWeight: "900" },
-  submitBtn: { backgroundColor: COLORS.primary, borderRadius: 18, paddingVertical: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
-  submitText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
-  dashboardBtn: { backgroundColor: COLORS.green, borderRadius: 18, paddingVertical: 16, alignItems: "center", marginTop: 10 },
+  submitBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  submitText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  dashboardBtn: {
+    backgroundColor: COLORS.green,
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginTop: 10,
+  },
   dashboardText: { color: "#FFFFFF", fontWeight: "900" },
-  navRow: { flexDirection: "row", gap: 12, marginHorizontal: 16, marginTop: 16 },
-  navButton: { flex: 1, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, paddingVertical: 16, alignItems: "center" },
-  navButtonText: { color: COLORS.text, fontWeight: "900" },
-  navButtonPrimary: { flex: 1, backgroundColor: COLORS.primary, borderRadius: 18, paddingVertical: 16, alignItems: "center" },
-  navButtonPrimaryText: { color: "#FFFFFF", fontWeight: "900" },
+
+  navRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 16,
+  },
+  navButton: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  navButtonText: {
+    color: COLORS.text,
+    fontWeight: "900",
+  },
+  navButtonPrimary: {
+    flex: 1,
+    backgroundColor: COLORS.primary,
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  navButtonPrimaryText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
   disabled: { opacity: 0.6 },
-  loginBtn: { paddingVertical: 18, alignItems: "center" },
-  loginText: { color: COLORS.primary, fontWeight: "900" },
+
+  loginBtn: {
+    paddingVertical: 18,
+    alignItems: "center",
+  },
+  loginText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
 });
