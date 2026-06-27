@@ -636,8 +636,14 @@ export default function FarmerRegister() {
   }
 
   function getMissingColumnName(error: any) {
-    const message = String(error?.message || "");
-    return message.match(/Could not find the '([^']+)' column/i)?.[1] || "";
+    const message = String(error?.message || error?.details || error?.hint || "");
+
+    return (
+      message.match(/Could not find the '([^']+)' column/i)?.[1] ||
+      message.match(/'([^']+)' column of '([^']+)'/i)?.[1] ||
+      message.match(/column "([^"]+)" of relation "([^"]+)" does not exist/i)?.[1] ||
+      ""
+    );
   }
 
   async function safeProfileUpdate(profileIdValue: string, payload: Record<string, any>) {
@@ -655,7 +661,9 @@ export default function FarmerRegister() {
 
       const missing = getMissingColumnName(error);
       if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-        delete nextPayload[missing];
+        const copy: any = { ...nextPayload };
+        delete copy[missing];
+        nextPayload = copy;
         continue;
       }
 
@@ -679,7 +687,9 @@ export default function FarmerRegister() {
 
       const missing = getMissingColumnName(error);
       if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-        delete nextPayload[missing];
+        const copy: any = { ...nextPayload };
+        delete copy[missing];
+        nextPayload = copy;
         continue;
       }
 
@@ -858,16 +868,13 @@ export default function FarmerRegister() {
       if (!error) return;
 
       const missing = getMissingColumnName(error);
-
-if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-  console.log(`Removing missing admin_verifications column: ${missing}`);
-
-  const copy: any = { ...nextPayload };
-  delete copy[missing];
-  nextPayload = copy;
-
-  continue;
-}
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        console.log(`Removing missing admin_verifications column: ${missing}`);
+        const copy: any = { ...nextPayload };
+        delete copy[missing];
+        nextPayload = copy;
+        continue;
+      }
 
       console.log("admin_verifications skipped:", error.message);
       return;
@@ -892,7 +899,9 @@ if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
       const missing = getMissingColumnName(error);
       if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
         console.log(`Removing missing farmer column: ${missing}`);
-        delete nextPayload[missing];
+        const copy: any = { ...nextPayload };
+        delete copy[missing];
+        nextPayload = copy;
         continue;
       }
 
