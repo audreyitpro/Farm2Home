@@ -636,20 +636,25 @@ export default function FarmerRegister() {
   }
 
   function getMissingColumnName(error: any): string {
-    const message = String(
-      error?.message ||
-        error?.details ||
-        error?.hint ||
-        JSON.stringify(error || {}) ||
-        ""
-    );
+    const parts = [
+      error?.message,
+      error?.details,
+      error?.hint,
+      typeof error === "string" ? error : "",
+      JSON.stringify(error || {}),
+    ].filter(Boolean);
+
+    const message = parts.join(" | ");
 
     const patterns = [
       /Could not find the '([^']+)' column/i,
+      /Could not find the "([^"]+)" column/i,
       /'([^']+)' column of '([^']+)'/i,
+      /"([^"]+)" column of "([^"]+)"/i,
       /column '([^']+)' of relation/i,
-      /column "([^"]+)" of relation "([^"]+)" does not exist/i,
+      /column "([^"]+)" of relation/i,
       /schema cache.*?'([^']+)'/i,
+      /schema cache.*?"([^"]+)"/i,
     ];
 
     for (const pattern of patterns) {
@@ -799,6 +804,37 @@ export default function FarmerRegister() {
     }
   }
 
+  async function safeAdminVerificationUpsert(payload: Record<string, any>) {
+    let nextPayload: any = { ...payload };
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const { data, error } = await supabase
+        .from("admin_verifications")
+        .upsert(nextPayload, { onConflict: "id" })
+        .select("*")
+        .maybeSingle();
+
+      if (!error) return data;
+
+      console.log("ADMIN VERIFICATION ERROR:", error.message);
+
+      const missing = getMissingColumnName(error);
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        console.log(`Removing missing admin_verifications column: ${missing}`);
+        const copy: any = { ...nextPayload };
+        delete copy[missing];
+        nextPayload = copy;
+        continue;
+      }
+
+      console.log("FAILED ADMIN PAYLOAD KEYS:", Object.keys(nextPayload));
+      console.log("admin_verifications skipped:", error.message);
+      return null;
+    }
+
+    return null;
+  }
+
   async function saveAdminVerificationIfTableExists(farmerAuthId: string, savedFarmer: any) {
     const now = new Date().toISOString();
     const paid = Boolean(savedFarmer.subscription_id || savedFarmer.stripe_subscription_id);
@@ -878,27 +914,7 @@ export default function FarmerRegister() {
       created_at: now,
     };
 
-    let nextPayload = { ...payload };
-
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      const { error } = await supabase
-        .from("admin_verifications")
-        .upsert(nextPayload, { onConflict: "id" });
-
-      if (!error) return;
-
-      const missing = getMissingColumnName(error);
-      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-        console.log(`Removing missing admin_verifications column: ${missing}`);
-        const copy: any = { ...nextPayload };
-        delete copy[missing];
-        nextPayload = copy;
-        continue;
-      }
-
-      console.log("admin_verifications skipped:", error.message);
-      return;
-    }
+    await safeAdminVerificationUpsert(payload);
   }
 
 
