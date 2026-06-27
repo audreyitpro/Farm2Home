@@ -705,7 +705,6 @@ export default function FarmerRegister() {
       email: normalizeEmail(emailValue),
       phone: phone.trim(),
       account_id: accountValue,
-      updated_at: now,
     };
 
     if (existing?.id) {
@@ -849,8 +848,58 @@ export default function FarmerRegister() {
       created_at: now,
     };
 
-    const { error } = await supabase.from("admin_verifications").upsert(payload, { onConflict: "id" });
-    if (error) console.log("admin_verifications skipped:", error.message);
+    let nextPayload = { ...payload };
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const { error } = await supabase
+        .from("admin_verifications")
+        .upsert(nextPayload, { onConflict: "id" });
+
+      if (!error) return;
+
+      const missing = getMissingColumnName(error);
+
+if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+  console.log(`Removing missing admin_verifications column: ${missing}`);
+
+  const copy: any = { ...nextPayload };
+  delete copy[missing];
+  nextPayload = copy;
+
+  continue;
+}
+
+      console.log("admin_verifications skipped:", error.message);
+      return;
+    }
+  }
+
+
+  async function safeFarmerUpsert(payload: Record<string, any>) {
+    let nextPayload = { ...payload };
+
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .upsert(nextPayload, { onConflict: "id" })
+        .select("*")
+        .maybeSingle();
+
+      if (!error) return data;
+
+      console.log("FARMER UPSERT ERROR:", error.message);
+
+      const missing = getMissingColumnName(error);
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        console.log(`Removing missing farmer column: ${missing}`);
+        delete nextPayload[missing];
+        continue;
+      }
+
+      throw error;
+    }
+
+    return null;
   }
 
   async function saveFarmerUserRow(authId: string, passedAccountId?: string) {
@@ -941,13 +990,11 @@ export default function FarmerRegister() {
       updated_at: now,
     };
 
-    const { data: savedFarmer, error } = await supabase
-      .from("farmers")
-      .upsert(existing?.id ? farmerPayload : { ...farmerPayload, created_at: now }, { onConflict: "id" })
-      .select("*")
-      .maybeSingle();
+    const savedFarmer = await safeFarmerUpsert({
+      ...farmerPayload,
+      created_at: existing?.created_at || now,
+    });
 
-    if (error) throw error;
     if (!savedFarmer?.id) throw new Error("Farmer registration did not save.");
 
     await upsertFarmerSubscriptionRow({
