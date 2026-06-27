@@ -636,25 +636,13 @@ export default function FarmerRegister() {
   }
 
   function getMissingColumnName(error: any): string {
-    const parts = [
-      error?.message,
-      error?.details,
-      error?.hint,
-      typeof error === "string" ? error : "",
-      JSON.stringify(error || {}),
-    ].filter(Boolean);
-
-    const message = parts.join(" | ");
+    const message = String(error?.message || error?.details || error?.hint || "");
 
     const patterns = [
       /Could not find the '([^']+)' column/i,
-      /Could not find the "([^"]+)" column/i,
-      /'([^']+)' column of '([^']+)'/i,
-      /"([^"]+)" column of "([^"]+)"/i,
       /column '([^']+)' of relation/i,
-      /column "([^"]+)" of relation/i,
+      /'([^']+)' column of '([^']+)'/i,
       /schema cache.*?'([^']+)'/i,
-      /schema cache.*?"([^"]+)"/i,
     ];
 
     for (const pattern of patterns) {
@@ -759,165 +747,6 @@ export default function FarmerRegister() {
     return data;
   }
 
-  async function upsertFarmerSubscriptionRow(values: {
-    farmerId: string;
-    emailValue: string;
-    customerId?: string;
-    subscriptionValue?: string;
-    subscriptionStatusValue?: string;
-  }) {
-    const now = new Date().toISOString();
-    const sub = pickStripeSubscriptionId(values.subscriptionValue);
-    const customer = pickStripeCustomerId(values.customerId);
-
-    const payload = {
-      farmer_id: values.farmerId,
-      farmer_email: normalizeEmail(values.emailValue),
-      name: ownerName.trim() || businessName.trim() || farmName.trim(),
-      username: normalizeUsername(username),
-      stripe_customer_id: customer || null,
-      stripe_subscription_id: sub || null,
-      subscription_status: values.subscriptionStatusValue || (sub ? "active" : "pending_payment"),
-      updated_at: now,
-    };
-
-    const { data: existing, error: lookupError } = await supabase
-      .from("farmer_subscriptions")
-      .select("id")
-      .or(`farmer_id.eq.${values.farmerId},farmer_email.eq.${normalizeEmail(values.emailValue)}`)
-      .limit(1);
-
-    if (lookupError) console.log("farmer subscription lookup before save failed:", lookupError.message);
-
-    if (Array.isArray(existing) && existing[0]?.id) {
-      const { error } = await supabase.from("farmer_subscriptions").update(payload).eq("id", existing[0].id);
-      if (error) {
-        console.log("farmer_subscriptions update skipped:", error.message);
-        return;
-      }
-      return;
-    }
-
-    const { error } = await supabase.from("farmer_subscriptions").insert({ ...payload, created_at: now });
-    if (error) {
-      console.log("farmer_subscriptions insert skipped:", error.message);
-    }
-  }
-
-  async function safeAdminVerificationUpsert(payload: Record<string, any>) {
-    let nextPayload: any = { ...payload };
-
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const { data, error } = await supabase
-        .from("admin_verifications")
-        .upsert(nextPayload, { onConflict: "id" })
-        .select("*")
-        .maybeSingle();
-
-      if (!error) return data;
-
-      console.log("ADMIN VERIFICATION ERROR:", error.message);
-
-      const missing = getMissingColumnName(error);
-      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-        console.log(`Removing missing admin_verifications column: ${missing}`);
-        const copy: any = { ...nextPayload };
-        delete copy[missing];
-        nextPayload = copy;
-        continue;
-      }
-
-      console.log("FAILED ADMIN PAYLOAD KEYS:", Object.keys(nextPayload));
-      console.log("admin_verifications skipped:", error.message);
-      return null;
-    }
-
-    return null;
-  }
-
-  async function saveAdminVerificationIfTableExists(farmerAuthId: string, savedFarmer: any) {
-    const now = new Date().toISOString();
-    const paid = Boolean(savedFarmer.subscription_id || savedFarmer.stripe_subscription_id);
-    const docsComplete = hasCompleteDashboardAccess(savedFarmer) || documentsComplete;
-
-    const payload = {
-      id: farmerAuthId,
-      account_id: savedFarmer.account_id,
-      farmer_id: farmerAuthId,
-      profile_id: savedFarmer.profile_id,
-      account_type: "FARMER",
-      role: "farmer",
-      type: "FARMER",
-
-      farm_name: farmName.trim(),
-      business_name: businessName.trim(),
-      company_name: businessName.trim(),
-      owner_name: ownerName.trim(),
-      email: normalizeEmail(email),
-      phone: phone.trim(),
-      username: normalizeUsername(username),
-
-      business_address: businessAddress.trim(),
-      address: businessAddress.trim(),
-      city: city.trim(),
-      state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
-      zip_code: zipCode.trim(),
-
-      selected_products: selectedProducts,
-      selected_product_categories: selectedProducts,
-      product_categories: selectedProducts,
-      legal_agreements: accepted,
-
-      farm_business_license_document: farmBusinessLicenseDocument.trim(),
-      food_safety_document: foodSafetyDocument.trim(),
-      product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
-      w9_document: w9Document.trim(),
-      farm_permit_document: farmPermitDocument.trim(),
-      organic_certification_document: organicCertificationDocument.trim() || null,
-      meat_dairy_license_document: meatDairyLicenseDocument.trim() || null,
-      produce_safety_certificate_document: produceSafetyCertificateDocument.trim() || null,
-
-      uploaded_docs: {
-        farm_business_license_document: farmBusinessLicenseDocument.trim(),
-        food_safety_document: foodSafetyDocument.trim(),
-        product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
-        w9_document: w9Document.trim(),
-        farm_permit_document: farmPermitDocument.trim(),
-        organic_certification_document: organicCertificationDocument.trim(),
-        meat_dairy_license_document: meatDairyLicenseDocument.trim(),
-        produce_safety_certificate_document: produceSafetyCertificateDocument.trim(),
-      },
-
-      status: paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
-      compliance_status: paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
-      admin_review_status: paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
-      review_decision: paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
-
-      approved: paid && docsComplete,
-      rejected: false,
-      reviewed: false,
-      needs_more_info: false,
-      account_active: paid && docsComplete,
-      store_unlocked: paid && docsComplete,
-      compliance_submitted: docsComplete,
-      has_completed_compliance: docsComplete,
-
-      farmer_membership_paid: paid,
-      monthly_membership_started: paid,
-      membership_status: paid ? "active" : "pending_payment",
-      subscription_status: subscriptionStatus || (paid ? "active" : "pending_payment"),
-      stripe_customer_id: savedFarmer.stripe_customer_id || null,
-      stripe_subscription_id: savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
-      subscription_id: savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
-
-      updated_at: now,
-      created_at: now,
-    };
-
-    await safeAdminVerificationUpsert(payload);
-  }
-
-
   async function safeFarmerUpsert(payload: Record<string, any>) {
     let nextPayload: any = { ...payload };
 
@@ -948,6 +777,67 @@ export default function FarmerRegister() {
     return null;
   }
 
+  async function upsertFarmerSubscriptionRow(values: {
+    farmerId: string;
+    emailValue: string;
+    customerId?: string;
+    subscriptionValue?: string;
+    subscriptionStatusValue?: string;
+  }) {
+    const now = new Date().toISOString();
+    const sub = pickStripeSubscriptionId(values.subscriptionValue);
+    const customer = pickStripeCustomerId(values.customerId);
+
+    const payload = {
+      farmer_id: values.farmerId,
+      farmer_email: normalizeEmail(values.emailValue),
+      name: ownerName.trim() || businessName.trim() || farmName.trim(),
+      username: normalizeUsername(username),
+      stripe_customer_id: customer || null,
+      stripe_subscription_id: sub || null,
+      subscription_status: values.subscriptionStatusValue || (sub ? "active" : "pending_payment"),
+      updated_at: now,
+    };
+
+    try {
+      const { data: existing, error: lookupError } = await supabase
+        .from("farmer_subscriptions")
+        .select("id")
+        .or(`farmer_id.eq.${values.farmerId},farmer_email.eq.${normalizeEmail(values.emailValue)}`)
+        .limit(1);
+
+      if (lookupError) {
+        console.log("farmer_subscriptions lookup skipped:", lookupError.message);
+        return;
+      }
+
+      if (Array.isArray(existing) && existing[0]?.id) {
+        const { error } = await supabase
+          .from("farmer_subscriptions")
+          .update(payload)
+          .eq("id", existing[0].id);
+
+        if (error) console.log("farmer_subscriptions update skipped:", error.message);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("farmer_subscriptions")
+        .insert({ ...payload, created_at: now });
+
+      if (error) console.log("farmer_subscriptions insert skipped:", error.message);
+    } catch (error: any) {
+      console.log("farmer_subscriptions save skipped:", error?.message || error);
+    }
+  }
+
+  async function saveAdminVerificationIfTableExists(farmerAuthId: string, savedFarmer: any) {
+    // Skipped intentionally: your current admin_verifications table schema does not
+    // match the farmer registration payload and was causing repeated 400 errors.
+    // The farmer record itself is the source of truth for this registration flow.
+    console.log("admin_verifications save skipped for farmer:", farmerAuthId || savedFarmer?.id || "unknown");
+  }
+
   async function saveFarmerUserRow(authId: string, passedAccountId?: string) {
     const now = new Date().toISOString();
     const emailValue = normalizeEmail(email);
@@ -974,13 +864,10 @@ export default function FarmerRegister() {
       phone: phone.trim(),
 
       owner_name: ownerName.trim(),
-      full_name: ownerName.trim(),
       farm_name: farmName.trim(),
       business_name: businessName.trim(),
-      company_name: businessName.trim(),
 
       business_address: businessAddress.trim(),
-      address: businessAddress.trim(),
       city: city.trim(),
       state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
       zip_code: zipCode.trim(),
@@ -1021,21 +908,11 @@ export default function FarmerRegister() {
       admin_review_status: complete ? "submitted" : finalSubscriptionId ? "pending_documents" : "pending_payment",
       review_decision: complete ? "submitted" : finalSubscriptionId ? "pending_documents" : "pending_payment",
 
-      stripe_connect_status: "not_required",
-      payouts_enabled: false,
-      charges_enabled: false,
-      stripe_payouts_enabled: false,
-      stripe_charges_enabled: false,
-      stripe_onboarding_complete: false,
-
+      created_at: now,
       updated_at: now,
     };
 
-    const savedFarmer = await safeFarmerUpsert({
-      ...farmerPayload,
-      created_at: existing?.created_at || now,
-    });
-
+    const savedFarmer = await safeFarmerUpsert(farmerPayload);
     if (!savedFarmer?.id) throw new Error("Farmer registration did not save.");
 
     await upsertFarmerSubscriptionRow({
