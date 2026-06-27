@@ -33,7 +33,7 @@ import { supabase } from "../data/supabaseClient";
  * Important:
  * - Profiles save is intentionally minimal to avoid POST /profiles 400 errors.
  * - Farmers save is schema-safe and removes missing columns automatically.
- * - Admin verification save is disabled for farmer registration to stop admin_verifications schema errors.
+ * - Admin verification save is optional and non-blocking.
  * - Farmer document upload uses Supabase Storage bucket: farmer-documents
  *
  * Install if needed:
@@ -1020,8 +1020,10 @@ export default function FarmerRegister() {
     }
   }
 
-  // Farmer registration intentionally does not save to admin_verifications.
-  // That table has a different schema and was causing repeated 400 errors.
+  // Admin verification is intentionally disabled for farmer registration.
+  // Farmer registration saves only to profiles, farmers, farmer_subscriptions, and Supabase Storage.
+
+
 
   async function saveFarmerUserRow(authId: string, passedAccountId?: string) {
     const now = new Date().toISOString();
@@ -1078,13 +1080,10 @@ export default function FarmerRegister() {
       phone: phone.trim(),
 
       owner_name: ownerName.trim(),
-      full_name: ownerName.trim(),
       farm_name: farmName.trim(),
       business_name: businessName.trim(),
-      company_name: businessName.trim(),
 
       business_address: businessAddress.trim(),
-      address: businessAddress.trim(),
       city: city.trim(),
       state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
       zip_code: zipCode.trim(),
@@ -1160,6 +1159,8 @@ export default function FarmerRegister() {
       subscriptionValue: finalSubscriptionId,
       subscriptionStatusValue: finalStatus,
     });
+
+    // Admin verification save removed to prevent schema mismatch 400 errors.
 
     const finalRow = {
       ...savedFarmer,
