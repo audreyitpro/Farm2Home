@@ -18,6 +18,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -29,8 +30,8 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   "https://farm2home-production-e4bd.up.railway.app";
 
-const APP_URL =
-  process.env.EXPO_PUBLIC_APP_URL || "https://farm2home-rho.vercel.app";
+const APP_URL = process.env.EXPO_PUBLIC_APP_URL || "https://farm2home-rho.vercel.app";
+const DOCUMENT_BUCKET = "freight-documents";
 
 const COLORS = {
   bg: "#F6F7FB",
@@ -68,6 +69,7 @@ const STEPS = [
   { key: "account", title: "Account", icon: "person-outline" },
   { key: "company", title: "Company", icon: "business-outline" },
   { key: "authority", title: "Authority", icon: "shield-checkmark-outline" },
+  { key: "documents", title: "Documents", icon: "document-text-outline" },
   { key: "security", title: "Security", icon: "key-outline" },
   { key: "stripe", title: "Stripe", icon: "card-outline" },
   { key: "review", title: "Review", icon: "checkmark-done-outline" },
@@ -82,32 +84,53 @@ const EQUIPMENT_OPTIONS = [
   { key: "produce", label: "Produce", icon: "leaf-outline" },
 ];
 
-type FreightRow = {
-  id: string;
-  freight_id: string;
-  auth_user_id: string;
-  profile_id: string;
-  role: "freight";
-  email: string;
-  account_id: string;
-  company_name: string;
-  business_name: string;
-  contact_name: string;
-  full_name: string;
-  name: string;
-  owner_name: string;
-  phone: string;
-  username: string;
-  stripe_customer_id: string;
-  subscription_id: string;
-  freight_account: string;
-  account_active: boolean;
-  approved: boolean;
-  freight_membership_paid: boolean;
-  membership_status: string;
-  verification_status: string;
-  compliance_status: string;
-  admin_review_status: string;
+const REQUIRED_DOCUMENTS = [
+  { key: "cdl_document", label: "Commercial Driver License / CDL", required: true },
+  { key: "dot_document", label: "DOT Certificate", required: true },
+  { key: "mc_authority_document", label: "MC Authority Letter", required: true },
+  { key: "insurance_document", label: "Certificate of Insurance / COI", required: true },
+  { key: "w9_document", label: "W-9 Form", required: true },
+  { key: "vehicle_registration_document", label: "Vehicle Registration", required: true },
+  { key: "cargo_insurance_document", label: "Cargo Insurance Certificate", required: true },
+  { key: "business_license_document", label: "Business License", required: true },
+] as const;
+
+const OPTIONAL_DOCUMENTS = [
+  { key: "hipaa_certificate", label: "HIPAA Certificate" },
+  { key: "bloodborne_certificate", label: "Bloodborne Pathogens Certificate" },
+  { key: "tsa_certificate", label: "TSA Certificate" },
+  { key: "food_handling_certificate", label: "Food Handling / Reefer Permit" },
+] as const;
+
+type DocumentKey =
+  | "cdl_document"
+  | "dot_document"
+  | "mc_authority_document"
+  | "insurance_document"
+  | "w9_document"
+  | "vehicle_registration_document"
+  | "cargo_insurance_document"
+  | "business_license_document"
+  | "hipaa_certificate"
+  | "bloodborne_certificate"
+  | "tsa_certificate"
+  | "food_handling_certificate";
+
+type DocumentState = Record<DocumentKey, string>;
+
+const EMPTY_DOCUMENTS: DocumentState = {
+  cdl_document: "",
+  dot_document: "",
+  mc_authority_document: "",
+  insurance_document: "",
+  w9_document: "",
+  vehicle_registration_document: "",
+  cargo_insurance_document: "",
+  business_license_document: "",
+  hipaa_certificate: "",
+  bloodborne_certificate: "",
+  tsa_certificate: "",
+  food_handling_certificate: "",
 };
 
 function clean(value: any) {
@@ -165,6 +188,17 @@ function makeFallbackAccountId() {
   return `Freight_${stamp}`;
 }
 
+function getDocumentName(value: string) {
+  const v = clean(value);
+  if (!v) return "Missing";
+  const parts = v.split("/");
+  return parts[parts.length - 1] || "Uploaded";
+}
+
+function hasRequiredDocuments(row: any) {
+  return REQUIRED_DOCUMENTS.every((doc) => clean(row?.[doc.key]));
+}
+
 async function parseApiResponse(response: Response) {
   const text = await response.text();
   try {
@@ -181,40 +215,17 @@ function getStripeLaunchUrl(data: any) {
       data?.onboarding_url ||
       data?.accountLink ||
       data?.account_link ||
-      data?.accountLinkUrl ||
-      data?.account_link_url ||
-      data?.connectUrl ||
-      data?.connect_url ||
       data?.checkoutUrl ||
       data?.checkout_url ||
       data?.sessionUrl ||
       data?.session_url ||
-      data?.checkoutSessionUrl ||
-      data?.checkout_session_url ||
-      data?.link ||
-      data?.accountLink?.url ||
-      data?.account_link?.url ||
       data?.data?.url ||
-      data?.data?.onboardingUrl ||
-      data?.data?.onboarding_url ||
-      data?.data?.accountLink ||
-      data?.data?.account_link ||
-      data?.data?.accountLink?.url ||
-      data?.data?.account_link?.url ||
-      data?.result?.url ||
-      data?.result?.onboardingUrl ||
-      data?.result?.onboarding_url ||
-      data?.result?.accountLink ||
-      data?.result?.account_link ||
-      data?.result?.accountLink?.url ||
-      data?.result?.account_link?.url
+      data?.result?.url
   );
 }
 
 async function openUrl(url: string) {
   const finalUrl = clean(url);
-
-  console.log("OPEN STRIPE URL:", finalUrl);
 
   if (!finalUrl || !finalUrl.startsWith("http")) {
     Alert.alert("Stripe Error", "No valid Stripe URL was returned.");
@@ -228,22 +239,26 @@ async function openUrl(url: string) {
 
   try {
     const result = await WebBrowser.openBrowserAsync(finalUrl);
-    console.log("STRIPE BROWSER RESULT:", result);
-
-    if (result?.type === "cancel" || result?.type === "dismiss") {
-      await Linking.openURL(finalUrl);
-    }
-  } catch (browserError) {
-    console.log("WebBrowser open failed, trying Linking:", browserError);
-
+    if (result?.type === "cancel" || result?.type === "dismiss") await Linking.openURL(finalUrl);
+  } catch {
     const canOpen = await Linking.canOpenURL(finalUrl);
     if (!canOpen) {
       Alert.alert("Stripe Error", "This device cannot open the Stripe URL.");
       return;
     }
-
     await Linking.openURL(finalUrl);
   }
+}
+
+function hasCompleteDashboardAccess(row: any) {
+  return Boolean(
+    clean(row?.id || row?.freight_id || row?.freightId) &&
+      clean(row?.account_id || row?.accountId) &&
+      isStripeCustomerId(row?.stripe_customer_id || row?.stripeCustomerId) &&
+      isStripeSubscriptionId(row?.subscription_id || row?.subscriptionId || row?.stripe_subscription_id) &&
+      isStripeConnectAccountId(row?.freight_account || row?.freightAccount || row?.stripe_account_id) &&
+      hasRequiredDocuments(row)
+  );
 }
 
 async function saveFreightSession(carrier: any) {
@@ -270,6 +285,7 @@ async function saveFreightSession(carrier: any) {
     freight_account: carrier.freight_account || carrier.freightAccount || carrier.stripe_account_id,
     stripeAccountId: carrier.freight_account || carrier.freightAccount || carrier.stripe_account_id,
     stripe_account_id: carrier.freight_account || carrier.freightAccount || carrier.stripe_account_id,
+    documentsComplete: hasRequiredDocuments(carrier),
     accountActive: carrier.account_active,
     account_active: carrier.account_active,
     membershipStatus: carrier.membership_status,
@@ -293,16 +309,6 @@ async function saveFreightSession(carrier: any) {
   ]);
 }
 
-function hasCompleteDashboardAccess(row: any) {
-  return Boolean(
-    clean(row?.id || row?.freight_id || row?.freightId) &&
-      clean(row?.account_id || row?.accountId) &&
-      isStripeCustomerId(row?.stripe_customer_id || row?.stripeCustomerId) &&
-      isStripeSubscriptionId(row?.subscription_id || row?.subscriptionId || row?.stripe_subscription_id) &&
-      isStripeConnectAccountId(row?.freight_account || row?.freightAccount || row?.stripe_account_id)
-  );
-}
-
 export default function FreightRegister() {
   const params = useLocalSearchParams();
 
@@ -311,7 +317,6 @@ export default function FreightRegister() {
   const [stripeLoading, setStripeLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [connectLoading, setConnectLoading] = useState(false);
-  const [processingReturn, setProcessingReturn] = useState(false);
 
   const [savedCarrierId, setSavedCarrierId] = useState("");
   const [profileId, setProfileId] = useState("");
@@ -358,53 +363,39 @@ export default function FreightRegister() {
   const [licensedRefrigeratedFood, setLicensedRefrigeratedFood] = useState(false);
   const [selectedEquipment, setSelectedEquipment] = useState<string[]>([]);
 
+  const [documents, setDocuments] = useState<DocumentState>(EMPTY_DOCUMENTS);
+
   const selectedQuestions = useMemo(
     () => [securityQuestion1, securityQuestion2, securityQuestion3].filter(Boolean),
     [securityQuestion1, securityQuestion2, securityQuestion3]
   );
 
+  const documentsComplete = useMemo(() => hasRequiredDocuments(documents), [documents]);
+
   const setupStatus = useMemo(() => {
     return [
-      {
-        label: "Freight Profile",
-        complete: Boolean(savedCarrierId || freightId),
-        value: savedCarrierId || freightId ? "Found" : "Missing",
-      },
-      {
-        label: "Static Account",
-        complete: Boolean(accountId),
-        value: accountId || "Missing",
-      },
-      {
-        label: "Stripe Customer",
-        complete: isStripeCustomerId(stripeCustomerId),
-        value: maskId(stripeCustomerId),
-      },
-      {
-        label: "Subscription",
-        complete: isStripeSubscriptionId(subscriptionId),
-        value: maskId(subscriptionId),
-      },
-      {
-        label: "Stripe Connect",
-        complete: isStripeConnectAccountId(freightAccount),
-        value: maskId(freightAccount),
-      },
+      { label: "Freight Profile", complete: Boolean(savedCarrierId || freightId), value: savedCarrierId || freightId ? "Found" : "Missing" },
+      { label: "Static Account", complete: Boolean(accountId), value: accountId || "Missing" },
+      { label: "Required Documents", complete: documentsComplete, value: documentsComplete ? "Uploaded" : "Missing" },
+      { label: "Stripe Customer", complete: isStripeCustomerId(stripeCustomerId), value: maskId(stripeCustomerId) },
+      { label: "Subscription", complete: isStripeSubscriptionId(subscriptionId), value: maskId(subscriptionId) },
+      { label: "Stripe Connect", complete: isStripeConnectAccountId(freightAccount), value: maskId(freightAccount) },
     ];
-  }, [savedCarrierId, freightId, accountId, stripeCustomerId, subscriptionId, freightAccount]);
+  }, [savedCarrierId, freightId, accountId, documentsComplete, stripeCustomerId, subscriptionId, freightAccount]);
 
   const setupScore = useMemo(() => setupStatus.filter((item) => item.complete).length, [setupStatus]);
 
-  const allFiveRequirementsFound = useMemo(
+  const allRequirementsFound = useMemo(
     () =>
       Boolean(
         (savedCarrierId || freightId) &&
           accountId &&
+          documentsComplete &&
           isStripeCustomerId(stripeCustomerId) &&
           isStripeSubscriptionId(subscriptionId) &&
           isStripeConnectAccountId(freightAccount)
       ),
-    [savedCarrierId, freightId, accountId, stripeCustomerId, subscriptionId, freightAccount]
+    [savedCarrierId, freightId, accountId, documentsComplete, stripeCustomerId, subscriptionId, freightAccount]
   );
 
   useEffect(() => {
@@ -412,8 +403,6 @@ export default function FreightRegister() {
   }, []);
 
   useEffect(() => {
-    const stripeStatus = String(params?.stripe || params?.payment || "");
-    const connectStatus = String(params?.connect || params?.connected || "");
     const returnedFreightId = String(params?.freightId || params?.freight_id || "");
     const returnedEmail = String(params?.email || "");
 
@@ -423,28 +412,16 @@ export default function FreightRegister() {
       setSavedCarrierId(returnedFreightId);
     }
 
-    if (stripeStatus === "success") {
-      handleStripeSuccessReturn(returnedFreightId);
-      return;
-    }
+    if (String(params?.stripe || params?.payment || "") === "success") handleStripeSuccessReturn(returnedFreightId);
+    if (["success", "true"].includes(String(params?.connect || params?.connected || ""))) handleConnectSuccessReturn(returnedFreightId);
+  }, [params?.stripe, params?.payment, params?.connect, params?.connected, params?.freightId, params?.freight_id, params?.email]);
 
-    if (connectStatus === "success" || connectStatus === "true") {
-      handleConnectSuccessReturn(returnedFreightId);
-    }
-  }, [
-    params?.stripe,
-    params?.payment,
-    params?.connect,
-    params?.connected,
-    params?.freightId,
-    params?.freight_id,
-    params?.email,
-  ]);
+  function setDocumentValue(key: DocumentKey, value: string) {
+    setDocuments((prev) => ({ ...prev, [key]: value }));
+  }
 
   function toggleEquipment(key: string) {
-    setSelectedEquipment((prev) =>
-      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
-    );
+    setSelectedEquipment((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]));
   }
 
   function goNext() {
@@ -457,6 +434,57 @@ export default function FreightRegister() {
 
   function goDashboard() {
     router.replace("/freight/dashboard" as any);
+  }
+
+  async function pickDocument(key: DocumentKey) {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/*"],
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const asset = result.assets[0];
+      const localValue = clean(asset.uri || asset.name);
+
+      const carrierId = savedCarrierId || freightId;
+      if (!carrierId) {
+        setDocumentValue(key, localValue);
+        Alert.alert("Document Selected", "Save the profile to attach this document to the freight account.");
+        return;
+      }
+
+      const safeName = clean(asset.name || `${key}.pdf`).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `${carrierId}/${key}/${Date.now()}_${safeName}`;
+
+      if (Platform.OS === "web") {
+        const response = await fetch(asset.uri);
+        const blob = await response.blob();
+        const { error } = await supabase.storage.from(DOCUMENT_BUCKET).upload(path, blob, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: asset.mimeType || undefined,
+        });
+        if (error) throw error;
+      } else {
+        const response = await fetch(asset.uri);
+        const blob = await response.blob();
+        const { error } = await supabase.storage.from(DOCUMENT_BUCKET).upload(path, blob, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: asset.mimeType || undefined,
+        });
+        if (error) throw error;
+      }
+
+      const { data } = supabase.storage.from(DOCUMENT_BUCKET).getPublicUrl(path);
+      setDocumentValue(key, data.publicUrl || path);
+    } catch (error: any) {
+      console.log("document upload error:", error);
+      Alert.alert("Upload Error", error?.message || "Unable to upload document. Check Supabase storage bucket permissions.");
+    }
   }
 
   function hydrateForm(row: any) {
@@ -479,12 +507,8 @@ export default function FreightRegister() {
 
     setSubscriptionStatus(row?.subscription_status || row?.subscriptionStatus || subscriptionStatus || "");
 
-    if (row?.company_name || row?.business_name || row?.companyName) {
-      setCompanyName(clean(row.company_name || row.business_name || row.companyName));
-    }
-    if (row?.full_name || row?.contact_name || row?.name) {
-      setContactName(clean(row.full_name || row.contact_name || row.name));
-    }
+    if (row?.company_name || row?.business_name || row?.companyName) setCompanyName(clean(row.company_name || row.business_name || row.companyName));
+    if (row?.full_name || row?.contact_name || row?.name) setContactName(clean(row.full_name || row.contact_name || row.name));
     if (row?.email || row?.freight_email) setEmail(normalize(row.email || row.freight_email));
     if (row?.phone) setPhone(clean(row.phone));
     if (row?.username) setUsername(clean(row.username));
@@ -512,59 +536,14 @@ export default function FreightRegister() {
     setHasSavedSecurityAnswer2(Boolean(row?.security_answer_2));
     setHasSavedSecurityAnswer3(Boolean(row?.security_answer_3));
 
+    const nextDocs: DocumentState = { ...EMPTY_DOCUMENTS };
+    [...REQUIRED_DOCUMENTS, ...OPTIONAL_DOCUMENTS].forEach((doc) => {
+      nextDocs[doc.key as DocumentKey] = clean(row?.[doc.key]);
+    });
+    setDocuments((prev) => ({ ...prev, ...nextDocs }));
+
     const equipmentText = clean(row?.equipment_type || "");
-    if (equipmentText) {
-      setSelectedEquipment(
-        equipmentText
-          .split(",")
-          .map((item) => normalize(item))
-          .filter(Boolean)
-      );
-    }
-  }
-
-  function buildCurrentSnapshot(base: any = {}) {
-    const id = clean(base.id || base.freight_id || savedCarrierId || freightId);
-    const finalConnect = pickStripeConnectAccountId(base.freight_account, base.stripe_account_id, freightAccount);
-    const finalSub = pickStripeSubscriptionId(base.subscription_id, base.stripe_subscription_id, subscriptionId);
-    const finalCustomer = pickStripeCustomerId(base.stripe_customer_id, stripeCustomerId);
-
-    return {
-      ...base,
-      id,
-      freight_id: id,
-      freightId: id,
-      auth_user_id: clean(base.auth_user_id || id),
-      profile_id: clean(base.profile_id || profileId),
-      role: "freight",
-      email: normalize(base.email || email),
-      account_id: clean(base.account_id || accountId),
-      accountId: clean(base.account_id || accountId),
-      company_name: clean(base.company_name || companyName),
-      companyName: clean(base.company_name || companyName),
-      business_name: clean(base.business_name || companyName),
-      businessName: clean(base.business_name || companyName),
-      contact_name: clean(base.contact_name || contactName),
-      full_name: clean(base.full_name || contactName),
-      fullName: clean(base.full_name || contactName),
-      name: clean(base.name || contactName),
-      phone: clean(base.phone || phone),
-      username: normalize(base.username || username),
-      stripe_customer_id: finalCustomer,
-      stripeCustomerId: finalCustomer,
-      subscription_id: finalSub,
-      subscriptionId: finalSub,
-      stripe_subscription_id: finalSub,
-      stripeSubscriptionId: finalSub,
-      subscription_status: clean(base.subscription_status || subscriptionStatus || (finalSub ? "active" : "pending_payment")),
-      freight_account: finalConnect,
-      freightAccount: finalConnect,
-      stripe_account_id: finalConnect,
-      stripeAccountId: finalConnect,
-      membership_status: finalSub ? "active" : "pending_payment",
-      account_active: Boolean(id && accountId && finalCustomer && finalSub && finalConnect),
-      updated_at: new Date().toISOString(),
-    };
+    if (equipmentText) setSelectedEquipment(equipmentText.split(",").map((item) => normalize(item)).filter(Boolean));
   }
 
   function validateForm({ full = true }: { full?: boolean } = {}) {
@@ -638,9 +617,16 @@ export default function FreightRegister() {
       return false;
     }
 
+    if (!hasRequiredDocuments(documents)) {
+      const missingDocs = REQUIRED_DOCUMENTS.filter((doc) => !clean(documents[doc.key])).map((doc) => doc.label);
+      Alert.alert("Documents Required", `Upload these required documents: ${missingDocs.join(", ")}.`);
+      setStep(3);
+      return false;
+    }
+
     if (selectedQuestions.length !== 3 || new Set(selectedQuestions).size !== 3) {
       Alert.alert("Security Questions Required", "Please choose 3 different security questions.");
-      setStep(3);
+      setStep(4);
       return false;
     }
 
@@ -651,7 +637,7 @@ export default function FreightRegister() {
 
     if (missingSecurityAnswers) {
       Alert.alert("Security Answers Required", "Please answer all 3 security questions.");
-      setStep(3);
+      setStep(4);
       return false;
     }
 
@@ -660,11 +646,7 @@ export default function FreightRegister() {
 
   async function generateFreightAccountId() {
     try {
-      const { data, error } = await supabase.rpc("next_account_id", {
-        p_role: "freight",
-        p_prefix: "Freight",
-      });
-
+      const { data, error } = await supabase.rpc("next_account_id", { p_role: "freight", p_prefix: "Freight" });
       if (!error && data) return String(data);
     } catch (error) {
       console.log("next_account_id skipped:", error);
@@ -678,23 +660,13 @@ export default function FreightRegister() {
     const emailValue = normalize(targetEmail);
 
     if (id) {
-      const { data, error } = await supabase
-        .from("freight_users")
-        .select("*")
-        .or(`id.eq.${id},freight_id.eq.${id}`)
-        .maybeSingle();
-
+      const { data, error } = await supabase.from("freight_users").select("*").or(`id.eq.${id},freight_id.eq.${id}`).maybeSingle();
       if (!error && data) return data;
       if (error) console.log("freight lookup by id:", error.message);
     }
 
     if (emailValue) {
-      const { data, error } = await supabase
-        .from("freight_users")
-        .select("*")
-        .eq("email", emailValue)
-        .maybeSingle();
-
+      const { data, error } = await supabase.from("freight_users").select("*").eq("email", emailValue).maybeSingle();
       if (!error && data) return data;
       if (error) console.log("freight lookup by email:", error.message);
     }
@@ -706,12 +678,7 @@ export default function FreightRegister() {
     const emailValue = normalize(targetEmail);
     if (!emailValue) return null;
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("email", emailValue)
-      .maybeSingle();
-
+    const { data, error } = await supabase.from("profiles").select("*").eq("email", emailValue).maybeSingle();
     if (error) {
       console.log("profile lookup error:", error.message);
       return null;
@@ -723,12 +690,7 @@ export default function FreightRegister() {
   async function findProfileByAuthId(authId: string) {
     if (!isUuid(authId)) return null;
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .or(`id.eq.${authId},auth_user_id.eq.${authId}`)
-      .maybeSingle();
-
+    const { data, error } = await supabase.from("profiles").select("*").or(`id.eq.${authId},auth_user_id.eq.${authId}`).maybeSingle();
     if (error) {
       console.log("profile lookup auth error:", error.message);
       return null;
@@ -740,23 +702,11 @@ export default function FreightRegister() {
   async function getBestFreightSubscription(targetId?: string, targetEmail?: string) {
     const id = clean(targetId);
     const emailValue = normalize(targetEmail);
-
-    const filters = [
-      id ? `freight_id.eq.${id}` : "",
-      emailValue ? `freight_email.eq.${emailValue}` : "",
-    ]
-      .filter(Boolean)
-      .join(",");
+    const filters = [id ? `freight_id.eq.${id}` : "", emailValue ? `freight_email.eq.${emailValue}` : ""].filter(Boolean).join(",");
 
     if (!filters) return null;
 
-    const { data, error } = await supabase
-      .from("freight_subscriptions")
-      .select("*")
-      .or(filters)
-      .order("updated_at", { ascending: false })
-      .limit(10);
-
+    const { data, error } = await supabase.from("freight_subscriptions").select("*").or(filters).order("updated_at", { ascending: false }).limit(10);
     if (error) {
       console.log("subscription lookup error:", error.message);
       return null;
@@ -791,27 +741,12 @@ export default function FreightRegister() {
     };
 
     if (existing?.id) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .update(payload)
-        .eq("id", existing.id)
-        .select("*")
-        .maybeSingle();
-
+      const { data, error } = await supabase.from("profiles").update(payload).eq("id", existing.id).select("*").maybeSingle();
       if (error) throw error;
       return data || { ...existing, ...payload };
     }
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .insert({
-        id: authId,
-        ...payload,
-        created_at: new Date().toISOString(),
-      })
-      .select("*")
-      .maybeSingle();
-
+    const { data, error } = await supabase.from("profiles").insert({ id: authId, ...payload, created_at: new Date().toISOString() }).select("*").maybeSingle();
     if (error) throw error;
     return data;
   }
@@ -842,37 +777,23 @@ export default function FreightRegister() {
       updated_at: now,
     };
 
-    const { data: existing, error: lookupError } = await supabase
-      .from("freight_subscriptions")
-      .select("id")
-      .or(`freight_id.eq.${values.freightId},freight_email.eq.${normalize(values.emailValue)}`)
-      .limit(1);
-
-    if (lookupError) {
-      console.log("subscription lookup before save failed:", lookupError.message);
-    }
+    const { data: existing } = await supabase.from("freight_subscriptions").select("id").or(`freight_id.eq.${values.freightId},freight_email.eq.${normalize(values.emailValue)}`).limit(1);
 
     if (Array.isArray(existing) && existing[0]?.id) {
-      const { error } = await supabase
-        .from("freight_subscriptions")
-        .update(payload)
-        .eq("id", existing[0].id);
-
+      const { error } = await supabase.from("freight_subscriptions").update(payload).eq("id", existing[0].id);
       if (error) throw error;
       return;
     }
 
-    const { error } = await supabase
-      .from("freight_subscriptions")
-      .insert({ ...payload, created_at: now });
-
+    const { error } = await supabase.from("freight_subscriptions").insert({ ...payload, created_at: now });
     if (error) throw error;
   }
 
   async function saveAdminVerificationIfTableExists(carrierId: string, savedFreightUser: any) {
     const now = new Date().toISOString();
     const paid = Boolean(savedFreightUser.subscription_id);
-    const connect = pickStripeConnectAccountId(savedFreightUser.freight_account);
+    const docsOk = hasRequiredDocuments(savedFreightUser);
+    const complete = paid && docsOk && isStripeConnectAccountId(savedFreightUser.freight_account);
 
     const payload = {
       id: carrierId,
@@ -903,33 +824,42 @@ export default function FreightRegister() {
       insurance_active: insuranceActive,
       licensed_livestock: licensedLivestock,
       licensed_refrigerated_food: licensedRefrigeratedFood,
-      status: paid ? "SUBMITTED" : "PENDING_PAYMENT",
-      compliance_status: paid ? "SUBMITTED" : "PENDING_PAYMENT",
-      admin_review_status: paid ? "submitted" : "pending_payment",
-      review_decision: paid ? "submitted" : "pending_payment",
-      approved: paid,
+      cdl_document: documents.cdl_document || null,
+      dot_document: documents.dot_document || null,
+      mc_authority_document: documents.mc_authority_document || null,
+      insurance_document: documents.insurance_document || null,
+      w9_document: documents.w9_document || null,
+      vehicle_registration_document: documents.vehicle_registration_document || null,
+      cargo_insurance_document: documents.cargo_insurance_document || null,
+      business_license_document: documents.business_license_document || null,
+      hipaa_certificate: documents.hipaa_certificate || null,
+      bloodborne_certificate: documents.bloodborne_certificate || null,
+      tsa_certificate: documents.tsa_certificate || null,
+      food_handling_certificate: documents.food_handling_certificate || null,
+      documents_complete: docsOk,
+      status: complete ? "SUBMITTED" : docsOk ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
+      compliance_status: complete ? "SUBMITTED" : docsOk ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
+      admin_review_status: complete ? "submitted" : docsOk ? "pending_payment" : "pending_documents",
+      approved: complete,
       rejected: false,
       reviewed: false,
       needs_more_info: false,
-      account_active: paid,
+      account_active: complete,
       membership_status: paid ? "active" : "pending_payment",
       subscription_status: subscriptionStatus || (paid ? "active" : "pending_payment"),
       freight_membership_paid: paid,
-      application_submitted: paid,
-      submitted_at: paid ? now : null,
+      application_submitted: complete,
+      submitted_at: complete ? now : null,
       stripe_customer_id: savedFreightUser.stripe_customer_id || null,
-      freight_account: connect || null,
-      stripe_account_id: connect || null,
+      freight_account: savedFreightUser.freight_account || null,
+      stripe_account_id: savedFreightUser.freight_account || null,
       stripe_subscription_id: savedFreightUser.subscription_id || null,
       subscription_id: savedFreightUser.subscription_id || null,
       updated_at: now,
       created_at: now,
     };
 
-    const { error } = await supabase
-      .from("admin_verifications")
-      .upsert(payload, { onConflict: "id" });
-
+    const { error } = await supabase.from("admin_verifications").upsert(payload, { onConflict: "id" });
     if (error) console.log("admin_verifications skipped:", error.message);
   }
 
@@ -942,14 +872,10 @@ export default function FreightRegister() {
     const finalAccountId = clean(existing?.account_id || passedAccountId || accountId || (await generateFreightAccountId()));
     const finalCustomerId = pickStripeCustomerId(stripeCustomerId, existing?.stripe_customer_id, subRow?.stripe_customer_id);
     const finalSubscriptionId = pickStripeSubscriptionId(subscriptionId, existing?.subscription_id, subRow?.stripe_subscription_id);
-    const finalConnectAccount = pickStripeConnectAccountId(
-      freightAccount,
-      existing?.freight_account,
-      subRow?.freight_account,
-      subRow?.stripe_account_id
-    );
+    const finalConnectAccount = pickStripeConnectAccountId(freightAccount, existing?.freight_account, subRow?.freight_account, subRow?.stripe_account_id);
     const finalStatus = subscriptionStatus || subRow?.subscription_status || (finalSubscriptionId ? "active" : "pending_payment");
-    const complete = Boolean(authId && finalAccountId && finalCustomerId && finalSubscriptionId && finalConnectAccount);
+    const docsOk = hasRequiredDocuments(documents);
+    const complete = Boolean(authId && finalAccountId && finalCustomerId && finalSubscriptionId && finalConnectAccount && docsOk);
 
     const profile = await upsertProfileForFreight(authId, emailValue, finalAccountId, finalConnectAccount);
     if (!profile?.id) throw new Error("Profile could not be created.");
@@ -960,72 +886,66 @@ export default function FreightRegister() {
       auth_user_id: authId,
       profile_id: profile.id,
       role: "freight",
-
       company_name: companyName.trim(),
       business_name: companyName.trim(),
       contact_name: contactName.trim(),
       full_name: contactName.trim(),
       name: contactName.trim(),
       owner_name: contactName.trim(),
-
       email: emailValue,
       phone: phone.trim(),
       username: normalize(username),
-
-      // Do not store raw passwords in Supabase profile tables.
-      // Authentication uses Supabase Auth.
-
       account_id: finalAccountId,
       stripe_customer_id: finalCustomerId || null,
       subscription_id: finalSubscriptionId || null,
       freight_account: finalConnectAccount || null,
-
       account_active: complete,
       approved: complete,
       freight_membership_paid: Boolean(finalSubscriptionId),
       membership_status: finalSubscriptionId ? "active" : "pending_payment",
-      verification_status: complete ? "SUBMITTED" : "REGISTERED",
-      compliance_status: complete ? "SUBMITTED" : "PENDING_PAYMENT",
-      admin_review_status: complete ? "submitted" : "pending_payment",
-
+      verification_status: complete ? "SUBMITTED" : docsOk ? "REGISTERED" : "PENDING_DOCUMENTS",
+      compliance_status: complete ? "SUBMITTED" : docsOk ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
+      admin_review_status: complete ? "submitted" : docsOk ? "pending_payment" : "pending_documents",
       security_question_1: securityQuestion1,
       security_question_2: securityQuestion2,
       security_question_3: securityQuestion3,
-      security_answer_1: securityAnswer1.trim()
-        ? normalizeAnswer(securityAnswer1)
-        : existing?.security_answer_1 || null,
-      security_answer_2: securityAnswer2.trim()
-        ? normalizeAnswer(securityAnswer2)
-        : existing?.security_answer_2 || null,
-      security_answer_3: securityAnswer3.trim()
-        ? normalizeAnswer(securityAnswer3)
-        : existing?.security_answer_3 || null,
-
+      security_answer_1: securityAnswer1.trim() ? normalizeAnswer(securityAnswer1) : existing?.security_answer_1 || null,
+      security_answer_2: securityAnswer2.trim() ? normalizeAnswer(securityAnswer2) : existing?.security_answer_2 || null,
+      security_answer_3: securityAnswer3.trim() ? normalizeAnswer(securityAnswer3) : existing?.security_answer_3 || null,
       service_area: serviceArea.trim(),
       business_address: businessAddress.trim(),
       city: city.trim(),
       state: stateValue.trim().toUpperCase(),
       zip_code: zipCode.trim(),
-
       mdot_number: mdotNumber.trim(),
       dot_number: mdotNumber.trim(),
       mc_number: mcNumber.trim(),
       insurance_provider: insuranceProvider.trim(),
       insurance_policy_number: insurancePolicyNumber.trim(),
-
       authority_active: authorityActive,
       insurance_active: insuranceActive,
       licensed_livestock: licensedLivestock,
       licensed_refrigerated_food: licensedRefrigeratedFood,
-
+      equipment_type: selectedEquipment.join(","),
+      cdl_document: documents.cdl_document || null,
+      dot_document: documents.dot_document || null,
+      mc_authority_document: documents.mc_authority_document || null,
+      insurance_document: documents.insurance_document || null,
+      w9_document: documents.w9_document || null,
+      vehicle_registration_document: documents.vehicle_registration_document || null,
+      cargo_insurance_document: documents.cargo_insurance_document || null,
+      business_license_document: documents.business_license_document || null,
+      hipaa_certificate: documents.hipaa_certificate || null,
+      bloodborne_certificate: documents.bloodborne_certificate || null,
+      tsa_certificate: documents.tsa_certificate || null,
+      food_handling_certificate: documents.food_handling_certificate || null,
+      documents_complete: docsOk,
       updated_at: now,
     };
 
     const { data: savedFreightUser, error } = await supabase
       .from("freight_users")
-      .upsert(existing?.id ? freightPayload : { ...freightPayload, created_at: now }, {
-        onConflict: "id",
-      })
+      .upsert(existing?.id ? freightPayload : { ...freightPayload, created_at: now }, { onConflict: "id" })
       .select("*")
       .maybeSingle();
 
@@ -1061,7 +981,6 @@ export default function FreightRegister() {
     setSubscriptionId(pickStripeSubscriptionId(savedFreightUser.subscription_id));
     setFreightAccount(pickStripeConnectAccountId(savedFreightUser.freight_account));
     setSubscriptionStatus(finalStatus);
-
     setHasSavedSecurityAnswer1(Boolean(savedFreightUser.security_answer_1));
     setHasSavedSecurityAnswer2(Boolean(savedFreightUser.security_answer_2));
     setHasSavedSecurityAnswer3(Boolean(savedFreightUser.security_answer_3));
@@ -1074,7 +993,6 @@ export default function FreightRegister() {
 
   async function getOrCreateAuthUser() {
     const emailValue = normalize(email);
-
     const { data: currentUserData } = await supabase.auth.getUser();
     if (currentUserData?.user?.id) return currentUserData.user.id;
 
@@ -1097,7 +1015,6 @@ export default function FreightRegister() {
 
     if (error) throw error;
     if (!data?.user?.id) throw new Error("Unable to create freight Auth user.");
-
     return data.user.id;
   }
 
@@ -1109,7 +1026,6 @@ export default function FreightRegister() {
       setSaving(true);
       const authId = savedCarrierId || freightId || (await getOrCreateAuthUser());
       const saved = await saveFreightUserRow(authId, accountId || undefined);
-
       Alert.alert("Saved", "Freight registration was saved.");
       return saved;
     } catch (error: any) {
@@ -1150,7 +1066,6 @@ export default function FreightRegister() {
       });
 
       const json = await parseApiResponse(response);
-
       if (!response.ok || !json.success) {
         if (!silent) Alert.alert("Stripe Sync Not Found", json.error || "No Stripe customer/subscription was found.");
         return null;
@@ -1182,7 +1097,6 @@ export default function FreightRegister() {
   async function retrieveMissingStripeInfo(routeWhenReady = false) {
     try {
       setSyncingStripe(true);
-
       const id = savedCarrierId || freightId || clean(String(params?.freightId || params?.freight_id || ""));
       const emailValue = normalize(email || String(params?.email || ""));
 
@@ -1191,21 +1105,27 @@ export default function FreightRegister() {
 
       if (!dbCarrier && !subRow) {
         const backendSynced = await syncStripeFromBackend(true);
-        if (backendSynced && routeWhenReady && hasCompleteDashboardAccess(backendSynced)) goDashboard();
-        if (!backendSynced) Alert.alert("Not Found", "No freight Stripe records were found.");
+        if (!backendSynced) Alert.alert("Not Found", "No freight registration or Stripe subscription was found.");
         return backendSynced;
       }
 
-      const targetId = dbCarrier?.id || subRow?.freight_id || id || (await getOrCreateAuthUser());
-      const customer = pickStripeCustomerId(stripeCustomerId, dbCarrier?.stripe_customer_id, subRow?.stripe_customer_id);
-      const sub = pickStripeSubscriptionId(subscriptionId, dbCarrier?.subscription_id, subRow?.stripe_subscription_id);
-      const connect = pickStripeConnectAccountId(freightAccount, dbCarrier?.freight_account, subRow?.freight_account, subRow?.stripe_account_id);
-      const status = subRow?.subscription_status || subscriptionStatus || (sub ? "active" : "pending_payment");
+      if (dbCarrier) hydrateForm(dbCarrier);
+
+      const targetId = clean(dbCarrier?.id || dbCarrier?.freight_id || subRow?.freight_id || id);
+      const customer = pickStripeCustomerId(dbCarrier?.stripe_customer_id, subRow?.stripe_customer_id);
+      const sub = pickStripeSubscriptionId(dbCarrier?.subscription_id, subRow?.stripe_subscription_id);
+      const connect = pickStripeConnectAccountId(dbCarrier?.freight_account, subRow?.freight_account, subRow?.stripe_account_id);
+      const status = clean(dbCarrier?.subscription_status || subRow?.subscription_status || (sub ? "active" : "pending_payment"));
 
       if (customer) setStripeCustomerId(customer);
       if (sub) setSubscriptionId(sub);
       if (connect) setFreightAccount(connect);
       setSubscriptionStatus(status);
+
+      if (!targetId) {
+        Alert.alert("Save Needed", "Save the freight profile before syncing Stripe information.");
+        return null;
+      }
 
       const saved = await saveFreightUserRow(targetId, dbCarrier?.account_id || accountId || undefined);
 
@@ -1235,7 +1155,6 @@ export default function FreightRegister() {
         (await AsyncStorage.getItem("currentUser"));
 
       let localCarrier: any = null;
-
       if (savedRaw) {
         try {
           localCarrier = JSON.parse(savedRaw);
@@ -1249,15 +1168,7 @@ export default function FreightRegister() {
       const authId = clean(authData?.user?.id || "");
       const authEmail = normalize(authData?.user?.email || "");
 
-      const lookupId =
-        returnedId ||
-        authId ||
-        localCarrier?.id ||
-        localCarrier?.freight_id ||
-        localCarrier?.freightId ||
-        savedCarrierId ||
-        freightId;
-
+      const lookupId = returnedId || authId || localCarrier?.id || localCarrier?.freight_id || localCarrier?.freightId || savedCarrierId || freightId;
       const lookupEmail = normalize(returnedEmail || authEmail || localCarrier?.email || email);
 
       if (!lookupId && !lookupEmail) return;
@@ -1291,292 +1202,91 @@ export default function FreightRegister() {
   }
 
   async function handleStripeSuccessReturn(returnedFreightId?: string) {
-    if (processingReturn) return;
-
-    try {
-      setProcessingReturn(true);
-      if (returnedFreightId) {
-        setSavedCarrierId(returnedFreightId);
-        setFreightId(returnedFreightId);
-      }
-
-      await loadSavedFreight();
-      const synced = await retrieveMissingStripeInfo(false);
-
-      if (synced && hasCompleteDashboardAccess(synced)) {
-        await saveFreightSession(synced);
-        router.replace("/freight/dashboard" as any);
-        return;
-      }
-
-      setStep(4);
-      Alert.alert("Stripe Synced", "Membership payment returned. Complete Stripe Connect if still missing.");
-    } catch (error: any) {
-      Alert.alert("Stripe Return Error", error?.message || "Unable to complete Stripe return.");
-    } finally {
-      setProcessingReturn(false);
-    }
+    const id = clean(returnedFreightId || savedCarrierId || freightId);
+    if (!id && !email) return;
+    await retrieveMissingStripeInfo(false);
   }
 
   async function handleConnectSuccessReturn(returnedFreightId?: string) {
-    if (processingReturn) return;
-
-    try {
-      setProcessingReturn(true);
-      if (returnedFreightId) {
-        setSavedCarrierId(returnedFreightId);
-        setFreightId(returnedFreightId);
-      }
-
-      await loadSavedFreight();
-      const synced = await retrieveMissingStripeInfo(false);
-
-      if (synced && hasCompleteDashboardAccess(synced)) {
-        await saveFreightSession(synced);
-        router.replace("/freight/dashboard" as any);
-        return;
-      }
-
-      setStep(4);
-      Alert.alert("Connect Synced", "Stripe Connect returned. Complete any remaining setup.");
-    } catch (error: any) {
-      Alert.alert("Connect Return Error", error?.message || "Unable to complete Stripe Connect return.");
-    } finally {
-      setProcessingReturn(false);
-    }
+    const id = clean(returnedFreightId || savedCarrierId || freightId);
+    if (!id && !email) return;
+    await retrieveMissingStripeInfo(false);
   }
 
   async function handleStripeCheckout() {
-    if (stripeLoading) return;
+    const saved = await saveFreightProfile(false);
+    if (!saved?.id) return;
 
     try {
       setStripeLoading(true);
-
-      const restored = await retrieveMissingStripeInfo(false);
-      if (restored && isStripeSubscriptionId(restored.subscription_id)) {
-        Alert.alert("Membership Already Active", "Your Stripe subscription is already saved.");
-        setStep(4);
-        return;
-      }
-
-      const saved = restored?.id ? restored : await saveFreightProfile(false);
-      if (!saved?.id) return;
-
-      const successUrl = `${APP_URL}/freight/register?stripe=success&freightId=${encodeURIComponent(saved.id)}&email=${encodeURIComponent(saved.email)}`;
-      const cancelUrl = `${APP_URL}/freight/register?stripe=cancelled&freightId=${encodeURIComponent(saved.id)}&email=${encodeURIComponent(saved.email)}`;
-
-      const response = await fetch(`${API_BASE_URL}/payments/create-freight-subscription-checkout`, {
+      const response = await fetch(`${API_BASE_URL}/payments/create-freight-checkout-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           role: "freight",
-          planType: "freight",
-          userId: saved.id,
           freightId: saved.id,
           freight_id: saved.id,
+          userId: saved.id,
+          email: normalize(email),
+          freight_email: normalize(email),
           accountId: saved.account_id,
           account_id: saved.account_id,
-          email: saved.email,
-          freight_email: saved.email,
-          customerEmail: saved.email,
-          companyName: saved.company_name,
-          company_name: saved.company_name,
-          businessName: saved.business_name,
-          business_name: saved.business_name,
-          name: saved.company_name,
-          username: saved.username,
-          successUrl,
-          success_url: successUrl,
-          cancelUrl,
-          cancel_url: cancelUrl,
+          name: companyName.trim(),
+          username: normalize(username),
+          successUrl: `${APP_URL}/freight/register?stripe=success&freightId=${saved.id}&email=${normalize(email)}`,
+          cancelUrl: `${APP_URL}/freight/register?stripe=cancel&freightId=${saved.id}&email=${normalize(email)}`,
         }),
       });
 
       const json = await parseApiResponse(response);
       const url = getStripeLaunchUrl(json);
-      console.log("FREIGHT STRIPE CHECKOUT RESPONSE:", json);
-
-      if (!response.ok || (!json.success && !url && !json.alreadySubscribed)) {
-        console.log("FREIGHT STRIPE ERROR RESPONSE:", json);
-        Alert.alert("Stripe Error", json.error || json.message || "Unable to open Stripe membership checkout.");
-        return;
-      }
-
-      const customer = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id, json.customerId, json.customer_id);
-      const sub = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id, json.subscriptionId, json.subscription_id);
-
-      if (!url) {
-        console.log("FREIGHT STRIPE CHECKOUT RESPONSE:", json);
-        Alert.alert("Stripe Error", "Stripe checkout URL was not returned from backend.");
-        return;
-      }
-
-      // Launch Stripe immediately. Do not let Supabase saves block browser launch.
-      void openUrl(url);
-
-      if (customer) setStripeCustomerId(customer);
-      if (sub) setSubscriptionId(sub);
-      if (json.subscriptionStatus || json.subscription_status) {
-        setSubscriptionStatus(json.subscriptionStatus || json.subscription_status);
-      }
-
-      try {
-        await saveFreightUserRow(saved.id, saved.account_id);
-      } catch (saveError) {
-        console.log("freight membership save after launch skipped:", saveError);
-      }
+      if (!response.ok || !url) throw new Error(json.error || "Unable to create Stripe Checkout session.");
+      await openUrl(url);
     } catch (error: any) {
-      Alert.alert("Stripe Error", error?.message || "Unable to start freight membership checkout.");
+      Alert.alert("Stripe Error", error?.message || "Unable to start freight membership.");
     } finally {
       setStripeLoading(false);
     }
   }
 
   async function handleConnectBank() {
-    if (connectLoading) return;
+    const saved = await saveFreightProfile(false);
+    if (!saved?.id) return;
 
     try {
       setConnectLoading(true);
-
-      const saved = await saveFreightProfile(false);
-      if (!saved?.id) return;
-
-      const finalFreightId = clean(saved.id || saved.freight_id || freightId || savedCarrierId);
-      const finalEmail = normalize(saved.email || email);
-      const finalAccountId = clean(saved.account_id || accountId);
-      const finalBusinessName = clean(
-        saved.company_name ||
-          saved.business_name ||
-          companyName ||
-          saved.name ||
-          "Farm2Home Carrier"
-      );
-
-      const returnUrl = `${APP_URL}/freight/connect-bank?success=true&freightId=${encodeURIComponent(
-        finalFreightId
-      )}&email=${encodeURIComponent(finalEmail)}`;
-
-      const refreshUrl = `${APP_URL}/freight/connect-bank?refresh=true&freightId=${encodeURIComponent(
-        finalFreightId
-      )}&email=${encodeURIComponent(finalEmail)}`;
-
       const response = await fetch(`${API_BASE_URL}/payments/create-connect-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           role: "freight",
-
-          userId: finalFreightId,
-          freightId: finalFreightId,
-          freight_id: finalFreightId,
-          profileId: finalFreightId,
-          authUserId: finalFreightId,
-
-          accountId: finalAccountId,
-          account_id: finalAccountId,
-
-          email: finalEmail,
-          freight_email: finalEmail,
-
-          businessName: finalBusinessName,
-          business_name: finalBusinessName,
-          companyName: finalBusinessName,
-          company_name: finalBusinessName,
-          name: finalBusinessName,
-          username: normalize(saved.username || username),
-
-          stripeCustomerId: stripeCustomerId || saved.stripe_customer_id || saved.stripeCustomerId,
-          stripe_customer_id: stripeCustomerId || saved.stripe_customer_id || saved.stripeCustomerId,
-
-          stripeAccountId: freightAccount || saved.freight_account || saved.stripe_account_id,
-          stripe_account_id: freightAccount || saved.freight_account || saved.stripe_account_id,
-
-          returnUrl,
-          return_url: returnUrl,
-          refreshUrl,
-          refresh_url: refreshUrl,
+          freightId: saved.id,
+          freight_id: saved.id,
+          userId: saved.id,
+          accountId: saved.account_id,
+          account_id: saved.account_id,
+          email: normalize(email),
+          freight_email: normalize(email),
+          name: companyName.trim(),
+          businessName: companyName.trim(),
+          companyName: companyName.trim(),
+          returnUrl: `${APP_URL}/freight/register?connect=success&freightId=${saved.id}&email=${normalize(email)}`,
+          refreshUrl: `${APP_URL}/freight/register?connect=refresh&freightId=${saved.id}&email=${normalize(email)}`,
         }),
       });
 
-      const data = await parseApiResponse(response);
-      console.log("FREIGHT CONNECT RESPONSE:", data);
-
-      const launchUrl = data?.url || data?.onboardingUrl || getStripeLaunchUrl(data);
-
-      if (!response.ok || !data.success || !launchUrl) {
-        Alert.alert(
-          "Connect Error",
-          data.error || data.message || "Stripe Connect onboarding URL was not returned."
-        );
-        return;
-      }
-
-      const connectAccount = pickStripeConnectAccountId(
-        data.stripeAccountId,
-        data.stripe_account_id,
-        data.freight_account,
-        data.account,
-        data.account_id
-      );
+      const json = await parseApiResponse(response);
+      const connectAccount = pickStripeConnectAccountId(json.stripeAccountId, json.stripe_account_id, json.freight_account, json.accountId);
+      const url = getStripeLaunchUrl(json);
 
       if (connectAccount) {
         setFreightAccount(connectAccount);
+        await saveFreightUserRow(saved.id, saved.account_id);
       }
 
-      // Launch Stripe immediately. Do not let Supabase saves block browser launch.
-      void openUrl(launchUrl);
-
-      if (connectAccount) {
-        try {
-          await supabase
-            .from("freight_users")
-            .update({
-              freight_account: connectAccount,
-              stripe_account_id: connectAccount,
-              stripe_connect_status: data.onboardingComplete ? "complete" : "started",
-              payouts_enabled: Boolean(data.payoutsEnabled),
-              charges_enabled: Boolean(data.chargesEnabled),
-              stripe_payouts_enabled: Boolean(data.payoutsEnabled),
-              stripe_charges_enabled: Boolean(data.chargesEnabled),
-              stripe_onboarding_complete: Boolean(data.onboardingComplete),
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", finalFreightId);
-        } catch (updateError) {
-          console.log("freight_users connect update skipped:", updateError);
-        }
-
-        try {
-          await upsertFreightSubscriptionRow({
-            freightId: finalFreightId,
-            emailValue: finalEmail,
-            customerId: stripeCustomerId || saved.stripe_customer_id,
-            subscriptionValue: subscriptionId || saved.subscription_id || saved.stripe_subscription_id,
-            connectValue: connectAccount,
-            subscriptionStatusValue:
-              subscriptionStatus || saved.subscription_status || "active",
-          });
-        } catch (subscriptionError) {
-          console.log("freight_subscriptions connect update skipped:", subscriptionError);
-        }
-
-        try {
-          await saveFreightSession({
-            ...saved,
-            id: finalFreightId,
-            freight_id: finalFreightId,
-            account_id: finalAccountId,
-            stripe_customer_id: stripeCustomerId || saved.stripe_customer_id,
-            subscription_id: subscriptionId || saved.subscription_id || saved.stripe_subscription_id,
-            freight_account: connectAccount,
-            stripe_account_id: connectAccount,
-          });
-        } catch (sessionError) {
-          console.log("freight session save after launch skipped:", sessionError);
-        }
-      }
+      if (!response.ok || !url) throw new Error(json.error || "Unable to create Stripe Connect link.");
+      await openUrl(url);
     } catch (error: any) {
-      console.log("FREIGHT CONNECT ERROR:", error);
       Alert.alert("Connect Error", error?.message || "Unable to connect Stripe payouts.");
     } finally {
       setConnectLoading(false);
@@ -1591,13 +1301,14 @@ export default function FreightRegister() {
       const missing = [
         !saved.id ? "Freight Profile" : "",
         !saved.account_id ? "Static Account ID" : "",
+        !hasRequiredDocuments(saved) ? "Required Documents" : "",
         !isStripeCustomerId(saved.stripe_customer_id) ? "Stripe Customer ID" : "",
         !isStripeSubscriptionId(saved.subscription_id) ? "Subscription ID" : "",
         !isStripeConnectAccountId(saved.freight_account) ? "Stripe Connect Account" : "",
       ].filter(Boolean);
 
       Alert.alert("Setup Incomplete", `Missing: ${missing.join(", ")}.`);
-      setStep(4);
+      setStep(5);
       return;
     }
 
@@ -1619,12 +1330,7 @@ export default function FreightRegister() {
     }
   }
 
-  function renderQuestionPicker(
-    value: string,
-    setValue: (v: string) => void,
-    label: string,
-    usedValues: string[]
-  ) {
+  function renderQuestionPicker(value: string, setValue: (v: string) => void, label: string, usedValues: string[]) {
     return (
       <View style={styles.questionBlock}>
         <Text style={styles.inputLabel}>{label}</Text>
@@ -1637,20 +1343,10 @@ export default function FreightRegister() {
                 key={question}
                 disabled={disabled}
                 onPress={() => setValue(question)}
-                style={[
-                  styles.questionChip,
-                  selected && styles.questionChipSelected,
-                  disabled && styles.questionChipDisabled,
-                ]}
+                style={[styles.questionChip, selected && styles.questionChipSelected, disabled && styles.questionChipDisabled]}
                 activeOpacity={0.9}
               >
-                <Text
-                  style={[
-                    styles.questionChipText,
-                    selected && styles.questionChipTextSelected,
-                    disabled && styles.questionChipTextDisabled,
-                  ]}
-                >
+                <Text style={[styles.questionChipText, selected && styles.questionChipTextSelected, disabled && styles.questionChipTextDisabled]}>
                   {question}
                 </Text>
               </TouchableOpacity>
@@ -1661,29 +1357,46 @@ export default function FreightRegister() {
     );
   }
 
+  function renderDocumentUpload(doc: { key: DocumentKey; label: string; required?: boolean }) {
+    const value = documents[doc.key];
+    const complete = Boolean(clean(value));
+
+    return (
+      <View key={doc.key} style={styles.documentRow}>
+        <View style={[styles.documentIcon, complete ? styles.statusGood : styles.statusMissing]}>
+          <Ionicons name={complete ? "checkmark-outline" : "document-attach-outline"} size={18} color={complete ? COLORS.white : COLORS.muted} />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.documentTitle}>
+            {doc.label} {doc.required ? <Text style={styles.requiredText}>*</Text> : null}
+          </Text>
+          <Text style={styles.documentValue}>{complete ? getDocumentName(value) : "No file uploaded"}</Text>
+        </View>
+
+        <TouchableOpacity style={styles.smallButton} onPress={() => pickDocument(doc.key)} activeOpacity={0.9}>
+          <Text style={styles.smallButtonText}>{complete ? "Replace" : "Upload"}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   function renderStep() {
     if (step === 0) {
       return (
         <View>
-          <SectionTitle title="Account Details" subtitle="Create the freight login and primary contact." />
-
+          <SectionTitle title="Account Information" subtitle="Create or retrieve your freight account." />
           <Field label="Company Name" value={companyName} onChangeText={setCompanyName} placeholder="ASO Freight LLC" icon="business-outline" />
-          <Field label="Contact Name" value={contactName} onChangeText={setContactName} placeholder="Owner or dispatcher name" icon="person-outline" />
-          <Field label="Email" value={email} onChangeText={(v) => setEmail(normalize(v))} placeholder="carrier@email.com" icon="mail-outline" keyboardType="email-address" autoCapitalize="none" />
+          <Field label="Contact Name" value={contactName} onChangeText={setContactName} placeholder="Owner / Dispatcher" icon="person-outline" />
+          <Field label="Email" value={email} onChangeText={(v) => setEmail(normalize(v))} placeholder="freight@email.com" icon="mail-outline" keyboardType="email-address" />
           <Field label="Phone" value={phone} onChangeText={setPhone} placeholder="(555) 555-5555" icon="call-outline" keyboardType="phone-pad" />
-          <Field label="Username" value={username} onChangeText={(v) => setUsername(normalize(v))} placeholder="carrier username" icon="at-outline" autoCapitalize="none" />
-
+          <Field label="Username" value={username} onChangeText={setUsername} placeholder="freightcarrier" icon="at-outline" />
           {!savedCarrierId && !freightId ? (
             <>
               <Field label="Password" value={password} onChangeText={setPassword} placeholder="Create password" icon="lock-closed-outline" secureTextEntry />
               <Field label="Confirm Password" value={confirmPassword} onChangeText={setConfirmPassword} placeholder="Confirm password" icon="lock-closed-outline" secureTextEntry />
             </>
-          ) : (
-            <View style={styles.noticeBox}>
-              <Ionicons name="checkmark-circle-outline" size={20} color={COLORS.accent} />
-              <Text style={styles.noticeText}>Freight Auth/Profile already exists. Password is managed by Supabase Auth.</Text>
-            </View>
-          )}
+          ) : null}
         </View>
       );
     }
@@ -1691,33 +1404,38 @@ export default function FreightRegister() {
     if (step === 1) {
       return (
         <View>
-          <SectionTitle title="Company Information" subtitle="Save business location and service area." />
-
-          <Field label="Service Area" value={serviceArea} onChangeText={setServiceArea} placeholder="Detroit Metro, Michigan, Midwest" icon="map-outline" />
+          <SectionTitle title="Company Location" subtitle="Business address and service area." />
           <Field label="Business Address" value={businessAddress} onChangeText={setBusinessAddress} placeholder="Street address" icon="location-outline" />
-          <View style={styles.twoCol}>
-            <View style={styles.col}>
-              <Field label="City" value={city} onChangeText={setCity} placeholder="Detroit" icon="business-outline" />
-            </View>
-            <View style={styles.col}>
-              <Field label="State" value={stateValue} onChangeText={(v) => setStateValue(v.toUpperCase())} placeholder="MI" icon="flag-outline" autoCapitalize="characters" />
-            </View>
-          </View>
-          <Field label="Zip Code" value={zipCode} onChangeText={setZipCode} placeholder="48201" icon="mail-open-outline" keyboardType="numeric" />
+          <Field label="City" value={city} onChangeText={setCity} placeholder="Detroit" icon="business-outline" />
+          <Field label="State" value={stateValue} onChangeText={setStateValue} placeholder="MI" icon="map-outline" />
+          <Field label="Zip Code" value={zipCode} onChangeText={setZipCode} placeholder="48201" icon="navigate-outline" keyboardType="number-pad" />
+          <Field label="Service Area" value={serviceArea} onChangeText={setServiceArea} placeholder="Michigan, Midwest, nationwide..." icon="earth-outline" multiline />
+        </View>
+      );
+    }
 
-          <Text style={styles.inputLabel}>Equipment / Load Types</Text>
-          <View style={styles.equipmentGrid}>
+    if (step === 2) {
+      return (
+        <View>
+          <SectionTitle title="Authority & Insurance" subtitle="Carrier operating details required for review." />
+          <Field label="MDOT / DOT Number" value={mdotNumber} onChangeText={setMdotNumber} placeholder="DOT number" icon="shield-checkmark-outline" />
+          <Field label="MC Number" value={mcNumber} onChangeText={setMcNumber} placeholder="MC number" icon="document-text-outline" />
+          <Field label="Insurance Provider" value={insuranceProvider} onChangeText={setInsuranceProvider} placeholder="Insurance carrier" icon="medkit-outline" />
+          <Field label="Insurance Policy Number" value={insurancePolicyNumber} onChangeText={setInsurancePolicyNumber} placeholder="Policy number" icon="reader-outline" />
+
+          <ToggleRow title="Active operating authority" value={authorityActive} onValueChange={setAuthorityActive} />
+          <ToggleRow title="Active insurance coverage" value={insuranceActive} onValueChange={setInsuranceActive} />
+          <ToggleRow title="Licensed for livestock delivery" value={licensedLivestock} onValueChange={setLicensedLivestock} />
+          <ToggleRow title="Licensed for refrigerated food / produce" value={licensedRefrigeratedFood} onValueChange={setLicensedRefrigeratedFood} />
+
+          <Text style={styles.inputLabel}>Equipment Types</Text>
+          <View style={styles.optionGrid}>
             {EQUIPMENT_OPTIONS.map((item) => {
               const selected = selectedEquipment.includes(item.key);
               return (
-                <TouchableOpacity
-                  key={item.key}
-                  style={[styles.equipmentChip, selected && styles.equipmentChipSelected]}
-                  onPress={() => toggleEquipment(item.key)}
-                  activeOpacity={0.9}
-                >
-                  <Ionicons name={item.icon as any} size={18} color={selected ? COLORS.white : COLORS.primary} />
-                  <Text style={[styles.equipmentText, selected && styles.equipmentTextSelected]}>{item.label}</Text>
+                <TouchableOpacity key={item.key} style={[styles.optionChip, selected && styles.optionChipSelected]} onPress={() => toggleEquipment(item.key)}>
+                  <Ionicons name={item.icon as any} size={17} color={selected ? COLORS.white : COLORS.primary} />
+                  <Text style={[styles.optionChipText, selected && styles.optionChipTextSelected]}>{item.label}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -1726,32 +1444,24 @@ export default function FreightRegister() {
       );
     }
 
-    if (step === 2) {
+    if (step === 3) {
       return (
         <View>
-          <SectionTitle title="Authority & Insurance" subtitle="Save authority, insurance, livestock, and refrigerated-food requirements." />
-
-          <View style={styles.twoCol}>
-            <View style={styles.col}>
-              <Field label="MDOT / DOT Number" value={mdotNumber} onChangeText={setMdotNumber} placeholder="DOT / MDOT #" icon="document-text-outline" />
-            </View>
-            <View style={styles.col}>
-              <Field label="MC Number" value={mcNumber} onChangeText={setMcNumber} placeholder="MC #" icon="shield-outline" />
-            </View>
+          <SectionTitle title="Required Documents" subtitle="Upload carrier compliance documents before dashboard approval." />
+          <View style={styles.noticeBox}>
+            <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
+            <Text style={styles.noticeText}>
+              Save the profile first if you need documents uploaded into the carrier folder. Required documents are checked during login.
+            </Text>
           </View>
-
-          <Field label="Insurance Provider" value={insuranceProvider} onChangeText={setInsuranceProvider} placeholder="Insurance company" icon="umbrella-outline" />
-          <Field label="Policy Number" value={insurancePolicyNumber} onChangeText={setInsurancePolicyNumber} placeholder="Policy #" icon="reader-outline" />
-
-          <ToggleRow label="Authority Active" value={authorityActive} onValueChange={setAuthorityActive} />
-          <ToggleRow label="Insurance Active" value={insuranceActive} onValueChange={setInsuranceActive} />
-          <ToggleRow label="Licensed Livestock" value={licensedLivestock} onValueChange={setLicensedLivestock} />
-          <ToggleRow label="Licensed Refrigerated Food / Produce" value={licensedRefrigeratedFood} onValueChange={setLicensedRefrigeratedFood} />
+          {REQUIRED_DOCUMENTS.map((doc) => renderDocumentUpload(doc))}
+          <Text style={styles.groupTitle}>Optional Medical / Specialized Carrier Documents</Text>
+          {OPTIONAL_DOCUMENTS.map((doc) => renderDocumentUpload({ ...doc, required: false } as any))}
         </View>
       );
     }
 
-    if (step === 3) {
+    if (step === 4) {
       const used1 = [securityQuestion2, securityQuestion3].filter(Boolean);
       const used2 = [securityQuestion1, securityQuestion3].filter(Boolean);
       const used3 = [securityQuestion1, securityQuestion2].filter(Boolean);
@@ -1759,45 +1469,20 @@ export default function FreightRegister() {
       return (
         <View>
           <SectionTitle title="Security Recovery" subtitle="Save three recovery questions. Answers are stored normalized for matching." />
-
           {renderQuestionPicker(securityQuestion1, setSecurityQuestion1, "Security Question 1", used1)}
-          <Field
-            label={hasSavedSecurityAnswer1 ? "Answer 1 - saved, enter only to replace" : "Answer 1"}
-            value={securityAnswer1}
-            onChangeText={setSecurityAnswer1}
-            placeholder={hasSavedSecurityAnswer1 ? "Saved answer on file" : "Your answer"}
-            icon="key-outline"
-            secureTextEntry
-          />
-
+          <Field label={hasSavedSecurityAnswer1 ? "Answer 1 - saved, enter only to replace" : "Answer 1"} value={securityAnswer1} onChangeText={setSecurityAnswer1} placeholder={hasSavedSecurityAnswer1 ? "Saved answer on file" : "Your answer"} icon="key-outline" secureTextEntry />
           {renderQuestionPicker(securityQuestion2, setSecurityQuestion2, "Security Question 2", used2)}
-          <Field
-            label={hasSavedSecurityAnswer2 ? "Answer 2 - saved, enter only to replace" : "Answer 2"}
-            value={securityAnswer2}
-            onChangeText={setSecurityAnswer2}
-            placeholder={hasSavedSecurityAnswer2 ? "Saved answer on file" : "Your answer"}
-            icon="key-outline"
-            secureTextEntry
-          />
-
+          <Field label={hasSavedSecurityAnswer2 ? "Answer 2 - saved, enter only to replace" : "Answer 2"} value={securityAnswer2} onChangeText={setSecurityAnswer2} placeholder={hasSavedSecurityAnswer2 ? "Saved answer on file" : "Your answer"} icon="key-outline" secureTextEntry />
           {renderQuestionPicker(securityQuestion3, setSecurityQuestion3, "Security Question 3", used3)}
-          <Field
-            label={hasSavedSecurityAnswer3 ? "Answer 3 - saved, enter only to replace" : "Answer 3"}
-            value={securityAnswer3}
-            onChangeText={setSecurityAnswer3}
-            placeholder={hasSavedSecurityAnswer3 ? "Saved answer on file" : "Your answer"}
-            icon="key-outline"
-            secureTextEntry
-          />
+          <Field label={hasSavedSecurityAnswer3 ? "Answer 3 - saved, enter only to replace" : "Answer 3"} value={securityAnswer3} onChangeText={setSecurityAnswer3} placeholder={hasSavedSecurityAnswer3 ? "Saved answer on file" : "Your answer"} icon="key-outline" secureTextEntry />
         </View>
       );
     }
 
-    if (step === 4) {
+    if (step === 5) {
       return (
         <View>
           <SectionTitle title="Stripe Membership & Payouts" subtitle="Save subscription and Stripe Connect payout account." />
-
           <View style={styles.statusList}>
             {setupStatus.map((item) => (
               <View key={item.label} style={styles.statusRow}>
@@ -1812,48 +1497,11 @@ export default function FreightRegister() {
             ))}
           </View>
 
-          <ActionButton
-            title="Save Profile"
-            subtitle="Save registration fields to profiles, freight_users, and freight_subscriptions."
-            icon="save-outline"
-            loading={saving}
-            onPress={() => saveFreightProfile(false)}
-          />
-
-          <ActionButton
-            title="Find / Retrieve Missing Stripe Info"
-            subtitle="Search existing freight_subscriptions and backend Stripe sync."
-            icon="sync-outline"
-            loading={syncingStripe}
-            onPress={() => retrieveMissingStripeInfo(false)}
-            secondary
-          />
-
-          <ActionButton
-            title="Start Freight Membership"
-            subtitle="Open Stripe Checkout for freight subscription."
-            icon="card-outline"
-            loading={stripeLoading}
-            onPress={handleStripeCheckout}
-          />
-
-          <ActionButton
-            title="Connect Stripe Payouts"
-            subtitle="Open Stripe Connect onboarding for freight_account / stripe_account_id."
-            icon="wallet-outline"
-            loading={connectLoading}
-            onPress={handleConnectBank}
-            secondary
-          />
-
-          <ActionButton
-            title="Refresh Without Clearing Form"
-            subtitle="Reload Supabase and Stripe info without wiping the form."
-            icon="refresh-outline"
-            loading={syncingStripe}
-            onPress={forceRefreshFreightRegister}
-            secondary
-          />
+          <ActionButton title="Save Profile" subtitle="Save registration fields to profiles, freight_users, and freight_subscriptions." icon="save-outline" loading={saving} onPress={() => saveFreightProfile(false)} />
+          <ActionButton title="Find / Retrieve Missing Stripe Info" subtitle="Search existing freight_subscriptions and backend Stripe sync." icon="sync-outline" loading={syncingStripe} onPress={() => retrieveMissingStripeInfo(false)} secondary />
+          <ActionButton title="Start Freight Membership" subtitle="Open Stripe Checkout for freight subscription." icon="card-outline" loading={stripeLoading} onPress={handleStripeCheckout} />
+          <ActionButton title="Connect Stripe Payouts" subtitle="Open Stripe Connect onboarding for freight_account / stripe_account_id." icon="wallet-outline" loading={connectLoading} onPress={handleConnectBank} secondary />
+          <ActionButton title="Refresh Without Clearing Form" subtitle="Reload Supabase and Stripe info without wiping the form." icon="refresh-outline" loading={syncingStripe} onPress={forceRefreshFreightRegister} secondary />
         </View>
       );
     }
@@ -1861,34 +1509,25 @@ export default function FreightRegister() {
     return (
       <View>
         <SectionTitle title="Review & Submit" subtitle="Confirm saved fields and open Freight Dashboard." />
-
         <ReviewRow label="Company" value={companyName} />
         <ReviewRow label="Contact" value={contactName} />
         <ReviewRow label="Email" value={email} />
         <ReviewRow label="Account ID" value={accountId} />
+        <ReviewRow label="Documents" value={documentsComplete ? "Required documents uploaded" : "Missing required documents"} />
         <ReviewRow label="Stripe Customer" value={maskId(stripeCustomerId)} />
         <ReviewRow label="Subscription" value={maskId(subscriptionId)} />
         <ReviewRow label="Stripe Connect" value={maskId(freightAccount)} />
 
         <View style={styles.noticeBox}>
-          <Ionicons
-            name={allFiveRequirementsFound ? "checkmark-circle-outline" : "warning-outline"}
-            size={20}
-            color={allFiveRequirementsFound ? COLORS.accent : COLORS.warning}
-          />
+          <Ionicons name={allRequirementsFound ? "checkmark-circle-outline" : "warning-outline"} size={20} color={allRequirementsFound ? COLORS.accent : COLORS.warning} />
           <Text style={styles.noticeText}>
-            {allFiveRequirementsFound
-              ? "All five dashboard requirements are saved."
-              : "Membership and Stripe Connect must be saved before dashboard routing."}
+            {allRequirementsFound
+              ? "All dashboard requirements are saved."
+              : "Documents, membership, and Stripe Connect must be saved before dashboard routing."}
           </Text>
         </View>
 
-        <TouchableOpacity
-          style={[styles.primaryButton, saving && styles.disabledButton]}
-          onPress={handleSubmitAndDashboard}
-          disabled={saving}
-          activeOpacity={0.9}
-        >
+        <TouchableOpacity style={[styles.primaryButton, saving && styles.disabledButton]} onPress={handleSubmitAndDashboard} disabled={saving} activeOpacity={0.9}>
           {saving ? (
             <ActivityIndicator color={COLORS.white} />
           ) : (
@@ -1905,7 +1544,6 @@ export default function FreightRegister() {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
-
       <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.shell}>
@@ -1924,24 +1562,19 @@ export default function FreightRegister() {
 
               <View style={styles.scoreCard}>
                 <Text style={styles.scoreLabel}>Setup Progress</Text>
-                <Text style={styles.scoreValue}>{setupScore}/5</Text>
-                <Text style={styles.scoreHint}>Profile, static account, Stripe customer, subscription, and Connect account.</Text>
+                <Text style={styles.scoreValue}>{setupScore}/6</Text>
+                <Text style={styles.scoreHint}>Profile, static account, documents, Stripe customer, subscription, and Connect account.</Text>
               </View>
 
               {STEPS.map((item, index) => {
                 const active = index === step;
-                const done = index < step;
+                const complete = index < step;
                 return (
-                  <TouchableOpacity
-                    key={item.key}
-                    style={[styles.stepNav, active && styles.stepNavActive]}
-                    onPress={() => setStep(index)}
-                    activeOpacity={0.9}
-                  >
-                    <View style={[styles.stepNavIcon, active && styles.stepNavIconActive, done && styles.stepNavIconDone]}>
-                      <Ionicons name={done ? "checkmark-outline" : (item.icon as any)} size={18} color={active || done ? COLORS.white : COLORS.primary} />
+                  <TouchableOpacity key={item.key} style={[styles.stepRow, active && styles.stepRowActive]} onPress={() => setStep(index)} activeOpacity={0.9}>
+                    <View style={[styles.stepIcon, active && styles.stepIconActive, complete && styles.stepIconComplete]}>
+                      <Ionicons name={(complete ? "checkmark-outline" : item.icon) as any} size={18} color={active || complete ? COLORS.white : "#94A3B8"} />
                     </View>
-                    <Text style={[styles.stepNavText, active && styles.stepNavTextActive]}>{item.title}</Text>
+                    <Text style={[styles.stepText, active && styles.stepTextActive]}>{item.title}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -1953,70 +1586,31 @@ export default function FreightRegister() {
             </View>
 
             <View style={styles.main}>
-              <View style={styles.topPanel}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.eyebrow}>Freight Carrier Registration</Text>
-                  <Text style={styles.pageTitle}>Freight Connect Setup</Text>
-                  <Text style={styles.pageSubtitle}>
-                    Save carrier information, subscription, and Stripe Connect details to Supabase.
-                  </Text>
-                </View>
-
-                <TouchableOpacity style={styles.loginButton} onPress={() => router.replace("/freight/login" as any)} activeOpacity={0.9}>
-                  <Ionicons name="log-in-outline" size={18} color={COLORS.primary} />
-                  <Text style={styles.loginButtonText}>Freight Login</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.metricsRow}>
-                <MetricCard icon="business-outline" label="Account" value={accountId || "Not assigned"} />
-                <MetricCard icon="card-outline" label="Subscription" value={isStripeSubscriptionId(subscriptionId) ? "Saved" : "Missing"} />
-                <MetricCard icon="wallet-outline" label="Connect" value={isStripeConnectAccountId(freightAccount) ? "Saved" : "Missing"} />
-              </View>
-
               <View style={styles.card}>
-                {processingReturn ? (
-                  <View style={styles.processingBox}>
-                    <ActivityIndicator color={COLORS.primary} />
-                    <Text style={styles.processingText}>Processing Stripe return...</Text>
+                <View style={styles.headerRow}>
+                  <View>
+                    <Text style={styles.title}>Freight Carrier Registration</Text>
+                    <Text style={styles.subtitle}>Complete onboarding, documents, Stripe membership, and payout setup.</Text>
                   </View>
-                ) : null}
+                  <View style={styles.headerIcon}>
+                    <Ionicons name={STEPS[step].icon as any} size={25} color={COLORS.white} />
+                  </View>
+                </View>
 
                 {renderStep()}
 
                 <View style={styles.footerNav}>
-                  <TouchableOpacity
-                    style={[styles.navButton, step === 0 && styles.disabledButton]}
-                    onPress={goBack}
-                    disabled={step === 0}
-                    activeOpacity={0.9}
-                  >
+                  <TouchableOpacity style={[styles.navButton, step === 0 && styles.disabledButton]} onPress={goBack} disabled={step === 0}>
                     <Ionicons name="arrow-back-outline" size={18} color={COLORS.primary} />
                     <Text style={styles.navButtonText}>Back</Text>
                   </TouchableOpacity>
 
                   {step < STEPS.length - 1 ? (
-                    <TouchableOpacity style={styles.primaryButtonSmall} onPress={goNext} activeOpacity={0.9}>
-                      <Text style={styles.primaryButtonText}>Next</Text>
+                    <TouchableOpacity style={styles.primaryButton} onPress={goNext}>
+                      <Text style={styles.primaryButtonText}>Continue</Text>
                       <Ionicons name="arrow-forward-outline" size={18} color={COLORS.white} />
                     </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={[styles.primaryButtonSmall, saving && styles.disabledButton]}
-                      onPress={handleSubmitAndDashboard}
-                      disabled={saving}
-                      activeOpacity={0.9}
-                    >
-                      {saving ? (
-                        <ActivityIndicator color={COLORS.white} />
-                      ) : (
-                        <>
-                          <Text style={styles.primaryButtonText}>Submit</Text>
-                          <Ionicons name="checkmark-outline" size={18} color={COLORS.white} />
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
+                  ) : null}
                 </View>
               </View>
             </View>
@@ -2029,8 +1623,8 @@ export default function FreightRegister() {
 
 function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+    <View style={styles.sectionTitle}>
+      <Text style={styles.sectionTitleText}>{title}</Text>
       <Text style={styles.sectionSubtitle}>{subtitle}</Text>
     </View>
   );
@@ -2042,56 +1636,45 @@ function Field({
   onChangeText,
   placeholder,
   icon,
-  keyboardType,
-  autoCapitalize,
   secureTextEntry,
+  keyboardType,
+  multiline,
 }: {
   label: string;
   value: string;
-  onChangeText: (value: string) => void;
+  onChangeText: (v: string) => void;
   placeholder: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  keyboardType?: any;
-  autoCapitalize?: any;
+  icon: any;
   secureTextEntry?: boolean;
+  keyboardType?: any;
+  multiline?: boolean;
 }) {
   return (
-    <View style={styles.fieldWrap}>
+    <View style={styles.fieldBlock}>
       <Text style={styles.inputLabel}>{label}</Text>
-      <View style={styles.inputShell}>
+      <View style={[styles.inputShell, multiline && styles.inputShellMultiline]}>
         <Ionicons name={icon} size={18} color={COLORS.muted} />
         <TextInput
-          style={styles.input}
+          style={[styles.input, multiline && styles.inputMultiline]}
           placeholder={placeholder}
           placeholderTextColor="#94A3B8"
           value={value}
           onChangeText={onChangeText}
-          keyboardType={keyboardType}
-          autoCapitalize={autoCapitalize || "none"}
-          autoCorrect={false}
           secureTextEntry={secureTextEntry}
+          keyboardType={keyboardType}
+          multiline={multiline}
+          autoCapitalize="none"
         />
       </View>
     </View>
   );
 }
 
-function ToggleRow({
-  label,
-  value,
-  onValueChange,
-}: {
-  label: string;
-  value: boolean;
-  onValueChange: (value: boolean) => void;
-}) {
+function ToggleRow({ title, value, onValueChange }: { title: string; value: boolean; onValueChange: (v: boolean) => void }) {
   return (
     <View style={styles.toggleRow}>
-      <View>
-        <Text style={styles.toggleLabel}>{label}</Text>
-        <Text style={styles.toggleSub}>{value ? "Confirmed" : "Tap to confirm"}</Text>
-      </View>
-      <Switch value={value} onValueChange={onValueChange} />
+      <Text style={styles.toggleText}>{title}</Text>
+      <Switch value={value} onValueChange={onValueChange} trackColor={{ false: "#CBD5E1", true: "#C7D2FE" }} thumbColor={value ? COLORS.primary : "#F8FAFC"} />
     </View>
   );
 }
@@ -2101,30 +1684,6 @@ function ReviewRow({ label, value }: { label: string; value: string }) {
     <View style={styles.reviewRow}>
       <Text style={styles.reviewLabel}>{label}</Text>
       <Text style={styles.reviewValue}>{value || "Missing"}</Text>
-    </View>
-  );
-}
-
-function MetricCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.metricCard}>
-      <View style={styles.metricIcon}>
-        <Ionicons name={icon} size={20} color={COLORS.primary} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.metricLabel}>{label}</Text>
-        <Text style={styles.metricValue} numberOfLines={1}>
-          {value}
-        </Text>
-      </View>
     </View>
   );
 }
@@ -2139,376 +1698,115 @@ function ActionButton({
 }: {
   title: string;
   subtitle: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  loading?: boolean;
+  icon: any;
+  loading: boolean;
   onPress: () => void;
   secondary?: boolean;
 }) {
   return (
-    <TouchableOpacity
-      style={[styles.actionButton, secondary && styles.actionButtonSecondary]}
-      onPress={onPress}
-      disabled={loading}
-      activeOpacity={0.9}
-    >
+    <TouchableOpacity style={[styles.actionButton, secondary && styles.actionButtonSecondary]} onPress={onPress} disabled={loading} activeOpacity={0.9}>
       <View style={[styles.actionIcon, secondary && styles.actionIconSecondary]}>
-        {loading ? (
-          <ActivityIndicator color={secondary ? COLORS.primary : COLORS.white} />
-        ) : (
-          <Ionicons name={icon} size={20} color={secondary ? COLORS.primary : COLORS.white} />
-        )}
+        {loading ? <ActivityIndicator color={secondary ? COLORS.primary : COLORS.white} /> : <Ionicons name={icon} size={20} color={secondary ? COLORS.primary : COLORS.white} />}
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={[styles.actionTitle, secondary && styles.actionTitleSecondary]}>{title}</Text>
+        <Text style={styles.actionTitle}>{title}</Text>
         <Text style={styles.actionSubtitle}>{subtitle}</Text>
       </View>
-      <Ionicons name="chevron-forward-outline" size={18} color={secondary ? COLORS.primary : COLORS.white} />
+      <Ionicons name="chevron-forward-outline" size={18} color={COLORS.muted} />
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: COLORS.navy },
   keyboard: { flex: 1 },
-  content: { flexGrow: 1, paddingBottom: 40 },
-  shell: {
-    flex: 1,
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    minHeight: Platform.OS === "web" ? 760 : undefined,
-  },
+  content: { flexGrow: 1, backgroundColor: COLORS.bg },
+  shell: { flex: 1, flexDirection: Platform.OS === "web" ? "row" : "column" },
   sidebar: {
+    width: Platform.OS === "web" ? 360 : "100%",
     backgroundColor: COLORS.navy,
-    paddingHorizontal: 22,
-    paddingTop: 28,
-    paddingBottom: 22,
-    width: Platform.OS === "web" ? 330 : "100%",
+    paddingHorizontal: 24,
+    paddingTop: 38,
+    paddingBottom: 24,
   },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  brandIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  brandTitle: { color: COLORS.white, fontSize: 21, fontWeight: "900" },
-  brandSubtitle: { color: "#A5B4FC", fontWeight: "800", marginTop: 2 },
-  sideDivider: { height: 1, backgroundColor: "#1E293B", marginVertical: 24 },
-  scoreCard: {
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#1E293B",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-  },
-  scoreLabel: { color: "#CBD5E1", fontWeight: "800" },
+  brandIcon: { width: 54, height: 54, borderRadius: 18, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+  brandTitle: { color: COLORS.white, fontSize: 24, fontWeight: "900" },
+  brandSubtitle: { color: "#CBD5E1", fontSize: 13, fontWeight: "700" },
+  sideDivider: { height: 1, backgroundColor: "#1E293B", marginVertical: 22 },
+  scoreCard: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 22, padding: 16, marginBottom: 18 },
+  scoreLabel: { color: "#CBD5E1", fontSize: 12, fontWeight: "800" },
   scoreValue: { color: COLORS.white, fontSize: 34, fontWeight: "900", marginTop: 4 },
-  scoreHint: { color: "#94A3B8", fontWeight: "700", lineHeight: 19, marginTop: 4 },
-  stepNav: {
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#1E293B",
-    borderRadius: 16,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
-  },
-  stepNavActive: { borderColor: "#818CF8", backgroundColor: "#111827" },
-  stepNavIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 13,
-    backgroundColor: COLORS.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stepNavIconActive: { backgroundColor: COLORS.primary },
-  stepNavIconDone: { backgroundColor: COLORS.accent },
-  stepNavText: { color: "#CBD5E1", fontWeight: "900" },
-  stepNavTextActive: { color: COLORS.white },
-  homeButton: {
-    marginTop: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#312E81",
-    backgroundColor: "#111827",
-    padding: 14,
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  homeButtonText: { color: COLORS.white, fontWeight: "900" },
-  main: { flex: 1, padding: 18 },
-  topPanel: {
-    backgroundColor: COLORS.white,
-    borderRadius: 26,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flexDirection: "row",
-    gap: 14,
-    alignItems: "flex-start",
-    marginBottom: 14,
-  },
-  eyebrow: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 12,
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-  pageTitle: { color: COLORS.text, fontSize: 34, fontWeight: "900", marginTop: 6 },
-  pageSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 22, marginTop: 7, maxWidth: 760 },
-  loginButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-    backgroundColor: COLORS.primarySoft,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  loginButtonText: { color: COLORS.primary, fontWeight: "900" },
-  metricsRow: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 12,
-    marginBottom: 14,
-  },
-  metricCard: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    padding: 15,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  metricIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 16,
-    backgroundColor: COLORS.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  metricLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11, textTransform: "uppercase" },
-  metricValue: { color: COLORS.text, fontWeight: "900", marginTop: 3 },
-  card: {
-    backgroundColor: COLORS.white,
-    borderRadius: 26,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  processingBox: {
-    backgroundColor: COLORS.primarySoft,
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  processingText: { color: COLORS.primaryDark, fontWeight: "900" },
-  sectionHeader: { marginBottom: 18 },
-  sectionTitle: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
-  sectionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 21, marginTop: 4 },
-  fieldWrap: { marginBottom: 13 },
-  inputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
-  inputShell: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-  },
-  input: { flex: 1, color: COLORS.text, fontWeight: "800", paddingVertical: 15 },
-  twoCol: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 12,
-  },
-  col: { flex: 1 },
-  equipmentGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 14,
-  },
-  equipmentChip: {
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-    backgroundColor: COLORS.primarySoft,
-    borderRadius: 999,
-    paddingHorizontal: 13,
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-  },
-  equipmentChipSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  equipmentText: { color: COLORS.primary, fontWeight: "900" },
-  equipmentTextSelected: { color: COLORS.white },
-  toggleRow: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  toggleLabel: { color: COLORS.text, fontWeight: "900" },
-  toggleSub: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
-  questionBlock: { marginBottom: 12 },
-  questionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  questionChip: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
+  scoreHint: { color: "#CBD5E1", fontSize: 12, lineHeight: 18, marginTop: 4 },
+  stepRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 11, paddingHorizontal: 10, borderRadius: 16, marginBottom: 7 },
+  stepRowActive: { backgroundColor: "rgba(99,91,255,0.32)" },
+  stepIcon: { width: 32, height: 32, borderRadius: 12, backgroundColor: "#1E293B", alignItems: "center", justifyContent: "center" },
+  stepIconActive: { backgroundColor: COLORS.primary },
+  stepIconComplete: { backgroundColor: COLORS.accent },
+  stepText: { color: "#CBD5E1", fontSize: 14, fontWeight: "800" },
+  stepTextActive: { color: COLORS.white },
+  homeButton: { marginTop: 14, backgroundColor: COLORS.white, borderRadius: 16, padding: 13, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  homeButtonText: { color: COLORS.primary, fontWeight: "900" },
+  main: { flex: 1, padding: 20 },
+  card: { width: "100%", maxWidth: 860, alignSelf: "center", backgroundColor: COLORS.card, borderRadius: 30, padding: 22, borderWidth: 1, borderColor: COLORS.border },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 },
+  headerIcon: { width: 54, height: 54, borderRadius: 18, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+  title: { color: COLORS.text, fontSize: 27, fontWeight: "900" },
+  subtitle: { color: COLORS.muted, fontSize: 14, lineHeight: 21, marginTop: 6 },
+  sectionTitle: { marginTop: 6, marginBottom: 10 },
+  sectionTitleText: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
+  sectionSubtitle: { color: COLORS.muted, fontSize: 13, lineHeight: 20, marginTop: 4 },
+  fieldBlock: { marginBottom: 8 },
+  inputLabel: { color: COLORS.text, fontSize: 13, fontWeight: "900", marginBottom: 7, marginTop: 8 },
+  inputShell: { minHeight: 52, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10 },
+  inputShellMultiline: { minHeight: 90, alignItems: "flex-start", paddingTop: 14 },
+  input: { flex: 1, color: COLORS.text, fontSize: 15, minHeight: 48 },
+  inputMultiline: { minHeight: 76, textAlignVertical: "top" },
+  toggleRow: { marginTop: 10, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, borderRadius: 16, padding: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  toggleText: { flex: 1, color: COLORS.text, fontSize: 14, fontWeight: "800" },
+  optionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 4 },
+  optionChip: { flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 10 },
+  optionChipSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  optionChipText: { color: COLORS.primary, fontWeight: "900", fontSize: 12 },
+  optionChipTextSelected: { color: COLORS.white },
+  noticeBox: { marginTop: 10, marginBottom: 12, borderWidth: 1, borderColor: "#C7D2FE", backgroundColor: COLORS.primarySoft, borderRadius: 16, padding: 12, flexDirection: "row", gap: 8 },
+  noticeText: { flex: 1, color: COLORS.text, fontSize: 12, lineHeight: 18, fontWeight: "700" },
+  documentRow: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, borderRadius: 18, padding: 13, marginBottom: 10 },
+  documentIcon: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  documentTitle: { color: COLORS.text, fontSize: 14, fontWeight: "900" },
+  documentValue: { color: COLORS.muted, fontSize: 12, marginTop: 3 },
+  requiredText: { color: COLORS.danger },
+  smallButton: { backgroundColor: COLORS.primary, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 9 },
+  smallButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 12 },
+  groupTitle: { color: COLORS.text, fontSize: 15, fontWeight: "900", marginTop: 16, marginBottom: 8 },
+  questionBlock: { marginTop: 8 },
+  questionGrid: { gap: 8 },
+  questionChip: { borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, borderRadius: 14, padding: 11 },
   questionChipSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   questionChipDisabled: { opacity: 0.45 },
   questionChipText: { color: COLORS.text, fontWeight: "800", fontSize: 12 },
   questionChipTextSelected: { color: COLORS.white },
   questionChipTextDisabled: { color: COLORS.muted },
-  statusList: { marginBottom: 14 },
-  statusRow: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 11,
-    marginBottom: 10,
-  },
-  statusIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  statusList: { borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, borderRadius: 18, padding: 10, marginVertical: 10 },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8 },
+  statusIcon: { width: 28, height: 28, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   statusGood: { backgroundColor: COLORS.accent },
-  statusMissing: { backgroundColor: "#E2E8F0" },
-  statusLabel: { color: COLORS.text, fontWeight: "900" },
-  statusValue: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
-  actionButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 18,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 10,
-  },
-  actionButtonSecondary: {
-    backgroundColor: COLORS.primarySoft,
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-  },
-  actionIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actionIconSecondary: { backgroundColor: COLORS.white },
-  actionTitle: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
-  actionTitleSecondary: { color: COLORS.primary },
-  actionSubtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 18, marginTop: 2 },
-  reviewRow: {
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    paddingVertical: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  reviewLabel: { color: COLORS.muted, fontWeight: "900" },
-  reviewValue: { color: COLORS.text, fontWeight: "900", flex: 1, textAlign: "right" },
-  noticeBox: {
-    backgroundColor: COLORS.primarySoft,
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-    borderRadius: 16,
-    padding: 13,
-    flexDirection: "row",
-    gap: 9,
-    alignItems: "flex-start",
-    marginVertical: 12,
-  },
-  noticeText: { color: COLORS.primaryDark, fontWeight: "800", lineHeight: 20, flex: 1 },
-  primaryButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 16,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 6,
-    flexDirection: "row",
-    gap: 8,
-    width: "100%",
-  },
-  primaryButtonSmall: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 13,
-    paddingHorizontal: 18,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  primaryButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: 15,
-    textAlign: "center",
-    flexShrink: 1,
-  },
-  disabledButton: { opacity: 0.55 },
-  footerNav: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 16,
-    marginTop: 18,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  navButton: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-    backgroundColor: COLORS.primarySoft,
-    paddingVertical: 13,
-    paddingHorizontal: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
+  statusMissing: { backgroundColor: COLORS.surface2, borderWidth: 1, borderColor: COLORS.border },
+  statusLabel: { color: COLORS.text, fontSize: 13, fontWeight: "900" },
+  statusValue: { color: COLORS.muted, fontSize: 12, marginTop: 2 },
+  actionButton: { marginTop: 10, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white, padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
+  actionButtonSecondary: { backgroundColor: COLORS.surface },
+  actionIcon: { width: 42, height: 42, borderRadius: 15, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+  actionIconSecondary: { backgroundColor: COLORS.primarySoft },
+  actionTitle: { color: COLORS.text, fontSize: 14, fontWeight: "900" },
+  actionSubtitle: { color: COLORS.muted, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  reviewRow: { flexDirection: "row", justifyContent: "space-between", gap: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border, paddingVertical: 12 },
+  reviewLabel: { color: COLORS.muted, fontWeight: "800", flex: 1 },
+  reviewValue: { color: COLORS.text, fontWeight: "900", flex: 1.4, textAlign: "right" },
+  footerNav: { marginTop: 20, flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  navButton: { minHeight: 52, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   navButtonText: { color: COLORS.primary, fontWeight: "900" },
+  primaryButton: { minHeight: 52, borderRadius: 16, backgroundColor: COLORS.primary, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  primaryButtonText: { color: COLORS.white, fontSize: 14, fontWeight: "900" },
+  disabledButton: { opacity: 0.55 },
 });

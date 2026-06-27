@@ -1,10 +1,11 @@
 // app/farmer/register.tsx
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -15,11 +16,48 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
+
+/**
+ * Farmer registration updated to fit the Freight registration flow.
+ *
+ * Flow:
+ * 1. Account
+ * 2. Farm
+ * 3. Location
+ * 4. Products
+ * 5. Documents
+ * 6. Legal
+ * 7. Stripe
+ * 8. Review
+ *
+ * Required farmer_subscriptions columns already provided:
+ * - farmer_id text
+ * - farmer_email text
+ * - name text
+ * - username text
+ * - stripe_customer_id text
+ * - stripe_subscription_id text
+ * - subscription_status text
+ * - current_period_end timestamptz
+ * - created_at timestamptz
+ * - updated_at timestamptz
+ *
+ * Add farmer document columns to public.farmers and admin_verifications if you want admin review there too:
+ * - farm_business_license_document text
+ * - food_safety_document text
+ * - product_liability_insurance_document text
+ * - w9_document text
+ * - farm_permit_document text
+ * - organic_certification_document text
+ * - meat_dairy_license_document text
+ * - produce_safety_certificate_document text
+ */
 
 const PENDING_FARMER_KEY = "pendingFarmerApplication";
 
@@ -27,6 +65,7 @@ const COLORS = {
   bg: "#F4F5F7",
   card: "#FFFFFF",
   surface: "#F9FAFB",
+  surface2: "#F1F5F9",
   black: "#050505",
   red: "#D71920",
   redDark: "#9F1117",
@@ -35,7 +74,22 @@ const COLORS = {
   border: "#E5E7EB",
   green: "#16A34A",
   amber: "#D97706",
+  primary: "#166534",
+  primaryDark: "#14532D",
+  primarySoft: "#ECFDF5",
+  white: "#FFFFFF",
 };
+
+const STEPS = [
+  { key: "account", title: "Account", icon: "person-outline" },
+  { key: "farm", title: "Farm", icon: "business-outline" },
+  { key: "location", title: "Location", icon: "location-outline" },
+  { key: "products", title: "Products", icon: "leaf-outline" },
+  { key: "documents", title: "Documents", icon: "document-text-outline" },
+  { key: "legal", title: "Legal", icon: "shield-checkmark-outline" },
+  { key: "stripe", title: "Stripe", icon: "card-outline" },
+  { key: "review", title: "Review", icon: "checkmark-done-outline" },
+] as const;
 
 const productOptions = [
   "Produce",
@@ -81,28 +135,183 @@ const agreements = [
   "I accept Farm2Home service fees, membership fees, payout terms, and platform policies.",
 ];
 
-function normalizeEmail(value: string) {
-  return String(value || "").trim().toLowerCase();
+function clean(value: any) {
+  return String(value ?? "").trim();
 }
 
-function normalizeUsername(value: string) {
-  return String(value || "").trim().toLowerCase();
+function normalizeEmail(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function normalizeUsername(value: any) {
+  return clean(value).toLowerCase();
 }
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
 }
 
-function openExternalUrl(url: string) {
-  if (Platform.OS === "web") {
-    window.location.href = url;
+function isUuid(value: any) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(clean(value));
+}
+
+function isStripeCustomerId(value: any) {
+  return clean(value).startsWith("cus_");
+}
+
+function isStripeSubscriptionId(value: any) {
+  return clean(value).startsWith("sub_");
+}
+
+function pickStripeCustomerId(...values: any[]) {
+  const found = values.find((value) => isStripeCustomerId(value));
+  return found ? clean(found) : "";
+}
+
+function pickStripeSubscriptionId(...values: any[]) {
+  const found = values.find((value) => isStripeSubscriptionId(value));
+  return found ? clean(found) : "";
+}
+
+function maskId(value: string, fallback = "Missing") {
+  const id = clean(value);
+  if (!id) return fallback;
+  if (id.length <= 14) return id;
+  return `${id.slice(0, 8)}...${id.slice(-5)}`;
+}
+
+function makeFallbackAccountId() {
+  const stamp = Date.now().toString().slice(-6);
+  return `Farmer_${stamp}`;
+}
+
+async function parseApiResponse(response: Response) {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { success: false, error: text || "Invalid backend response." };
+  }
+}
+
+function getStripeLaunchUrl(data: any) {
+  return clean(
+    data?.url ||
+      data?.checkoutUrl ||
+      data?.checkout_url ||
+      data?.sessionUrl ||
+      data?.session_url ||
+      data?.checkoutSessionUrl ||
+      data?.checkout_session_url ||
+      data?.link ||
+      data?.data?.url ||
+      data?.data?.checkoutUrl ||
+      data?.result?.url ||
+      data?.result?.checkoutUrl
+  );
+}
+
+async function openUrl(url: string) {
+  const finalUrl = clean(url);
+  if (!finalUrl || !finalUrl.startsWith("http")) {
+    Alert.alert("Stripe Error", "No valid Stripe URL was returned.");
     return;
   }
 
-  router.push(url as any);
+  if (Platform.OS === "web") {
+    window.location.assign(finalUrl);
+    return;
+  }
+
+  try {
+    const result = await WebBrowser.openBrowserAsync(finalUrl);
+    if (result?.type === "cancel" || result?.type === "dismiss") {
+      await Linking.openURL(finalUrl);
+    }
+  } catch (browserError) {
+    console.log("WebBrowser open failed, trying Linking:", browserError);
+    const canOpen = await Linking.canOpenURL(finalUrl);
+    if (!canOpen) {
+      Alert.alert("Stripe Error", "This device cannot open the Stripe URL.");
+      return;
+    }
+    await Linking.openURL(finalUrl);
+  }
+}
+
+function hasCompleteDashboardAccess(row: any) {
+  return Boolean(
+    clean(row?.id || row?.farmer_id || row?.farmerId) &&
+      clean(row?.account_id || row?.accountId) &&
+      isStripeCustomerId(row?.stripe_customer_id || row?.stripeCustomerId) &&
+      isStripeSubscriptionId(row?.subscription_id || row?.stripe_subscription_id || row?.stripeSubscriptionId) &&
+      clean(row?.farm_business_license_document || row?.farmBusinessLicenseDocument) &&
+      clean(row?.food_safety_document || row?.foodSafetyDocument) &&
+      clean(row?.product_liability_insurance_document || row?.productLiabilityInsuranceDocument) &&
+      clean(row?.w9_document || row?.w9Document) &&
+      clean(row?.farm_permit_document || row?.farmPermitDocument)
+  );
+}
+
+async function saveFarmerSession(farmer: any) {
+  const sessionFarmer = {
+    ...farmer,
+    role: "farmer",
+    farmerId: farmer.farmer_id || farmer.farmerId || farmer.id,
+    farmer_id: farmer.farmer_id || farmer.farmerId || farmer.id,
+    accountId: farmer.account_id || farmer.accountId,
+    account_id: farmer.account_id || farmer.accountId,
+    ownerName: farmer.owner_name || farmer.ownerName || farmer.full_name || farmer.name,
+    owner_name: farmer.owner_name || farmer.ownerName || farmer.full_name || farmer.name,
+    farmName: farmer.farm_name || farmer.farmName || farmer.business_name || farmer.businessName,
+    farm_name: farmer.farm_name || farmer.farmName || farmer.business_name || farmer.businessName,
+    businessName: farmer.business_name || farmer.businessName || farmer.farm_name || farmer.farmName,
+    business_name: farmer.business_name || farmer.businessName || farmer.farm_name || farmer.farmName,
+    stripeCustomerId: farmer.stripe_customer_id || farmer.stripeCustomerId,
+    stripe_customer_id: farmer.stripe_customer_id || farmer.stripeCustomerId,
+    stripeSubscriptionId: farmer.stripe_subscription_id || farmer.subscription_id || farmer.stripeSubscriptionId,
+    stripe_subscription_id: farmer.stripe_subscription_id || farmer.subscription_id || farmer.stripeSubscriptionId,
+    subscriptionId: farmer.subscription_id || farmer.stripe_subscription_id || farmer.subscriptionId,
+    subscription_id: farmer.subscription_id || farmer.stripe_subscription_id || farmer.subscriptionId,
+    accountActive: farmer.account_active,
+    account_active: farmer.account_active,
+    membershipStatus: farmer.membership_status,
+    membership_status: farmer.membership_status,
+    dashboardReady: hasCompleteDashboardAccess(farmer),
+    updatedAt: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  await AsyncStorage.multiSet([
+    ["currentFarmer", JSON.stringify(sessionFarmer)],
+    [PENDING_FARMER_KEY, JSON.stringify(sessionFarmer)],
+    ["currentFarmerUser", JSON.stringify(sessionFarmer)],
+    ["farm2homeCurrentFarmer", JSON.stringify(sessionFarmer)],
+    ["currentUser", JSON.stringify(sessionFarmer)],
+    ["userRole", "farmer"],
+    ["currentUserRole", "farmer"],
+    ["lastLoginRole", "farmer"],
+    ["lastFarmerDashboardReady", hasCompleteDashboardAccess(farmer) ? "true" : "false"],
+  ]);
 }
 
 export default function FarmerRegister() {
+  const params = useLocalSearchParams();
+
+  const [step, setStep] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [stripeLoading, setStripeLoading] = useState(false);
+  const [syncingStripe, setSyncingStripe] = useState(false);
+
+  const [savedFarmerId, setSavedFarmerId] = useState("");
+  const [profileId, setProfileId] = useState("");
+  const [farmerId, setFarmerId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [stripeCustomerId, setStripeCustomerId] = useState("");
+  const [subscriptionId, setSubscriptionId] = useState("");
+  const [subscriptionStatus, setSubscriptionStatus] = useState("");
+
   const [ownerName, setOwnerName] = useState("");
   const [farmName, setFarmName] = useState("");
   const [businessName, setBusinessName] = useState("");
@@ -120,88 +329,224 @@ export default function FarmerRegister() {
 
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [accepted, setAccepted] = useState<Record<number, boolean>>({});
-  const [loading, setLoading] = useState(false);
+
+  const [farmBusinessLicenseDocument, setFarmBusinessLicenseDocument] = useState("");
+  const [foodSafetyDocument, setFoodSafetyDocument] = useState("");
+  const [productLiabilityInsuranceDocument, setProductLiabilityInsuranceDocument] = useState("");
+  const [w9Document, setW9Document] = useState("");
+  const [farmPermitDocument, setFarmPermitDocument] = useState("");
+  const [organicCertificationDocument, setOrganicCertificationDocument] = useState("");
+  const [meatDairyLicenseDocument, setMeatDairyLicenseDocument] = useState("");
+  const [produceSafetyCertificateDocument, setProduceSafetyCertificateDocument] = useState("");
 
   const businessComplete = useMemo(
-    () =>
-      Boolean(
-        ownerName.trim() &&
-          farmName.trim() &&
-          businessName.trim() &&
-          isValidEmail(email) &&
-          phone.trim()
-      ),
+    () => Boolean(ownerName.trim() && farmName.trim() && businessName.trim() && isValidEmail(email) && phone.trim()),
     [ownerName, farmName, businessName, email, phone]
   );
 
   const loginComplete = useMemo(
-    () =>
-      Boolean(
-        username.trim() &&
-          password.trim().length >= 6 &&
-          confirmPassword.trim() &&
-          password.trim() === confirmPassword.trim()
-      ),
+    () => Boolean(username.trim() && password.trim().length >= 6 && confirmPassword.trim() && password.trim() === confirmPassword.trim()),
     [username, password, confirmPassword]
   );
 
   const locationComplete = useMemo(
-    () =>
-      Boolean(
-        businessAddress.trim() &&
-          city.trim() &&
-          stateValue.trim() &&
-          zipCode.trim()
-      ),
+    () => Boolean(businessAddress.trim() && city.trim() && stateValue.trim() && zipCode.trim()),
     [businessAddress, city, stateValue, zipCode]
   );
 
   const productsComplete = selectedProducts.length > 0;
   const legalComplete = agreements.every((_, index) => accepted[index]);
 
-  function toggleProduct(product: string) {
-    setSelectedProducts((prev) =>
-      prev.includes(product)
-        ? prev.filter((item) => item !== product)
-        : [...prev, product]
-    );
+  const documentsComplete = useMemo(
+    () =>
+      Boolean(
+        farmBusinessLicenseDocument.trim() &&
+          foodSafetyDocument.trim() &&
+          productLiabilityInsuranceDocument.trim() &&
+          w9Document.trim() &&
+          farmPermitDocument.trim()
+      ),
+    [farmBusinessLicenseDocument, foodSafetyDocument, productLiabilityInsuranceDocument, w9Document, farmPermitDocument]
+  );
+
+  const setupStatus = useMemo(
+    () => [
+      { label: "Farmer Profile", complete: Boolean(savedFarmerId || farmerId), value: savedFarmerId || farmerId ? "Found" : "Missing" },
+      { label: "Static Account", complete: Boolean(accountId), value: accountId || "Missing" },
+      { label: "Stripe Customer", complete: isStripeCustomerId(stripeCustomerId), value: maskId(stripeCustomerId) },
+      { label: "Subscription", complete: isStripeSubscriptionId(subscriptionId), value: maskId(subscriptionId) },
+      { label: "Documents", complete: documentsComplete, value: documentsComplete ? "Complete" : "Missing" },
+    ],
+    [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete]
+  );
+
+  const setupScore = useMemo(() => setupStatus.filter((item) => item.complete).length, [setupStatus]);
+  const allFiveRequirementsFound = useMemo(
+    () => Boolean((savedFarmerId || farmerId) && accountId && isStripeCustomerId(stripeCustomerId) && isStripeSubscriptionId(subscriptionId) && documentsComplete),
+    [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete]
+  );
+
+  useEffect(() => {
+    loadSavedFarmer();
+  }, []);
+
+  useEffect(() => {
+    const stripeStatus = String(params?.stripe || params?.payment || "");
+    const returnedFarmerId = String(params?.farmerId || params?.farmer_id || "");
+    const returnedEmail = String(params?.email || "");
+
+    if (returnedEmail) setEmail(normalizeEmail(returnedEmail));
+    if (returnedFarmerId) {
+      setFarmerId(returnedFarmerId);
+      setSavedFarmerId(returnedFarmerId);
+    }
+
+    if (stripeStatus === "success") {
+      handleStripeSuccessReturn(returnedFarmerId);
+    }
+  }, [params?.stripe, params?.payment, params?.farmerId, params?.farmer_id, params?.email]);
+
+  function goNext() {
+    setStep((prev) => Math.min(prev + 1, STEPS.length - 1));
   }
 
-  function validateForm() {
+  function goBack() {
+    setStep((prev) => Math.max(prev - 1, 0));
+  }
+
+  function goDashboard() {
+    router.replace("/farmer/dashboard" as any);
+  }
+
+  function toggleProduct(product: string) {
+    setSelectedProducts((prev) => (prev.includes(product) ? prev.filter((item) => item !== product) : [...prev, product]));
+  }
+
+  function hydrateForm(row: any) {
+    const rowFarmerId = clean(row?.id || row?.farmer_id || row?.farmerId || "");
+    const rowProfileId = clean(row?.profile_id || row?.profileId || "");
+    const rowAccountId = clean(row?.account_id || row?.accountId || "");
+    const rowCustomerId = pickStripeCustomerId(row?.stripe_customer_id, row?.stripeCustomerId);
+    const rowSubId = pickStripeSubscriptionId(row?.subscription_id, row?.stripe_subscription_id, row?.stripeSubscriptionId);
+
+    if (rowFarmerId) {
+      setFarmerId(rowFarmerId);
+      setSavedFarmerId(rowFarmerId);
+    }
+    if (rowProfileId) setProfileId(rowProfileId);
+    if (rowAccountId) setAccountId(rowAccountId);
+    if (rowCustomerId) setStripeCustomerId(rowCustomerId);
+    if (rowSubId) setSubscriptionId(rowSubId);
+
+    setSubscriptionStatus(row?.subscription_status || row?.subscriptionStatus || subscriptionStatus || "");
+
+    if (row?.owner_name || row?.ownerName || row?.full_name || row?.name) setOwnerName(clean(row.owner_name || row.ownerName || row.full_name || row.name));
+    if (row?.farm_name || row?.farmName) setFarmName(clean(row.farm_name || row.farmName));
+    if (row?.business_name || row?.businessName || row?.company_name) setBusinessName(clean(row.business_name || row.businessName || row.company_name));
+    if (row?.email || row?.farmer_email) setEmail(normalizeEmail(row.email || row.farmer_email));
+    if (row?.phone) setPhone(clean(row.phone));
+    if (row?.username) setUsername(clean(row.username));
+
+    if (row?.business_address || row?.address) setBusinessAddress(clean(row.business_address || row.address));
+    if (row?.city) setCity(clean(row.city));
+    if (row?.state) setStateValue(clean(row.state).toUpperCase().slice(0, 2));
+    if (row?.zip_code) setZipCode(clean(row.zip_code));
+
+    if (row?.farm_business_license_document) setFarmBusinessLicenseDocument(clean(row.farm_business_license_document));
+    if (row?.food_safety_document) setFoodSafetyDocument(clean(row.food_safety_document));
+    if (row?.product_liability_insurance_document) setProductLiabilityInsuranceDocument(clean(row.product_liability_insurance_document));
+    if (row?.w9_document) setW9Document(clean(row.w9_document));
+    if (row?.farm_permit_document) setFarmPermitDocument(clean(row.farm_permit_document));
+    if (row?.organic_certification_document) setOrganicCertificationDocument(clean(row.organic_certification_document));
+    if (row?.meat_dairy_license_document) setMeatDairyLicenseDocument(clean(row.meat_dairy_license_document));
+    if (row?.produce_safety_certificate_document) setProduceSafetyCertificateDocument(clean(row.produce_safety_certificate_document));
+
+    const products = row?.selected_products || row?.selected_product_categories || row?.product_categories;
+    if (Array.isArray(products)) setSelectedProducts(products.map((item) => clean(item)).filter(Boolean));
+  }
+
+  function buildCurrentSnapshot(base: any = {}) {
+    const id = clean(base.id || base.farmer_id || savedFarmerId || farmerId);
+    const finalSub = pickStripeSubscriptionId(base.subscription_id, base.stripe_subscription_id, subscriptionId);
+    const finalCustomer = pickStripeCustomerId(base.stripe_customer_id, stripeCustomerId);
+
+    return {
+      ...base,
+      id,
+      farmer_id: id,
+      farmerId: id,
+      auth_user_id: clean(base.auth_user_id || id),
+      profile_id: clean(base.profile_id || profileId || id),
+      role: "farmer",
+      email: normalizeEmail(base.email || email),
+      account_id: clean(base.account_id || accountId),
+      accountId: clean(base.account_id || accountId),
+      owner_name: clean(base.owner_name || ownerName),
+      ownerName: clean(base.owner_name || ownerName),
+      full_name: clean(base.full_name || ownerName),
+      name: clean(base.name || ownerName),
+      farm_name: clean(base.farm_name || farmName),
+      farmName: clean(base.farm_name || farmName),
+      business_name: clean(base.business_name || businessName),
+      businessName: clean(base.business_name || businessName),
+      phone: clean(base.phone || phone),
+      username: normalizeUsername(base.username || username),
+      stripe_customer_id: finalCustomer,
+      stripeCustomerId: finalCustomer,
+      subscription_id: finalSub,
+      subscriptionId: finalSub,
+      stripe_subscription_id: finalSub,
+      stripeSubscriptionId: finalSub,
+      subscription_status: clean(base.subscription_status || subscriptionStatus || (finalSub ? "active" : "pending_payment")),
+      membership_status: finalSub ? "active" : "pending_payment",
+      farm_business_license_document: clean(base.farm_business_license_document || farmBusinessLicenseDocument),
+      food_safety_document: clean(base.food_safety_document || foodSafetyDocument),
+      product_liability_insurance_document: clean(base.product_liability_insurance_document || productLiabilityInsuranceDocument),
+      w9_document: clean(base.w9_document || w9Document),
+      farm_permit_document: clean(base.farm_permit_document || farmPermitDocument),
+      account_active: Boolean(id && accountId && finalCustomer && finalSub && documentsComplete),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  function validateForm({ full = true }: { full?: boolean } = {}) {
     if (!businessComplete) {
-      Alert.alert(
-        "Business Info Required",
-        "Complete owner name, farm name, business name, email, and phone."
-      );
+      Alert.alert("Business Info Required", "Complete owner name, farm name, business name, email, and phone.");
+      setStep(0);
       return false;
     }
 
-    if (!loginComplete) {
-      Alert.alert(
-        "Login Required",
-        "Create a username and matching password with at least 6 characters."
-      );
-      return false;
+    if (!savedFarmerId && !farmerId) {
+      if (!loginComplete) {
+        Alert.alert("Login Required", "Create a username and matching password with at least 6 characters.");
+        setStep(0);
+        return false;
+      }
     }
 
     if (!locationComplete) {
-      Alert.alert(
-        "Location Required",
-        "Complete business address, city, state, and zip code."
-      );
+      Alert.alert("Location Required", "Complete business address, city, state, and zip code.");
+      setStep(2);
       return false;
     }
 
+    if (!full) return true;
+
     if (!productsComplete) {
       Alert.alert("Products Required", "Select at least one product type.");
+      setStep(3);
+      return false;
+    }
+
+    if (!documentsComplete) {
+      Alert.alert("Documents Required", "Upload or paste links for all required farmer documents.");
+      setStep(4);
       return false;
     }
 
     if (!legalComplete) {
-      Alert.alert(
-        "Agreement Required",
-        "Accept all Farmer Seller Agreement items before continuing."
-      );
+      Alert.alert("Agreement Required", "Accept all Farmer Seller Agreement items before continuing.");
+      setStep(5);
       return false;
     }
 
@@ -209,508 +554,649 @@ export default function FarmerRegister() {
   }
 
   async function generateFarmerAccountId() {
-    const { data, error } = await supabase.rpc("next_account_id", {
-      p_role: "farmer",
-      p_prefix: "Farmer",
-    });
-
-    if (error) throw error;
-    if (!data) throw new Error("Unable to generate farmer account ID.");
-
-    return String(data);
+    try {
+      const { data, error } = await supabase.rpc("next_account_id", { p_role: "farmer", p_prefix: "Farmer" });
+      if (!error && data) return String(data);
+    } catch (error) {
+      console.log("next_account_id skipped:", error);
+    }
+    return makeFallbackAccountId();
   }
 
-  async function checkDuplicateFarmer(cleanEmail: string, cleanUsername: string) {
+  async function findFarmerByIdOrEmail(targetId?: string, targetEmail?: string) {
+    const id = clean(targetId);
+    const emailValue = normalizeEmail(targetEmail);
+
+    if (id) {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .or(`id.eq.${id},farmer_id.eq.${id},profile_id.eq.${id}`)
+        .maybeSingle();
+
+      if (!error && data) return data;
+      if (error) console.log("farmer lookup by id:", error.message);
+    }
+
+    if (emailValue) {
+      const { data, error } = await supabase.from("farmers").select("*").eq("email", emailValue).maybeSingle();
+      if (!error && data) return data;
+      if (error) console.log("farmer lookup by email:", error.message);
+    }
+
+    return null;
+  }
+
+  async function findProfileByEmail(targetEmail: string) {
+    const emailValue = normalizeEmail(targetEmail);
+    if (!emailValue) return null;
+
+    const { data, error } = await supabase.from("profiles").select("*").eq("email", emailValue).maybeSingle();
+    if (error) {
+      console.log("profile lookup error:", error.message);
+      return null;
+    }
+    return data || null;
+  }
+
+  async function findProfileByAuthId(authId: string) {
+    if (!isUuid(authId)) return null;
+
+    const { data, error } = await supabase.from("profiles").select("*").or(`id.eq.${authId},auth_user_id.eq.${authId}`).maybeSingle();
+    if (error) {
+      console.log("profile lookup auth error:", error.message);
+      return null;
+    }
+    return data || null;
+  }
+
+  async function getBestFarmerSubscription(targetId?: string, targetEmail?: string) {
+    const id = clean(targetId);
+    const emailValue = normalizeEmail(targetEmail);
+
+    const filters = [id ? `farmer_id.eq.${id}` : "", emailValue ? `farmer_email.eq.${emailValue}` : ""].filter(Boolean).join(",");
+    if (!filters) return null;
+
     const { data, error } = await supabase
-      .from("farmers")
-      .select("id,account_id,email,username")
-      .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-      .maybeSingle();
+      .from("farmer_subscriptions")
+      .select("*")
+      .or(filters)
+      .order("updated_at", { ascending: false })
+      .limit(10);
 
     if (error) {
-      console.log("Farmer duplicate check error:", error.message);
-      return false;
+      console.log("farmer subscription lookup error:", error.message);
+      return null;
     }
 
-    if (data) {
-      Alert.alert(
-        "Account Exists",
-        "A farmer account already exists with this email or username."
-      );
-      return true;
-    }
+    if (!Array.isArray(data) || data.length === 0) return null;
 
-    return false;
+    const completeRow = data.find((row) => pickStripeCustomerId(row?.stripe_customer_id) && pickStripeSubscriptionId(row?.stripe_subscription_id));
+    return completeRow || data[0];
   }
 
-  async function saveLocalFarmerSession(farmer: any) {
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(farmer));
-    await AsyncStorage.setItem(PENDING_FARMER_KEY, JSON.stringify(farmer));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(farmer));
-    await AsyncStorage.setItem("userRole", "farmer");
-    await AsyncStorage.setItem("currentUserRole", "farmer");
-  }
+  async function upsertProfileForFarmer(authId: string, emailValue: string, accountValue: string) {
+    const existingByEmail = await findProfileByEmail(emailValue);
+    const existingByAuth = existingByEmail ? null : await findProfileByAuthId(authId);
+    const existing = existingByEmail || existingByAuth;
 
-  async function upsertProfile(payload: any) {
-    const { data: existingProfile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", payload.id)
-      .maybeSingle();
-
-    const profilePayload = {
-      id: payload.id,
-      auth_user_id: payload.id,
-      account_id: payload.account_id,
+    const payload = {
+      auth_user_id: authId,
       role: "farmer",
-      full_name: payload.owner_name,
-      name: payload.owner_name,
-      email: payload.email,
-      phone: payload.phone,
-      username: payload.username,
-      company_name: payload.business_name,
+      full_name: ownerName.trim(),
+      name: ownerName.trim(),
+      email: normalizeEmail(emailValue),
+      phone: phone.trim(),
+      username: normalizeUsername(username),
+      company_name: businessName.trim(),
+      account_id: accountValue,
       account_active: true,
-      updated_at: payload.updated_at,
+      updated_at: new Date().toISOString(),
     };
 
-    if (existingProfile?.id) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .update(profilePayload)
-        .eq("id", payload.id)
-        .select("*")
-        .single();
-
+    if (existing?.id) {
+      const { data, error } = await supabase.from("profiles").update(payload).eq("id", existing.id).select("*").maybeSingle();
       if (error) throw error;
-      return data;
+      return data || { ...existing, ...payload };
     }
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .insert({
-        ...profilePayload,
-        created_at: payload.created_at,
-      })
-      .select("*")
-      .single();
-
+    const { data, error } = await supabase.from("profiles").insert({ id: authId, ...payload, created_at: new Date().toISOString() }).select("*").maybeSingle();
     if (error) throw error;
     return data;
   }
 
-  async function createAdminVerificationRecord(farmerPayload: any) {
-    const { error } = await supabase.from("admin_verifications").upsert(
-      {
-        id: farmerPayload.id,
-        account_id: farmerPayload.account_id,
-        farmer_id: farmerPayload.id,
-        profile_id: farmerPayload.profile_id,
-        account_type: "FARMER",
-        role: "farmer",
-        type: "FARMER",
-
-        farm_name: farmerPayload.farm_name,
-        business_name: farmerPayload.business_name,
-        company_name: farmerPayload.business_name,
-        owner_name: farmerPayload.owner_name,
-        email: farmerPayload.email,
-        phone: farmerPayload.phone,
-        username: farmerPayload.username,
-
-        business_address: farmerPayload.business_address,
-        address: farmerPayload.address,
-        city: farmerPayload.city,
-        state: farmerPayload.state,
-        zip_code: farmerPayload.zip_code,
-
-        selected_products: farmerPayload.selected_products,
-        selected_product_categories: farmerPayload.selected_product_categories,
-        legal_agreements: farmerPayload.legal_agreements,
-
-        status: "ACTIVE",
-        compliance_status: "ACTIVE",
-        admin_review_status: "DOCUMENT_REVIEW_ONLY",
-        review_decision: "NOT_REQUIRED",
-
-        approved: true,
-        rejected: false,
-        reviewed: false,
-        needs_more_info: false,
-        account_active: true,
-        store_unlocked: true,
-
-        compliance_submitted: false,
-        application_fee_paid: false,
-        farmer_membership_paid: false,
-        monthly_membership_started: false,
-
-        stripe_account_id: null,
-        farmer_stripe_account_id: null,
-        stripe_customer_id: null,
-        stripe_subscription_id: null,
-        stripe_checkout_session_id: null,
-        stripe_connect_status: "not_started",
-        payouts_enabled: false,
-        charges_enabled: false,
-        stripe_payouts_enabled: false,
-        stripe_charges_enabled: false,
-        stripe_onboarding_complete: false,
-
-        uploaded_docs: {},
-        legal_checks: {},
-        documents: [],
-
-        created_at: farmerPayload.created_at,
-        updated_at: farmerPayload.updated_at,
-      },
-      { onConflict: "id" }
-    );
-
-    if (error) console.log("Farmer admin verification save error:", error.message);
-  }
-
-  async function notifyAdminFarmer(farmer: any) {
-    try {
-      await fetch(`${API_BASE_URL}/notify/farmer-verification`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(farmer),
-      });
-    } catch (error) {
-      console.log("Farmer admin notify skipped:", error);
-    }
-  }
-
-  async function createFarmerCheckout(params: {
+  async function upsertFarmerSubscriptionRow(values: {
     farmerId: string;
-    accountId: string;
-    email: string;
-    name: string;
-    username: string;
-    businessName: string;
-    farmName: string;
+    emailValue: string;
+    customerId?: string;
+    subscriptionValue?: string;
+    subscriptionStatusValue?: string;
   }) {
-    const response = await fetch(`${API_BASE_URL}/payments/create-farmer-checkout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        farmer_id: params.farmerId,
-        farmerId: params.farmerId,
-        account_id: params.accountId,
-        accountId: params.accountId,
-        email: params.email,
-        farmer_email: params.email,
-        name: params.name,
-        username: params.username,
-        businessName: params.businessName,
-        business_name: params.businessName,
-        farmName: params.farmName,
-        farm_name: params.farmName,
-        role: "farmer",
-      }),
+    const now = new Date().toISOString();
+    const sub = pickStripeSubscriptionId(values.subscriptionValue);
+    const customer = pickStripeCustomerId(values.customerId);
+
+    const payload = {
+      farmer_id: values.farmerId,
+      farmer_email: normalizeEmail(values.emailValue),
+      name: ownerName.trim() || businessName.trim() || farmName.trim(),
+      username: normalizeUsername(username),
+      stripe_customer_id: customer || null,
+      stripe_subscription_id: sub || null,
+      subscription_status: values.subscriptionStatusValue || (sub ? "active" : "pending_payment"),
+      updated_at: now,
+    };
+
+    const { data: existing, error: lookupError } = await supabase
+      .from("farmer_subscriptions")
+      .select("id")
+      .or(`farmer_id.eq.${values.farmerId},farmer_email.eq.${normalizeEmail(values.emailValue)}`)
+      .limit(1);
+
+    if (lookupError) console.log("farmer subscription lookup before save failed:", lookupError.message);
+
+    if (Array.isArray(existing) && existing[0]?.id) {
+      const { error } = await supabase.from("farmer_subscriptions").update(payload).eq("id", existing[0].id);
+      if (error) throw error;
+      return;
+    }
+
+    const { error } = await supabase.from("farmer_subscriptions").insert({ ...payload, created_at: now });
+    if (error) throw error;
+  }
+
+  async function saveAdminVerificationIfTableExists(farmerAuthId: string, savedFarmer: any) {
+    const now = new Date().toISOString();
+    const paid = Boolean(savedFarmer.subscription_id || savedFarmer.stripe_subscription_id);
+    const docsComplete = hasCompleteDashboardAccess(savedFarmer) || documentsComplete;
+
+    const payload = {
+      id: farmerAuthId,
+      account_id: savedFarmer.account_id,
+      farmer_id: farmerAuthId,
+      profile_id: savedFarmer.profile_id,
+      account_type: "FARMER",
+      role: "farmer",
+      type: "FARMER",
+
+      farm_name: farmName.trim(),
+      business_name: businessName.trim(),
+      company_name: businessName.trim(),
+      owner_name: ownerName.trim(),
+      email: normalizeEmail(email),
+      phone: phone.trim(),
+      username: normalizeUsername(username),
+
+      business_address: businessAddress.trim(),
+      address: businessAddress.trim(),
+      city: city.trim(),
+      state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
+      zip_code: zipCode.trim(),
+
+      selected_products: selectedProducts,
+      selected_product_categories: selectedProducts,
+      product_categories: selectedProducts,
+      legal_agreements: accepted,
+
+      farm_business_license_document: farmBusinessLicenseDocument.trim(),
+      food_safety_document: foodSafetyDocument.trim(),
+      product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
+      w9_document: w9Document.trim(),
+      farm_permit_document: farmPermitDocument.trim(),
+      organic_certification_document: organicCertificationDocument.trim() || null,
+      meat_dairy_license_document: meatDairyLicenseDocument.trim() || null,
+      produce_safety_certificate_document: produceSafetyCertificateDocument.trim() || null,
+
+      uploaded_docs: {
+        farm_business_license_document: farmBusinessLicenseDocument.trim(),
+        food_safety_document: foodSafetyDocument.trim(),
+        product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
+        w9_document: w9Document.trim(),
+        farm_permit_document: farmPermitDocument.trim(),
+        organic_certification_document: organicCertificationDocument.trim(),
+        meat_dairy_license_document: meatDairyLicenseDocument.trim(),
+        produce_safety_certificate_document: produceSafetyCertificateDocument.trim(),
+      },
+
+      status: paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
+      compliance_status: paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
+      admin_review_status: paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
+      review_decision: paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
+
+      approved: paid && docsComplete,
+      rejected: false,
+      reviewed: false,
+      needs_more_info: false,
+      account_active: paid && docsComplete,
+      store_unlocked: paid && docsComplete,
+      compliance_submitted: docsComplete,
+      has_completed_compliance: docsComplete,
+
+      farmer_membership_paid: paid,
+      monthly_membership_started: paid,
+      membership_status: paid ? "active" : "pending_payment",
+      subscription_status: subscriptionStatus || (paid ? "active" : "pending_payment"),
+      stripe_customer_id: savedFarmer.stripe_customer_id || null,
+      stripe_subscription_id: savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
+      subscription_id: savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
+
+      updated_at: now,
+      created_at: now,
+    };
+
+    const { error } = await supabase.from("admin_verifications").upsert(payload, { onConflict: "id" });
+    if (error) console.log("admin_verifications skipped:", error.message);
+  }
+
+  async function saveFarmerUserRow(authId: string, passedAccountId?: string) {
+    const now = new Date().toISOString();
+    const emailValue = normalizeEmail(email);
+    const existing = await findFarmerByIdOrEmail(authId, emailValue);
+    const subRow = await getBestFarmerSubscription(authId, emailValue);
+
+    const finalAccountId = clean(existing?.account_id || passedAccountId || accountId || (await generateFarmerAccountId()));
+    const finalCustomerId = pickStripeCustomerId(stripeCustomerId, existing?.stripe_customer_id, subRow?.stripe_customer_id);
+    const finalSubscriptionId = pickStripeSubscriptionId(subscriptionId, existing?.subscription_id, existing?.stripe_subscription_id, subRow?.stripe_subscription_id);
+    const finalStatus = subscriptionStatus || subRow?.subscription_status || (finalSubscriptionId ? "active" : "pending_payment");
+    const complete = Boolean(authId && finalAccountId && finalCustomerId && finalSubscriptionId && documentsComplete);
+
+    const profile = await upsertProfileForFarmer(authId, emailValue, finalAccountId);
+    if (!profile?.id) throw new Error("Profile could not be created.");
+
+    const farmerPayload: any = {
+      id: authId,
+      farmer_id: authId,
+      auth_user_id: authId,
+      profile_id: profile.id,
+      role: "farmer",
+
+      email: emailValue,
+      username: normalizeUsername(username),
+      phone: phone.trim(),
+
+      owner_name: ownerName.trim(),
+      full_name: ownerName.trim(),
+      name: ownerName.trim(),
+      farm_name: farmName.trim(),
+      business_name: businessName.trim(),
+      company_name: businessName.trim(),
+
+      business_address: businessAddress.trim(),
+      address: businessAddress.trim(),
+      city: city.trim(),
+      state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
+      zip_code: zipCode.trim(),
+
+      selected_products: selectedProducts,
+      selected_product_categories: selectedProducts,
+      product_categories: selectedProducts,
+      legal_agreements: accepted,
+
+      farm_business_license_document: farmBusinessLicenseDocument.trim(),
+      food_safety_document: foodSafetyDocument.trim(),
+      product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
+      w9_document: w9Document.trim(),
+      farm_permit_document: farmPermitDocument.trim(),
+      organic_certification_document: organicCertificationDocument.trim() || null,
+      meat_dairy_license_document: meatDairyLicenseDocument.trim() || null,
+      produce_safety_certificate_document: produceSafetyCertificateDocument.trim() || null,
+
+      account_id: finalAccountId,
+      stripe_customer_id: finalCustomerId || null,
+      stripe_subscription_id: finalSubscriptionId || null,
+      subscription_id: finalSubscriptionId || null,
+      subscription_status: finalStatus,
+      membership_status: finalSubscriptionId ? "active" : "pending_payment",
+
+      approved: complete,
+      rejected: false,
+      reviewed: false,
+      needs_more_info: false,
+      account_active: complete,
+      store_unlocked: complete,
+      compliance_submitted: documentsComplete,
+      has_completed_compliance: documentsComplete,
+      farmer_membership_paid: Boolean(finalSubscriptionId),
+      monthly_membership_started: Boolean(finalSubscriptionId),
+
+      verification_status: complete ? "SUBMITTED" : finalSubscriptionId ? "PENDING_DOCUMENTS" : "REGISTERED",
+      compliance_status: complete ? "SUBMITTED" : finalSubscriptionId ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
+      admin_review_status: complete ? "submitted" : finalSubscriptionId ? "pending_documents" : "pending_payment",
+      review_decision: complete ? "submitted" : finalSubscriptionId ? "pending_documents" : "pending_payment",
+
+      stripe_connect_status: "not_required",
+      payouts_enabled: false,
+      charges_enabled: false,
+      stripe_payouts_enabled: false,
+      stripe_charges_enabled: false,
+      stripe_onboarding_complete: false,
+      notifications_enabled: true,
+      expo_push_token: existing?.expo_push_token || "",
+
+      updated_at: now,
+    };
+
+    const { data: savedFarmer, error } = await supabase
+      .from("farmers")
+      .upsert(existing?.id ? farmerPayload : { ...farmerPayload, created_at: now }, { onConflict: "id" })
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!savedFarmer?.id) throw new Error("Farmer registration did not save.");
+
+    await upsertFarmerSubscriptionRow({
+      farmerId: authId,
+      emailValue,
+      customerId: finalCustomerId,
+      subscriptionValue: finalSubscriptionId,
+      subscriptionStatusValue: finalStatus,
     });
 
-    const result = await response.json().catch(() => null);
+    await saveAdminVerificationIfTableExists(authId, savedFarmer);
 
-    if (!response.ok) {
-      throw new Error(
-        result?.error ||
-          result?.message ||
-          "Unable to create farmer Stripe checkout session."
-      );
-    }
+    const finalRow = {
+      ...savedFarmer,
+      stripe_subscription_id: savedFarmer.subscription_id || savedFarmer.stripe_subscription_id,
+      subscription_status: finalStatus,
+    };
 
-    const checkoutUrl = result?.url || result?.checkoutUrl || result?.sessionUrl;
+    hydrateForm(finalRow);
+    await saveFarmerSession(finalRow);
 
-    if (!checkoutUrl) {
-      throw new Error("Stripe checkout URL was not returned from backend.");
-    }
+    setSavedFarmerId(savedFarmer.id);
+    setFarmerId(savedFarmer.id);
+    setProfileId(clean(savedFarmer.profile_id));
+    setAccountId(clean(savedFarmer.account_id));
+    setStripeCustomerId(pickStripeCustomerId(savedFarmer.stripe_customer_id));
+    setSubscriptionId(pickStripeSubscriptionId(savedFarmer.subscription_id, savedFarmer.stripe_subscription_id));
+    setSubscriptionStatus(finalStatus);
 
-    return checkoutUrl;
+    return finalRow;
   }
 
-  async function registerFarmer() {
-    if (loading) return;
-    if (!validateForm()) return;
+  async function getOrCreateAuthUser() {
+    const emailValue = normalizeEmail(email);
+
+    const { data: currentUserData } = await supabase.auth.getUser();
+    if (currentUserData?.user?.id) return currentUserData.user.id;
+
+    const existingFarmer = await findFarmerByIdOrEmail("", emailValue);
+    if (existingFarmer?.id) return existingFarmer.id;
+
+    const { data, error } = await supabase.auth.signUp({
+      email: emailValue,
+      password: password.trim(),
+      options: {
+        data: {
+          role: "farmer",
+          username: normalizeUsername(username),
+          owner_name: ownerName.trim(),
+          full_name: ownerName.trim(),
+          name: ownerName.trim(),
+          business_name: businessName.trim(),
+          farm_name: farmName.trim(),
+        },
+      },
+    });
+
+    if (error) throw error;
+    if (!data?.user?.id) throw new Error("Unable to create farmer Auth user.");
+
+    return data.user.id;
+  }
+
+  async function saveFarmerProfile(fullValidation = false) {
+    if (saving) return null;
+    if (!validateForm({ full: fullValidation })) return null;
 
     try {
-      setLoading(true);
-
-      const cleanOwnerName = ownerName.trim();
-      const cleanFarmName = farmName.trim();
-      const cleanBusinessName = businessName.trim();
-      const cleanEmail = normalizeEmail(email);
-      const cleanPhone = phone.trim();
-      const cleanUsername = normalizeUsername(username);
-      const cleanPassword = password.trim();
-      const cleanState = stateValue.trim().toUpperCase().slice(0, 2) || "MI";
-      const now = new Date().toISOString();
-
-      const duplicate = await checkDuplicateFarmer(cleanEmail, cleanUsername);
-      if (duplicate) return;
-
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: cleanPassword,
-        options: {
-          data: {
-            role: "farmer",
-            username: cleanUsername,
-            owner_name: cleanOwnerName,
-            full_name: cleanOwnerName,
-            name: cleanOwnerName,
-            business_name: cleanBusinessName,
-            farm_name: cleanFarmName,
-          },
-        },
-      });
-
-      if (authError) {
-        Alert.alert("Signup Error", authError.message);
-        return;
-      }
-
-      const farmerId = authData?.user?.id;
-
-      if (!farmerId) {
-        Alert.alert("Signup Error", "Unable to create farmer account. Please try again.");
-        return;
-      }
-
-      const accountId = await generateFarmerAccountId();
-
-      const farmerPayload = {
-        id: farmerId,
-        account_id: accountId,
-        auth_user_id: farmerId,
-        profile_id: farmerId,
-        role: "farmer",
-
-        email: cleanEmail,
-        username: cleanUsername,
-        phone: cleanPhone,
-
-        owner_name: cleanOwnerName,
-        full_name: cleanOwnerName,
-        name: cleanOwnerName,
-        farm_name: cleanFarmName,
-        business_name: cleanBusinessName,
-        company_name: cleanBusinessName,
-
-        business_address: businessAddress.trim(),
-        address: businessAddress.trim(),
-        city: city.trim(),
-        state: cleanState,
-        zip_code: zipCode.trim(),
-
-        selected_products: selectedProducts,
-        selected_product_categories: selectedProducts,
-        product_categories: selectedProducts,
-        legal_agreements: accepted,
-
-        compliance_status: "ACTIVE",
-        admin_review_status: "DOCUMENT_REVIEW_ONLY",
-        review_decision: "NOT_REQUIRED",
-
-        approved: true,
-        rejected: false,
-        reviewed: false,
-        needs_more_info: false,
-        account_active: true,
-        store_unlocked: true,
-
-        compliance_submitted: false,
-        application_fee_paid: false,
-        farmer_membership_paid: false,
-        monthly_membership_started: false,
-
-        membership_status: "pending_payment",
-        subscription_status: "pending_payment",
-
-        stripe_account_id: null,
-        farmer_stripe_account_id: null,
-        stripe_customer_id: null,
-        stripe_subscription_id: null,
-        stripe_checkout_session_id: null,
-        stripe_connect_status: "not_started",
-        payouts_enabled: false,
-        charges_enabled: false,
-        stripe_payouts_enabled: false,
-        stripe_charges_enabled: false,
-        stripe_onboarding_complete: false,
-
-        uploaded_docs: {},
-        legal_checks: {},
-        products: [],
-
-        notifications_enabled: true,
-        expo_push_token: "",
-
-        created_at: now,
-        updated_at: now,
-      };
-
-      await upsertProfile(farmerPayload);
-
-      const { data: savedFarmer, error: farmerError } = await supabase
-        .from("farmers")
-        .upsert(farmerPayload, { onConflict: "id" })
-        .select("*")
-        .single();
-
-      if (farmerError) {
-        Alert.alert("Farmer Save Error", farmerError.message);
-        return;
-      }
-
-      await createAdminVerificationRecord(savedFarmer);
-
-      const localFarmer = {
-        id: farmerId,
-        accountId,
-        account_id: accountId,
-        farmerId,
-        profileId: farmerId,
-        authUserId: farmerId,
-        role: "farmer",
-
-        ownerName: cleanOwnerName,
-        fullName: cleanOwnerName,
-        name: cleanOwnerName,
-        farmName: cleanFarmName,
-        businessName: cleanBusinessName,
-        companyName: cleanBusinessName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        username: cleanUsername,
-
-        businessAddress: businessAddress.trim(),
-        address: businessAddress.trim(),
-        city: city.trim(),
-        state: cleanState,
-        zipCode: zipCode.trim(),
-
-        selectedProducts,
-        selectedProductCategories: selectedProducts,
-        productCategories: selectedProducts,
-        legalAgreements: accepted,
-
-        approved: true,
-        rejected: false,
-        reviewed: false,
-        needsMoreInfo: false,
-        accountActive: true,
-        storeUnlocked: true,
-
-        complianceSubmitted: false,
-        complianceStatus: "ACTIVE",
-        adminReviewStatus: "DOCUMENT_REVIEW_ONLY",
-        reviewDecision: "NOT_REQUIRED",
-
-        applicationFeePaid: false,
-        farmerMembershipPaid: false,
-        monthlyMembershipStarted: false,
-
-        membershipStatus: "pending_payment",
-        subscriptionStatus: "pending_payment",
-
-        stripeAccountId: "",
-        farmerStripeAccountId: "",
-        stripeCustomerId: "",
-        stripeSubscriptionId: "",
-        stripeCheckoutSessionId: "",
-        stripeConnectStatus: "not_started",
-        payoutsEnabled: false,
-        chargesEnabled: false,
-        stripeOnboardingComplete: false,
-        stripePayoutsEnabled: false,
-        stripeChargesEnabled: false,
-
-        uploadedDocs: {},
-        legalChecks: {},
-        products: [],
-
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await saveLocalFarmerSession(localFarmer);
-      await notifyAdminFarmer(localFarmer);
-
-      const checkoutUrl = await createFarmerCheckout({
-        farmerId,
-        accountId,
-        email: cleanEmail,
-        name: cleanOwnerName,
-        username: cleanUsername,
-        businessName: cleanBusinessName,
-        farmName: cleanFarmName,
-      });
-
-      openExternalUrl(checkoutUrl);
+      setSaving(true);
+      const authId = savedFarmerId || farmerId || (await getOrCreateAuthUser());
+      const saved = await saveFarmerUserRow(authId, accountId || undefined);
+      Alert.alert("Saved", "Farmer registration was saved.");
+      return saved;
     } catch (error: any) {
-      console.log("Farmer registration error:", error);
-      Alert.alert(
-        "Registration Error",
-        error?.message || "Unable to continue to farmer payment."
-      );
+      Alert.alert("Save Error", error?.message || "Unable to save farmer registration.");
+      return null;
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
-  return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+  async function syncStripeFromBackend(silent = false) {
+    const emailValue = normalizeEmail(email);
+    const id = savedFarmerId || farmerId;
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="none"
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.hero}>
-          <View style={styles.heroIcon}>
-            <Ionicons name="leaf-outline" size={34} color="#FFFFFF" />
-          </View>
+    if (!emailValue && !id) {
+      if (!silent) Alert.alert("Search Required", "Enter email or save registration first.");
+      return null;
+    }
 
-          <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
-          <Text style={styles.heroTitle}>Create Your Farmer Account</Text>
-          <Text style={styles.heroSub}>
-            Create your farm profile first. Then Stripe Checkout will open with
-            your farmer ID, email, name, and username attached for automatic
-            Supabase subscription syncing.
-          </Text>
-        </View>
+    try {
+      setSyncingStripe(true);
 
-        <View style={styles.priceCard}>
-          <Text style={styles.priceTitle}>Farmer Pricing</Text>
-          <Text style={styles.priceLine}>Application Process Fee: $29.99</Text>
-          <Text style={styles.priceLine}>Monthly Membership: $14.99</Text>
-          <Text style={styles.priceLine}>Marketplace Service Fee: 4%</Text>
-        </View>
+      const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "farmer",
+          email: emailValue,
+          farmer_email: emailValue,
+          name: ownerName.trim() || businessName.trim() || farmName.trim(),
+          username: normalizeUsername(username),
+          userId: id,
+          farmerId: id,
+          farmer_id: id,
+        }),
+      });
 
-        <SectionCard icon="business-outline" title="Farm Business Info" subtitle="Basic farm and owner details." done={businessComplete}>
+      const json = await parseApiResponse(response);
+
+      if (!response.ok || !json.success) {
+        if (!silent) Alert.alert("Stripe Sync Not Found", json.error || "No Stripe customer/subscription was found.");
+        return null;
+      }
+
+      const customer = pickStripeCustomerId(json.stripeCustomerId, json.stripe_customer_id);
+      const sub = pickStripeSubscriptionId(json.stripeSubscriptionId, json.stripe_subscription_id);
+      const status = json.subscriptionStatus || json.subscription_status || "active";
+
+      if (customer) setStripeCustomerId(customer);
+      if (sub) setSubscriptionId(sub);
+      setSubscriptionStatus(status);
+
+      const authId = id || (await getOrCreateAuthUser());
+      const saved = await saveFarmerUserRow(authId, accountId || undefined);
+
+      if (!silent) Alert.alert("Stripe Retrieved", "Stripe customer and subscription data were saved.");
+      return saved;
+    } catch (error: any) {
+      if (!silent) Alert.alert("Retrieve Error", error?.message || "Unable to retrieve Stripe information.");
+      return null;
+    } finally {
+      setSyncingStripe(false);
+    }
+  }
+
+  async function retrieveMissingStripeInfo(routeWhenReady = false) {
+    try {
+      setSyncingStripe(true);
+
+      const id = savedFarmerId || farmerId || clean(String(params?.farmerId || params?.farmer_id || ""));
+      const emailValue = normalizeEmail(email || String(params?.email || ""));
+
+      const dbFarmer = await findFarmerByIdOrEmail(id, emailValue);
+      const subRow = await getBestFarmerSubscription(dbFarmer?.id || id, dbFarmer?.email || emailValue);
+
+      if (!dbFarmer && !subRow) {
+        const backendSynced = await syncStripeFromBackend(true);
+        if (!backendSynced) {
+          Alert.alert("Not Found", "No farmer profile or Stripe subscription was found yet.");
+          return null;
+        }
+        if (routeWhenReady && hasCompleteDashboardAccess(backendSynced)) goDashboard();
+        return backendSynced;
+      }
+
+      const merged = buildCurrentSnapshot({ ...(dbFarmer || {}), ...(subRow || {}) });
+      const customer = pickStripeCustomerId(dbFarmer?.stripe_customer_id, subRow?.stripe_customer_id, stripeCustomerId);
+      const sub = pickStripeSubscriptionId(dbFarmer?.subscription_id, dbFarmer?.stripe_subscription_id, subRow?.stripe_subscription_id, subscriptionId);
+      const status = subRow?.subscription_status || dbFarmer?.subscription_status || subscriptionStatus || (sub ? "active" : "pending_payment");
+
+      if (customer) setStripeCustomerId(customer);
+      if (sub) setSubscriptionId(sub);
+      setSubscriptionStatus(status);
+
+      hydrateForm({ ...merged, stripe_customer_id: customer, subscription_id: sub, stripe_subscription_id: sub, subscription_status: status });
+
+      const authId = clean(dbFarmer?.id || subRow?.farmer_id || id);
+      if (authId) {
+        const saved = await saveFarmerUserRow(authId, dbFarmer?.account_id || accountId || undefined);
+        if (routeWhenReady && hasCompleteDashboardAccess(saved)) goDashboard();
+        return saved;
+      }
+
+      return merged;
+    } catch (error: any) {
+      Alert.alert("Retrieve Error", error?.message || "Unable to retrieve farmer Stripe information.");
+      return null;
+    } finally {
+      setSyncingStripe(false);
+    }
+  }
+
+  async function handleStripeSuccessReturn(returnedFarmerId?: string) {
+    try {
+      setStripeLoading(true);
+      const saved = await retrieveMissingStripeInfo(false);
+      if (saved && hasCompleteDashboardAccess(saved)) {
+        Alert.alert("Payment Complete", "Farmer payment was confirmed. Your farmer dashboard is ready.");
+      }
+    } finally {
+      setStripeLoading(false);
+    }
+  }
+
+  async function createFarmerCheckout() {
+    if (stripeLoading || loading) return;
+    if (!validateForm({ full: true })) return;
+
+    try {
+      setStripeLoading(true);
+      const authId = savedFarmerId || farmerId || (await getOrCreateAuthUser());
+      const saved = await saveFarmerUserRow(authId, accountId || undefined);
+      const finalId = clean(saved?.id || authId);
+      const finalAccountId = clean(saved?.account_id || accountId);
+      const emailValue = normalizeEmail(saved?.email || email);
+
+      const response = await fetch(`${API_BASE_URL}/payments/create-farmer-checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          farmer_id: finalId,
+          farmerId: finalId,
+          userId: finalId,
+          account_id: finalAccountId,
+          accountId: finalAccountId,
+          email: emailValue,
+          farmer_email: emailValue,
+          name: ownerName.trim(),
+          username: normalizeUsername(username),
+          businessName: businessName.trim(),
+          business_name: businessName.trim(),
+          farmName: farmName.trim(),
+          farm_name: farmName.trim(),
+          role: "farmer",
+        }),
+      });
+
+      const json = await parseApiResponse(response);
+      if (!response.ok) throw new Error(json?.error || json?.message || "Unable to create farmer Stripe checkout session.");
+
+      const checkoutUrl = getStripeLaunchUrl(json);
+      if (!checkoutUrl) throw new Error("Stripe checkout URL was not returned from backend.");
+
+      await openUrl(checkoutUrl);
+    } catch (error: any) {
+      Alert.alert("Stripe Error", error?.message || "Unable to continue to farmer payment.");
+    } finally {
+      setStripeLoading(false);
+    }
+  }
+
+  async function loadSavedFarmer() {
+    try {
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem(PENDING_FARMER_KEY)) ||
+        (await AsyncStorage.getItem("currentFarmerUser")) ||
+        (await AsyncStorage.getItem("currentUser"));
+
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.role === "farmer" || parsed?.farmerId || parsed?.id) hydrateForm(parsed);
+      }
+
+      const paramId = clean(String(params?.farmerId || params?.farmer_id || ""));
+      const paramEmail = normalizeEmail(String(params?.email || ""));
+      if (paramEmail) setEmail(paramEmail);
+      if (paramId) {
+        const dbFarmer = await findFarmerByIdOrEmail(paramId, paramEmail);
+        if (dbFarmer) hydrateForm(dbFarmer);
+      }
+    } catch (error) {
+      console.log("load farmer skipped:", error);
+    }
+  }
+
+  async function handleSaveAndContinue() {
+    const saved = await saveFarmerProfile(step >= 4);
+    if (saved) goNext();
+  }
+
+  function renderStepBody() {
+    const key = STEPS[step].key;
+
+    if (key === "account") {
+      return (
+        <SectionCard icon="person-outline" title="Account" subtitle="Create the farmer login." done={businessComplete && (savedFarmerId || farmerId ? true : loginComplete)}>
           <TextInput style={styles.input} placeholder="Owner Name" value={ownerName} onChangeText={setOwnerName} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Farm Name" value={farmName} onChangeText={setFarmName} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Business Name" value={businessName} onChangeText={setBusinessName} autoCorrect={false} />
           <TextInput style={styles.input} placeholder="Email Address" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} autoCorrect={false} />
           <TextInput style={styles.input} placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-        </SectionCard>
-
-        <SectionCard icon="lock-closed-outline" title="Create Farmer Login" subtitle="Credentials used for future farmer login." done={loginComplete}>
           <TextInput style={styles.input} placeholder="Create Username" autoCapitalize="none" value={username} onChangeText={setUsername} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Create Password" secureTextEntry value={password} onChangeText={setPassword} autoCorrect={false} />
-          <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} autoCorrect={false} />
+          {!savedFarmerId && !farmerId ? (
+            <>
+              <TextInput style={styles.input} placeholder="Create Password" secureTextEntry value={password} onChangeText={setPassword} autoCorrect={false} />
+              <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} autoCorrect={false} />
+            </>
+          ) : null}
         </SectionCard>
+      );
+    }
 
+    if (key === "farm") {
+      return (
+        <SectionCard icon="business-outline" title="Farm Business Info" subtitle="Basic farm and business details." done={Boolean(farmName.trim() && businessName.trim())}>
+          <TextInput style={styles.input} placeholder="Farm Name" value={farmName} onChangeText={setFarmName} autoCorrect={false} />
+          <TextInput style={styles.input} placeholder="Business Name" value={businessName} onChangeText={setBusinessName} autoCorrect={false} />
+        </SectionCard>
+      );
+    }
+
+    if (key === "location") {
+      return (
         <SectionCard icon="location-outline" title="Farm Location" subtitle="Used for local customer discovery." done={locationComplete}>
           <TextInput style={styles.input} placeholder="Business Address" value={businessAddress} onChangeText={setBusinessAddress} autoCorrect={false} />
           <TextInput style={styles.input} placeholder="City" value={city} onChangeText={setCity} autoCorrect={false} />
           <TextInput style={styles.input} placeholder="State" value={stateValue} onChangeText={(value) => setStateValue(value.toUpperCase().slice(0, 2))} maxLength={2} autoCapitalize="characters" autoCorrect={false} />
           <TextInput style={styles.input} placeholder="Zip Code" keyboardType="numeric" value={zipCode} onChangeText={setZipCode} />
         </SectionCard>
+      );
+    }
 
+    if (key === "products") {
+      return (
         <SectionCard icon="leaf-outline" title="Products You Sell" subtitle="Select at least one category." done={productsComplete}>
           <View style={styles.grid}>
             {productOptions.map((product) => {
@@ -723,43 +1209,140 @@ export default function FarmerRegister() {
             })}
           </View>
         </SectionCard>
+      );
+    }
 
+    if (key === "documents") {
+      return (
+        <SectionCard icon="document-text-outline" title="Required Farmer Documents" subtitle="Paste document URLs or storage paths. These are verified at login." done={documentsComplete}>
+          <DocumentInput label="Farm Business License / Registration" required value={farmBusinessLicenseDocument} onChangeText={setFarmBusinessLicenseDocument} />
+          <DocumentInput label="Food Safety / Cottage Food Document" required value={foodSafetyDocument} onChangeText={setFoodSafetyDocument} />
+          <DocumentInput label="Product Liability Insurance" required value={productLiabilityInsuranceDocument} onChangeText={setProductLiabilityInsuranceDocument} />
+          <DocumentInput label="W-9 Form" required value={w9Document} onChangeText={setW9Document} />
+          <DocumentInput label="Farm Permit / Producer Certificate" required value={farmPermitDocument} onChangeText={setFarmPermitDocument} />
+          <DocumentInput label="Organic Certification" value={organicCertificationDocument} onChangeText={setOrganicCertificationDocument} />
+          <DocumentInput label="Meat / Dairy License" value={meatDairyLicenseDocument} onChangeText={setMeatDairyLicenseDocument} />
+          <DocumentInput label="Produce Safety Certificate" value={produceSafetyCertificateDocument} onChangeText={setProduceSafetyCertificateDocument} />
+        </SectionCard>
+      );
+    }
+
+    if (key === "legal") {
+      return (
         <SectionCard icon="shield-checkmark-outline" title="Farmer Seller Agreement" subtitle="Accept all items before continuing." done={legalComplete}>
           {agreements.map((item, index) => {
             const checked = Boolean(accepted[index]);
-
             return (
-              <TouchableOpacity
-                key={item}
-                style={styles.legalRow}
-                onPress={() =>
-                  setAccepted((prev) => ({
-                    ...prev,
-                    [index]: !prev[index],
-                  }))
-                }
-                activeOpacity={0.85}
-              >
+              <TouchableOpacity key={item} style={styles.legalRow} onPress={() => setAccepted((prev) => ({ ...prev, [index]: !prev[index] }))} activeOpacity={0.85}>
                 <View style={[styles.checkbox, checked && styles.checkboxOn]}>
                   <Text style={styles.checkText}>{checked ? "✓" : ""}</Text>
                 </View>
-
                 <Text style={styles.legalText}>{item}</Text>
               </TouchableOpacity>
             );
           })}
         </SectionCard>
+      );
+    }
 
-        <TouchableOpacity style={[styles.submitBtn, loading && styles.disabled]} onPress={registerFarmer} disabled={loading} activeOpacity={0.85}>
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons name="card-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.submitText}>Continue to Secure Payment</Text>
-            </>
-          )}
+    if (key === "stripe") {
+      return (
+        <SectionCard icon="card-outline" title="Stripe Membership" subtitle="Retrieve payment status or open checkout." done={isStripeCustomerId(stripeCustomerId) && isStripeSubscriptionId(subscriptionId)}>
+          <View style={styles.statusBox}>
+            {setupStatus.map((item) => (
+              <View key={item.label} style={styles.statusRow}>
+                <Ionicons name={item.complete ? "checkmark-circle" : "ellipse-outline"} size={18} color={item.complete ? COLORS.green : COLORS.muted} />
+                <Text style={styles.statusLabel}>{item.label}</Text>
+                <Text style={[styles.statusValue, item.complete && styles.statusValueGood]}>{item.value}</Text>
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity style={[styles.actionBtn, syncingStripe && styles.disabled]} onPress={() => retrieveMissingStripeInfo(false)} disabled={syncingStripe}>
+            {syncingStripe ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.actionText}>Retrieve Stripe Payment</Text>}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.submitBtn, stripeLoading && styles.disabled]} onPress={createFarmerCheckout} disabled={stripeLoading} activeOpacity={0.85}>
+            {stripeLoading ? <ActivityIndicator color="#FFFFFF" /> : <><Ionicons name="card-outline" size={20} color="#FFFFFF" /><Text style={styles.submitText}>Continue to Secure Payment</Text></>}
+          </TouchableOpacity>
+        </SectionCard>
+      );
+    }
+
+    return (
+      <SectionCard icon="checkmark-done-outline" title="Review Farmer Setup" subtitle={`${setupScore}/5 dashboard requirements complete.`} done={allFiveRequirementsFound}>
+        <View style={styles.statusBox}>
+          {setupStatus.map((item) => (
+            <View key={item.label} style={styles.statusRow}>
+              <Ionicons name={item.complete ? "checkmark-circle" : "ellipse-outline"} size={18} color={item.complete ? COLORS.green : COLORS.muted} />
+              <Text style={styles.statusLabel}>{item.label}</Text>
+              <Text style={[styles.statusValue, item.complete && styles.statusValueGood]}>{item.value}</Text>
+            </View>
+          ))}
+        </View>
+
+        <TouchableOpacity style={[styles.actionBtn, saving && styles.disabled]} onPress={() => saveFarmerProfile(true)} disabled={saving}>
+          {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.actionText}>Save Farmer Setup</Text>}
         </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.dashboardBtn, !allFiveRequirementsFound && styles.disabled]} onPress={goDashboard} disabled={!allFiveRequirementsFound}>
+          <Text style={styles.dashboardText}>Open Farmer Dashboard</Text>
+        </TouchableOpacity>
+      </SectionCard>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="none" showsVerticalScrollIndicator={false}>
+        <View style={styles.hero}>
+          <View style={styles.heroIcon}>
+            <Ionicons name="leaf-outline" size={34} color="#FFFFFF" />
+          </View>
+          <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
+          <Text style={styles.heroTitle}>Create Your Farmer Account</Text>
+          <Text style={styles.heroSub}>Farmer registration now matches the freight setup pattern: profile, documents, Stripe subscription, then verified dashboard access.</Text>
+        </View>
+
+        <View style={styles.priceCard}>
+          <Text style={styles.priceTitle}>Farmer Pricing</Text>
+          <Text style={styles.priceLine}>Application Process Fee: $29.99</Text>
+          <Text style={styles.priceLine}>Monthly Membership: $14.99</Text>
+          <Text style={styles.priceLine}>Marketplace Service Fee: 4%</Text>
+        </View>
+
+        <View style={styles.stepBar}>
+          {STEPS.map((item, index) => {
+            const active = index === step;
+            const done = index < step;
+            return (
+              <TouchableOpacity key={item.key} style={[styles.stepPill, active && styles.stepPillActive, done && styles.stepPillDone]} onPress={() => setStep(index)}>
+                <Ionicons name={item.icon as any} size={14} color={active || done ? "#FFFFFF" : COLORS.muted} />
+                <Text style={[styles.stepText, (active || done) && styles.stepTextActive]}>{item.title}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {renderStepBody()}
+
+        <View style={styles.navRow}>
+          <TouchableOpacity style={[styles.navButton, step === 0 && styles.disabled]} onPress={goBack} disabled={step === 0}>
+            <Text style={styles.navButtonText}>Back</Text>
+          </TouchableOpacity>
+
+          {step < STEPS.length - 1 ? (
+            <TouchableOpacity style={styles.navButtonPrimary} onPress={handleSaveAndContinue} disabled={saving}>
+              {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.navButtonPrimaryText}>Save & Next</Text>}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.navButtonPrimary} onPress={() => saveFarmerProfile(true)} disabled={saving}>
+              {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.navButtonPrimaryText}>Save Final</Text>}
+            </TouchableOpacity>
+          )}
+        </View>
 
         <TouchableOpacity style={styles.loginBtn} onPress={() => router.push("/farmer/login" as any)} activeOpacity={0.85}>
           <Text style={styles.loginText}>Already have account? Farmer Login</Text>
@@ -772,42 +1355,34 @@ export default function FarmerRegister() {
 function StatusPill({ done }: { done: boolean }) {
   return (
     <View style={[styles.pill, done ? styles.pillDone : styles.pillMissing]}>
-      <Text style={[styles.pillText, done ? styles.pillTextDone : styles.pillTextMissing]}>
-        {done ? "Complete" : "Needed"}
-      </Text>
+      <Text style={[styles.pillText, done ? styles.pillTextDone : styles.pillTextMissing]}>{done ? "Complete" : "Needed"}</Text>
     </View>
   );
 }
 
-function SectionCard({
-  icon,
-  title,
-  subtitle,
-  done,
-  children,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  subtitle: string;
-  done: boolean;
-  children: React.ReactNode;
-}) {
+function SectionCard({ icon, title, subtitle, done, children }: { icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string; done: boolean; children: React.ReactNode }) {
   return (
     <View style={styles.card}>
       <View style={styles.cardTop}>
         <View style={styles.iconBox}>
           <Ionicons name={icon} size={24} color="#FFFFFF" />
         </View>
-
         <View style={{ flex: 1 }}>
           <Text style={styles.cardTitle}>{title}</Text>
           <Text style={styles.cardSub}>{subtitle}</Text>
         </View>
-
         <StatusPill done={done} />
       </View>
-
       {children}
+    </View>
+  );
+}
+
+function DocumentInput({ label, value, onChangeText, required = false }: { label: string; value: string; onChangeText: (value: string) => void; required?: boolean }) {
+  return (
+    <View style={styles.docWrap}>
+      <Text style={styles.docLabel}>{label} {required ? <Text style={styles.required}>*</Text> : <Text style={styles.optional}>(optional)</Text>}</Text>
+      <TextInput style={styles.input} placeholder="Paste file URL or Supabase Storage path" value={value} onChangeText={onChangeText} autoCapitalize="none" autoCorrect={false} />
     </View>
   );
 }
@@ -815,165 +1390,63 @@ function SectionCard({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 90 },
-  hero: {
-    backgroundColor: COLORS.black,
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    paddingBottom: 32,
-  },
-  heroIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 24,
-    backgroundColor: COLORS.red,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 14,
-  },
-  kicker: {
-    color: "#FCA5A5",
-    fontWeight: "900",
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  heroTitle: {
-    color: "#FFFFFF",
-    fontSize: 33,
-    fontWeight: "900",
-    marginTop: 8,
-  },
-  heroSub: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    lineHeight: 22,
-    marginTop: 8,
-  },
-  priceCard: {
-    backgroundColor: COLORS.red,
-    marginHorizontal: 16,
-    marginTop: 16,
-    borderRadius: 24,
-    padding: 16,
-  },
-  priceTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "900",
-    marginBottom: 8,
-  },
-  priceLine: {
-    color: "#FFE4E6",
-    fontWeight: "800",
-    marginBottom: 4,
-  },
-  card: {
-    backgroundColor: COLORS.card,
-    marginHorizontal: 16,
-    marginTop: 16,
-    borderRadius: 24,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  cardTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-    marginBottom: 14,
-  },
-  iconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 16,
-    backgroundColor: COLORS.black,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardTitle: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: "900",
-  },
-  cardSub: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginTop: 2,
-  },
-  pill: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
+  hero: { backgroundColor: COLORS.black, paddingHorizontal: 20, paddingTop: 28, paddingBottom: 32 },
+  heroIcon: { width: 64, height: 64, borderRadius: 24, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  kicker: { color: "#BBF7D0", fontWeight: "900", fontSize: 12, textTransform: "uppercase", letterSpacing: 1 },
+  heroTitle: { color: "#FFFFFF", fontSize: 33, fontWeight: "900", marginTop: 8 },
+  heroSub: { color: "#CBD5E1", fontWeight: "700", lineHeight: 22, marginTop: 8 },
+  priceCard: { backgroundColor: COLORS.primary, marginHorizontal: 16, marginTop: 16, borderRadius: 24, padding: 16 },
+  priceTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", marginBottom: 8 },
+  priceLine: { color: "#DCFCE7", fontWeight: "800", marginBottom: 4 },
+  stepBar: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginHorizontal: 16, marginTop: 16 },
+  stepPill: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8 },
+  stepPillActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  stepPillDone: { backgroundColor: COLORS.green, borderColor: COLORS.green },
+  stepText: { color: COLORS.muted, fontSize: 11, fontWeight: "900" },
+  stepTextActive: { color: "#FFFFFF" },
+  card: { backgroundColor: COLORS.card, marginHorizontal: 16, marginTop: 16, borderRadius: 24, padding: 16, borderWidth: 1, borderColor: COLORS.border },
+  cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 14 },
+  iconBox: { width: 44, height: 44, borderRadius: 16, backgroundColor: COLORS.black, alignItems: "center", justifyContent: "center" },
+  cardTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
+  cardSub: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 2 },
+  pill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   pillDone: { backgroundColor: "#DCFCE7" },
   pillMissing: { backgroundColor: "#FEE2E2" },
   pillText: { fontSize: 11, fontWeight: "900" },
   pillTextDone: { color: "#166534" },
   pillTextMissing: { color: "#B91C1C" },
-  input: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 14,
-    fontWeight: "800",
-    marginBottom: 10,
-    color: COLORS.text,
-  },
+  input: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, padding: 14, fontWeight: "800", marginBottom: 10, color: COLORS.text },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  productChip: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    borderRadius: 999,
-  },
-  productChipActive: {
-    backgroundColor: COLORS.red,
-    borderColor: COLORS.red,
-  },
+  productChip: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: 13, paddingVertical: 11, borderRadius: 999 },
+  productChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   productText: { color: COLORS.text, fontWeight: "900" },
   productTextActive: { color: "#FFFFFF" },
-  legalRow: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  checkbox: {
-    width: 28,
-    height: 28,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: COLORS.red,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxOn: { backgroundColor: COLORS.red },
+  legalRow: { flexDirection: "row", gap: 10, alignItems: "flex-start", paddingVertical: 10, borderTopWidth: 1, borderTopColor: COLORS.border },
+  checkbox: { width: 28, height: 28, borderRadius: 9, borderWidth: 2, borderColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
+  checkboxOn: { backgroundColor: COLORS.primary },
   checkText: { color: "#FFFFFF", fontWeight: "900" },
-  legalText: {
-    flex: 1,
-    color: COLORS.text,
-    fontWeight: "800",
-    lineHeight: 21,
-  },
-  submitBtn: {
-    backgroundColor: COLORS.red,
-    marginHorizontal: 16,
-    marginTop: 18,
-    borderRadius: 20,
-    paddingVertical: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
+  legalText: { flex: 1, color: COLORS.text, fontWeight: "800", lineHeight: 21 },
+  docWrap: { marginBottom: 4 },
+  docLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 6 },
+  required: { color: COLORS.red },
+  optional: { color: COLORS.muted, fontWeight: "700" },
+  statusBox: { backgroundColor: COLORS.surface2, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 14, marginBottom: 12 },
+  statusRow: { flexDirection: "row", alignItems: "center", paddingVertical: 6, gap: 8 },
+  statusLabel: { flex: 1, color: COLORS.text, fontWeight: "800" },
+  statusValue: { color: COLORS.muted, fontWeight: "900", fontSize: 12 },
+  statusValueGood: { color: COLORS.green },
+  actionBtn: { backgroundColor: COLORS.black, borderRadius: 18, paddingVertical: 16, alignItems: "center", marginBottom: 10 },
+  actionText: { color: "#FFFFFF", fontWeight: "900" },
+  submitBtn: { backgroundColor: COLORS.primary, borderRadius: 18, paddingVertical: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
   submitText: { color: "#FFFFFF", fontWeight: "900", fontSize: 16 },
+  dashboardBtn: { backgroundColor: COLORS.green, borderRadius: 18, paddingVertical: 16, alignItems: "center", marginTop: 10 },
+  dashboardText: { color: "#FFFFFF", fontWeight: "900" },
+  navRow: { flexDirection: "row", gap: 12, marginHorizontal: 16, marginTop: 16 },
+  navButton: { flex: 1, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, paddingVertical: 16, alignItems: "center" },
+  navButtonText: { color: COLORS.text, fontWeight: "900" },
+  navButtonPrimary: { flex: 1, backgroundColor: COLORS.primary, borderRadius: 18, paddingVertical: 16, alignItems: "center" },
+  navButtonPrimaryText: { color: "#FFFFFF", fontWeight: "900" },
   disabled: { opacity: 0.6 },
   loginBtn: { paddingVertical: 18, alignItems: "center" },
-  loginText: { color: COLORS.red, fontWeight: "900" },
+  loginText: { color: COLORS.primary, fontWeight: "900" },
 });

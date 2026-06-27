@@ -47,6 +47,7 @@ const COLORS = {
 type FarmerRecord = {
   id?: string;
   farmerId?: string;
+  farmer_id?: string;
   auth_user_id?: string;
   profile_id?: string;
   role?: string;
@@ -73,6 +74,15 @@ type FarmerRecord = {
   farmLogoUrl?: string;
   pickup?: boolean;
   delivery?: boolean;
+  allow_pickup?: boolean;
+  allow_delivery?: boolean;
+  pickup_enabled?: boolean;
+  delivery_enabled?: boolean;
+  store_active?: boolean;
+  marketplace_visible?: boolean;
+  farmer_email?: string;
+  about_farm?: string;
+  description?: string;
   account_active?: boolean;
   approved?: boolean;
   reviewed?: boolean;
@@ -99,7 +109,13 @@ function firstParam(value: any) {
 }
 
 function getFarmerId(farmer?: FarmerRecord | null) {
-  return clean(farmer?.id || farmer?.farmerId || farmer?.profile_id || farmer?.auth_user_id);
+  return clean(
+    farmer?.id ||
+      farmer?.farmerId ||
+      farmer?.farmer_id ||
+      farmer?.profile_id ||
+      farmer?.auth_user_id
+  );
 }
 
 function getFarmName(farmer?: FarmerRecord | null) {
@@ -148,16 +164,20 @@ export default function FarmerSetupStoreScreen() {
   const farmerId = getFarmerId(currentFarmer);
   const stripeConnected = Boolean(getStripeAccount(currentFarmer));
 
-  const completion = useMemo(() => {
-    return [
-      ownerName.trim(),
-      farmName.trim(),
-      isValidEmail(email),
-      farmLocation.trim(),
-      logoUrl.trim(),
-      pickup || delivery,
-    ].filter(Boolean).length;
-  }, [ownerName, farmName, email, farmLocation, logoUrl, pickup, delivery]);
+  const completionItems = useMemo(
+    () => [
+      { label: "Owner", done: Boolean(ownerName.trim()) },
+      { label: "Farm", done: Boolean(farmName.trim()) },
+      { label: "Email", done: isValidEmail(email) },
+      { label: "Location", done: Boolean(farmLocation.trim()) },
+      { label: "Logo", done: Boolean(logoUrl.trim()) },
+      { label: "Fulfillment", done: pickup || delivery },
+    ],
+    [ownerName, farmName, email, farmLocation, logoUrl, pickup, delivery]
+  );
+
+  const completion = completionItems.filter((item) => item.done).length;
+  const completionPercent = Math.round((completion / completionItems.length) * 100);
 
   useEffect(() => {
     initializeScreen();
@@ -173,8 +193,9 @@ export default function FarmerSetupStoreScreen() {
       const merged: FarmerRecord = {
         ...(local || {}),
         ...(dbFarmer || {}),
-        id: clean(dbFarmer?.id || local?.id || local?.farmerId || farmerIdFromParams),
-        farmerId: clean(dbFarmer?.id || local?.id || local?.farmerId || farmerIdFromParams),
+        id: clean(dbFarmer?.id || dbFarmer?.farmer_id || local?.id || local?.farmerId || local?.farmer_id || farmerIdFromParams),
+        farmerId: clean(dbFarmer?.id || dbFarmer?.farmer_id || local?.id || local?.farmerId || local?.farmer_id || farmerIdFromParams),
+        farmer_id: clean(dbFarmer?.farmer_id || local?.farmer_id || dbFarmer?.id || local?.id || local?.farmerId || farmerIdFromParams),
         role: "farmer",
       };
 
@@ -210,31 +231,67 @@ export default function FarmerSetupStoreScreen() {
     }
   }
 
+  async function findFarmerByColumn(column: string, value: string) {
+    if (!value) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq(column, value)
+        .maybeSingle();
+
+      if (!error && data) return data;
+      if (error) console.log(`farmers lookup ${column} skipped:`, error.message);
+    } catch (error: any) {
+      console.log(`farmers lookup ${column} exception skipped:`, error?.message || error);
+    }
+
+    return null;
+  }
+
   async function findSupabaseFarmer(local: any) {
     const { data: authData } = await supabase.auth.getUser();
     const authUser = authData?.user;
 
-    const activeId = clean(farmerIdFromParams || local?.id || local?.farmerId || authUser?.id);
-    const activeEmail = normalize(local?.email || authUser?.email);
+    const ids = Array.from(
+      new Set(
+        [
+          farmerIdFromParams,
+          local?.id,
+          local?.farmerId,
+          local?.farmer_id,
+          local?.profile_id,
+          local?.auth_user_id,
+          authUser?.id,
+        ]
+          .map(clean)
+          .filter(Boolean)
+      )
+    );
 
-    if (activeId) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .select("*")
-        .or(`id.eq.${activeId},farmer_id.eq.${activeId},profile_id.eq.${activeId},auth_user_id.eq.${activeId}`)
-        .limit(1);
+    const activeEmail = normalize(local?.email || local?.farmer_email || authUser?.email);
 
-      if (!error && Array.isArray(data) && data[0]) return data[0];
+    for (const id of ids) {
+      const byId = await findFarmerByColumn("id", id);
+      if (byId) return byId;
+
+      const byFarmerId = await findFarmerByColumn("farmer_id", id);
+      if (byFarmerId) return byFarmerId;
+
+      const byProfileId = await findFarmerByColumn("profile_id", id);
+      if (byProfileId) return byProfileId;
+
+      const byAuth = await findFarmerByColumn("auth_user_id", id);
+      if (byAuth) return byAuth;
     }
 
     if (activeEmail) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .select("*")
-        .eq("email", activeEmail)
-        .maybeSingle();
+      const byEmail = await findFarmerByColumn("email", activeEmail);
+      if (byEmail) return byEmail;
 
-      if (!error && data) return data;
+      const byFarmerEmail = await findFarmerByColumn("farmer_email", activeEmail);
+      if (byFarmerEmail) return byFarmerEmail;
     }
 
     return null;
@@ -250,10 +307,10 @@ export default function FarmerSetupStoreScreen() {
     setEmail(normalize(farmer.email));
     setPhone(clean(farmer.phone));
     setFarmLocation(clean(farmer.farm_location || farmer.farmLocation || farmer.location || [farmer.city, farmer.state].filter(Boolean).join(", ")));
-    setAbout(clean(farmer.about));
+    setAbout(clean(farmer.about || farmer.about_farm || farmer.description));
     setLogoUrl(loadedLogo);
-    setPickup(farmer.pickup !== false);
-    setDelivery(farmer.delivery !== false);
+    setPickup(farmer.pickup !== false && farmer.allow_pickup !== false && farmer.pickup_enabled !== false);
+    setDelivery(farmer.delivery !== false && farmer.allow_delivery !== false && farmer.delivery_enabled !== false);
   }
 
   async function saveFarmerSession(farmer: FarmerRecord) {
@@ -261,8 +318,9 @@ export default function FarmerSetupStoreScreen() {
       ...farmer,
       id: getFarmerId(farmer),
       farmerId: getFarmerId(farmer),
+      farmer_id: getFarmerId(farmer),
       role: "farmer",
-      email: normalize(farmer.email),
+      email: normalize(farmer.email || farmer.farmer_email),
     };
 
     await AsyncStorage.multiSet([
@@ -376,26 +434,46 @@ export default function FarmerSetupStoreScreen() {
   }
 
   async function safeUpdateFarmers(id: string, payload: Record<string, any>) {
-    let nextPayload = { ...payload };
+    const idColumns = ["id", "farmer_id", "profile_id", "auth_user_id"];
+    const values: Record<string, string> = {
+      id,
+      farmer_id: clean(currentFarmer?.farmer_id || id),
+      profile_id: clean(currentFarmer?.profile_id),
+      auth_user_id: clean(currentFarmer?.auth_user_id),
+    };
 
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .update(nextPayload)
-        .eq("id", id)
-        .select("*")
-        .maybeSingle();
+    for (const column of idColumns) {
+      const value = values[column];
+      if (!value) continue;
 
-      if (!error) return data;
+      let nextPayload = { ...payload };
 
-      const missing = String(error.message || "").match(/Could not find the '([^']+)' column/i)?.[1];
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        try {
+          const { data, error } = await supabase
+            .from("farmers")
+            .update(nextPayload)
+            .eq(column, value)
+            .select("*")
+            .maybeSingle();
 
-      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-        delete nextPayload[missing];
-        continue;
+          if (!error && data) return data;
+          if (!error && !data) break;
+
+          const missing = String(error?.message || "").match(/Could not find the '([^']+)' column/i)?.[1];
+
+          if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+            delete nextPayload[missing];
+            continue;
+          }
+
+          console.log(`safeUpdateFarmers ${column} skipped:`, error?.message);
+          break;
+        } catch (error: any) {
+          console.log(`safeUpdateFarmers ${column} exception skipped:`, error?.message || error);
+          break;
+        }
       }
-
-      throw error;
     }
 
     return null;
@@ -430,21 +508,32 @@ export default function FarmerSetupStoreScreen() {
       const finalLocation = farmLocation.trim();
 
       const payload: Record<string, any> = {
+        role: "farmer",
+        farmer_id: clean(currentFarmer?.farmer_id || activeFarmerId),
         owner_name: finalOwner,
         full_name: finalOwner,
         name: finalOwner,
         farm_name: finalFarmName,
         business_name: finalFarmName,
         email: finalEmail,
+        farmer_email: finalEmail,
         phone: phone.trim(),
         username: normalize((currentFarmer as any)?.username || finalEmail),
         farm_location: finalLocation,
         location: finalLocation,
         about: about.trim(),
+        about_farm: about.trim(),
+        description: about.trim(),
         logo_url: finalLogoUrl,
         farm_logo_url: finalLogoUrl,
         pickup,
         delivery,
+        allow_pickup: pickup,
+        allow_delivery: delivery,
+        pickup_enabled: pickup,
+        delivery_enabled: delivery,
+        marketplace_visible: true,
+        store_active: true,
         account_active: true,
         approved: true,
         reviewed: true,
@@ -481,6 +570,7 @@ export default function FarmerSetupStoreScreen() {
         ...(updated || {}),
         id: activeFarmerId,
         farmerId: activeFarmerId,
+        farmer_id: clean((updated as any)?.farmer_id || currentFarmer?.farmer_id || activeFarmerId),
         role: "farmer",
         owner_name: finalOwner,
         ownerName: finalOwner,
@@ -489,17 +579,26 @@ export default function FarmerSetupStoreScreen() {
         business_name: finalFarmName,
         businessName: finalFarmName,
         email: finalEmail,
+        farmer_email: finalEmail,
         phone: phone.trim(),
         farm_location: finalLocation,
         farmLocation: finalLocation,
         location: finalLocation,
         about: about.trim(),
+        about_farm: about.trim(),
+        description: about.trim(),
         logo_url: finalLogoUrl,
         farm_logo_url: finalLogoUrl,
         logoUrl: finalLogoUrl,
         farmLogoUrl: finalLogoUrl,
         pickup,
         delivery,
+        allow_pickup: pickup,
+        allow_delivery: delivery,
+        pickup_enabled: pickup,
+        delivery_enabled: delivery,
+        marketplace_visible: true,
+        store_active: true,
         account_active: true,
         approved: true,
         store_unlocked: true,
@@ -570,12 +669,37 @@ export default function FarmerSetupStoreScreen() {
           <View style={styles.hero}>
             <View style={{ flex: 1 }}>
               <Text style={styles.heroBadge}>Fresh Local Market</Text>
-              <Text style={styles.heroTitle}>Create a clean grocery storefront customers can shop.</Text>
-              <Text style={styles.heroSub}>Add farm details, logo, pickup, and delivery preferences.</Text>
+              <Text style={styles.heroTitle}>Build your grocery-style farm storefront.</Text>
+              <Text style={styles.heroSub}>Save your profile first, then add produce, custom products, payouts, and preferred drivers.</Text>
             </View>
 
             <View style={styles.heroImage}>
               <Text style={styles.heroEmoji}>🥦</Text>
+            </View>
+          </View>
+
+
+          <View style={styles.progressCard}>
+            <View style={styles.progressHeader}>
+              <Text style={styles.progressTitle}>Store Completion</Text>
+              <Text style={styles.progressPercent}>{completionPercent}%</Text>
+            </View>
+
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${completionPercent}%` }]} />
+            </View>
+
+            <View style={styles.checkGrid}>
+              {completionItems.map((item) => (
+                <View key={item.label} style={styles.checkItem}>
+                  <Ionicons
+                    name={item.done ? "checkmark-circle" : "ellipse-outline"}
+                    size={16}
+                    color={item.done ? COLORS.green : COLORS.muted}
+                  />
+                  <Text style={[styles.checkText, item.done && styles.checkTextDone]}>{item.label}</Text>
+                </View>
+              ))}
             </View>
           </View>
 
@@ -666,6 +790,18 @@ export default function FarmerSetupStoreScreen() {
               onValueChange={setDelivery}
               icon="car-outline"
             />
+          </View>
+
+
+          <View style={styles.card}>
+            <SectionHeader title="Next Steps" subtitle="Save first, then continue your farmer workflow." icon="trail-sign-outline" />
+
+            <View style={styles.nextGrid}>
+              <NextStep title="Add Produce" subtitle="Select grocery catalog items." icon="nutrition-outline" onPress={() => saveAndRoute("/farmer/select-produce")} />
+              <NextStep title="Custom Product" subtitle="Upload your own farm item." icon="add-circle-outline" onPress={() => saveAndRoute("/farmer/add-product")} />
+              <NextStep title="Connect Bank" subtitle="Finish Stripe payouts." icon="card-outline" onPress={() => saveAndRoute("/farmer/connect-bank")} />
+              <NextStep title="Preferred Drivers" subtitle="Manage driver network." icon="people-outline" onPress={() => saveAndRoute("/farmer/driver")} />
+            </View>
           </View>
 
           <View style={styles.actionGrid}>
@@ -814,7 +950,80 @@ function ToggleRow({
   );
 }
 
+
+function NextStep({
+  title,
+  subtitle,
+  icon,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.nextStep} onPress={onPress} activeOpacity={0.9}>
+      <View style={styles.nextIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.greenDark} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.nextTitle}>{title}</Text>
+        <Text style={styles.nextSub}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward-outline" size={18} color={COLORS.muted} />
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
+  progressCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  progressHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  progressTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  progressPercent: { color: COLORS.greenDark, fontWeight: "900" },
+  progressTrack: { height: 10, borderRadius: 999, backgroundColor: COLORS.greenSoft, overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: 999, backgroundColor: COLORS.green },
+  checkGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  checkItem: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  checkText: { color: COLORS.muted, fontWeight: "900", fontSize: 12 },
+  checkTextDone: { color: COLORS.greenDark },
+  nextGrid: { gap: 10 },
+  nextStep: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  nextIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 15,
+    backgroundColor: COLORS.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nextTitle: { color: COLORS.text, fontWeight: "900" },
+  nextSub: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
+
   safe: { flex: 1, backgroundColor: COLORS.bg },
   loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   loadingText: { marginTop: 10, color: COLORS.muted, fontWeight: "800" },

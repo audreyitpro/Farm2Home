@@ -22,94 +22,43 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-/**
- * IMPORTANT SCHEMA NOTE
- * This version matches your actual Supabase schema shown in screenshots:
- *
- * public.freight_users has:
- * - id text
- * - freight_id text
- * - auth_user_id uuid
- * - profile_id uuid
- * - role text
- * - email text
- * - account_id text
- * - company_name text
- * - business_name text
- * - name text
- * - full_name text
- * - username text
- * - stripe_customer_id text
- * - subscription_id text
- * - freight_account text
- * - account_active boolean
- * - approved boolean
- * - freight_membership_paid boolean
- * - membership_status text
- * - verification_status text
- * - compliance_status text
- * - admin_review_status text
- * - created_at timestamp
- * - updated_at timestamp
- *
- * public.profiles has:
- * - id uuid
- * - auth_user_id uuid
- * - role text
- * - full_name text
- * - email text
- * - phone text
- * - created_at timestamp
- * - account_id text
- * - freight_account text
- * - stripe_account_id text
- *
- * public.freight_subscriptions has:
- * - freight_id text
- * - freight_email text
- * - name text
- * - username text
- * - stripe_customer_id text
- * - stripe_subscription_id text
- * - subscription_status text
- * - stripe_account_id text
- * - freight_account text
- */
-
 type FreightUser = {
   id: string;
   freight_id: string;
   auth_user_id: string;
   profile_id: string;
   role: "freight";
-
   email: string;
   account_id: string;
-
   company_name: string;
   business_name: string;
   name: string;
   full_name: string;
   username: string;
   phone: string;
-
   stripe_customer_id: string;
   subscription_id: string;
   freight_account: string;
-
   account_active: boolean;
   approved: boolean;
   freight_membership_paid: boolean;
   membership_status: string;
-
   verification_status: string;
   compliance_status: string;
   admin_review_status: string;
-
+  cdl_document: string;
+  dot_document: string;
+  mc_authority_document: string;
+  insurance_document: string;
+  w9_document: string;
+  vehicle_registration_document: string;
+  cargo_insurance_document: string;
+  business_license_document: string;
+  hipaa_certificate?: string;
+  bloodborne_certificate?: string;
+  tsa_certificate?: string;
   created_at?: string;
   updated_at?: string;
-
-  // aliases used by other screens
   freightId?: string;
   accountId?: string;
   companyName?: string;
@@ -217,6 +166,19 @@ function getCustomerId(row: any) {
   return pickCus(row?.stripe_customer_id, row?.stripeCustomerId);
 }
 
+function hasRequiredDocuments(row: any) {
+  return Boolean(
+    clean(row?.cdl_document) &&
+      clean(row?.dot_document) &&
+      clean(row?.mc_authority_document) &&
+      clean(row?.insurance_document) &&
+      clean(row?.w9_document) &&
+      clean(row?.vehicle_registration_document) &&
+      clean(row?.cargo_insurance_document) &&
+      clean(row?.business_license_document)
+  );
+}
+
 function buildFreightUser(row: any): FreightUser {
   const id = clean(row?.id || row?.freight_id);
   const freightId = clean(row?.freight_id || row?.id);
@@ -233,33 +195,37 @@ function buildFreightUser(row: any): FreightUser {
     auth_user_id: clean(row?.auth_user_id),
     profile_id: clean(row?.profile_id),
     role: "freight",
-
     email: normalize(row?.email || row?.freight_email),
     account_id: clean(row?.account_id),
-
     company_name: companyName,
     business_name: clean(row?.business_name || companyName),
     name: clean(row?.name || fullName),
     full_name: fullName,
     username: clean(row?.username),
     phone: clean(row?.phone),
-
     stripe_customer_id: customerId,
     subscription_id: subscriptionId,
     freight_account: connectAccount,
-
     account_active: accountActive,
     approved: row?.approved !== false,
     freight_membership_paid: row?.freight_membership_paid !== false && Boolean(subscriptionId),
     membership_status: clean(row?.membership_status || row?.subscription_status || (subscriptionId ? "active" : "pending")),
-
     verification_status: clean(row?.verification_status || "SUBMITTED"),
     compliance_status: clean(row?.compliance_status || "SUBMITTED"),
     admin_review_status: clean(row?.admin_review_status || "submitted"),
-
+    cdl_document: clean(row?.cdl_document),
+    dot_document: clean(row?.dot_document),
+    mc_authority_document: clean(row?.mc_authority_document),
+    insurance_document: clean(row?.insurance_document),
+    w9_document: clean(row?.w9_document),
+    vehicle_registration_document: clean(row?.vehicle_registration_document),
+    cargo_insurance_document: clean(row?.cargo_insurance_document),
+    business_license_document: clean(row?.business_license_document),
+    hipaa_certificate: clean(row?.hipaa_certificate),
+    bloodborne_certificate: clean(row?.bloodborne_certificate),
+    tsa_certificate: clean(row?.tsa_certificate),
     created_at: row?.created_at,
     updated_at: row?.updated_at,
-
     freightId,
     accountId: clean(row?.account_id),
     companyName,
@@ -283,6 +249,7 @@ function hasDashboardAccess(user: FreightUser | null) {
       isCus(user.stripe_customer_id) &&
       isSub(user.subscription_id) &&
       isAcct(user.freight_account) &&
+      hasRequiredDocuments(user) &&
       !valueIsFalse(user.account_active) &&
       statusIsGood(user.membership_status || "active")
   );
@@ -296,6 +263,7 @@ function getMissingAccessItems(user: FreightUser | null) {
       "Stripe Customer ID",
       "Subscription ID",
       "Stripe Connect Account",
+      "Required Documents",
     ];
   }
 
@@ -305,6 +273,14 @@ function getMissingAccessItems(user: FreightUser | null) {
     !isCus(user.stripe_customer_id) ? "Stripe Customer ID" : "",
     !isSub(user.subscription_id) ? "Subscription ID" : "",
     !isAcct(user.freight_account) ? "Stripe Connect Account" : "",
+    !clean(user.cdl_document) ? "CDL Document" : "",
+    !clean(user.dot_document) ? "DOT Certificate" : "",
+    !clean(user.mc_authority_document) ? "MC Authority Letter" : "",
+    !clean(user.insurance_document) ? "Certificate of Insurance" : "",
+    !clean(user.w9_document) ? "W-9" : "",
+    !clean(user.vehicle_registration_document) ? "Vehicle Registration" : "",
+    !clean(user.cargo_insurance_document) ? "Cargo Insurance" : "",
+    !clean(user.business_license_document) ? "Business License" : "",
   ].filter(Boolean);
 }
 
@@ -330,35 +306,17 @@ export default function FreightLoginScreen() {
         { label: "Stripe Customer", complete: false, value: "Login to check" },
         { label: "Subscription", complete: false, value: "Login to check" },
         { label: "Stripe Connect", complete: false, value: "Login to check" },
+        { label: "Required Documents", complete: false, value: "Login to check" },
       ];
     }
 
     return [
-      {
-        label: "Freight Profile",
-        complete: Boolean(lastCheckedUser.id),
-        value: lastCheckedUser.id ? "Found" : "Missing",
-      },
-      {
-        label: "Static Account",
-        complete: Boolean(lastCheckedUser.account_id),
-        value: lastCheckedUser.account_id || "Missing",
-      },
-      {
-        label: "Stripe Customer",
-        complete: isCus(lastCheckedUser.stripe_customer_id),
-        value: maskId(lastCheckedUser.stripe_customer_id),
-      },
-      {
-        label: "Subscription",
-        complete: isSub(lastCheckedUser.subscription_id),
-        value: maskId(lastCheckedUser.subscription_id),
-      },
-      {
-        label: "Stripe Connect",
-        complete: isAcct(lastCheckedUser.freight_account),
-        value: maskId(lastCheckedUser.freight_account),
-      },
+      { label: "Freight Profile", complete: Boolean(lastCheckedUser.id), value: lastCheckedUser.id ? "Found" : "Missing" },
+      { label: "Static Account", complete: Boolean(lastCheckedUser.account_id), value: lastCheckedUser.account_id || "Missing" },
+      { label: "Stripe Customer", complete: isCus(lastCheckedUser.stripe_customer_id), value: maskId(lastCheckedUser.stripe_customer_id) },
+      { label: "Subscription", complete: isSub(lastCheckedUser.subscription_id), value: maskId(lastCheckedUser.subscription_id) },
+      { label: "Stripe Connect", complete: isAcct(lastCheckedUser.freight_account), value: maskId(lastCheckedUser.freight_account) },
+      { label: "Required Documents", complete: hasRequiredDocuments(lastCheckedUser), value: hasRequiredDocuments(lastCheckedUser) ? "Uploaded" : "Missing" },
     ];
   }, [lastCheckedUser]);
 
@@ -374,6 +332,7 @@ export default function FreightLoginScreen() {
       stripeAccountId: user.freight_account,
       accountActive: user.account_active,
       membershipStatus: user.membership_status,
+      documentsComplete: hasRequiredDocuments(user),
       updatedAt: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -432,11 +391,7 @@ export default function FreightLoginScreen() {
   async function findProfileByEmail(cleanEmail: string) {
     if (!cleanEmail) return null;
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("email", cleanEmail)
-      .maybeSingle();
+    const { data, error } = await supabase.from("profiles").select("*").eq("email", cleanEmail).maybeSingle();
 
     if (error) {
       console.log("profiles lookup by email failed:", error.message);
@@ -472,19 +427,13 @@ export default function FreightLoginScreen() {
         .maybeSingle();
 
       if (!error && data) return buildFreightUser(data);
-
       if (error) console.log("freight_users lookup by id failed:", error.message);
     }
 
     if (cleanEmail) {
-      const { data, error } = await supabase
-        .from("freight_users")
-        .select("*")
-        .eq("email", cleanEmail)
-        .maybeSingle();
+      const { data, error } = await supabase.from("freight_users").select("*").eq("email", cleanEmail).maybeSingle();
 
       if (!error && data) return buildFreightUser(data);
-
       if (error) console.log("freight_users lookup by email failed:", error.message);
     }
 
@@ -621,7 +570,8 @@ export default function FreightLoginScreen() {
       return existingFreightUser;
     }
 
-    const complete = Boolean(customerId && subscriptionId && connectAccount);
+    const documentsComplete = hasRequiredDocuments(existingFreightUser);
+    const complete = Boolean(customerId && subscriptionId && connectAccount && documentsComplete);
 
     const payload = {
       id: authUserId,
@@ -631,24 +581,32 @@ export default function FreightLoginScreen() {
       role: "freight",
       email: cleanEmail,
       account_id: accountId,
-
       company_name: clean(subscription?.name || existingFreightUser?.company_name || profile?.full_name || "Freight Carrier"),
       business_name: clean(subscription?.name || existingFreightUser?.business_name || profile?.full_name || "Freight Carrier"),
       name: clean(subscription?.name || existingFreightUser?.name || profile?.full_name || "Freight Carrier"),
       full_name: clean(subscription?.name || existingFreightUser?.full_name || profile?.full_name || "Freight Carrier"),
       username: clean(subscription?.username || existingFreightUser?.username || ""),
-
       stripe_customer_id: customerId || null,
       subscription_id: subscriptionId || null,
       freight_account: connectAccount || null,
-
       account_active: complete,
       approved: complete,
       freight_membership_paid: Boolean(subscriptionId),
       membership_status: subscriptionId ? "active" : "pending",
       verification_status: complete ? "SUBMITTED" : "REGISTERED",
-      compliance_status: complete ? "SUBMITTED" : "PENDING_PAYMENT",
-      admin_review_status: complete ? "submitted" : "pending_payment",
+      compliance_status: complete ? "SUBMITTED" : "PENDING_DOCUMENTS",
+      admin_review_status: complete ? "submitted" : "pending_documents",
+      cdl_document: existingFreightUser?.cdl_document || null,
+      dot_document: existingFreightUser?.dot_document || null,
+      mc_authority_document: existingFreightUser?.mc_authority_document || null,
+      insurance_document: existingFreightUser?.insurance_document || null,
+      w9_document: existingFreightUser?.w9_document || null,
+      vehicle_registration_document: existingFreightUser?.vehicle_registration_document || null,
+      cargo_insurance_document: existingFreightUser?.cargo_insurance_document || null,
+      business_license_document: existingFreightUser?.business_license_document || null,
+      hipaa_certificate: existingFreightUser?.hipaa_certificate || null,
+      bloodborne_certificate: existingFreightUser?.bloodborne_certificate || null,
+      tsa_certificate: existingFreightUser?.tsa_certificate || null,
       updated_at: new Date().toISOString(),
     };
 
@@ -672,15 +630,10 @@ export default function FreightLoginScreen() {
   async function touchLastLogin(user: FreightUser) {
     const { error } = await supabase
       .from("freight_users")
-      .update({
-        account_active: true,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ updated_at: new Date().toISOString() })
       .eq("id", user.id);
 
-    if (error) {
-      console.log("last login update skipped:", error.message);
-    }
+    if (error) console.log("last login update skipped:", error.message);
   }
 
   async function openFreightDashboard(user: FreightUser) {
@@ -704,14 +657,12 @@ export default function FreightLoginScreen() {
 
     try {
       const user = await findFreightUser("", cleanEmail);
-
       if (user) {
         setLastCheckedUser(user);
         return;
       }
 
       const subscription = await findSubscription("", cleanEmail);
-
       if (subscription) {
         const previewUser = buildFreightUser({
           id: subscription.freight_id || "",
@@ -785,7 +736,6 @@ export default function FreightLoginScreen() {
       }
 
       const authUserId = clean(data?.user?.id);
-
       if (!authUserId) {
         Alert.alert("Login Error", "Unable to confirm freight account.");
         return;
@@ -794,15 +744,8 @@ export default function FreightLoginScreen() {
       const syncedUser = await syncFreightUser(authUserId, cleanEmail);
 
       if (!syncedUser) {
-        Alert.alert(
-          "Freight Setup Missing",
-          "Your login exists, but no freight subscription or freight profile was found. Registration will open."
-        );
-
-        router.replace({
-          pathname: REGISTER_ROUTE as any,
-          params: { freightId: authUserId, email: cleanEmail },
-        });
+        Alert.alert("Freight Setup Missing", "Your login exists, but no freight subscription or freight profile was found. Registration will open.");
+        router.replace({ pathname: REGISTER_ROUTE as any, params: { freightId: authUserId, email: cleanEmail } });
         return;
       }
 
@@ -816,10 +759,11 @@ export default function FreightLoginScreen() {
 
       const missingItems = getMissingAccessItems(syncedUser);
 
-      Alert.alert(
-        "Finish Freight Setup",
-        `Your account was found, but this setup is missing: ${missingItems.join(", ")}.`
-      );
+      Alert.alert("Finish Freight Setup", `Your account was found, but this setup is missing: ${missingItems.join(", ")}.`);
+      router.replace({
+        pathname: REGISTER_ROUTE as any,
+        params: { freightId: authUserId, email: cleanEmail },
+      });
     } catch (error: any) {
       console.log("freight login error:", error);
       Alert.alert("Login Error", error?.message || "Unable to login to freight account.");
@@ -861,16 +805,8 @@ export default function FreightLoginScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
-
-      <KeyboardAvoidingView
-        style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+      <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.shell}>
             <View style={styles.sidebar}>
               <View style={styles.brandRow}>
@@ -885,81 +821,30 @@ export default function FreightLoginScreen() {
 
               <View style={styles.sideDivider} />
 
-              <SideFeature
-                icon="grid-outline"
-                title="Dashboard-first access"
-                body="Completed freight profiles route directly to the carrier dashboard."
-              />
+              <SideFeature icon="grid-outline" title="Dashboard-first access" body="Completed freight profiles route directly to the carrier dashboard." />
+              <SideFeature icon="document-text-outline" title="Compliance documents" body="Required carrier documents are checked before dashboard access." />
+              <SideFeature icon="card-outline" title="Stripe verified" body="Customer, subscription, and Connect account IDs are checked at login." />
 
-              <SideFeature
-                icon="card-outline"
-                title="Stripe verified"
-                body="Customer, subscription, and Connect account IDs are checked at login."
-              />
-
-              <SideFeature
-                icon="business-outline"
-                title="Carrier workspace"
-                body="Manage load board, live routes, payouts, alerts, and profile setup."
-              />
-
-              <TouchableOpacity
-                style={styles.homeButton}
-                onPress={() => router.replace("/" as any)}
-                activeOpacity={0.9}
-              >
+              <TouchableOpacity style={styles.homeButton} onPress={() => router.replace("/" as any)} activeOpacity={0.9}>
                 <Ionicons name="home-outline" size={18} color={COLORS.primary} />
                 <Text style={styles.homeButtonText}>Back to Home</Text>
               </TouchableOpacity>
             </View>
 
             <View style={styles.main}>
-              <View style={styles.topPanel}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.eyebrow}>Fina Admin Style Portal</Text>
-                  <Text style={styles.pageTitle}>Carrier Login</Text>
-                  <Text style={styles.pageSubtitle}>
-                    Sign in to access Farm2Home Freight loads, dispatch tools, route tracking, and Stripe payouts.
-                  </Text>
+              <View style={styles.heroCard}>
+                <View style={styles.badge}>
+                  <Ionicons name="shield-checkmark-outline" size={16} color={COLORS.primary} />
+                  <Text style={styles.badgeText}>Carrier Login</Text>
                 </View>
 
-                <View style={styles.statusBadge}>
-                  <View style={styles.statusDot} />
-                  <Text style={styles.statusBadgeText}>Secure</Text>
-                </View>
-              </View>
+                <Text style={styles.title}>Login to Freight Dashboard</Text>
+                <Text style={styles.subtitle}>
+                  Freight access verifies profile, Stripe membership, Stripe Connect, and required compliance documents.
+                </Text>
 
-              <View style={styles.metricsRow}>
-                <MetricCard
-                  icon="person-circle-outline"
-                  label="Profile"
-                  value={lastCheckedUser?.company_name || "Carrier"}
-                />
-                <MetricCard
-                  icon="business-outline"
-                  label="Account"
-                  value={lastCheckedUser?.account_id || "Freight ID"}
-                />
-                <MetricCard
-                  icon="shield-checkmark-outline"
-                  label="Access"
-                  value={hasDashboardAccess(lastCheckedUser) ? "Ready" : "Check Login"}
-                />
-              </View>
-
-              <View style={styles.formGrid}>
-                <View style={styles.loginCard}>
-                  <View style={styles.cardHeader}>
-                    <View style={styles.cardIcon}>
-                      <Ionicons name="log-in-outline" size={22} color={COLORS.white} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cardTitle}>Welcome back</Text>
-                      <Text style={styles.cardSubtitle}>Use your freight registration email and password.</Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.inputLabel}>Email Address</Text>
+                <View style={styles.formCard}>
+                  <Text style={styles.inputLabel}>Freight Email</Text>
                   <View style={styles.inputShell}>
                     <Ionicons name="mail-outline" size={18} color={COLORS.muted} />
                     <TextInput
@@ -1008,7 +893,7 @@ export default function FreightLoginScreen() {
                   {navigatingToDashboard ? (
                     <View style={styles.readyBanner}>
                       <Ionicons name="checkmark-circle-outline" size={18} color={COLORS.greenDark} />
-                      <Text style={styles.readyBannerText}>Dashboard session is ready. Opening freight dashboard...</Text>
+                      <Text style={styles.readyBannerText}>Dashboard session is ready. Opening freight dashboard.</Text>
                     </View>
                   ) : null}
 
@@ -1025,11 +910,7 @@ export default function FreightLoginScreen() {
 
                   <View style={styles.divider} />
 
-                  <TouchableOpacity
-                    style={styles.secondaryButton}
-                    onPress={() => router.push(REGISTER_ROUTE as any)}
-                    activeOpacity={0.9}
-                  >
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push(REGISTER_ROUTE as any)} activeOpacity={0.9}>
                     <Ionicons name="business-outline" size={18} color={COLORS.primary} />
                     <Text style={styles.secondaryButtonText}>Register for Freight Connect</Text>
                   </TouchableOpacity>
@@ -1049,11 +930,7 @@ export default function FreightLoginScreen() {
                   {accessStatus.map((item) => (
                     <View key={item.label} style={styles.accessRow}>
                       <View style={[styles.accessIcon, item.complete ? styles.accessGood : styles.accessMissing]}>
-                        <Ionicons
-                          name={item.complete ? "checkmark-outline" : "ellipse-outline"}
-                          size={16}
-                          color={item.complete ? COLORS.white : COLORS.muted}
-                        />
+                        <Ionicons name={item.complete ? "checkmark-outline" : "ellipse-outline"} size={16} color={item.complete ? COLORS.white : COLORS.muted} />
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.accessLabel}>{item.label}</Text>
@@ -1065,7 +942,7 @@ export default function FreightLoginScreen() {
                   <View style={styles.noteBox}>
                     <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
                     <Text style={styles.noteText}>
-                      Freight access requires profile ID, static Freight ID, Stripe customer, subscription, and Stripe Connect account.
+                      Freight access now requires profile ID, static Freight ID, Stripe customer, subscription, Stripe Connect, and required carrier documents.
                     </Text>
                   </View>
                 </View>
@@ -1102,30 +979,19 @@ export default function FreightLoginScreen() {
               />
             </View>
 
-            <TouchableOpacity
-              style={[styles.primaryButton, resetLoading && styles.disabledButton]}
-              onPress={handlePasswordReset}
-              disabled={resetLoading}
-              activeOpacity={0.9}
-            >
+            <TouchableOpacity style={[styles.primaryButton, resetLoading && styles.disabledButton]} onPress={handlePasswordReset} disabled={resetLoading}>
               {resetLoading ? (
                 <ActivityIndicator color={COLORS.white} />
               ) : (
                 <>
-                  <Ionicons name="mail-outline" size={18} color={COLORS.white} />
+                  <Ionicons name="send-outline" size={18} color={COLORS.white} />
                   <Text style={styles.primaryButtonText}>Send Reset Link</Text>
                 </>
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => {
-                setResetVisible(false);
-                setResetEmail("");
-              }}
-            >
-              <Text style={styles.closeText}>Close</Text>
+            <TouchableOpacity style={styles.textButton} onPress={() => setResetVisible(false)}>
+              <Text style={styles.textButtonText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1134,19 +1000,11 @@ export default function FreightLoginScreen() {
   );
 }
 
-function SideFeature({
-  icon,
-  title,
-  body,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  body: string;
-}) {
+function SideFeature({ icon, title, body }: { icon: any; title: string; body: string }) {
   return (
     <View style={styles.sideFeature}>
       <View style={styles.sideFeatureIcon}>
-        <Ionicons name={icon} size={18} color={COLORS.primary} />
+        <Ionicons name={icon} size={19} color={COLORS.white} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.sideFeatureTitle}>{title}</Text>
@@ -1156,443 +1014,191 @@ function SideFeature({
   );
 }
 
-function MetricCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.metricCard}>
-      <View style={styles.metricIcon}>
-        <Ionicons name={icon} size={20} color={COLORS.primary} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.metricLabel}>{label}</Text>
-        <Text style={styles.metricValue} numberOfLines={1}>
-          {value}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: COLORS.navy },
   keyboard: { flex: 1 },
-  content: { flexGrow: 1, paddingBottom: 40 },
-  shell: {
-    flex: 1,
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    minHeight: Platform.OS === "web" ? 760 : undefined,
-  },
+  content: { flexGrow: 1, backgroundColor: COLORS.bg },
+  shell: { flex: 1, flexDirection: Platform.OS === "web" ? "row" : "column" },
   sidebar: {
     backgroundColor: COLORS.navy,
-    paddingHorizontal: 22,
-    paddingTop: 28,
-    paddingBottom: 22,
-    width: Platform.OS === "web" ? 330 : "100%",
+    paddingTop: 40,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    width: Platform.OS === "web" ? 360 : "100%",
   },
-  brandRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   brandIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  brandTitle: {
-    color: COLORS.white,
-    fontSize: 21,
-    fontWeight: "900",
-  },
-  brandSubtitle: {
-    color: "#A5B4FC",
-    fontWeight: "800",
-    marginTop: 2,
-  },
-  sideDivider: {
-    height: 1,
-    backgroundColor: "#1E293B",
-    marginVertical: 24,
-  },
-  sideFeature: {
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#1E293B",
+    width: 52,
+    height: 52,
     borderRadius: 18,
-    padding: 14,
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 12,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
   },
+  brandTitle: { color: COLORS.white, fontSize: 24, fontWeight: "900" },
+  brandSubtitle: { color: "#CBD5E1", fontSize: 13, fontWeight: "700" },
+  sideDivider: { height: 1, backgroundColor: "#1E293B", marginVertical: 28 },
+  sideFeature: { flexDirection: "row", gap: 12, marginBottom: 18 },
   sideFeatureIcon: {
     width: 38,
     height: 38,
-    borderRadius: 14,
-    backgroundColor: COLORS.primarySoft,
-    alignItems: "center",
+    borderRadius: 13,
+    backgroundColor: "rgba(109,93,251,0.35)",
     justifyContent: "center",
+    alignItems: "center",
   },
-  sideFeatureTitle: {
-    color: COLORS.white,
-    fontWeight: "900",
-    marginBottom: 4,
-  },
-  sideFeatureBody: {
-    color: "#CBD5E1",
-    fontWeight: "700",
-    lineHeight: 19,
-    fontSize: 12,
-  },
+  sideFeatureTitle: { color: COLORS.white, fontSize: 15, fontWeight: "900" },
+  sideFeatureBody: { color: "#CBD5E1", fontSize: 12, lineHeight: 18, marginTop: 3 },
   homeButton: {
-    marginTop: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#312E81",
-    backgroundColor: "#111827",
-    padding: 14,
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  homeButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
-  main: {
-    flex: 1,
-    padding: 18,
-  },
-  topPanel: {
+    marginTop: 16,
     backgroundColor: COLORS.white,
-    borderRadius: 26,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flexDirection: "row",
-    gap: 14,
-    alignItems: "flex-start",
-    marginBottom: 14,
-  },
-  eyebrow: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 12,
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-  pageTitle: {
-    color: COLORS.text,
-    fontSize: 34,
-    fontWeight: "900",
-    marginTop: 6,
-  },
-  pageSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 22,
-    marginTop: 7,
-    maxWidth: 680,
-  },
-  statusBadge: {
-    backgroundColor: "#ECFDF5",
-    borderWidth: 1,
-    borderColor: "#A7F3D0",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: COLORS.green,
-  },
-  statusBadgeText: {
-    color: COLORS.greenDark,
-    fontWeight: "900",
-  },
-  metricsRow: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 12,
-    marginBottom: 14,
-  },
-  metricCard: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    padding: 15,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  metricIcon: {
-    width: 42,
-    height: 42,
     borderRadius: 16,
-    backgroundColor: COLORS.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  metricLabel: {
-    color: COLORS.muted,
-    fontWeight: "900",
-    fontSize: 11,
-    textTransform: "uppercase",
-  },
-  metricValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: 3,
-  },
-  formGrid: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 14,
-    alignItems: "flex-start",
-  },
-  loginCard: {
-    flex: 1.1,
-    width: "100%",
-    backgroundColor: COLORS.white,
-    borderRadius: 26,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  accessCard: {
-    flex: 0.9,
-    width: "100%",
-    backgroundColor: COLORS.white,
-    borderRadius: 26,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 20,
-  },
-  cardIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 17,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardIconSoft: {
-    backgroundColor: COLORS.primarySoft,
-  },
-  cardTitle: {
-    color: COLORS.text,
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  cardSubtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 3,
-    lineHeight: 19,
-  },
-  inputLabel: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginBottom: 8,
-  },
-  inputShell: {
-    backgroundColor: COLORS.panel,
-    borderWidth: 1,
-    borderColor: COLORS.borderDark,
-    borderRadius: 16,
+    paddingVertical: 13,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
-    gap: 9,
-    marginBottom: 14,
+    justifyContent: "center",
+    gap: 8,
   },
-  input: {
-    flex: 1,
-    color: COLORS.text,
-    fontWeight: "800",
-    paddingVertical: 15,
+  homeButtonText: { color: COLORS.primary, fontWeight: "900" },
+  main: { flex: 1, padding: 20 },
+  heroCard: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center",
+    backgroundColor: COLORS.card,
+    borderRadius: 30,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    elevation: 4,
   },
-  primaryButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 16,
+  badge: {
+    alignSelf: "flex-start",
+    backgroundColor: COLORS.primarySoft,
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
+  badgeText: { color: COLORS.primary, fontWeight: "900", fontSize: 12 },
+  title: { color: COLORS.text, fontSize: 31, fontWeight: "900", marginTop: 16 },
+  subtitle: { color: COLORS.muted, fontSize: 15, lineHeight: 23, marginTop: 8 },
+  formCard: {
+    backgroundColor: COLORS.panel,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginTop: 22,
+  },
+  inputLabel: { color: COLORS.text, fontSize: 13, fontWeight: "900", marginTop: 12, marginBottom: 8 },
+  inputShell: {
+    minHeight: 52,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  input: { flex: 1, color: COLORS.text, fontSize: 15, minHeight: 48 },
+  primaryButton: {
+    minHeight: 54,
+    borderRadius: 18,
+    backgroundColor: COLORS.primary,
+    marginTop: 18,
+    paddingHorizontal: 18,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 6,
     flexDirection: "row",
     gap: 8,
-    width: "100%",
   },
-  primaryButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: 15,
-    textAlign: "center",
-    flexShrink: 1,
-  },
-  disabledButton: { opacity: 0.6 },
+  primaryButtonText: { color: COLORS.white, fontSize: 15, fontWeight: "900" },
+  disabledButton: { opacity: 0.65 },
   readyBanner: {
+    marginTop: 12,
     backgroundColor: "#ECFDF5",
-    borderWidth: 1,
     borderColor: "#A7F3D0",
+    borderWidth: 1,
     borderRadius: 14,
     padding: 12,
-    marginTop: 12,
     flexDirection: "row",
-    alignItems: "center",
     gap: 8,
   },
-  readyBannerText: {
-    color: COLORS.greenDark,
-    fontWeight: "900",
-    flex: 1,
-    lineHeight: 19,
-  },
-  textButton: {
-    alignItems: "center",
-    marginTop: 15,
-  },
-  textButtonText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 18,
-  },
+  readyBannerText: { color: COLORS.greenDark, fontWeight: "800", flex: 1 },
+  textButton: { alignSelf: "center", paddingVertical: 14, paddingHorizontal: 8 },
+  textButtonText: { color: COLORS.primary, fontWeight: "900" },
+  divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 4 },
   secondaryButton: {
-    backgroundColor: COLORS.primarySoft,
+    minHeight: 52,
+    borderRadius: 18,
+    backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: "#C7D2FE",
-    borderRadius: 16,
-    padding: 15,
+    borderColor: COLORS.borderDark,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
-    width: "100%",
+    paddingHorizontal: 16,
   },
-  secondaryButtonText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    textAlign: "center",
-    flexShrink: 1,
-  },
-  accessRow: {
-    backgroundColor: COLORS.panel,
+  secondaryButtonText: { color: COLORS.primary, fontWeight: "900" },
+  accessCard: {
+    marginTop: 20,
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    padding: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 11,
-    marginBottom: 10,
   },
-  accessIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  accessGood: {
-    backgroundColor: COLORS.green,
-  },
-  accessMissing: {
-    backgroundColor: "#E2E8F0",
-  },
-  accessLabel: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  accessValue: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 2,
-  },
+  cardHeader: { flexDirection: "row", gap: 12, alignItems: "center", marginBottom: 12 },
+  cardIcon: { width: 44, height: 44, borderRadius: 16, justifyContent: "center", alignItems: "center" },
+  cardIconSoft: { backgroundColor: COLORS.primarySoft },
+  cardTitle: { color: COLORS.text, fontSize: 17, fontWeight: "900" },
+  cardSubtitle: { color: COLORS.muted, fontSize: 12, marginTop: 2 },
+  accessRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 9 },
+  accessIcon: { width: 28, height: 28, borderRadius: 999, justifyContent: "center", alignItems: "center" },
+  accessGood: { backgroundColor: COLORS.green },
+  accessMissing: { backgroundColor: COLORS.panel, borderWidth: 1, borderColor: COLORS.border },
+  accessLabel: { color: COLORS.text, fontSize: 13, fontWeight: "900" },
+  accessValue: { color: COLORS.muted, fontSize: 12, marginTop: 2 },
   noteBox: {
+    marginTop: 12,
     backgroundColor: COLORS.primarySoft,
+    borderRadius: 16,
+    padding: 12,
+    flexDirection: "row",
+    gap: 8,
     borderWidth: 1,
     borderColor: "#C7D2FE",
-    borderRadius: 16,
-    padding: 13,
-    flexDirection: "row",
-    gap: 9,
-    alignItems: "flex-start",
-    marginTop: 4,
   },
-  noteText: {
-    color: COLORS.primaryDark,
-    fontWeight: "800",
-    lineHeight: 20,
-    flex: 1,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(2,6,23,0.72)",
-    justifyContent: "center",
-    padding: 22,
-  },
+  noteText: { flex: 1, color: COLORS.text, fontSize: 12, lineHeight: 18, fontWeight: "700" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(2,6,23,0.70)", justifyContent: "center", padding: 20 },
   modalCard: {
     backgroundColor: COLORS.white,
-    borderRadius: 26,
+    borderRadius: 28,
     padding: 22,
-    maxHeight: "90%",
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    width: "100%",
+    maxWidth: 520,
+    alignSelf: "center",
   },
   modalIcon: {
     width: 58,
     height: 58,
-    borderRadius: 22,
+    borderRadius: 20,
     backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
     alignSelf: "center",
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 14,
   },
-  modalTitle: {
-    color: COLORS.text,
-    fontSize: 26,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  modalSubtitle: {
-    color: COLORS.muted,
-    textAlign: "center",
-    lineHeight: 22,
-    marginVertical: 14,
-    fontWeight: "700",
-  },
-  closeButton: {
-    marginTop: 16,
-    alignItems: "center",
-  },
-  closeText: {
-    color: COLORS.red,
-    fontWeight: "900",
-  },
+  modalTitle: { color: COLORS.text, fontSize: 23, fontWeight: "900", textAlign: "center" },
+  modalSubtitle: { color: COLORS.muted, fontSize: 14, lineHeight: 21, textAlign: "center", marginTop: 6 },
 });
