@@ -635,15 +635,30 @@ export default function FarmerRegister() {
     return completeRow || data[0];
   }
 
-  function getMissingColumnName(error: any) {
-    const message = String(error?.message || error?.details || error?.hint || "");
-
-    return (
-      message.match(/Could not find the '([^']+)' column/i)?.[1] ||
-      message.match(/'([^']+)' column of '([^']+)'/i)?.[1] ||
-      message.match(/column "([^"]+)" of relation "([^"]+)" does not exist/i)?.[1] ||
-      ""
+  function getMissingColumnName(error: any): string {
+    const message = String(
+      error?.message ||
+        error?.details ||
+        error?.hint ||
+        JSON.stringify(error || {}) ||
+        ""
     );
+
+    const patterns = [
+      /Could not find the '([^']+)' column/i,
+      /'([^']+)' column of '([^']+)'/i,
+      /column '([^']+)' of relation/i,
+      /column "([^"]+)" of relation "([^"]+)" does not exist/i,
+      /schema cache.*?'([^']+)'/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match?.[1]) return match[1];
+    }
+
+    console.log("UNMATCHED SUPABASE ERROR:", message);
+    return "";
   }
 
   async function safeProfileUpdate(profileIdValue: string, payload: Record<string, any>) {
@@ -771,12 +786,17 @@ export default function FarmerRegister() {
 
     if (Array.isArray(existing) && existing[0]?.id) {
       const { error } = await supabase.from("farmer_subscriptions").update(payload).eq("id", existing[0].id);
-      if (error) throw error;
+      if (error) {
+        console.log("farmer_subscriptions update skipped:", error.message);
+        return;
+      }
       return;
     }
 
     const { error } = await supabase.from("farmer_subscriptions").insert({ ...payload, created_at: now });
-    if (error) throw error;
+    if (error) {
+      console.log("farmer_subscriptions insert skipped:", error.message);
+    }
   }
 
   async function saveAdminVerificationIfTableExists(farmerAuthId: string, savedFarmer: any) {
@@ -883,9 +903,9 @@ export default function FarmerRegister() {
 
 
   async function safeFarmerUpsert(payload: Record<string, any>) {
-    let nextPayload = { ...payload };
+    let nextPayload: any = { ...payload };
 
-    for (let attempt = 0; attempt < 60; attempt += 1) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
       const { data, error } = await supabase
         .from("farmers")
         .upsert(nextPayload, { onConflict: "id" })
@@ -905,6 +925,7 @@ export default function FarmerRegister() {
         continue;
       }
 
+      console.log("FAILED FARMER PAYLOAD KEYS:", Object.keys(nextPayload));
       throw error;
     }
 
@@ -931,7 +952,6 @@ export default function FarmerRegister() {
       farmer_id: authId,
       auth_user_id: authId,
       profile_id: profile.id,
-      role: "farmer",
 
       email: emailValue,
       username: normalizeUsername(username),
@@ -939,7 +959,6 @@ export default function FarmerRegister() {
 
       owner_name: ownerName.trim(),
       full_name: ownerName.trim(),
-      name: ownerName.trim(),
       farm_name: farmName.trim(),
       business_name: businessName.trim(),
       company_name: businessName.trim(),
@@ -952,7 +971,6 @@ export default function FarmerRegister() {
 
       selected_products: selectedProducts,
       selected_product_categories: selectedProducts,
-      product_categories: selectedProducts,
       legal_agreements: accepted,
 
       farm_business_license_document: farmBusinessLicenseDocument.trim(),
@@ -993,8 +1011,6 @@ export default function FarmerRegister() {
       stripe_payouts_enabled: false,
       stripe_charges_enabled: false,
       stripe_onboarding_complete: false,
-      notifications_enabled: true,
-      expo_push_token: existing?.expo_push_token || "",
 
       updated_at: now,
     };
