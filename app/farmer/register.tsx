@@ -635,33 +635,98 @@ export default function FarmerRegister() {
     return completeRow || data[0];
   }
 
+  function getMissingColumnName(error: any) {
+    const message = String(error?.message || "");
+    return message.match(/Could not find the '([^']+)' column/i)?.[1] || "";
+  }
+
+  async function safeProfileUpdate(profileIdValue: string, payload: Record<string, any>) {
+    let nextPayload = { ...payload };
+
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update(nextPayload)
+        .eq("id", profileIdValue)
+        .select("*")
+        .maybeSingle();
+
+      if (!error) return data;
+
+      const missing = getMissingColumnName(error);
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        delete nextPayload[missing];
+        continue;
+      }
+
+      throw error;
+    }
+
+    return null;
+  }
+
+  async function safeProfileInsert(payload: Record<string, any>) {
+    let nextPayload = { ...payload };
+
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .insert(nextPayload)
+        .select("*")
+        .maybeSingle();
+
+      if (!error) return data;
+
+      const missing = getMissingColumnName(error);
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        delete nextPayload[missing];
+        continue;
+      }
+
+      throw error;
+    }
+
+    return null;
+  }
+
   async function upsertProfileForFarmer(authId: string, emailValue: string, accountValue: string) {
     const existingByEmail = await findProfileByEmail(emailValue);
     const existingByAuth = existingByEmail ? null : await findProfileByAuthId(authId);
     const existing = existingByEmail || existingByAuth;
+    const now = new Date().toISOString();
 
+    // Keep this payload aligned with the real profiles table used by the freight flow.
+    // Extra columns such as name, username, company_name, and account_active caused
+    // POST /rest/v1/profiles 400 errors when those columns were not present.
     const payload = {
       auth_user_id: authId,
       role: "farmer",
       full_name: ownerName.trim(),
-      name: ownerName.trim(),
       email: normalizeEmail(emailValue),
       phone: phone.trim(),
-      username: normalizeUsername(username),
-      company_name: businessName.trim(),
       account_id: accountValue,
-      account_active: true,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     };
 
     if (existing?.id) {
-      const { data, error } = await supabase.from("profiles").update(payload).eq("id", existing.id).select("*").maybeSingle();
-      if (error) throw error;
+      const data = await safeProfileUpdate(existing.id, payload);
       return data || { ...existing, ...payload };
     }
 
-    const { data, error } = await supabase.from("profiles").insert({ id: authId, ...payload, created_at: new Date().toISOString() }).select("*").maybeSingle();
-    if (error) throw error;
+    const data = await safeProfileInsert({
+      id: authId,
+      ...payload,
+      created_at: now,
+    });
+
+    if (!data?.id) {
+      return {
+        id: authId,
+        ...payload,
+        created_at: now,
+      };
+    }
+
     return data;
   }
 
