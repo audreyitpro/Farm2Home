@@ -223,7 +223,11 @@ function makeFarmerProduct(item: FarmCatalogProduct, farmer: FarmerRecord): Farm
 }
 
 function missingColumn(error: any) {
-  return String(error?.message || "").match(/Could not find the '([^']+)' column/i)?.[1] || "";
+  return (
+    String(error?.message || "").match(/Could not find the '([^']+)' column/i)?.[1] ||
+    String(error?.message || "").match(/column ['\"]?([^'\"]+)['\"]? does not exist/i)?.[1] ||
+    ""
+  );
 }
 
 async function safeUpdate(table: string, idColumn: string, idValue: string, payload: Record<string, any>) {
@@ -458,11 +462,17 @@ export default function SelectProduceScreen() {
   }
 
   async function saveProductsToFarmerRow(farmerId: string, updatedFarmer: FarmerRecord, updatedProducts: any[]) {
+    /**
+     * IMPORTANT:
+     * Do NOT save products / selected_products / selected_product_categories
+     * to the farmers table unless those columns are guaranteed to exist.
+     *
+     * The dashboard reads inventory from farm_products / farmer_products / products.
+     * This function only marks the farmer store as active using safe common columns.
+     * This prevents Supabase 400 errors like:
+     * PATCH /rest/v1/farmers?id=eq... 400 Bad Request
+     */
     const payload = {
-      products: updatedProducts,
-      selected_produce: updatedFarmer.selectedProduce,
-      selected_products: updatedFarmer.selectedProducts,
-      selected_product_categories: updatedFarmer.selectedProductCategories,
       store_unlocked: true,
       account_active: true,
       updated_at: new Date().toISOString(),
@@ -480,6 +490,7 @@ export default function SelectProduceScreen() {
       if (byProfileId) return true;
     }
 
+    // Local inventory and inventory table inserts are still saved even if this update is skipped.
     return false;
   }
 
