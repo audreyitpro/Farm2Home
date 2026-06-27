@@ -33,7 +33,7 @@ import { supabase } from "../data/supabaseClient";
  * Important:
  * - Profiles save is intentionally minimal to avoid POST /profiles 400 errors.
  * - Farmers save is schema-safe and removes missing columns automatically.
- * - Admin verification save is optional and non-blocking.
+ * - Admin verification save is disabled for farmer registration to stop admin_verifications schema errors.
  * - Farmer document upload uses Supabase Storage bucket: farmer-documents
  *
  * Install if needed:
@@ -1020,80 +1020,8 @@ export default function FarmerRegister() {
     }
   }
 
-  async function saveAdminVerificationIfTableExists(
-    farmerAuthId: string,
-    savedFarmer: any
-  ) {
-    const now = new Date().toISOString();
-    const paid = Boolean(savedFarmer.subscription_id || savedFarmer.stripe_subscription_id);
-    const docsComplete = hasCompleteDashboardAccess(savedFarmer) || documentsComplete;
-
-    const payload = {
-      id: farmerAuthId,
-      account_id: savedFarmer.account_id,
-      farmer_id: farmerAuthId,
-      profile_id: savedFarmer.profile_id,
-      account_type: "FARMER",
-      role: "farmer",
-      type: "FARMER",
-      farm_name: farmName.trim(),
-      business_name: businessName.trim(),
-      company_name: businessName.trim(),
-      owner_name: ownerName.trim(),
-      email: normalizeEmail(email),
-      phone: phone.trim(),
-      username: normalizeUsername(username),
-      business_address: businessAddress.trim(),
-      address: businessAddress.trim(),
-      city: city.trim(),
-      state: stateValue.trim().toUpperCase().slice(0, 2) || "MI",
-      zip_code: zipCode.trim(),
-      selected_products: selectedProducts,
-      selected_product_categories: selectedProducts,
-      legal_agreements: accepted,
-      farm_business_license_document: farmBusinessLicenseDocument.trim(),
-      food_safety_document: foodSafetyDocument.trim(),
-      product_liability_insurance_document: productLiabilityInsuranceDocument.trim(),
-      w9_document: w9Document.trim(),
-      farm_permit_document: farmPermitDocument.trim(),
-      organic_certification_document: organicCertificationDocument.trim() || null,
-      meat_dairy_license_document: meatDairyLicenseDocument.trim() || null,
-      produce_safety_certificate_document:
-        produceSafetyCertificateDocument.trim() || null,
-      status: paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
-      compliance_status:
-        paid && docsComplete ? "SUBMITTED" : paid ? "PENDING_DOCUMENTS" : "PENDING_PAYMENT",
-      admin_review_status:
-        paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
-      review_decision:
-        paid && docsComplete ? "submitted" : paid ? "pending_documents" : "pending_payment",
-      approved: paid && docsComplete,
-      rejected: false,
-      reviewed: false,
-      needs_more_info: false,
-      account_active: paid && docsComplete,
-      store_unlocked: paid && docsComplete,
-      compliance_submitted: docsComplete,
-      has_completed_compliance: docsComplete,
-      farmer_membership_paid: paid,
-      monthly_membership_started: paid,
-      membership_status: paid ? "active" : "pending_payment",
-      subscription_status: subscriptionStatus || (paid ? "active" : "pending_payment"),
-      stripe_customer_id: savedFarmer.stripe_customer_id || null,
-      stripe_subscription_id:
-        savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
-      subscription_id:
-        savedFarmer.subscription_id || savedFarmer.stripe_subscription_id || null,
-      updated_at: now,
-      created_at: now,
-    };
-
-    try {
-      await safeTableUpsert("admin_verifications", payload, "ADMIN_VERIFICATIONS");
-    } catch (error: any) {
-      console.log("admin_verifications skipped:", error?.message || error);
-    }
-  }
+  // Farmer registration intentionally does not save to admin_verifications.
+  // That table has a different schema and was causing repeated 400 errors.
 
   async function saveFarmerUserRow(authId: string, passedAccountId?: string) {
     const now = new Date().toISOString();
@@ -1232,8 +1160,6 @@ export default function FarmerRegister() {
       subscriptionValue: finalSubscriptionId,
       subscriptionStatusValue: finalStatus,
     });
-
-    await saveAdminVerificationIfTableExists(authId, savedFarmer);
 
     const finalRow = {
       ...savedFarmer,
