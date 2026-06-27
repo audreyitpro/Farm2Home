@@ -42,6 +42,7 @@ const COLORS = {
 
 type FarmerSession = {
   id?: string;
+  farmer_id?: string;
   farmerId?: string;
   auth_user_id?: string;
   profile_id?: string;
@@ -116,7 +117,13 @@ function money(value: any) {
 }
 
 function getFarmerId(farmer?: FarmerSession | null) {
-  return clean(farmer?.id || farmer?.farmerId || farmer?.profile_id || farmer?.auth_user_id);
+  return clean(
+    farmer?.farmer_id ||
+      farmer?.farmerId ||
+      farmer?.id ||
+      farmer?.profile_id ||
+      farmer?.auth_user_id
+  );
 }
 
 function getFarmName(farmer?: FarmerSession | null) {
@@ -145,6 +152,44 @@ function getStripeAccount(farmer?: FarmerSession | null) {
 function isReadyStatus(value: any) {
   const status = normalize(value || "active");
   return !["canceled", "cancelled", "inactive", "disabled", "rejected", "unpaid"].includes(status);
+}
+
+async function selectByFirstWorkingFilter({
+  table,
+  columns,
+  value,
+  orderBy,
+  limit = 50,
+}: {
+  table: string;
+  columns: string[];
+  value: string;
+  orderBy?: string;
+  limit?: number;
+}) {
+  if (!value) return { data: [], error: null };
+
+  for (const column of columns) {
+    try {
+      let query = supabase.from(table).select("*").eq(column, value).limit(limit);
+
+      if (orderBy) {
+        query = query.order(orderBy, { ascending: false });
+      }
+
+      const { data, error } = await query;
+
+      if (!error) {
+        return { data: Array.isArray(data) ? data : [], error: null };
+      }
+
+      console.log(`${table}.${column} lookup skipped:`, error.message);
+    } catch (error: any) {
+      console.log(`${table}.${column} lookup failed:`, error?.message || error);
+    }
+  }
+
+  return { data: [], error: null };
 }
 
 export default function FarmerDashboardScreen() {
@@ -218,27 +263,40 @@ export default function FarmerDashboardScreen() {
     const { data: authData } = await supabase.auth.getUser();
     const authUser = authData?.user;
 
-    const localId = clean(local?.id || local?.farmerId || local?.profile_id || authUser?.id);
+    const localId = clean(
+      local?.farmer_id ||
+        local?.farmerId ||
+        local?.id ||
+        local?.profile_id ||
+        local?.auth_user_id ||
+        authUser?.id
+    );
     const localEmail = normalize(local?.email || authUser?.email);
 
     if (localId) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .select("*")
-        .or(`id.eq.${localId},farmer_id.eq.${localId},profile_id.eq.${localId},auth_user_id.eq.${localId}`)
-        .limit(1);
+      const byId = await selectByFirstWorkingFilter({
+        table: "farmers",
+        columns: ["id", "farmer_id", "profile_id", "auth_user_id"],
+        value: localId,
+        limit: 1,
+      });
 
-      if (!error && Array.isArray(data) && data[0]) return data[0];
+      if (Array.isArray(byId.data) && byId.data[0]) return byId.data[0];
     }
 
     if (localEmail) {
-      const { data, error } = await supabase
-        .from("farmers")
-        .select("*")
-        .eq("email", localEmail)
-        .maybeSingle();
+      try {
+        const { data, error } = await supabase
+          .from("farmers")
+          .select("*")
+          .eq("email", localEmail)
+          .maybeSingle();
 
-      if (!error && data) return data;
+        if (!error && data) return data;
+        if (error) console.log("farmers.email lookup skipped:", error.message);
+      } catch (error: any) {
+        console.log("farmers.email lookup failed:", error?.message || error);
+      }
     }
 
     return null;
@@ -248,6 +306,7 @@ export default function FarmerDashboardScreen() {
     const normalized = {
       ...nextFarmer,
       id: getFarmerId(nextFarmer),
+      farmer_id: getFarmerId(nextFarmer),
       farmerId: getFarmerId(nextFarmer),
       role: "farmer",
       email: normalize(nextFarmer.email),
@@ -276,8 +335,9 @@ export default function FarmerDashboardScreen() {
       const merged = {
         ...(local || {}),
         ...(dbFarmer || {}),
-        id: clean(dbFarmer?.id || local?.id || local?.farmerId || local?.profile_id),
-        farmerId: clean(dbFarmer?.id || local?.id || local?.farmerId || local?.profile_id),
+        id: clean(dbFarmer?.id || local?.id || local?.farmer_id || local?.farmerId || local?.profile_id),
+        farmer_id: clean(dbFarmer?.farmer_id || dbFarmer?.id || local?.farmer_id || local?.id || local?.farmerId || local?.profile_id),
+        farmerId: clean(dbFarmer?.farmer_id || dbFarmer?.id || local?.farmer_id || local?.id || local?.farmerId || local?.profile_id),
         role: "farmer",
       };
 
@@ -304,86 +364,111 @@ export default function FarmerDashboardScreen() {
   }
 
   async function loadProducts(activeFarmerId: string) {
-    const tables = ["farm_products", "products", "farmer_products"];
+    if (!activeFarmerId) {
+      setProducts([]);
+      return;
+    }
+
+    const tables = ["farm_products", "farmer_products", "products"];
     const loaded: FarmProduct[] = [];
 
     for (const table of tables) {
-      try {
-        const { data, error } = await supabase
-          .from(table)
-          .select("*")
-          .eq("farmer_id", activeFarmerId)
-          .order("created_at", { ascending: false });
+      const result = await selectByFirstWorkingFilter({
+        table,
+        columns: ["farmer_id", "seller_id", "owner_id", "user_id"],
+        value: activeFarmerId,
+        orderBy: "created_at",
+        limit: 100,
+      });
 
-        if (!error && Array.isArray(data)) {
-          loaded.push(
-            ...data.map((row: any) => ({
-              id: clean(row.id),
-              name: clean(row.name || row.product_name || "Farm Product"),
-              price: Number(row.price || row.unit_price || 0),
-              quantity: Number(row.quantity || row.inventory_count || row.stock || 0),
-              status: clean(row.status || "active"),
-              image_url: clean(row.image_url || row.product_image_url),
-            }))
-          );
-          break;
-        }
-      } catch (error) {
-        console.log(`${table} products lookup skipped:`, error);
+      if (Array.isArray(result.data) && result.data.length) {
+        loaded.push(
+          ...result.data.map((row: any) => ({
+            id: clean(row.id),
+            name: clean(row.name || row.product_name || row.title || "Farm Product"),
+            price: Number(row.price || row.unit_price || row.amount || 0),
+            quantity: Number(row.quantity || row.inventory_count || row.stock || row.qty || 0),
+            status: clean(row.status || "active"),
+            image_url: clean(row.image_url || row.product_image_url || row.photo_url),
+          }))
+        );
+        break;
       }
     }
 
-    setProducts(loaded);
+    setProducts(Array.from(new Map(loaded.map((item) => [item.id, item])).values()));
   }
 
   async function loadOrders(activeFarmerId: string, activeEmail: string) {
-    const tables = ["orders", "customer_orders", "farm_orders", "delivery_orders"];
+    const tables = ["farm_orders", "customer_orders", "orders", "delivery_orders"];
     const loaded: OrderRow[] = [];
 
     for (const table of tables) {
-      try {
-        let query = supabase.from(table).select("*").limit(50);
+      if (activeFarmerId) {
+        const result = await selectByFirstWorkingFilter({
+          table,
+          columns: ["farmer_id", "seller_id", "vendor_id", "store_id", "farm_id"],
+          value: activeFarmerId,
+          orderBy: "created_at",
+          limit: 100,
+        });
 
-        if (activeFarmerId) {
-          query = query.or(`farmer_id.eq.${activeFarmerId},seller_id.eq.${activeFarmerId}`);
-        } else if (activeEmail) {
-          query = query.eq("farmer_email", activeEmail);
-        }
-
-        const { data, error } = await query;
-
-        if (!error && Array.isArray(data)) {
+        if (Array.isArray(result.data) && result.data.length) {
           loaded.push(
-            ...data.map((row: any) => ({
+            ...result.data.map((row: any) => ({
               id: clean(row.id || row.order_id),
-              status: clean(row.status || row.fulfillment_status || "new"),
-              total: Number(row.total || row.order_total || row.subtotal || 0),
+              status: clean(row.status || row.fulfillment_status || row.order_status || "new"),
+              total: Number(row.total || row.order_total || row.subtotal || row.amount || 0),
+              created_at: clean(row.created_at),
+            }))
+          );
+          continue;
+        }
+      }
+
+      if (activeEmail) {
+        const result = await selectByFirstWorkingFilter({
+          table,
+          columns: ["farmer_email", "seller_email", "vendor_email", "email"],
+          value: activeEmail,
+          orderBy: "created_at",
+          limit: 100,
+        });
+
+        if (Array.isArray(result.data) && result.data.length) {
+          loaded.push(
+            ...result.data.map((row: any) => ({
+              id: clean(row.id || row.order_id),
+              status: clean(row.status || row.fulfillment_status || row.order_status || "new"),
+              total: Number(row.total || row.order_total || row.subtotal || row.amount || 0),
               created_at: clean(row.created_at),
             }))
           );
         }
-      } catch (error) {
-        console.log(`${table} orders lookup skipped:`, error);
       }
     }
 
-    const unique = Array.from(new Map(loaded.map((item) => [item.id, item])).values());
+    const unique = Array.from(
+      new Map(loaded.filter((item) => item.id).map((item) => [item.id, item])).values()
+    );
+
     setOrders(unique);
   }
 
   async function loadDrivers(activeFarmerId: string) {
-    try {
-      const { data, error } = await supabase
-        .from("farmer_drivers")
-        .select("id")
-        .eq("farmer_id", activeFarmerId);
-
-      if (!error && Array.isArray(data)) {
-        setPreferredDrivers(data.length);
-      }
-    } catch {
+    if (!activeFarmerId) {
       setPreferredDrivers(0);
+      return;
     }
+
+    const result = await selectByFirstWorkingFilter({
+      table: "farmer_drivers",
+      columns: ["farmer_id", "owner_id", "user_id"],
+      value: activeFarmerId,
+      limit: 500,
+    });
+
+    setPreferredDrivers(Array.isArray(result.data) ? result.data.length : 0);
   }
 
   async function refreshDashboard() {
