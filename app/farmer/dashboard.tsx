@@ -57,22 +57,14 @@ type FarmerSession = {
   farmName?: string;
   business_name?: string;
   businessName?: string;
-  farm_location?: string;
-  farmLocation?: string;
-  location?: string;
-  about?: string;
   logo_url?: string;
   farm_logo_url?: string;
   logoUrl?: string;
   farmLogoUrl?: string;
-  pickup?: boolean;
-  delivery?: boolean;
-  store_unlocked?: boolean;
-  storeUnlocked?: boolean;
   account_active?: boolean;
-  approved?: boolean;
   stripe_account_id?: string;
   farmer_stripe_account_id?: string;
+  farmer_account?: string;
   stripeAccountId?: string;
   farmerStripeAccountId?: string;
   stripe_payouts_enabled?: boolean;
@@ -81,8 +73,6 @@ type FarmerSession = {
   stripeChargesEnabled?: boolean;
   stripe_onboarding_complete?: boolean;
   stripeOnboardingComplete?: boolean;
-  farmer_membership_paid?: boolean;
-  monthly_membership_started?: boolean;
   membership_status?: string;
   subscription_status?: string;
 };
@@ -112,8 +102,7 @@ function normalize(value: any) {
 }
 
 function money(value: any) {
-  const num = Number(value || 0);
-  return `$${num.toFixed(2)}`;
+  return `$${Number(value || 0).toFixed(2)}`;
 }
 
 function getFarmerId(farmer?: FarmerSession | null) {
@@ -137,12 +126,18 @@ function getFarmName(farmer?: FarmerSession | null) {
 }
 
 function getLogo(farmer?: FarmerSession | null) {
-  return clean(farmer?.logo_url || farmer?.farm_logo_url || farmer?.logoUrl || farmer?.farmLogoUrl);
+  return clean(
+    farmer?.logo_url ||
+      farmer?.farm_logo_url ||
+      farmer?.logoUrl ||
+      farmer?.farmLogoUrl
+  );
 }
 
 function getStripeAccount(farmer?: FarmerSession | null) {
   return clean(
-    farmer?.stripe_account_id ||
+    farmer?.farmer_account ||
+      farmer?.stripe_account_id ||
       farmer?.farmer_stripe_account_id ||
       farmer?.stripeAccountId ||
       farmer?.farmerStripeAccountId
@@ -151,45 +146,98 @@ function getStripeAccount(farmer?: FarmerSession | null) {
 
 function isReadyStatus(value: any) {
   const status = normalize(value || "active");
-  return !["canceled", "cancelled", "inactive", "disabled", "rejected", "unpaid"].includes(status);
+  return ![
+    "canceled",
+    "cancelled",
+    "inactive",
+    "disabled",
+    "rejected",
+    "unpaid",
+  ].includes(status);
 }
 
-async function selectByFirstWorkingFilter({
-  table,
-  columns,
-  value,
-  orderBy,
-  limit = 50,
-}: {
-  table: string;
-  columns: string[];
-  value: string;
-  orderBy?: string;
-  limit?: number;
-}) {
-  if (!value) return { data: [], error: null };
+function rowMatchesFarmer(row: any, farmerId: string, farmerEmail: string) {
+  const idFields = [
+    row?.farmer_id,
+    row?.seller_id,
+    row?.vendor_id,
+    row?.store_id,
+    row?.farm_id,
+    row?.owner_id,
+    row?.user_id,
+    row?.profile_id,
+    row?.auth_user_id,
+  ].map(clean);
 
-  for (const column of columns) {
-    try {
-      let query = supabase.from(table).select("*").eq(column, value).limit(limit);
+  const emailFields = [
+    row?.farmer_email,
+    row?.seller_email,
+    row?.vendor_email,
+    row?.email,
+  ].map(normalize);
 
-      if (orderBy) {
-        query = query.order(orderBy, { ascending: false });
-      }
+  const itemMatch =
+    Array.isArray(row?.items) &&
+    row.items.some((item: any) =>
+      [
+        item?.farmer_id,
+        item?.farmerId,
+        item?.seller_id,
+        item?.vendor_id,
+        item?.farm_id,
+      ]
+        .map(clean)
+        .includes(farmerId)
+    );
 
-      const { data, error } = await query;
+  const splitMatch =
+    Array.isArray(row?.payout_splits) &&
+    row.payout_splits.some((split: any) =>
+      [
+        split?.farmer_id,
+        split?.farmerId,
+        split?.seller_id,
+        split?.vendor_id,
+        split?.farm_id,
+      ]
+        .map(clean)
+        .includes(farmerId)
+    );
 
-      if (!error) {
-        return { data: Array.isArray(data) ? data : [], error: null };
-      }
+  return Boolean(
+    (farmerId && idFields.includes(farmerId)) ||
+      (farmerEmail && emailFields.includes(farmerEmail)) ||
+      itemMatch ||
+      splitMatch
+  );
+}
 
-      console.log(`${table}.${column} lookup skipped:`, error.message);
-    } catch (error: any) {
-      console.log(`${table}.${column} lookup failed:`, error?.message || error);
+async function safeSelectRecent(table: string, limit = 100) {
+  try {
+    let result = await supabase
+      .from(table)
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (!result.error) {
+      return Array.isArray(result.data) ? result.data : [];
     }
-  }
 
-  return { data: [], error: null };
+    console.log(`${table} created_at order skipped:`, result.error.message);
+
+    result = await supabase.from(table).select("*").limit(limit);
+
+    if (!result.error) {
+      return Array.isArray(result.data) ? result.data : [];
+    }
+
+    console.log(`${table} select skipped:`, result.error.message);
+    return [];
+  } catch (error: any) {
+    console.log(`${table} select failed:`, error?.message || error);
+    return [];
+  }
 }
 
 export default function FarmerDashboardScreen() {
@@ -215,7 +263,9 @@ export default function FarmerDashboardScreen() {
     return Boolean(
       farmerId &&
         clean(farmer?.email) &&
-        isReadyStatus(farmer?.membership_status || farmer?.subscription_status || "active") &&
+        isReadyStatus(
+          farmer?.membership_status || farmer?.subscription_status || "active"
+        ) &&
         farmer?.account_active !== false
     );
   }, [farmer, farmerId]);
@@ -229,11 +279,20 @@ export default function FarmerDashboardScreen() {
   );
 
   const stats = useMemo(() => {
-    const activeProducts = products.filter((p) => normalize(p.status || "active") !== "inactive").length;
-    const pendingOrders = orders.filter((o) =>
-      ["new", "pending", "paid", "processing", "open"].includes(normalize(o.status || "new"))
+    const activeProducts = products.filter(
+      (p) => normalize(p.status || "active") !== "inactive"
     ).length;
-    const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+
+    const pendingOrders = orders.filter((o) =>
+      ["new", "pending", "paid", "processing", "open"].includes(
+        normalize(o.status || "new")
+      )
+    ).length;
+
+    const revenue = orders.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
 
     return {
       products: activeProducts,
@@ -271,43 +330,42 @@ export default function FarmerDashboardScreen() {
         local?.auth_user_id ||
         authUser?.id
     );
+
     const localEmail = normalize(local?.email || authUser?.email);
 
     if (localId) {
-      const byId = await selectByFirstWorkingFilter({
-        table: "farmers",
-        columns: ["id", "farmer_id", "profile_id", "auth_user_id"],
-        value: localId,
-        limit: 1,
-      });
+      const rows = await safeSelectRecent("farmers", 500);
+      const found = rows.find((row: any) =>
+        [
+          row?.id,
+          row?.farmer_id,
+          row?.profile_id,
+          row?.auth_user_id,
+        ]
+          .map(clean)
+          .includes(localId)
+      );
 
-      if (Array.isArray(byId.data) && byId.data[0]) return byId.data[0];
+      if (found) return found;
     }
 
     if (localEmail) {
-      try {
-        const { data, error } = await supabase
-          .from("farmers")
-          .select("*")
-          .eq("email", localEmail)
-          .maybeSingle();
-
-        if (!error && data) return data;
-        if (error) console.log("farmers.email lookup skipped:", error.message);
-      } catch (error: any) {
-        console.log("farmers.email lookup failed:", error?.message || error);
-      }
+      const rows = await safeSelectRecent("farmers", 500);
+      const found = rows.find((row: any) => normalize(row?.email) === localEmail);
+      if (found) return found;
     }
 
     return null;
   }
 
   async function saveFarmerSession(nextFarmer: FarmerSession) {
+    const id = getFarmerId(nextFarmer);
+
     const normalized = {
       ...nextFarmer,
-      id: getFarmerId(nextFarmer),
-      farmer_id: getFarmerId(nextFarmer),
-      farmerId: getFarmerId(nextFarmer),
+      id,
+      farmer_id: id,
+      farmerId: id,
       role: "farmer",
       email: normalize(nextFarmer.email),
     };
@@ -335,9 +393,29 @@ export default function FarmerDashboardScreen() {
       const merged = {
         ...(local || {}),
         ...(dbFarmer || {}),
-        id: clean(dbFarmer?.id || local?.id || local?.farmer_id || local?.farmerId || local?.profile_id),
-        farmer_id: clean(dbFarmer?.farmer_id || dbFarmer?.id || local?.farmer_id || local?.id || local?.farmerId || local?.profile_id),
-        farmerId: clean(dbFarmer?.farmer_id || dbFarmer?.id || local?.farmer_id || local?.id || local?.farmerId || local?.profile_id),
+        id: clean(
+          dbFarmer?.id ||
+            local?.id ||
+            local?.farmer_id ||
+            local?.farmerId ||
+            local?.profile_id
+        ),
+        farmer_id: clean(
+          dbFarmer?.farmer_id ||
+            dbFarmer?.id ||
+            local?.farmer_id ||
+            local?.id ||
+            local?.farmerId ||
+            local?.profile_id
+        ),
+        farmerId: clean(
+          dbFarmer?.farmer_id ||
+            dbFarmer?.id ||
+            local?.farmer_id ||
+            local?.id ||
+            local?.farmerId ||
+            local?.profile_id
+        ),
         role: "farmer",
       };
 
@@ -348,55 +426,61 @@ export default function FarmerDashboardScreen() {
       }
 
       const saved = await saveFarmerSession(merged);
+      const activeFarmerId = getFarmerId(saved);
+      const activeEmail = normalize(saved.email);
 
       await Promise.all([
-        loadProducts(getFarmerId(saved)),
-        loadOrders(getFarmerId(saved), normalize(saved.email)),
-        loadDrivers(getFarmerId(saved)),
+        loadProducts(activeFarmerId, activeEmail),
+        loadOrders(activeFarmerId, activeEmail),
+        loadDrivers(activeFarmerId),
       ]);
     } catch (error: any) {
       console.log("Farmer dashboard load error:", error);
-      Alert.alert("Load Error", error?.message || "Unable to load farmer dashboard.");
+      Alert.alert(
+        "Load Error",
+        error?.message || "Unable to load farmer dashboard."
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }
 
-  async function loadProducts(activeFarmerId: string) {
-    if (!activeFarmerId) {
-      setProducts([]);
-      return;
-    }
-
+  async function loadProducts(activeFarmerId: string, activeEmail: string) {
     const tables = ["farm_products", "farmer_products", "products"];
     const loaded: FarmProduct[] = [];
 
     for (const table of tables) {
-      const result = await selectByFirstWorkingFilter({
-        table,
-        columns: ["farmer_id", "seller_id", "owner_id", "user_id"],
-        value: activeFarmerId,
-        orderBy: "created_at",
-        limit: 100,
-      });
+      const rows = await safeSelectRecent(table, 300);
 
-      if (Array.isArray(result.data) && result.data.length) {
+      const filtered = rows.filter((row: any) =>
+        rowMatchesFarmer(row, activeFarmerId, activeEmail)
+      );
+
+      if (filtered.length) {
         loaded.push(
-          ...result.data.map((row: any) => ({
-            id: clean(row.id),
+          ...filtered.map((row: any) => ({
+            id: clean(row.id || row.product_id || `${table}_${loaded.length}`),
             name: clean(row.name || row.product_name || row.title || "Farm Product"),
             price: Number(row.price || row.unit_price || row.amount || 0),
-            quantity: Number(row.quantity || row.inventory_count || row.stock || row.qty || 0),
+            quantity: Number(
+              row.quantity || row.inventory_count || row.stock || row.qty || 0
+            ),
             status: clean(row.status || "active"),
-            image_url: clean(row.image_url || row.product_image_url || row.photo_url),
+            image_url: clean(
+              row.image_url || row.product_image_url || row.photo_url
+            ),
           }))
         );
-        break;
       }
     }
 
-    setProducts(Array.from(new Map(loaded.map((item) => [item.id, item])).values()));
+    setProducts(
+      Array.from(
+        new Map(loaded.filter((item) => item.id).map((item) => [item.id, item]))
+          .values()
+      )
+    );
   }
 
   async function loadOrders(activeFarmerId: string, activeEmail: string) {
@@ -404,55 +488,30 @@ export default function FarmerDashboardScreen() {
     const loaded: OrderRow[] = [];
 
     for (const table of tables) {
-      if (activeFarmerId) {
-        const result = await selectByFirstWorkingFilter({
-          table,
-          columns: ["farmer_id", "seller_id", "vendor_id", "store_id", "farm_id"],
-          value: activeFarmerId,
-          orderBy: "created_at",
-          limit: 100,
-        });
+      const rows = await safeSelectRecent(table, 300);
 
-        if (Array.isArray(result.data) && result.data.length) {
-          loaded.push(
-            ...result.data.map((row: any) => ({
-              id: clean(row.id || row.order_id),
-              status: clean(row.status || row.fulfillment_status || row.order_status || "new"),
-              total: Number(row.total || row.order_total || row.subtotal || row.amount || 0),
-              created_at: clean(row.created_at),
-            }))
-          );
-          continue;
-        }
-      }
+      const filtered = rows.filter((row: any) =>
+        rowMatchesFarmer(row, activeFarmerId, activeEmail)
+      );
 
-      if (activeEmail) {
-        const result = await selectByFirstWorkingFilter({
-          table,
-          columns: ["farmer_email", "seller_email", "vendor_email", "email"],
-          value: activeEmail,
-          orderBy: "created_at",
-          limit: 100,
-        });
-
-        if (Array.isArray(result.data) && result.data.length) {
-          loaded.push(
-            ...result.data.map((row: any) => ({
-              id: clean(row.id || row.order_id),
-              status: clean(row.status || row.fulfillment_status || row.order_status || "new"),
-              total: Number(row.total || row.order_total || row.subtotal || row.amount || 0),
-              created_at: clean(row.created_at),
-            }))
-          );
-        }
-      }
+      loaded.push(
+        ...filtered.map((row: any) => ({
+          id: clean(row.id || row.order_id || `${table}_${loaded.length}`),
+          status: clean(
+            row.status || row.fulfillment_status || row.order_status || "new"
+          ),
+          total: Number(row.total || row.order_total || row.subtotal || row.amount || 0),
+          created_at: clean(row.created_at),
+        }))
+      );
     }
 
-    const unique = Array.from(
-      new Map(loaded.filter((item) => item.id).map((item) => [item.id, item])).values()
+    setOrders(
+      Array.from(
+        new Map(loaded.filter((item) => item.id).map((item) => [item.id, item]))
+          .values()
+      )
     );
-
-    setOrders(unique);
   }
 
   async function loadDrivers(activeFarmerId: string) {
@@ -461,14 +520,21 @@ export default function FarmerDashboardScreen() {
       return;
     }
 
-    const result = await selectByFirstWorkingFilter({
-      table: "farmer_drivers",
-      columns: ["farmer_id", "owner_id", "user_id"],
-      value: activeFarmerId,
-      limit: 500,
-    });
+    const rows = await safeSelectRecent("farmer_drivers", 500);
 
-    setPreferredDrivers(Array.isArray(result.data) ? result.data.length : 0);
+    const filtered = rows.filter((row: any) =>
+      [
+        row?.farmer_id,
+        row?.owner_id,
+        row?.user_id,
+        row?.profile_id,
+        row?.auth_user_id,
+      ]
+        .map(clean)
+        .includes(activeFarmerId)
+    );
+
+    setPreferredDrivers(filtered.length);
   }
 
   async function refreshDashboard() {
@@ -498,6 +564,7 @@ export default function FarmerDashboardScreen() {
             "userRole",
             "currentUserRole",
           ]);
+
           await supabase.auth.signOut();
           router.replace("/farmer/login" as any);
         },
@@ -523,7 +590,9 @@ export default function FarmerDashboardScreen() {
 
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />
+        }
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topBar}>
@@ -532,7 +601,11 @@ export default function FarmerDashboardScreen() {
             <Text style={styles.pageTitle}>{farmName}</Text>
           </View>
 
-          <TouchableOpacity style={styles.profileCircle} onPress={() => go("/farmer/setup-store")} activeOpacity={0.9}>
+          <TouchableOpacity
+            style={styles.profileCircle}
+            onPress={() => go("/farmer/setup-store")}
+            activeOpacity={0.9}
+          >
             {logoUrl ? (
               <Image source={{ uri: logoUrl }} style={styles.profileLogo} />
             ) : (
@@ -544,17 +617,28 @@ export default function FarmerDashboardScreen() {
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
             <Text style={styles.heroBadge}>Grocerly Farmer Store</Text>
-            <Text style={styles.heroTitle}>Fresh farm products, ready for local customers.</Text>
+            <Text style={styles.heroTitle}>
+              Fresh farm products, ready for local customers.
+            </Text>
             <Text style={styles.heroSub}>
-              Manage your store, produce, deliveries, payout setup, and preferred drivers.
+              Manage your store, produce, deliveries, payout setup, and preferred
+              drivers.
             </Text>
 
             <View style={styles.heroActions}>
-              <TouchableOpacity style={styles.heroButton} onPress={() => go("/farmer/setup-store")} activeOpacity={0.9}>
+              <TouchableOpacity
+                style={styles.heroButton}
+                onPress={() => go("/farmer/setup-store")}
+                activeOpacity={0.9}
+              >
                 <Text style={styles.heroButtonText}>Setup Store</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.heroButtonLight} onPress={() => go("/farmer/add-product")} activeOpacity={0.9}>
+              <TouchableOpacity
+                style={styles.heroButtonLight}
+                onPress={() => go("/farmer/add-product")}
+                activeOpacity={0.9}
+              >
                 <Text style={styles.heroButtonLightText}>Add Product</Text>
               </TouchableOpacity>
             </View>
@@ -566,15 +650,27 @@ export default function FarmerDashboardScreen() {
         </View>
 
         <View style={styles.readyCard}>
-          <View style={[styles.readyIcon, dashboardReady ? styles.readyIconGood : styles.readyIconWarn]}>
+          <View
+            style={[
+              styles.readyIcon,
+              dashboardReady ? styles.readyIconGood : styles.readyIconWarn,
+            ]}
+          >
             <Ionicons
-              name={dashboardReady ? "checkmark-circle-outline" : "alert-circle-outline"}
+              name={
+                dashboardReady
+                  ? "checkmark-circle-outline"
+                  : "alert-circle-outline"
+              }
               size={26}
               color={dashboardReady ? COLORS.greenDark : COLORS.orange}
             />
           </View>
+
           <View style={{ flex: 1 }}>
-            <Text style={styles.readyTitle}>{dashboardReady ? "Store is active" : "Store setup needed"}</Text>
+            <Text style={styles.readyTitle}>
+              {dashboardReady ? "Store is active" : "Store setup needed"}
+            </Text>
             <Text style={styles.readyText}>
               {dashboardReady
                 ? "Your farmer dashboard is ready. Continue managing orders and inventory."
@@ -614,7 +710,9 @@ export default function FarmerDashboardScreen() {
           />
           <ActionCard
             title="Connect Bank"
-            subtitle={payoutsReady ? "Stripe payouts ready." : "Finish Stripe Connect payouts."}
+            subtitle={
+              payoutsReady ? "Stripe payouts ready." : "Finish Stripe Connect payouts."
+            }
             icon="card-outline"
             onPress={() => go("/farmer/connect-bank")}
           />
@@ -644,13 +742,18 @@ export default function FarmerDashboardScreen() {
                   <Text style={styles.productEmoji}>🥕</Text>
                 )}
               </View>
+
               <View style={{ flex: 1 }}>
                 <Text style={styles.productName}>{product.name}</Text>
                 <Text style={styles.productMeta}>
                   {money(product.price)} • Qty {Number(product.quantity || 0)}
                 </Text>
               </View>
-              <TouchableOpacity style={styles.productEdit} onPress={() => go("/farmer/add-product")}>
+
+              <TouchableOpacity
+                style={styles.productEdit}
+                onPress={() => go("/farmer/add-product")}
+              >
                 <Ionicons name="create-outline" size={18} color={COLORS.greenDark} />
               </TouchableOpacity>
             </View>
@@ -660,8 +763,13 @@ export default function FarmerDashboardScreen() {
             <View style={styles.emptyBox}>
               <Text style={styles.emptyEmoji}>🧺</Text>
               <Text style={styles.emptyTitle}>No products listed yet</Text>
-              <Text style={styles.emptyText}>Add produce or custom grocery items to open your store.</Text>
-              <TouchableOpacity style={styles.emptyButton} onPress={() => go("/farmer/select-produce")}>
+              <Text style={styles.emptyText}>
+                Add produce or custom grocery items to open your store.
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyButton}
+                onPress={() => go("/farmer/select-produce")}
+              >
                 <Text style={styles.emptyButtonText}>Add Produce</Text>
               </TouchableOpacity>
             </View>
@@ -677,7 +785,15 @@ export default function FarmerDashboardScreen() {
   );
 }
 
-function StatCard({ label, value, icon }: { label: string; value: string; icon: keyof typeof Ionicons.glyphMap }) {
+function StatCard({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
   return (
     <View style={styles.statCard}>
       <View style={styles.statIcon}>
@@ -709,13 +825,27 @@ function ActionCard({
       activeOpacity={0.9}
     >
       <View style={[styles.actionIcon, primary && styles.actionIconPrimary]}>
-        <Ionicons name={icon} size={22} color={primary ? COLORS.white : COLORS.greenDark} />
+        <Ionicons
+          name={icon}
+          size={22}
+          color={primary ? COLORS.white : COLORS.greenDark}
+        />
       </View>
+
       <View style={{ flex: 1 }}>
-        <Text style={[styles.actionTitle, primary && styles.actionTitlePrimary]}>{title}</Text>
-        <Text style={[styles.actionSub, primary && styles.actionSubPrimary]}>{subtitle}</Text>
+        <Text style={[styles.actionTitle, primary && styles.actionTitlePrimary]}>
+          {title}
+        </Text>
+        <Text style={[styles.actionSub, primary && styles.actionSubPrimary]}>
+          {subtitle}
+        </Text>
       </View>
-      <Ionicons name="chevron-forward-outline" size={18} color={primary ? COLORS.white : COLORS.muted} />
+
+      <Ionicons
+        name="chevron-forward-outline"
+        size={18}
+        color={primary ? COLORS.white : COLORS.muted}
+      />
     </TouchableOpacity>
   );
 }
@@ -732,7 +862,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   greeting: { color: COLORS.muted, fontWeight: "800", fontSize: 14 },
-  pageTitle: { color: COLORS.text, fontSize: 26, fontWeight: "900", marginTop: 2 },
+  pageTitle: {
+    color: COLORS.text,
+    fontSize: 26,
+    fontWeight: "900",
+    marginTop: 2,
+  },
   profileCircle: {
     width: 54,
     height: 54,
@@ -765,8 +900,20 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 11,
   },
-  heroTitle: { color: COLORS.white, fontSize: 25, fontWeight: "900", lineHeight: 31, marginTop: 7 },
-  heroSub: { color: COLORS.white, opacity: 0.92, fontWeight: "700", lineHeight: 20, marginTop: 7 },
+  heroTitle: {
+    color: COLORS.white,
+    fontSize: 25,
+    fontWeight: "900",
+    lineHeight: 31,
+    marginTop: 7,
+  },
+  heroSub: {
+    color: COLORS.white,
+    opacity: 0.92,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 7,
+  },
   heroActions: { flexDirection: "row", gap: 10, marginTop: 16, flexWrap: "wrap" },
   heroButton: {
     backgroundColor: COLORS.white,
@@ -812,13 +959,13 @@ const styles = StyleSheet.create({
   readyIconGood: { backgroundColor: COLORS.greenSoft },
   readyIconWarn: { backgroundColor: COLORS.orangeSoft },
   readyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
-  readyText: { color: COLORS.muted, fontWeight: "700", lineHeight: 19, marginTop: 3 },
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 18,
+  readyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 19,
+    marginTop: 3,
   },
+  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 18 },
   statCard: {
     width: Platform.OS === "web" ? "24%" : "48%",
     minWidth: 150,
@@ -840,7 +987,13 @@ const styles = StyleSheet.create({
   },
   statValue: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
   statLabel: { color: COLORS.muted, fontWeight: "900", marginTop: 2 },
-  sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: "900", marginBottom: 12, marginTop: 4 },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: "900",
+    marginBottom: 12,
+    marginTop: 4,
+  },
   actionGrid: { gap: 10, marginBottom: 18 },
   actionCard: {
     backgroundColor: COLORS.card,
@@ -867,7 +1020,12 @@ const styles = StyleSheet.create({
   actionIconPrimary: { backgroundColor: "rgba(255,255,255,0.16)" },
   actionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
   actionTitlePrimary: { color: COLORS.white },
-  actionSub: { color: COLORS.muted, fontWeight: "700", marginTop: 3, lineHeight: 18 },
+  actionSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    lineHeight: 18,
+  },
   actionSubPrimary: { color: "rgba(255,255,255,0.86)" },
   productList: { gap: 10 },
   productRow: {
@@ -910,8 +1068,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   emptyEmoji: { fontSize: 42 },
-  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18, marginTop: 8 },
-  emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", marginTop: 6, lineHeight: 20 },
+  emptyTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 18,
+    marginTop: 8,
+  },
+  emptyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 6,
+    lineHeight: 20,
+  },
   emptyButton: {
     backgroundColor: COLORS.green,
     borderRadius: 999,
