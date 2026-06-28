@@ -57,7 +57,7 @@ type FarmerProfile = {
   farmerStripeAccountId?: string;
   stripe_account_id?: string;
   farmer_stripe_account_id?: string;
-  farmer_account?: string;
+  
 
   stripePayoutsEnabled?: boolean;
   stripeChargesEnabled?: boolean;
@@ -125,14 +125,13 @@ function getStripeAccountId(farmer: FarmerProfile | null | undefined) {
     farmer?.stripeAccountId ||
       farmer?.farmerStripeAccountId ||
       farmer?.stripe_account_id ||
-      farmer?.farmer_stripe_account_id ||
-      farmer?.farmer_account
+      farmer?.farmer_stripe_account_id
+      
   );
 }
 
 function mapSupabaseFarmer(row: any): FarmerProfile {
   const stripeAccountId = clean(
-    row.farmer_account ||
       row.stripe_account_id ||
       row.farmer_stripe_account_id
   );
@@ -162,7 +161,7 @@ function mapSupabaseFarmer(row: any): FarmerProfile {
     farmerStripeAccountId: stripeAccountId,
     stripe_account_id: stripeAccountId,
     farmer_stripe_account_id: stripeAccountId,
-    farmer_account: stripeAccountId,
+   
 
     stripePayoutsEnabled: Boolean(row.stripe_payouts_enabled),
     stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
@@ -302,7 +301,6 @@ export default function ConnectBankScreen() {
           farmerStripeAccountId: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
           stripe_account_id: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
           farmer_stripe_account_id: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
-          farmer_account: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
           role: "farmer",
         }
       : localFarmer
@@ -317,7 +315,6 @@ export default function ConnectBankScreen() {
           farmerStripeAccountId: getStripeAccountId(localFarmer),
           stripe_account_id: getStripeAccountId(localFarmer),
           farmer_stripe_account_id: getStripeAccountId(localFarmer),
-          farmer_account: getStripeAccountId(localFarmer),
           role: "farmer",
         }
       : null;
@@ -354,8 +351,7 @@ export default function ConnectBankScreen() {
       farmerStripeAccountId: finalAccountId,
       stripe_account_id: finalAccountId,
       farmer_stripe_account_id: finalAccountId,
-      farmer_account: finalAccountId,
-    };
+          };
 
     await AsyncStorage.multiSet([
       ["currentFarmer", JSON.stringify(merged)],
@@ -376,7 +372,6 @@ export default function ConnectBankScreen() {
     if (!farmerId && !updatedFarmer.email) return;
 
     const payload: Record<string, any> = {
-      farmer_account: accountId,
       stripe_account_id: accountId,
       farmer_stripe_account_id: accountId,
       stripe_onboarding_complete: Boolean(
@@ -599,7 +594,6 @@ export default function ConnectBankScreen() {
         farmer_email: normalizeEmail(farmer.email),
         stripeAccountId,
         stripe_account_id: stripeAccountId,
-        farmer_account: stripeAccountId,
         accountId: stripeAccountId,
         account_id: stripeAccountId,
       };
@@ -630,8 +624,7 @@ export default function ConnectBankScreen() {
         farmerStripeAccountId: normalized.accountId,
         stripe_account_id: normalized.accountId,
         farmer_stripe_account_id: normalized.accountId,
-        farmer_account: normalized.accountId,
-
+        
         payoutsEnabled: normalized.payoutsEnabled,
         chargesEnabled: normalized.chargesEnabled,
         detailsSubmitted: normalized.detailsSubmitted,
@@ -736,7 +729,6 @@ export default function ConnectBankScreen() {
           business_name: getFarmName(farmer),
           stripeAccountId,
           stripe_account_id: stripeAccountId,
-          farmer_account: stripeAccountId,
           accountId: stripeAccountId,
           existingStripeAccountId: stripeAccountId,
         });
@@ -750,7 +742,6 @@ export default function ConnectBankScreen() {
         const returnedAccountId =
           data.stripeAccountId ||
           data.stripe_account_id ||
-          data.farmer_account ||
           data.accountId ||
           stripeAccountId ||
           "";
@@ -770,7 +761,6 @@ export default function ConnectBankScreen() {
             farmerStripeAccountId: returnedAccountId,
             stripe_account_id: returnedAccountId,
             farmer_stripe_account_id: returnedAccountId,
-            farmer_account: returnedAccountId,
             stripeOnboardingComplete: false,
             stripeChargesEnabled: false,
             stripePayoutsEnabled: false,
