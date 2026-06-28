@@ -68,7 +68,6 @@ type FarmerRecord = {
 
 type FarmerProductRow = {
   id: string;
-  catalogId: string;
   catalog_id: string;
   name: string;
   product_name: string;
@@ -78,39 +77,15 @@ type FarmerProductRow = {
   unit: string;
   stock: number;
   quantity: number;
-  inventory: number;
-  inventory_count: number;
-  lowStockThreshold: number;
-  low_stock_threshold: number;
-  image: string;
-  imageUrl: string;
   image_url: string;
   tags: string[];
-  farmName: string;
   farm_name: string;
-  farmerId: string;
   farmer_id: string;
-  farmerEmail: string;
-  farmer_email: string;
-  deliveryOption: string;
-  delivery_option: string;
-  sold: number;
-  grossSales: number;
-  gross_sales: number;
   active: boolean;
-  available: boolean;
-  marketplace_visible: boolean;
-  removed_from_inventory: boolean;
-  source: string;
   organic: boolean;
   local: boolean;
-  seasonal: boolean;
-  isSoldOut: boolean;
-  is_sold_out: boolean;
   status: string;
-  createdAt: string;
   created_at: string;
-  updatedAt: string;
   updated_at: string;
 };
 
@@ -127,9 +102,7 @@ function firstParam(value: any) {
   return value ? String(value) : "";
 }
 
-
 function makeUuid() {
-  // Valid UUID for Supabase uuid primary keys.
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
     const random = Math.floor(Math.random() * 16);
     const value = char === "x" ? random : (random & 0x3) | 0x8;
@@ -138,7 +111,9 @@ function makeUuid() {
 }
 
 function isUuid(value: any) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean(value));
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    clean(value)
+  );
 }
 
 function getFarmerProductsKey(farmerId: string) {
@@ -172,7 +147,7 @@ function cleanProducts(items: any[]) {
     })
     .map((item: any) => ({
       ...item,
-      id: clean(item.id || item.catalog_id || item.catalogId || `${normalize(item.name)}_${Date.now()}`),
+      id: clean(item.id || item.catalog_id || makeUuid()),
       name: clean(item.name || item.product_name || "Farm Product"),
       product_name: clean(item.product_name || item.name || "Farm Product"),
       farmer_id: clean(item.farmer_id || item.farmerId),
@@ -180,78 +155,61 @@ function cleanProducts(items: any[]) {
     }));
 }
 
-function makeFarmerProduct(item: FarmCatalogProduct, farmer: FarmerRecord): FarmerProductRow {
+function makeFarmerProduct(
+  item: FarmCatalogProduct,
+  farmer: FarmerRecord
+): FarmerProductRow {
   const now = new Date().toISOString();
   const farmerId = getFarmerId(farmer);
   const farmName = getFarmName(farmer);
-  const farmerEmail = normalize(farmer.email);
-  const deliveryOption = "Pickup and Delivery";
-  const uuid = makeUuid();
+  const price = Number(item.defaultPrice || 0);
+  const quantity = Number(item.defaultStock || 0);
 
   return {
-    // IMPORTANT: farm_products / farmer_products id is a uuid in Supabase.
-    // Do not use `${farmerId}_${item.id}` because that causes:
-    // invalid input syntax for type uuid.
-    id: uuid,
-    catalogId: item.id,
+    id: makeUuid(),
     catalog_id: item.id,
     name: item.name,
     product_name: item.name,
     category: item.category,
-    price: Number(item.defaultPrice || 0),
-    unit_price: Number(item.defaultPrice || 0),
+    price,
+    unit_price: price,
     unit: item.unit,
-    stock: Number(item.defaultStock || 0),
-    quantity: Number(item.defaultStock || 0),
-    inventory: Number(item.defaultStock || 0),
-    inventory_count: Number(item.defaultStock || 0),
-    lowStockThreshold: 5,
-    low_stock_threshold: 5,
-    image: item.imageUrl,
-    imageUrl: item.imageUrl,
+    stock: quantity,
+    quantity,
     image_url: item.imageUrl,
     tags: item.tags || [],
-    farmName,
     farm_name: farmName,
-    farmerId,
     farmer_id: farmerId,
-    farmerEmail,
-    farmer_email: farmerEmail,
-    deliveryOption,
-    delivery_option: deliveryOption,
-    sold: 0,
-    grossSales: 0,
-    gross_sales: 0,
     active: true,
-    available: true,
-    marketplace_visible: true,
-    removed_from_inventory: false,
-    source: "farm_catalog",
     organic: item.tags?.includes("organic") || false,
     local: true,
-    seasonal: item.tags?.includes("seasonal") || false,
-    isSoldOut: false,
-    is_sold_out: false,
     status: "active",
-    createdAt: now,
     created_at: now,
-    updatedAt: now,
     updated_at: now,
   };
 }
 
 function missingColumn(error: any) {
+  const message = String(error?.message || error?.details || "");
+
   return (
-    String(error?.message || "").match(/Could not find the '([^']+)' column/i)?.[1] ||
-    String(error?.message || "").match(/column ['\"]?([^'\"]+)['\"]? does not exist/i)?.[1] ||
+    message.match(/Could not find the '([^']+)' column/i)?.[1] ||
+    message.match(/column ['"]?([^'"]+)['"]? does not exist/i)?.[1] ||
     ""
   );
 }
 
-async function safeUpdate(table: string, idColumn: string, idValue: string, payload: Record<string, any>) {
-  let nextPayload = { ...payload };
+async function safeUpdate(
+  table: string,
+  idColumn: string,
+  idValue: string,
+  payload: Record<string, any>
+) {
+  if (!idValue) return null;
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  let nextPayload: Record<string, any> = { ...payload };
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
     const { data, error } = await supabase
       .from(table)
       .update(nextPayload)
@@ -262,6 +220,7 @@ async function safeUpdate(table: string, idColumn: string, idValue: string, payl
     if (!error) return data;
 
     const missing = missingColumn(error);
+
     if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
       delete nextPayload[missing];
       continue;
@@ -275,30 +234,28 @@ async function safeUpdate(table: string, idColumn: string, idValue: string, payl
 }
 
 function buildSafeProductPayload(row: Record<string, any>) {
-  const id = isUuid(row.id) ? clean(row.id) : makeUuid();
+  const now = new Date().toISOString();
 
   return {
-    // Keep this list intentionally small and schema-safe.
-    // Missing columns are removed and retried by safeInsertMany.
-    id,
+    id: isUuid(row.id) ? clean(row.id) : makeUuid(),
     name: clean(row.name || row.product_name || "Farm Product"),
     product_name: clean(row.product_name || row.name || "Farm Product"),
     category: clean(row.category || "Produce"),
     price: Number(row.price || row.unit_price || 0),
     unit_price: Number(row.unit_price || row.price || 0),
     unit: clean(row.unit || "each"),
-    stock: Number(row.stock || row.quantity || row.inventory || 0),
-    quantity: Number(row.quantity || row.stock || row.inventory || 0),
-    image_url: clean(row.image_url || row.imageUrl || row.image || ""),
+    stock: Number(row.stock || row.quantity || 0),
+    quantity: Number(row.quantity || row.stock || 0),
+    image_url: clean(row.image_url || ""),
     tags: Array.isArray(row.tags) ? row.tags : [],
-    farm_name: clean(row.farm_name || row.farmName || ""),
-    farmer_id: clean(row.farmer_id || row.farmerId || ""),
+    farm_name: clean(row.farm_name || ""),
+    farmer_id: clean(row.farmer_id || ""),
     active: row.active !== false,
-    status: clean(row.status || "active"),
     organic: Boolean(row.organic),
     local: row.local !== false,
-    created_at: clean(row.created_at || row.createdAt || new Date().toISOString()),
-    updated_at: clean(row.updated_at || row.updatedAt || new Date().toISOString()),
+    status: clean(row.status || "active"),
+    created_at: clean(row.created_at || now),
+    updated_at: clean(row.updated_at || now),
   };
 }
 
@@ -306,42 +263,38 @@ async function safeInsertMany(table: string, rows: Record<string, any>[]) {
   if (!rows.length) return false;
 
   let nextRows: Record<string, any>[] = rows.map((row) =>
-    buildSafeProductPayload(row) as Record<string, any>
+    buildSafeProductPayload(row)
   );
 
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const { error } = await supabase
-      .from(table)
-      .upsert(nextRows, { onConflict: "id" });
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const { error } = await supabase.from(table).insert(nextRows);
 
     if (!error) return true;
 
     const missing = missingColumn(error);
 
     if (missing) {
-      nextRows = nextRows.map((row: Record<string, any>) => {
+      nextRows = nextRows.map((row) => {
         const copy: Record<string, any> = { ...row };
-
-        if (Object.prototype.hasOwnProperty.call(copy, missing)) {
-          delete copy[missing];
-        }
-
+        delete copy[missing];
         return copy;
       });
-
       continue;
     }
 
-    // If your table's id column is uuid, this prevents farmerId_productName failures.
-    if (String(error.message || "").toLowerCase().includes("invalid input syntax for type uuid")) {
-      nextRows = nextRows.map((row: Record<string, any>) => ({
+    if (
+      String(error.message || "")
+        .toLowerCase()
+        .includes("invalid input syntax for type uuid")
+    ) {
+      nextRows = nextRows.map((row) => ({
         ...row,
         id: makeUuid(),
       }));
       continue;
     }
 
-    console.log(`${table} insert skipped:`, error.message);
+    console.log(`${table} insert failed:`, error.message);
     return false;
   }
 
@@ -458,11 +411,33 @@ export default function SelectProduceScreen() {
 
       const latestFromDb = await findLatestFarmer(localFarmer);
 
-      let latestFarmer: FarmerRecord = {
+      const latestFarmer: FarmerRecord = {
         ...(localFarmer || {}),
         ...(latestFromDb || {}),
-        id: clean(latestFromDb?.id || localFarmer?.id || localFarmer?.farmerId || farmerIdParam),
-        farmerId: clean(latestFromDb?.id || localFarmer?.id || localFarmer?.farmerId || farmerIdParam),
+        id: clean(
+          latestFromDb?.id ||
+            latestFromDb?.farmer_id ||
+            localFarmer?.id ||
+            localFarmer?.farmerId ||
+            localFarmer?.farmer_id ||
+            farmerIdParam
+        ),
+        farmerId: clean(
+          latestFromDb?.id ||
+            latestFromDb?.farmer_id ||
+            localFarmer?.id ||
+            localFarmer?.farmerId ||
+            localFarmer?.farmer_id ||
+            farmerIdParam
+        ),
+        farmer_id: clean(
+          latestFromDb?.farmer_id ||
+            latestFromDb?.id ||
+            localFarmer?.farmer_id ||
+            localFarmer?.id ||
+            localFarmer?.farmerId ||
+            farmerIdParam
+        ),
         role: "farmer",
         email: normalize(latestFromDb?.email || localFarmer?.email),
       };
@@ -480,7 +455,9 @@ export default function SelectProduceScreen() {
       if (localInventory) {
         latestFarmer.products = cleanProducts(JSON.parse(localInventory));
       } else {
-        latestFarmer.products = cleanProducts(latestFromDb?.products || localFarmer?.products || []);
+        latestFarmer.products = cleanProducts(
+          latestFromDb?.products || localFarmer?.products || []
+        );
       }
 
       await AsyncStorage.multiSet([
@@ -507,7 +484,8 @@ export default function SelectProduceScreen() {
     const q = normalize(search);
 
     return FARM_PRODUCT_CATALOG.filter((item) => {
-      const matchesCategory = selectedCategory === "All" || item.category === selectedCategory;
+      const matchesCategory =
+        selectedCategory === "All" || item.category === selectedCategory;
 
       const matchesSearch =
         !q ||
@@ -526,17 +504,7 @@ export default function SelectProduceScreen() {
     }));
   }
 
-  async function saveProductsToFarmerRow(farmerId: string, updatedFarmer: FarmerRecord, updatedProducts: any[]) {
-    /**
-     * IMPORTANT:
-     * Do NOT save products / selected_products / selected_product_categories
-     * to the farmers table unless those columns are guaranteed to exist.
-     *
-     * The dashboard reads inventory from farm_products / farmer_products / products.
-     * This function only marks the farmer store as active using safe common columns.
-     * This prevents Supabase 400 errors like:
-     * PATCH /rest/v1/farmers?id=eq... 400 Bad Request
-     */
+  async function saveProductsToFarmerRow(farmerId: string, updatedFarmer: FarmerRecord) {
     const payload = {
       store_unlocked: true,
       account_active: true,
@@ -555,20 +523,11 @@ export default function SelectProduceScreen() {
       if (byProfileId) return true;
     }
 
-    // Local inventory and inventory table inserts are still saved even if this update is skipped.
     return false;
   }
 
   async function saveProductsToInventoryTables(newProducts: FarmerProductRow[]) {
-    const tables = ["farm_products", "farmer_products", "products"];
-    let savedAny = false;
-
-    for (const table of tables) {
-      const ok = await safeInsertMany(table, newProducts);
-      if (ok) savedAny = true;
-    }
-
-    return savedAny;
+    return await safeInsertMany("farm_products", newProducts);
   }
 
   async function saveSelectedProducts() {
@@ -608,17 +567,14 @@ export default function SelectProduceScreen() {
 
       const existingKeys = new Set(
         latestProducts.flatMap((item: any) => [
-          normalize(item.id),
-          normalize(item.catalogId || item.catalog_id),
+          normalize(item.catalog_id),
           normalize(item.name || item.product_name),
         ])
       );
 
       const newProducts = selected
         .filter((item) => {
-          const productRowId = `${farmerId}_${item.id}`;
           return (
-            !existingKeys.has(normalize(productRowId)) &&
             !existingKeys.has(normalize(item.id)) &&
             !existingKeys.has(normalize(item.name))
           );
@@ -627,19 +583,26 @@ export default function SelectProduceScreen() {
 
       if (newProducts.length === 0) {
         Alert.alert("Already Added", "Those products are already on your dashboard.", [
-          { text: "Go to Dashboard", onPress: () => router.replace("/farmer/dashboard" as any) },
+          {
+            text: "Go to Dashboard",
+            onPress: () => router.replace("/farmer/dashboard" as any),
+          },
         ]);
         return;
       }
 
       const updatedProducts = cleanProducts([...latestProducts, ...newProducts]);
 
-      await AsyncStorage.setItem(getFarmerProductsKey(farmerId), JSON.stringify(updatedProducts));
+      await AsyncStorage.setItem(
+        getFarmerProductsKey(farmerId),
+        JSON.stringify(updatedProducts)
+      );
 
       const updatedFarmer: FarmerRecord = {
         ...(farmer || {}),
         id: farmerId,
         farmerId,
+        farmer_id: farmerId,
         role: "farmer",
         products: updatedProducts,
         selectedProduce: updatedProducts.map((item: any) => item.name),
@@ -658,13 +621,23 @@ export default function SelectProduceScreen() {
         ["currentUserRole", "farmer"],
       ]);
 
-      await saveProductsToFarmerRow(farmerId, updatedFarmer, updatedProducts);
-      await saveProductsToInventoryTables(newProducts);
+      await saveProductsToFarmerRow(farmerId, updatedFarmer);
+
+      const savedInventory = await saveProductsToInventoryTables(newProducts);
+
+      if (!savedInventory) {
+        console.log("Inventory saved locally but Supabase insert failed.");
+      }
 
       Alert.alert(
         "Products Added",
         `${newProducts.length} product(s) added to your farm inventory.`,
-        [{ text: "Go to Dashboard", onPress: () => router.replace("/farmer/dashboard" as any) }]
+        [
+          {
+            text: "Go to Dashboard",
+            onPress: () => router.replace("/farmer/dashboard" as any),
+          },
+        ]
       );
     } catch (error: any) {
       console.log("SAVE_SELECTED_PRODUCTS_ERROR:", error);
@@ -692,7 +665,9 @@ export default function SelectProduceScreen() {
             </View>
 
             <View style={[styles.checkCircle, selected && styles.checkCircleOn]}>
-              {selected ? <Ionicons name="checkmark-outline" size={20} color={COLORS.white} /> : null}
+              {selected ? (
+                <Ionicons name="checkmark-outline" size={20} color={COLORS.white} />
+              ) : null}
             </View>
           </View>
 
@@ -723,10 +698,17 @@ export default function SelectProduceScreen() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
-      <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView
+        style={styles.safe}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
         <View style={styles.page}>
           <View style={styles.topBar}>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+              activeOpacity={0.9}
+            >
               <Ionicons name="arrow-back-outline" size={21} color={COLORS.text} />
             </TouchableOpacity>
 
@@ -751,7 +733,11 @@ export default function SelectProduceScreen() {
             {loading ? <ActivityIndicator color={COLORS.green} /> : null}
           </View>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryRow}
+          >
             {categories.map((category) => {
               const active = selectedCategory === category;
               return (
@@ -795,7 +781,9 @@ export default function SelectProduceScreen() {
               ) : (
                 <>
                   <Ionicons name="basket-outline" size={18} color={COLORS.white} />
-                  <Text style={styles.saveText}>Add Selected Products ({selectedCount})</Text>
+                  <Text style={styles.saveText}>
+                    Add Selected Products ({selectedCount})
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
@@ -811,7 +799,9 @@ export default function SelectProduceScreen() {
               activeOpacity={0.9}
             >
               <Ionicons name="add-circle-outline" size={18} color={COLORS.greenDark} />
-              <Text style={styles.customText}>Product Not Listed? Upload Your Own</Text>
+              <Text style={styles.customText}>
+                Product Not Listed? Upload Your Own
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -841,7 +831,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  eyebrow: { color: COLORS.green, fontWeight: "900", letterSpacing: 1, textTransform: "uppercase", fontSize: 12 },
+  eyebrow: {
+    color: COLORS.green,
+    fontWeight: "900",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    fontSize: 12,
+  },
   title: { color: COLORS.text, fontSize: 27, fontWeight: "900", marginTop: 2 },
   subtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 4 },
   searchCard: {
