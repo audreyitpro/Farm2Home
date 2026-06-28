@@ -142,6 +142,7 @@ function cleanProducts(items: any[]) {
     .map((item: any) => ({
       ...item,
       id: clean(item.id || item.catalog_id || makeUuid()),
+      catalog_id: clean(item.catalog_id || item.catalogId || item.catalogID),
       name: clean(item.name || item.product_name || "Farm Product"),
       product_name: clean(item.product_name || item.name || "Farm Product"),
       farmer_id: clean(item.farmer_id || item.farmerId),
@@ -185,9 +186,15 @@ function missingColumn(error: any) {
 
   return (
     message.match(/Could not find the '([^']+)' column/i)?.[1] ||
-    message.match(/column ['"]?([^'"]+)['"]? does not exist/i)?.[1] ||
+    message.match(/column ['\"]?([^'\"]+)['\"]? does not exist/i)?.[1] ||
     ""
   );
+}
+
+function removeMissing(payload: Record<string, any>, column: string) {
+  const copy: Record<string, any> = { ...payload };
+  delete copy[column];
+  return copy;
 }
 
 async function safeUpdate(
@@ -213,7 +220,7 @@ async function safeUpdate(
     const missing = missingColumn(error);
 
     if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-      delete nextPayload[missing];
+      nextPayload = removeMissing(nextPayload, missing);
       continue;
     }
 
@@ -224,74 +231,34 @@ async function safeUpdate(
   return null;
 }
 
-function buildInsertAttempts(row: FarmerProductRow) {
-  const now = new Date().toISOString();
-
-  return [
-    {
-      id: row.id || makeUuid(),
-      name: row.name,
-      product_name: row.product_name,
-      category: row.category,
-      price: row.price,
-      unit_price: row.unit_price,
-      unit: row.unit,
-      stock: row.stock,
-      quantity: row.quantity,
-      image_url: row.image_url,
-      tags: row.tags,
-      farm_name: row.farm_name,
-      farmer_id: row.farmer_id,
-      active: true,
-      organic: row.organic,
-      local: true,
-      status: "active",
-      created_at: row.created_at || now,
-      updated_at: row.updated_at || now,
-    },
-    {
-      id: row.id || makeUuid(),
-      product_name: row.product_name,
-      category: row.category,
-      price: row.price,
-      unit_price: row.unit_price,
-      unit: row.unit,
-      stock: row.stock,
-      quantity: row.quantity,
-      farm_name: row.farm_name,
-      farmer_id: row.farmer_id,
-      active: true,
-      created_at: row.created_at || now,
-      updated_at: row.updated_at || now,
-    },
-    {
-      id: row.id || makeUuid(),
-      product_name: row.product_name,
-      category: row.category,
-      price: row.price,
-      unit: row.unit,
-      farm_name: row.farm_name,
-      farmer_id: row.farmer_id,
-      active: true,
-      created_at: row.created_at || now,
-      updated_at: row.updated_at || now,
-    },
-    {
-      product_name: row.product_name,
-      category: row.category,
-      price: row.price,
-      unit: row.unit,
-      farm_name: row.farm_name,
-      farmer_id: row.farmer_id,
-      active: true,
-    },
-  ];
+function buildProductInsertPayload(row: FarmerProductRow): Record<string, any> {
+  return {
+    id: row.id || makeUuid(),
+    name: row.name,
+    product_name: row.product_name,
+    category: row.category,
+    price: row.price,
+    unit_price: row.unit_price,
+    unit: row.unit,
+    stock: row.stock,
+    quantity: row.quantity,
+    image_url: row.image_url,
+    tags: row.tags,
+    farm_name: row.farm_name,
+    farmer_id: row.farmer_id,
+    active: true,
+    organic: row.organic,
+    local: true,
+    status: "active",
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 async function insertOneProduct(row: FarmerProductRow) {
-  const attempts = buildInsertAttempts(row);
+  let payload: Record<string, any> = buildProductInsertPayload(row);
 
-  for (const payload of attempts) {
+  for (let attempt = 0; attempt < 35; attempt += 1) {
     console.log("INSERT PAYLOAD:", payload);
 
     const { data, error } = await supabase
@@ -306,11 +273,28 @@ async function insertOneProduct(row: FarmerProductRow) {
 
     console.error("FULL SUPABASE ERROR:", JSON.stringify(error, null, 2));
 
+    const missing = missingColumn(error);
+    if (missing && Object.prototype.hasOwnProperty.call(payload, missing)) {
+      payload = removeMissing(payload, missing);
+      continue;
+    }
+
     const msg = String(error.message || "").toLowerCase();
 
+    if (msg.includes("invalid input syntax for type uuid")) {
+      payload.id = makeUuid();
+      continue;
+    }
+
     if (msg.includes("row-level security")) {
+      Alert.alert(
+        "Supabase Policy Error",
+        "farm_products is blocking inserts with RLS. Run the farm_products RLS policy SQL in Supabase."
+      );
       return false;
     }
+
+    return false;
   }
 
   return false;
@@ -553,11 +537,14 @@ export default function SelectProduceScreen() {
   }
 
   async function saveSelectedProducts() {
+    if (saving) return;
+
     try {
       console.log("ADD SELECTED PRODUCTS STARTED", selectedProducts);
       setSaving(true);
 
       const selected = FARM_PRODUCT_CATALOG.filter((item) => selectedProducts[item.id]);
+      console.log("SELECTED CATALOG ITEMS:", selected.map((item) => item.id));
 
       if (selected.length === 0) {
         Alert.alert("No Products Selected", "Select at least one farm product.");
@@ -588,29 +575,24 @@ export default function SelectProduceScreen() {
         latestProducts = cleanProducts(JSON.parse(localInventory));
       }
 
-      const existingKeys = new Set(
-        latestProducts.flatMap((item: any) => [
-          normalize(item.catalog_id),
-          normalize(item.name || item.product_name),
-        ])
+      const latestProductsWithoutSelected = latestProducts.filter((item: any) => {
+        const catalogId = normalize(item.catalog_id || item.catalogId);
+        const productName = normalize(item.name || item.product_name);
+
+        return !selected.some(
+          (selectedItem) =>
+            normalize(selectedItem.id) === catalogId ||
+            normalize(selectedItem.name) === productName
+        );
+      });
+
+      const newProducts = selected.map((item) =>
+        makeFarmerProduct(item, farmer as FarmerRecord)
       );
 
-      const newProducts = selected
-        .filter(
-          (item) =>
-            !existingKeys.has(normalize(item.id)) &&
-            !existingKeys.has(normalize(item.name))
-        )
-        .map((item) => makeFarmerProduct(item, farmer as FarmerRecord));
+      console.log("NEW PRODUCTS TO SAVE:", newProducts);
 
-      if (newProducts.length === 0) {
-        Alert.alert("Already Added", "Those products are already on your dashboard.", [
-          { text: "Go to Dashboard", onPress: () => router.replace("/farmer/dashboard" as any) },
-        ]);
-        return;
-      }
-
-      const updatedProducts = cleanProducts([...latestProducts, ...newProducts]);
+      const updatedProducts = cleanProducts([...latestProductsWithoutSelected, ...newProducts]);
 
       await AsyncStorage.setItem(
         getFarmerProductsKey(farmerId),
@@ -772,6 +754,13 @@ export default function SelectProduceScreen() {
             renderItem={renderProduct}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyEmoji}>🥬</Text>
+                <Text style={styles.emptyTitle}>No matching produce</Text>
+                <Text style={styles.emptyText}>Try another search or category.</Text>
+              </View>
+            }
           />
 
           <View style={styles.footer}>
@@ -926,6 +915,17 @@ const styles = StyleSheet.create({
   },
   price: { color: COLORS.text, fontWeight: "900", marginTop: 12 },
   stock: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
+  emptyBox: {
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 28,
+    alignItems: "center",
+  },
+  emptyEmoji: { fontSize: 42 },
+  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18, marginTop: 6 },
+  emptyText: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
   footer: {
     position: "absolute",
     left: 0,
