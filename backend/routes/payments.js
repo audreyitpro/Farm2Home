@@ -2596,24 +2596,37 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
 module.exports = router;
 router.post("/connect-account-status", async (req, res) => {
   try {
-    if (!requireStripe(res)) return;
+    const { farmerId } = req.body;
 
-    const body = req.body || {};
-
-    const role = roleName(body.role || "farmer");
-
-    const accountId = clean(
-      body.stripeAccountId ||
-      body.stripe_account_id ||
-      body.farmer_account ||
-      body.freight_account ||
-      body.driver_account
-    );
-
-    if (!accountId || !accountId.startsWith("acct_")) {
+    if (!farmerId) {
       return res.status(400).json({
         success: false,
-        error: "Valid Stripe account ID required.",
+        message: "Missing farmerId",
+      });
+    }
+
+    const { data: farmer, error } = await supabase
+      .from("farmers")
+      .select("*")
+      .or(`id.eq.${farmerId},farmer_id.eq.${farmerId}`)
+      .single();
+
+    if (error || !farmer) {
+      return res.status(404).json({
+        success: false,
+        message: "Farmer not found",
+      });
+    }
+
+    const accountId =
+      farmer.stripe_account_id ||
+      farmer.farmer_stripe_account_id;
+
+    if (!accountId) {
+      return res.json({
+        success: true,
+        connected: false,
+        account: null,
       });
     }
 
@@ -2621,28 +2634,15 @@ router.post("/connect-account-status", async (req, res) => {
 
     return res.json({
       success: true,
-      role,
-      stripeAccountId: account.id,
-      chargesEnabled: Boolean(account.charges_enabled),
-      payoutsEnabled: Boolean(account.payouts_enabled),
-      detailsSubmitted: Boolean(account.details_submitted),
-      onboardingComplete: Boolean(account.details_submitted),
-      requirementsCurrentlyDue:
-        account.requirements?.currently_due || [],
-      requirementsEventuallyDue:
-        account.requirements?.eventually_due || [],
-      requirementsPastDue:
-        account.requirements?.past_due || [],
+      connected: true,
       account,
     });
-  } catch (error) {
-    console.error("connect-account-status error:", error);
+  } catch (err) {
+    console.error("Stripe status error:", err);
 
     return res.status(500).json({
       success: false,
-      error:
-        error.message ||
-        "Unable to retrieve Stripe Connect status.",
+      message: err.message,
     });
   }
 });
