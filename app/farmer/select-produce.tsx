@@ -110,12 +110,6 @@ function makeUuid() {
   });
 }
 
-function isUuid(value: any) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    clean(value)
-  );
-}
-
 function getFarmerProductsKey(farmerId: string) {
   return `farmer_products_${farmerId}`;
 }
@@ -155,10 +149,7 @@ function cleanProducts(items: any[]) {
     }));
 }
 
-function makeFarmerProduct(
-  item: FarmCatalogProduct,
-  farmer: FarmerRecord
-): FarmerProductRow {
+function makeFarmerProduct(item: FarmCatalogProduct, farmer: FarmerRecord): FarmerProductRow {
   const now = new Date().toISOString();
   const farmerId = getFarmerId(farmer);
   const farmName = getFarmName(farmer);
@@ -233,72 +224,107 @@ async function safeUpdate(
   return null;
 }
 
-function buildSafeProductPayload(row: Record<string, any>) {
+function buildInsertAttempts(row: FarmerProductRow) {
   const now = new Date().toISOString();
 
-  return {
-    id: isUuid(row.id) ? clean(row.id) : makeUuid(),
-    name: clean(row.name || row.product_name || "Farm Product"),
-    product_name: clean(row.product_name || row.name || "Farm Product"),
-    category: clean(row.category || "Produce"),
-    price: Number(row.price || row.unit_price || 0),
-    unit_price: Number(row.unit_price || row.price || 0),
-    unit: clean(row.unit || "each"),
-    stock: Number(row.stock || row.quantity || 0),
-    quantity: Number(row.quantity || row.stock || 0),
-    image_url: clean(row.image_url || ""),
-    tags: Array.isArray(row.tags) ? row.tags : [],
-    farm_name: clean(row.farm_name || ""),
-    farmer_id: clean(row.farmer_id || ""),
-    active: row.active !== false,
-    organic: Boolean(row.organic),
-    local: row.local !== false,
-    status: clean(row.status || "active"),
-    created_at: clean(row.created_at || now),
-    updated_at: clean(row.updated_at || now),
-  };
+  return [
+    {
+      id: row.id || makeUuid(),
+      name: row.name,
+      product_name: row.product_name,
+      category: row.category,
+      price: row.price,
+      unit_price: row.unit_price,
+      unit: row.unit,
+      stock: row.stock,
+      quantity: row.quantity,
+      image_url: row.image_url,
+      tags: row.tags,
+      farm_name: row.farm_name,
+      farmer_id: row.farmer_id,
+      active: true,
+      organic: row.organic,
+      local: true,
+      status: "active",
+      created_at: row.created_at || now,
+      updated_at: row.updated_at || now,
+    },
+    {
+      id: row.id || makeUuid(),
+      product_name: row.product_name,
+      category: row.category,
+      price: row.price,
+      unit_price: row.unit_price,
+      unit: row.unit,
+      stock: row.stock,
+      quantity: row.quantity,
+      farm_name: row.farm_name,
+      farmer_id: row.farmer_id,
+      active: true,
+      created_at: row.created_at || now,
+      updated_at: row.updated_at || now,
+    },
+    {
+      id: row.id || makeUuid(),
+      product_name: row.product_name,
+      category: row.category,
+      price: row.price,
+      unit: row.unit,
+      farm_name: row.farm_name,
+      farmer_id: row.farmer_id,
+      active: true,
+      created_at: row.created_at || now,
+      updated_at: row.updated_at || now,
+    },
+    {
+      product_name: row.product_name,
+      category: row.category,
+      price: row.price,
+      unit: row.unit,
+      farm_name: row.farm_name,
+      farmer_id: row.farmer_id,
+      active: true,
+    },
+  ];
 }
 
-async function safeInsertMany(table: string, rows: Record<string, any>[]) {
-  if (!rows.length) return false;
+async function insertOneProduct(row: FarmerProductRow) {
+  const attempts = buildInsertAttempts(row);
 
-  let nextRows: Record<string, any>[] = rows.map((row) =>
-    buildSafeProductPayload(row)
-  );
+  for (const payload of attempts) {
+    console.log("INSERT PAYLOAD:", payload);
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const { error } = await supabase.from(table).insert(nextRows);
+    const { data, error } = await supabase
+      .from("farm_products")
+      .insert([payload])
+      .select("*");
+
+    console.log("INSERT DATA:", data);
+    console.log("INSERT ERROR:", error);
 
     if (!error) return true;
 
-    const missing = missingColumn(error);
+    console.error("FULL SUPABASE ERROR:", JSON.stringify(error, null, 2));
 
-    if (missing) {
-      nextRows = nextRows.map((row) => {
-        const copy: Record<string, any> = { ...row };
-        delete copy[missing];
-        return copy;
-      });
-      continue;
+    const msg = String(error.message || "").toLowerCase();
+
+    if (msg.includes("row-level security")) {
+      return false;
     }
-
-    if (
-      String(error.message || "")
-        .toLowerCase()
-        .includes("invalid input syntax for type uuid")
-    ) {
-      nextRows = nextRows.map((row) => ({
-        ...row,
-        id: makeUuid(),
-      }));
-      continue;
-    }
-
-    console.log(`${table} insert failed:`, error.message);
-    return false;
   }
 
   return false;
+}
+
+async function insertProductsToSupabase(rows: FarmerProductRow[]) {
+  let savedCount = 0;
+
+  for (const row of rows) {
+    const saved = await insertOneProduct(row);
+    if (saved) savedCount += 1;
+  }
+
+  return savedCount;
 }
 
 export default function SelectProduceScreen() {
@@ -526,10 +552,6 @@ export default function SelectProduceScreen() {
     return false;
   }
 
-  async function saveProductsToInventoryTables(newProducts: FarmerProductRow[]) {
-    return await safeInsertMany("farm_products", newProducts);
-  }
-
   async function saveSelectedProducts() {
     try {
       console.log("ADD SELECTED PRODUCTS STARTED", selectedProducts);
@@ -574,20 +596,16 @@ export default function SelectProduceScreen() {
       );
 
       const newProducts = selected
-        .filter((item) => {
-          return (
+        .filter(
+          (item) =>
             !existingKeys.has(normalize(item.id)) &&
             !existingKeys.has(normalize(item.name))
-          );
-        })
+        )
         .map((item) => makeFarmerProduct(item, farmer as FarmerRecord));
 
       if (newProducts.length === 0) {
         Alert.alert("Already Added", "Those products are already on your dashboard.", [
-          {
-            text: "Go to Dashboard",
-            onPress: () => router.replace("/farmer/dashboard" as any),
-          },
+          { text: "Go to Dashboard", onPress: () => router.replace("/farmer/dashboard" as any) },
         ]);
         return;
       }
@@ -624,21 +642,14 @@ export default function SelectProduceScreen() {
 
       await saveProductsToFarmerRow(farmerId, updatedFarmer);
 
-      const savedInventory = await saveProductsToInventoryTables(newProducts);
+      const supabaseSavedCount = await insertProductsToSupabase(newProducts);
 
-      if (!savedInventory) {
-        console.log("Inventory saved locally but Supabase insert failed.");
-      }
+      console.log("SUPABASE SAVED COUNT:", supabaseSavedCount);
 
       Alert.alert(
         "Products Added",
-        `${newProducts.length} product(s) added to your farm inventory.`,
-        [
-          {
-            text: "Go to Dashboard",
-            onPress: () => router.replace("/farmer/dashboard" as any),
-          },
-        ]
+        `${newProducts.length} product(s) added locally. ${supabaseSavedCount} saved to Supabase.`,
+        [{ text: "Go to Dashboard", onPress: () => router.replace("/farmer/dashboard" as any) }]
       );
     } catch (error: any) {
       console.log("SAVE_SELECTED_PRODUCTS_ERROR:", error);
@@ -761,13 +772,6 @@ export default function SelectProduceScreen() {
             renderItem={renderProduct}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyEmoji}>🥬</Text>
-                <Text style={styles.emptyTitle}>No matching produce</Text>
-                <Text style={styles.emptyText}>Try another search or category.</Text>
-              </View>
-            }
           />
 
           <View style={styles.footer}>
@@ -922,17 +926,6 @@ const styles = StyleSheet.create({
   },
   price: { color: COLORS.text, fontWeight: "900", marginTop: 12 },
   stock: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  emptyBox: {
-    backgroundColor: COLORS.card,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 28,
-    alignItems: "center",
-  },
-  emptyEmoji: { fontSize: 42 },
-  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18, marginTop: 6 },
-  emptyText: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
   footer: {
     position: "absolute",
     left: 0,
