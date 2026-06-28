@@ -127,6 +127,20 @@ function firstParam(value: any) {
   return value ? String(value) : "";
 }
 
+
+function makeUuid() {
+  // Valid UUID for Supabase uuid primary keys.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = char === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
+function isUuid(value: any) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean(value));
+}
+
 function getFarmerProductsKey(farmerId: string) {
   return `farmer_products_${farmerId}`;
 }
@@ -172,9 +186,13 @@ function makeFarmerProduct(item: FarmCatalogProduct, farmer: FarmerRecord): Farm
   const farmName = getFarmName(farmer);
   const farmerEmail = normalize(farmer.email);
   const deliveryOption = "Pickup and Delivery";
+  const uuid = makeUuid();
 
   return {
-    id: `${farmerId}_${item.id}`,
+    // IMPORTANT: farm_products / farmer_products id is a uuid in Supabase.
+    // Do not use `${farmerId}_${item.id}` because that causes:
+    // invalid input syntax for type uuid.
+    id: uuid,
     catalogId: item.id,
     catalog_id: item.id,
     name: item.name,
@@ -256,23 +274,70 @@ async function safeUpdate(table: string, idColumn: string, idValue: string, payl
   return null;
 }
 
+function buildSafeProductPayload(row: Record<string, any>) {
+  const id = isUuid(row.id) ? clean(row.id) : makeUuid();
+
+  return {
+    // Keep this list intentionally small and schema-safe.
+    // Missing columns are removed and retried by safeInsertMany.
+    id,
+    name: clean(row.name || row.product_name || "Farm Product"),
+    product_name: clean(row.product_name || row.name || "Farm Product"),
+    category: clean(row.category || "Produce"),
+    price: Number(row.price || row.unit_price || 0),
+    unit_price: Number(row.unit_price || row.price || 0),
+    unit: clean(row.unit || "each"),
+    stock: Number(row.stock || row.quantity || row.inventory || 0),
+    quantity: Number(row.quantity || row.stock || row.inventory || 0),
+    image_url: clean(row.image_url || row.imageUrl || row.image || ""),
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    farm_name: clean(row.farm_name || row.farmName || ""),
+    farmer_id: clean(row.farmer_id || row.farmerId || ""),
+    active: row.active !== false,
+    status: clean(row.status || "active"),
+    organic: Boolean(row.organic),
+    local: row.local !== false,
+    created_at: clean(row.created_at || row.createdAt || new Date().toISOString()),
+    updated_at: clean(row.updated_at || row.updatedAt || new Date().toISOString()),
+  };
+}
+
 async function safeInsertMany(table: string, rows: Record<string, any>[]) {
   if (!rows.length) return false;
 
-  let nextRows = rows.map((row) => ({ ...row }));
+  let nextRows: Record<string, any>[] = rows.map((row) =>
+    buildSafeProductPayload(row) as Record<string, any>
+  );
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const { error } = await supabase.from(table).upsert(nextRows, { onConflict: "id" });
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const { error } = await supabase
+      .from(table)
+      .upsert(nextRows, { onConflict: "id" });
 
     if (!error) return true;
 
     const missing = missingColumn(error);
+
     if (missing) {
-      nextRows = nextRows.map((row) => {
-        const copy = { ...row };
-        delete copy[missing];
+      nextRows = nextRows.map((row: Record<string, any>) => {
+        const copy: Record<string, any> = { ...row };
+
+        if (Object.prototype.hasOwnProperty.call(copy, missing)) {
+          delete copy[missing];
+        }
+
         return copy;
       });
+
+      continue;
+    }
+
+    // If your table's id column is uuid, this prevents farmerId_productName failures.
+    if (String(error.message || "").toLowerCase().includes("invalid input syntax for type uuid")) {
+      nextRows = nextRows.map((row: Record<string, any>) => ({
+        ...row,
+        id: makeUuid(),
+      }));
       continue;
     }
 
