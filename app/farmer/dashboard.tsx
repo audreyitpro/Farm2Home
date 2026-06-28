@@ -717,6 +717,12 @@ export default function FarmerDashboardScreen() {
   <ActionCard title="Revenue Analytics" subtitle="View sales analytics." icon="bar-chart-outline" onPress={() => go("/farmer/revenue-analytics")} />
 </View>
           <ActionCard
+          title="Meat & Seafood Bundles"
+          subtitle="Create monthly or bi-monthly farm bundles."
+          icon="fish-outline"
+          onPress={() => go("/farmer/farm-bundles")}
+          />
+          <ActionCard
             title="Setup Farmer Store"
             subtitle="Farm profile, logo, pickup, delivery."
             icon="storefront-outline"

@@ -19,19 +19,6 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
-/**
- * app/customer/dashboard.tsx
- *
- * Fina-style Customer Dashboard.
- *
- * Updates:
- * - Matches Freight/Fina UI color system: navy + purple, soft cards, light surfaces.
- * - Removes red/black customer dashboard theme.
- * - Customer marketplace access DOES NOT require account_id.
- * - Supabase order count queries use snake_case only: customer_id/customer_email.
- * - Avoids camelCase database filters like customerId/customerEmail.
- */
-
 const COLORS = {
   bg: "#F6F7FB",
   card: "#FFFFFF",
@@ -279,8 +266,14 @@ export default function CustomerDashboard() {
         const merged = buildSession({
           ...dbCustomer,
           stripe_customer_id: dbCustomer.stripe_customer_id || dbCustomer.stripe_id || sub?.stripe_customer_id,
-          stripe_subscription_id: dbCustomer.stripe_subscription_id || dbCustomer.subscription_id || sub?.stripe_subscription_id,
-          subscription_id: dbCustomer.subscription_id || dbCustomer.stripe_subscription_id || sub?.stripe_subscription_id,
+          stripe_subscription_id:
+            dbCustomer.stripe_subscription_id ||
+            dbCustomer.subscription_id ||
+            sub?.stripe_subscription_id,
+          subscription_id:
+            dbCustomer.subscription_id ||
+            dbCustomer.stripe_subscription_id ||
+            sub?.stripe_subscription_id,
           subscription_status: dbCustomer.subscription_status || sub?.subscription_status,
           membership_status:
             dbCustomer.membership_status ||
@@ -364,11 +357,7 @@ export default function CustomerDashboard() {
     return null;
   }
 
-  async function safeOrderCount(
-    table: string,
-    id: string,
-    email: string
-  ): Promise<number> {
+  async function safeOrderCount(table: string, id: string, email: string): Promise<number> {
     try {
       let query = supabase.from(table).select("id", { count: "exact", head: true });
 
@@ -408,17 +397,11 @@ export default function CustomerDashboard() {
 
     const orderTables = ["orders", "customer_orders", "farm_orders"];
 
-    const counts = await Promise.all(
-      orderTables.map((table) => safeOrderCount(table, id, email))
-    );
+    const counts = await Promise.all(orderTables.map((table) => safeOrderCount(table, id, email)));
 
     const totalOrders = counts.reduce((sum, value) => sum + value, 0);
 
     setOrdersCount(totalOrders);
-
-    // These tables currently do not share a reliable status column.
-    // To prevent Supabase 400 errors, active count uses total order count
-    // until a shared order status column is added across all order tables.
     setActiveOrdersCount(totalOrders);
   }
 
@@ -611,42 +594,63 @@ export default function CustomerDashboard() {
               subtitle={`${cartCount} saved items`}
               onPress={() => requireAccess("/customer/cart")}
             />
+
             <ActionButton
               icon="receipt-outline"
               title="My Orders"
               subtitle="View order history"
               onPress={() => requireAccess("/customer/my-orders")}
             />
+
             <ActionButton
               icon="navigate-outline"
               title="Tracking"
               subtitle="Track active deliveries"
               onPress={() => requireAccess("/customer/tracking")}
             />
+
             <ActionButton
               icon="chatbubbles-outline"
               title="Farmer Chat"
               subtitle="Message farmers"
               onPress={() => requireAccess("/customer/farmer-chat")}
             />
+
+            <ActionButton
+              icon="basket-outline"
+              title="Farm Bundles"
+              subtitle="Shop meat and seafood bundles."
+              onPress={() => requireAccess("/customer/farm-bundles")}
+            />
+
+            <ActionButton
+              icon="repeat-outline"
+              title="My Bundle Subscriptions"
+              subtitle="Manage monthly and bi-monthly bundles."
+              onPress={() => requireAccess("/customer/bundle-subscriptions")}
+            />
+
             <ActionButton
               icon="car-outline"
               title="Driver Chat"
               subtitle="Message delivery driver"
               onPress={() => requireAccess("/customer/driver-chat")}
             />
+
             <ActionButton
               icon="person-outline"
               title="Profile"
               subtitle="Address, phone, membership"
               onPress={() => requireAccess("/customer/profile")}
             />
+
             <ActionButton
               icon="heart-outline"
               title="Favorites"
               subtitle="Saved farms and products"
               onPress={() => requireAccess("/customer/favorites")}
             />
+
             <ActionButton
               icon="card-outline"
               title="Membership"
@@ -767,16 +771,9 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  page: {
-    flex: 1,
-  },
-  content: {
-    paddingBottom: 70,
-  },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  page: { flex: 1 },
+  content: { paddingBottom: 70 },
   center: {
     flex: 1,
     justifyContent: "center",
@@ -784,10 +781,7 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: COLORS.bg,
   },
-  centerText: {
-    color: COLORS.muted,
-    fontWeight: "800",
-  },
+  centerText: { color: COLORS.muted, fontWeight: "800" },
   hero: {
     backgroundColor: COLORS.navy,
     paddingTop: 22,
@@ -819,10 +813,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  logoutText: {
-    color: COLORS.white,
-    fontWeight: "900",
-  },
+  logoutText: { color: COLORS.white, fontWeight: "900" },
   kicker: {
     color: "#A5B4FC",
     fontSize: 12,
@@ -848,10 +839,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: "700",
   },
-  heroStatus: {
-    marginTop: 16,
-    flexDirection: "row",
-  },
+  heroStatus: { marginTop: 16, flexDirection: "row" },
   statusPill: {
     borderRadius: 999,
     paddingHorizontal: 13,
@@ -860,21 +848,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7,
   },
-  statusPillGood: {
-    backgroundColor: COLORS.accentSoft,
-  },
-  statusPillWarn: {
-    backgroundColor: COLORS.warningSoft,
-  },
-  statusPillText: {
-    fontWeight: "900",
-  },
-  statusPillTextGood: {
-    color: COLORS.accentDark,
-  },
-  statusPillTextWarn: {
-    color: "#92400E",
-  },
+  statusPillGood: { backgroundColor: COLORS.accentSoft },
+  statusPillWarn: { backgroundColor: COLORS.warningSoft },
+  statusPillText: { fontWeight: "900" },
+  statusPillTextGood: { color: COLORS.accentDark },
+  statusPillTextWarn: { color: "#92400E" },
   metricsRow: {
     flexDirection: Platform.OS === "web" ? "row" : "column",
     gap: 12,
@@ -906,11 +884,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textTransform: "uppercase",
   },
-  metricValue: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: 3,
-  },
+  metricValue: { color: COLORS.text, fontWeight: "900", marginTop: 3 },
   accessCard: {
     backgroundColor: COLORS.card,
     borderRadius: 24,
@@ -926,11 +900,7 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 10,
   },
-  accessScore: {
-    color: COLORS.primary,
-    fontSize: 24,
-    fontWeight: "900",
-  },
+  accessScore: { color: COLORS.primary, fontSize: 24, fontWeight: "900" },
   checkRow: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -949,24 +919,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  checkGood: {
-    backgroundColor: COLORS.accent,
-  },
-  checkOptional: {
-    backgroundColor: COLORS.primary,
-  },
-  checkMissing: {
-    backgroundColor: "#E5E7EB",
-  },
-  checkLabel: {
-    color: COLORS.text,
-    fontWeight: "900",
-  },
-  checkValue: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    marginTop: 2,
-  },
+  checkGood: { backgroundColor: COLORS.accent },
+  checkOptional: { backgroundColor: COLORS.primary },
+  checkMissing: { backgroundColor: "#E5E7EB" },
+  checkLabel: { color: COLORS.text, fontWeight: "900" },
+  checkValue: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
   quickActions: {
     backgroundColor: COLORS.card,
     borderRadius: 24,
@@ -978,11 +935,7 @@ const styles = StyleSheet.create({
     position: "relative",
     zIndex: 1,
   },
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
+  sectionTitle: { fontSize: 22, fontWeight: "900", color: COLORS.text },
   sectionSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -1021,26 +974,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  primaryActionIcon: {
-    backgroundColor: "rgba(255,255,255,0.18)",
-  },
-  actionTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 15,
-  },
-  primaryActionTitle: {
-    color: COLORS.white,
-  },
+  primaryActionIcon: { backgroundColor: "rgba(255,255,255,0.18)" },
+  actionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 15 },
+  primaryActionTitle: { color: COLORS.white },
   actionSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
     lineHeight: 18,
     marginTop: 2,
   },
-  primaryActionSubtitle: {
-    color: "#E0E7FF",
-  },
+  primaryActionSubtitle: { color: "#E0E7FF" },
   infoCard: {
     backgroundColor: COLORS.accentSoft,
     borderWidth: 1,

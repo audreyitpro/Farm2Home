@@ -2592,7 +2592,166 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
     });
   }
 });
+router.post("/create-bundle-subscription", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
 
+    const {
+      customerId,
+      customerEmail,
+      farmerId,
+      bundleId,
+      bundleName,
+      bundleType,
+      fulfillmentMethod,
+      deliveryMethod,
+      frequency,
+      price,
+      amount,
+    } = req.body || {};
+
+    const finalFrequency =
+      String(frequency || "").toLowerCase().includes("bi")
+        ? "bi-monthly"
+        : "monthly";
+
+    const intervalCount = finalFrequency === "bi-monthly" ? 2 : 1;
+
+    const finalAmount = Number(price || amount || 0);
+
+    if (!customerEmail) {
+      return res.status(400).json({
+        success: false,
+        error: "customerEmail is required.",
+      });
+    }
+
+    if (!bundleId || !bundleName || !farmerId) {
+      return res.status(400).json({
+        success: false,
+        error: "bundleId, bundleName, and farmerId are required.",
+      });
+    }
+
+    if (!finalAmount || finalAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Valid bundle price is required.",
+      });
+    }
+
+    const finalDeliveryMethod =
+      fulfillmentMethod || deliveryMethod || "delivery";
+
+    const successUrl =
+      process.env.APP_URL ||
+      process.env.FRONTEND_URL ||
+      "https://farm2home-s-projects.vercel.app";
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer_email: customerEmail,
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            unit_amount: Math.round(finalAmount * 100),
+            recurring: {
+              interval: "month",
+              interval_count: intervalCount,
+            },
+            product_data: {
+              name: bundleName,
+              description: `${bundleType || "Farm"} bundle - ${finalDeliveryMethod} - ${finalFrequency}`,
+              metadata: {
+                type: "farm_bundle",
+                customerId: customerId || "",
+                customerEmail,
+                farmerId,
+                bundleId,
+                bundleName,
+                bundleType: bundleType || "",
+                deliveryMethod: finalDeliveryMethod,
+                frequency: finalFrequency,
+              },
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      subscription_data: {
+        metadata: {
+          type: "farm_bundle",
+          customerId: customerId || "",
+          customerEmail,
+          farmerId,
+          bundleId,
+          bundleName,
+          bundleType: bundleType || "",
+          deliveryMethod: finalDeliveryMethod,
+          frequency: finalFrequency,
+          amount: String(finalAmount),
+        },
+      },
+      metadata: {
+        type: "farm_bundle",
+        customerId: customerId || "",
+        customerEmail,
+        farmerId,
+        bundleId,
+        bundleName,
+        bundleType: bundleType || "",
+        deliveryMethod: finalDeliveryMethod,
+        frequency: finalFrequency,
+        amount: String(finalAmount),
+      },
+      success_url: `${successUrl}/customer/bundle-subscriptions?success=true`,
+      cancel_url: `${successUrl}/customer/farm-bundles?cancelled=true`,
+    });
+
+    return res.json({
+      success: true,
+      url: session.url,
+      sessionId: session.id,
+    });
+  } catch (error) {
+    console.error("create-bundle-subscription error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to create bundle subscription.",
+    });
+  }
+});
+
+router.post("/cancel-bundle-subscription", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const { stripeSubscriptionId, subscriptionId } = req.body || {};
+    const subId = stripeSubscriptionId || subscriptionId;
+
+    if (!subId || !String(subId).startsWith("sub_")) {
+      return res.status(400).json({
+        success: false,
+        error: "Valid Stripe subscription ID is required.",
+      });
+    }
+
+    const cancelled = await stripe.subscriptions.cancel(subId);
+
+    return res.json({
+      success: true,
+      subscription: cancelled,
+      status: cancelled.status,
+    });
+  } catch (error) {
+    console.error("cancel-bundle-subscription error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unable to cancel bundle subscription.",
+    });
+  }
+});
 module.exports = router;
 router.post("/connect-account-status", async (req, res) => {
   try {
