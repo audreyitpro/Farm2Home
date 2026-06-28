@@ -22,7 +22,6 @@ import { supabase } from "../data/supabaseClient";
 const COLORS = {
   primary: "#2E7D32",
   primaryDark: "#14532D",
-  secondary: "#F9A825",
   background: "#F8FAF5",
   card: "#FFFFFF",
   text: "#172017",
@@ -31,15 +30,18 @@ const COLORS = {
   softGreen: "#EAF5E6",
   lightGreen: "#F1FAED",
   danger: "#DC2626",
-  dark: "#111827",
   stripe: "#635BFF",
 };
 
 type FarmerProfile = {
   id?: string;
   farmerId?: string;
+  farmer_id?: string;
   profileId?: string;
+  profile_id?: string;
   authUserId?: string;
+  auth_user_id?: string;
+  user_id?: string;
 
   farmName?: string;
   farm_name?: string;
@@ -48,12 +50,14 @@ type FarmerProfile = {
   ownerName?: string;
   owner_name?: string;
   email?: string;
+  farmer_email?: string;
   phone?: string;
 
   stripeAccountId?: string;
   farmerStripeAccountId?: string;
   stripe_account_id?: string;
   farmer_stripe_account_id?: string;
+  farmer_account?: string;
 
   stripePayoutsEnabled?: boolean;
   stripeChargesEnabled?: boolean;
@@ -78,9 +82,12 @@ type FarmerProfile = {
   complianceStatus?: string;
   compliance_status?: string;
 
-  products?: any[];
   role?: string;
 };
+
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
 
 function firstParam(value: any) {
   if (Array.isArray(value)) return value[0] || "";
@@ -88,45 +95,57 @@ function firstParam(value: any) {
 }
 
 function normalizeEmail(value?: string) {
-  return String(value || "").trim().toLowerCase();
+  return clean(value).toLowerCase();
 }
 
 function getFarmerId(farmer: FarmerProfile | null | undefined) {
-  return farmer?.id || farmer?.farmerId || "";
+  return clean(
+    farmer?.id ||
+      farmer?.farmerId ||
+      farmer?.farmer_id ||
+      farmer?.profileId ||
+      farmer?.profile_id ||
+      farmer?.authUserId ||
+      farmer?.auth_user_id ||
+      farmer?.user_id
+  );
 }
 
 function getFarmName(farmer: FarmerProfile | null | undefined) {
   return (
-    farmer?.farmName ||
-    farmer?.farm_name ||
-    farmer?.businessName ||
-    farmer?.business_name ||
-    farmer?.ownerName ||
-    farmer?.owner_name ||
+    clean(farmer?.farmName || farmer?.farm_name) ||
+    clean(farmer?.businessName || farmer?.business_name) ||
+    clean(farmer?.ownerName || farmer?.owner_name) ||
     "Farmer"
   );
 }
 
 function getStripeAccountId(farmer: FarmerProfile | null | undefined) {
-  return (
+  return clean(
     farmer?.stripeAccountId ||
-    farmer?.farmerStripeAccountId ||
-    farmer?.stripe_account_id ||
-    farmer?.farmer_stripe_account_id ||
-    ""
+      farmer?.farmerStripeAccountId ||
+      farmer?.stripe_account_id ||
+      farmer?.farmer_stripe_account_id ||
+      farmer?.farmer_account
   );
 }
 
 function mapSupabaseFarmer(row: any): FarmerProfile {
-  const stripeAccountId =
-    row.stripe_account_id || row.farmer_stripe_account_id || "";
+  const stripeAccountId = clean(
+    row.farmer_account ||
+      row.stripe_account_id ||
+      row.farmer_stripe_account_id
+  );
 
   return {
     id: row.id,
-    farmerId: row.id,
+    farmerId: row.farmer_id || row.id,
+    farmer_id: row.farmer_id || row.id,
     profileId: row.profile_id || "",
+    profile_id: row.profile_id || "",
     authUserId: row.auth_user_id || row.user_id || "",
-
+    auth_user_id: row.auth_user_id || row.user_id || "",
+    user_id: row.user_id || "",
     role: "farmer",
 
     farmName: row.farm_name || row.business_name || "",
@@ -135,13 +154,15 @@ function mapSupabaseFarmer(row: any): FarmerProfile {
     business_name: row.business_name || row.farm_name || "",
     ownerName: row.owner_name || "",
     owner_name: row.owner_name || "",
-    email: row.email || "",
+    email: row.email || row.farmer_email || "",
+    farmer_email: row.farmer_email || row.email || "",
     phone: row.phone || "",
 
     stripeAccountId,
-    farmerStripeAccountId: row.farmer_stripe_account_id || stripeAccountId,
+    farmerStripeAccountId: stripeAccountId,
     stripe_account_id: stripeAccountId,
-    farmer_stripe_account_id: row.farmer_stripe_account_id || stripeAccountId,
+    farmer_stripe_account_id: stripeAccountId,
+    farmer_account: stripeAccountId,
 
     stripePayoutsEnabled: Boolean(row.stripe_payouts_enabled),
     stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
@@ -165,16 +186,16 @@ function mapSupabaseFarmer(row: any): FarmerProfile {
 
     complianceStatus: row.compliance_status || "",
     compliance_status: row.compliance_status || "",
-
-    products: row.products || [],
   };
 }
 
 export default function ConnectBankScreen() {
   const params = useLocalSearchParams();
 
-  const farmerIdParam = firstParam(params.farmerId || params.id);
-  const emailParam = normalizeEmail(firstParam(params.email));
+  const farmerIdParam = firstParam(
+    params.farmerId || params.farmer_id || params.id || params.profile_id
+  );
+  const emailParam = normalizeEmail(firstParam(params.email || params.farmer_email));
 
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<FarmerProfile | null>(null);
@@ -188,6 +209,8 @@ export default function ConnectBankScreen() {
   async function readLocalFarmer(): Promise<FarmerProfile | null> {
     const rawFarmer =
       (await AsyncStorage.getItem("currentFarmer")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
+      (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
       (await AsyncStorage.getItem("currentUser")) ||
       (await AsyncStorage.getItem("pendingFarmerApplication"));
 
@@ -195,8 +218,7 @@ export default function ConnectBankScreen() {
 
     try {
       return JSON.parse(rawFarmer);
-    } catch (error) {
-      console.log("Parse farmer session error:", error);
+    } catch {
       return null;
     }
   }
@@ -212,28 +234,38 @@ export default function ConnectBankScreen() {
 
   async function findFarmerFromSupabase(localFarmer: FarmerProfile | null) {
     const localId = getFarmerId(localFarmer);
-    const activeFarmerId = farmerIdParam || localId;
-    const activeEmail = emailParam || normalizeEmail(localFarmer?.email);
+    const activeFarmerId = clean(farmerIdParam || localId);
+    const activeEmail = normalizeEmail(emailParam || localFarmer?.email || localFarmer?.farmer_email);
     const authUserId = await getAuthUserId();
 
     if (activeFarmerId) {
       const { data, error } = await supabase
         .from("farmers")
         .select("*")
-        .eq("id", activeFarmerId)
-        .maybeSingle();
+        .or(
+          `id.eq.${activeFarmerId},farmer_id.eq.${activeFarmerId},profile_id.eq.${activeFarmerId},auth_user_id.eq.${activeFarmerId}`
+        )
+        .limit(1);
 
-      if (!error && data) return mapSupabaseFarmer(data);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return mapSupabaseFarmer(data[0]);
+      }
+
+      if (error) console.log("farmer id lookup skipped:", error.message);
     }
 
     if (activeEmail) {
       const { data, error } = await supabase
         .from("farmers")
         .select("*")
-        .eq("email", activeEmail)
-        .maybeSingle();
+        .or(`email.eq.${activeEmail},farmer_email.eq.${activeEmail}`)
+        .limit(1);
 
-      if (!error && data) return mapSupabaseFarmer(data);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return mapSupabaseFarmer(data[0]);
+      }
+
+      if (error) console.log("farmer email lookup skipped:", error.message);
     }
 
     if (authUserId) {
@@ -246,6 +278,8 @@ export default function ConnectBankScreen() {
       if (!error && Array.isArray(data) && data.length > 0) {
         return mapSupabaseFarmer(data[0]);
       }
+
+      if (error) console.log("farmer auth lookup skipped:", error.message);
     }
 
     return null;
@@ -259,95 +293,92 @@ export default function ConnectBankScreen() {
       ? {
           ...(localFarmer || {}),
           ...supabaseFarmer,
-
           id: supabaseFarmer.id || getFarmerId(localFarmer),
           farmerId: supabaseFarmer.farmerId || supabaseFarmer.id || getFarmerId(localFarmer),
-
-          stripeAccountId:
-            getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
-          farmerStripeAccountId:
-            getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
-          stripe_account_id:
-            getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
-          farmer_stripe_account_id:
-            getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
-
-          email: supabaseFarmer.email || localFarmer?.email || emailParam,
-          farmName: getFarmName(supabaseFarmer) || getFarmName(localFarmer),
-          businessName: supabaseFarmer.businessName || localFarmer?.businessName,
+          farmer_id: supabaseFarmer.farmer_id || supabaseFarmer.id || getFarmerId(localFarmer),
+          email: normalizeEmail(supabaseFarmer.email || localFarmer?.email || emailParam),
+          farmer_email: normalizeEmail(supabaseFarmer.email || localFarmer?.email || emailParam),
+          stripeAccountId: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
+          farmerStripeAccountId: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
+          stripe_account_id: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
+          farmer_stripe_account_id: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
+          farmer_account: getStripeAccountId(supabaseFarmer) || getStripeAccountId(localFarmer),
+          role: "farmer",
         }
       : localFarmer
       ? {
           ...localFarmer,
           id: farmerIdParam || getFarmerId(localFarmer),
           farmerId: farmerIdParam || getFarmerId(localFarmer),
-          email: emailParam || localFarmer.email,
+          farmer_id: farmerIdParam || getFarmerId(localFarmer),
+          email: normalizeEmail(emailParam || localFarmer.email || localFarmer.farmer_email),
+          farmer_email: normalizeEmail(emailParam || localFarmer.email || localFarmer.farmer_email),
           stripeAccountId: getStripeAccountId(localFarmer),
           farmerStripeAccountId: getStripeAccountId(localFarmer),
+          stripe_account_id: getStripeAccountId(localFarmer),
+          farmer_stripe_account_id: getStripeAccountId(localFarmer),
+          farmer_account: getStripeAccountId(localFarmer),
+          role: "farmer",
         }
       : null;
 
     if (mergedFarmer) {
-      await saveUpdatedFarmer(mergedFarmer);
+      const saved = await saveUpdatedFarmer(mergedFarmer);
+      return saved;
     }
 
-    return mergedFarmer;
+    return null;
   }
 
   async function saveUpdatedFarmer(updatedFarmer: FarmerProfile) {
     const existing = await readLocalFarmer();
-
     const finalAccountId = getStripeAccountId(updatedFarmer) || getStripeAccountId(existing);
+    const farmerId = getFarmerId(updatedFarmer) || getFarmerId(existing) || farmerIdParam;
 
-    const merged = {
+    const merged: FarmerProfile = {
       ...(existing || {}),
       ...updatedFarmer,
-
-      id: updatedFarmer.id || updatedFarmer.farmerId || existing?.id || farmerIdParam,
-      farmerId:
-        updatedFarmer.farmerId ||
-        updatedFarmer.id ||
-        existing?.farmerId ||
-        existing?.id ||
-        farmerIdParam,
-
+      id: farmerId,
+      farmerId,
+      farmer_id: farmerId,
       role: "farmer",
 
-      farmName: updatedFarmer.farmName || updatedFarmer.farm_name || existing?.farmName || "",
-      businessName:
-        updatedFarmer.businessName ||
-        updatedFarmer.business_name ||
-        updatedFarmer.farmName ||
-        existing?.businessName ||
-        "",
+      farmName: getFarmName(updatedFarmer) || getFarmName(existing),
+      farm_name: getFarmName(updatedFarmer) || getFarmName(existing),
+      businessName: getFarmName(updatedFarmer) || getFarmName(existing),
+      business_name: getFarmName(updatedFarmer) || getFarmName(existing),
       email: normalizeEmail(updatedFarmer.email || existing?.email || emailParam),
+      farmer_email: normalizeEmail(updatedFarmer.email || existing?.email || emailParam),
 
       stripeAccountId: finalAccountId,
       farmerStripeAccountId: finalAccountId,
       stripe_account_id: finalAccountId,
       farmer_stripe_account_id: finalAccountId,
-
-      updatedAt: new Date().toISOString(),
+      farmer_account: finalAccountId,
     };
 
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(merged));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(merged));
-    await AsyncStorage.setItem("currentUserRole", "farmer");
-    await AsyncStorage.setItem("userRole", "farmer");
+    await AsyncStorage.multiSet([
+      ["currentFarmer", JSON.stringify(merged)],
+      ["farm2homeCurrentFarmer", JSON.stringify(merged)],
+      ["farm2homeFarmerSession", JSON.stringify(merged)],
+      ["currentUser", JSON.stringify(merged)],
+      ["currentUserRole", "farmer"],
+      ["userRole", "farmer"],
+    ]);
 
     return merged;
   }
 
-  async function saveStripeStatusToSupabase(updatedFarmer: FarmerProfile) {
+  async function safeUpdateFarmerInSupabase(updatedFarmer: FarmerProfile) {
     const farmerId = getFarmerId(updatedFarmer);
     const accountId = getStripeAccountId(updatedFarmer);
 
     if (!farmerId && !updatedFarmer.email) return;
 
-    const payload: any = {
+    const payload: Record<string, any> = {
+      farmer_account: accountId,
       stripe_account_id: accountId,
       farmer_stripe_account_id: accountId,
-
       stripe_onboarding_complete: Boolean(
         updatedFarmer.stripeOnboardingComplete ||
           updatedFarmer.detailsSubmitted ||
@@ -363,7 +394,6 @@ export default function ConnectBankScreen() {
           updatedFarmer.payoutsEnabled ||
           updatedFarmer.stripe_payouts_enabled
       ),
-
       stripe_payout_account:
         updatedFarmer.stripePayoutAccount ||
         updatedFarmer.stripe_payout_account ||
@@ -376,30 +406,58 @@ export default function ConnectBankScreen() {
         updatedFarmer.stripePayoutBankName ||
         updatedFarmer.stripe_payout_bank_name ||
         "",
-
+      compliance_status:
+        updatedFarmer.complianceStatus ||
+        updatedFarmer.compliance_status ||
+        "stripe_pending",
       updated_at: new Date().toISOString(),
     };
 
-    if (updatedFarmer.email) payload.email = normalizeEmail(updatedFarmer.email);
-    if (getFarmName(updatedFarmer) && getFarmName(updatedFarmer) !== "Farmer") {
-      payload.farm_name = getFarmName(updatedFarmer);
-      payload.business_name = getFarmName(updatedFarmer);
+    if (updatedFarmer.email) {
+      payload.email = normalizeEmail(updatedFarmer.email);
+      payload.farmer_email = normalizeEmail(updatedFarmer.email);
     }
 
-    if (farmerId) {
-      const { error } = await supabase
-        .from("farmers")
-        .update(payload)
-        .eq("id", farmerId);
+    const name = getFarmName(updatedFarmer);
+    if (name && name !== "Farmer") {
+      payload.farm_name = name;
+      payload.business_name = name;
+    }
+
+    let nextPayload = { ...payload };
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      let query = supabase.from("farmers").update(nextPayload);
+
+      if (farmerId) {
+        query = query.or(
+          `id.eq.${farmerId},farmer_id.eq.${farmerId},profile_id.eq.${farmerId},auth_user_id.eq.${farmerId}`
+        );
+      } else {
+        query = query.or(
+          `email.eq.${normalizeEmail(updatedFarmer.email)},farmer_email.eq.${normalizeEmail(
+            updatedFarmer.email
+          )}`
+        );
+      }
+
+      const { error } = await query;
 
       if (!error) return;
-    }
 
-    if (updatedFarmer.email) {
-      await supabase
-        .from("farmers")
-        .update(payload)
-        .eq("email", normalizeEmail(updatedFarmer.email));
+      const msg = String(error.message || "");
+      const missing =
+        msg.match(/Could not find the '([^']+)' column/i)?.[1] ||
+        msg.match(/column ['"]?([^'"]+)['"]? does not exist/i)?.[1] ||
+        "";
+
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        delete nextPayload[missing];
+        continue;
+      }
+
+      console.log("farmers stripe update skipped:", error.message);
+      return;
     }
   }
 
@@ -429,6 +487,7 @@ export default function ConnectBankScreen() {
     const accountId =
       data.accountId ||
       data.stripeAccountId ||
+      data.stripe_account_id ||
       account.id ||
       currentAccountId ||
       "";
@@ -460,12 +519,7 @@ export default function ConnectBankScreen() {
       account?.external_accounts?.data?.[0] ||
       null;
 
-    const bankName =
-      data.bankName ||
-      data.bank_name ||
-      externalAccount?.bank_name ||
-      "";
-
+    const bankName = data.bankName || data.bank_name || externalAccount?.bank_name || "";
     const last4 =
       data.last4 ||
       data.accountLast4 ||
@@ -491,38 +545,23 @@ export default function ConnectBankScreen() {
     };
   }
 
-  async function loadAndCheckStripeStatus() {
+  async function postJson(path: string, body: Record<string, any>) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const text = await response.text();
+
+    let data: any = {};
     try {
-      setLoading(true);
-
-      const farmer = await getCurrentFarmer();
-
-      if (!farmer) {
-        Alert.alert(
-          "Farmer Session Required",
-          "Please login or complete farmer registration first."
-        );
-        router.replace("/farmer/login" as any);
-        return;
-      }
-
-      const accountId = getStripeAccountId(farmer);
-
-      if (!accountId) {
-        setStatus(farmer);
-        return;
-      }
-
-      await checkStripeStatus(false, farmer);
-    } catch (error: any) {
-      console.log("Stripe status load error:", error);
-      Alert.alert(
-        "Stripe Status Error",
-        error?.message || "Unable to load Stripe account."
-      );
-    } finally {
-      setLoading(false);
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`Backend returned invalid response: ${text}`);
     }
+
+    return { response, data };
   }
 
   async function checkStripeStatus(showAlert = true, farmerOverride?: FarmerProfile) {
@@ -532,10 +571,7 @@ export default function ConnectBankScreen() {
       const farmer = farmerOverride || (await getCurrentFarmer());
 
       if (!farmer) {
-        Alert.alert(
-          "Farmer Session Required",
-          "Please login or complete farmer registration first."
-        );
+        Alert.alert("Farmer Session Required", "Please login or complete farmer registration first.");
         router.replace("/farmer/login" as any);
         return;
       }
@@ -548,62 +584,53 @@ export default function ConnectBankScreen() {
         if (showAlert) {
           Alert.alert(
             "Stripe Not Connected",
-            "No Stripe account is saved for this farmer yet. Use Resume Stripe Onboarding or go back to Compliance to set it up.",
-            [
-              {
-                text: "Go to Compliance",
-                onPress: () => router.push("/farmer/compliance-upload" as any),
-              },
-              { text: "OK" },
-            ]
+            "No Stripe account is saved for this farmer yet. Start Stripe onboarding."
           );
         }
 
         return;
       }
 
-      const response = await fetch(
-        `${API_BASE_URL}/payments/check-farmer-connect-account`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            farmerId: getFarmerId(farmer),
-            email: normalizeEmail(farmer.email),
-            stripeAccountId,
-            accountId: stripeAccountId,
-          }),
-        }
-      );
+      const body = {
+        role: "farmer",
+        farmerId: getFarmerId(farmer),
+        farmer_id: getFarmerId(farmer),
+        email: normalizeEmail(farmer.email),
+        farmer_email: normalizeEmail(farmer.email),
+        stripeAccountId,
+        stripe_account_id: stripeAccountId,
+        farmer_account: stripeAccountId,
+        accountId: stripeAccountId,
+        account_id: stripeAccountId,
+      };
 
-      const text = await response.text();
+      let result = await postJson("/payments/check-farmer-connect-account", body);
 
-      let data: any = {};
-
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        throw new Error(`Backend returned invalid Stripe response: ${text}`);
+      if (result.response.status === 404) {
+        result = await postJson("/payments/connect-account-status", body);
       }
 
-      if (!response.ok) {
-        throw new Error(data.error || data.message || "Unable to check Stripe status.");
+      if (!result.response.ok) {
+        throw new Error(
+          result.data.error ||
+            result.data.message ||
+            "Unable to check Stripe status."
+        );
       }
 
-      const normalized = normalizeStripeResponse(data, stripeAccountId);
+      const normalized = normalizeStripeResponse(result.data, stripeAccountId);
 
       const updatedFarmer: FarmerProfile = {
         ...farmer,
-
         id: getFarmerId(farmer),
         farmerId: getFarmerId(farmer),
+        farmer_id: getFarmerId(farmer),
 
         stripeAccountId: normalized.accountId,
         farmerStripeAccountId: normalized.accountId,
         stripe_account_id: normalized.accountId,
         farmer_stripe_account_id: normalized.accountId,
+        farmer_account: normalized.accountId,
 
         payoutsEnabled: normalized.payoutsEnabled,
         chargesEnabled: normalized.chargesEnabled,
@@ -617,63 +644,59 @@ export default function ConnectBankScreen() {
         stripe_charges_enabled: normalized.chargesEnabled,
         stripe_onboarding_complete: normalized.detailsSubmitted,
 
-        stripePayoutAccount:
-          normalized.payoutLabel ||
-          farmer.stripePayoutAccount ||
-          farmer.stripe_payout_account ||
-          "",
-        stripePayoutAccountLast4:
-          normalized.last4 ||
-          farmer.stripePayoutAccountLast4 ||
-          farmer.stripe_payout_account_last4 ||
-          "",
-        stripePayoutBankName:
-          normalized.bankName ||
-          farmer.stripePayoutBankName ||
-          farmer.stripe_payout_bank_name ||
-          "",
+        stripePayoutAccount: normalized.payoutLabel,
+        stripePayoutAccountLast4: normalized.last4,
+        stripePayoutBankName: normalized.bankName,
 
-        stripe_payout_account:
-          normalized.payoutLabel ||
-          farmer.stripePayoutAccount ||
-          farmer.stripe_payout_account ||
-          "",
-        stripe_payout_account_last4:
-          normalized.last4 ||
-          farmer.stripePayoutAccountLast4 ||
-          farmer.stripe_payout_account_last4 ||
-          "",
-        stripe_payout_bank_name:
-          normalized.bankName ||
-          farmer.stripePayoutBankName ||
-          farmer.stripe_payout_bank_name ||
-          "",
+        stripe_payout_account: normalized.payoutLabel,
+        stripe_payout_account_last4: normalized.last4,
+        stripe_payout_bank_name: normalized.bankName,
 
         complianceStatus: normalized.payoutsEnabled ? "stripe_complete" : "stripe_pending",
         compliance_status: normalized.payoutsEnabled ? "stripe_complete" : "stripe_pending",
       };
 
-      await saveStripeStatusToSupabase(updatedFarmer);
+      await safeUpdateFarmerInSupabase(updatedFarmer);
       const savedFarmer = await saveUpdatedFarmer(updatedFarmer);
-
       setStatus(savedFarmer);
 
       if (showAlert) {
         Alert.alert(
           normalized.payoutsEnabled ? "Stripe Ready" : "Stripe Pending",
-          `Account: ${normalized.accountId}\n` +
-            `Details Submitted: ${normalized.detailsSubmitted ? "YES" : "NO"}\n` +
-            `Charges Enabled: ${normalized.chargesEnabled ? "YES" : "NO"}\n` +
-            `Payouts Enabled: ${normalized.payoutsEnabled ? "YES" : "NO"}`
+          `Account: ${normalized.accountId}\nDetails Submitted: ${
+            normalized.detailsSubmitted ? "YES" : "NO"
+          }\nCharges Enabled: ${
+            normalized.chargesEnabled ? "YES" : "NO"
+          }\nPayouts Enabled: ${normalized.payoutsEnabled ? "YES" : "NO"}`
         );
       }
     } catch (error: any) {
       console.log("Stripe status check error:", error);
+      Alert.alert("Stripe Status Error", error?.message || "Unable to check Stripe account.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-      Alert.alert(
-        "Stripe Status Error",
-        error?.message || "Unable to check Stripe account."
-      );
+  async function loadAndCheckStripeStatus() {
+    try {
+      setLoading(true);
+
+      const farmer = await getCurrentFarmer();
+
+      if (!farmer) {
+        Alert.alert("Farmer Session Required", "Please login or complete farmer registration first.");
+        router.replace("/farmer/login" as any);
+        return;
+      }
+
+      setStatus(farmer);
+
+      if (getStripeAccountId(farmer)) {
+        await checkStripeStatus(false, farmer);
+      }
+    } catch (error: any) {
+      console.log("Stripe status load error:", error);
     } finally {
       setLoading(false);
     }
@@ -694,83 +717,83 @@ export default function ConnectBankScreen() {
       const farmerId = getFarmerId(farmer);
       const stripeAccountId = getStripeAccountId(farmer);
 
-      const endpoint = stripeAccountId
-        ? "/payments/create-farmer-onboarding-link"
-        : "/payments/create-farmer-connect-account";
+      const endpoints = stripeAccountId
+        ? ["/payments/create-farmer-onboarding-link", "/payments/create-farmer-connect-account"]
+        : ["/payments/create-farmer-connect-account"];
 
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      let lastError = "";
+
+      for (const endpoint of endpoints) {
+        const { response, data } = await postJson(endpoint, {
+          role: "farmer",
           farmerId,
+          farmer_id: farmerId,
           email: normalizeEmail(farmer.email),
+          farmer_email: normalizeEmail(farmer.email),
           farmName: getFarmName(farmer),
+          farm_name: getFarmName(farmer),
           businessName: getFarmName(farmer),
+          business_name: getFarmName(farmer),
           stripeAccountId,
+          stripe_account_id: stripeAccountId,
+          farmer_account: stripeAccountId,
           accountId: stripeAccountId,
           existingStripeAccountId: stripeAccountId,
-        }),
-      });
+        });
 
-      const text = await response.text();
+        if (!response.ok) {
+          lastError = data.error || data.message || `Endpoint failed: ${endpoint}`;
+          continue;
+        }
 
-      let data: any = {};
+        const onboardingUrl = data.onboardingUrl || data.url;
+        const returnedAccountId =
+          data.stripeAccountId ||
+          data.stripe_account_id ||
+          data.farmer_account ||
+          data.accountId ||
+          stripeAccountId ||
+          "";
 
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        throw new Error(`Backend returned invalid onboarding response: ${text}`);
+        if (!onboardingUrl) {
+          lastError = "No Stripe onboarding URL returned.";
+          continue;
+        }
+
+        if (returnedAccountId) {
+          const updatedFarmer: FarmerProfile = {
+            ...farmer,
+            id: farmerId,
+            farmerId,
+            farmer_id: farmerId,
+            stripeAccountId: returnedAccountId,
+            farmerStripeAccountId: returnedAccountId,
+            stripe_account_id: returnedAccountId,
+            farmer_stripe_account_id: returnedAccountId,
+            farmer_account: returnedAccountId,
+            stripeOnboardingComplete: false,
+            stripeChargesEnabled: false,
+            stripePayoutsEnabled: false,
+            detailsSubmitted: false,
+            chargesEnabled: false,
+            payoutsEnabled: false,
+            complianceStatus: "stripe_pending",
+            compliance_status: "stripe_pending",
+          };
+
+          await safeUpdateFarmerInSupabase(updatedFarmer);
+          const savedFarmer = await saveUpdatedFarmer(updatedFarmer);
+          setStatus(savedFarmer);
+        }
+
+        await openExternalUrl(onboardingUrl);
+        return;
       }
 
-      if (!response.ok) {
-        throw new Error(data.error || data.message || "Unable to create onboarding link.");
-      }
-
-      const onboardingUrl = data.onboardingUrl || data.url;
-      const returnedAccountId =
-        data.accountId || data.stripeAccountId || stripeAccountId || "";
-
-      if (!onboardingUrl) {
-        throw new Error("No Stripe onboarding URL returned.");
-      }
-
-      if (returnedAccountId) {
-        const updatedFarmer: FarmerProfile = {
-          ...farmer,
-          id: farmerId,
-          farmerId,
-
-          stripeAccountId: returnedAccountId,
-          farmerStripeAccountId: returnedAccountId,
-          stripe_account_id: returnedAccountId,
-          farmer_stripe_account_id: returnedAccountId,
-
-          stripeOnboardingComplete: false,
-          stripeChargesEnabled: false,
-          stripePayoutsEnabled: false,
-          detailsSubmitted: false,
-          chargesEnabled: false,
-          payoutsEnabled: false,
-
-          complianceStatus: "stripe_pending",
-          compliance_status: "stripe_pending",
-        };
-
-        await saveStripeStatusToSupabase(updatedFarmer);
-        const savedFarmer = await saveUpdatedFarmer(updatedFarmer);
-        setStatus(savedFarmer);
-      }
-
-      await openExternalUrl(onboardingUrl);
+      throw new Error(lastError || "Unable to create onboarding link.");
     } catch (error: any) {
       console.log("Resume onboarding error:", error);
-
-      Alert.alert(
-        "Onboarding Error",
-        error?.message || "Unable to resume Stripe onboarding."
-      );
+      Alert.alert("Onboarding Error", error?.message || "Unable to resume Stripe onboarding.");
     } finally {
       setLoading(false);
     }
@@ -790,10 +813,7 @@ export default function ConnectBankScreen() {
 
   return (
     <View style={styles.page}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backCircle, pressed && styles.pressed]}
@@ -819,30 +839,20 @@ export default function ConnectBankScreen() {
               {fullyConnected ? "Payouts are enabled" : "Finish payout setup"}
             </Text>
             <Text style={styles.heroText}>
-              Verify your Stripe Express account so Farm2Home can send farmer
-              marketplace payouts.
+              Verify your Stripe Express account so Farm2Home can send farmer marketplace payouts.
             </Text>
           </View>
         </View>
 
         <View style={styles.statusCard}>
           <View style={styles.statusHeader}>
-            <View
-              style={[
-                styles.statusIcon,
-                fullyConnected ? styles.statusGoodBg : styles.statusBadBg,
-              ]}
-            >
-              <Text style={styles.statusIconText}>
-                {fullyConnected ? "✅" : "⚠️"}
-              </Text>
+            <View style={[styles.statusIcon, fullyConnected ? styles.statusGoodBg : styles.statusBadBg]}>
+              <Text style={styles.statusIconText}>{fullyConnected ? "✅" : "⚠️"}</Text>
             </View>
 
             <View style={styles.statusBody}>
               <Text style={styles.statusTitle}>
-                {fullyConnected
-                  ? "Farmer payouts fully enabled"
-                  : "Stripe onboarding incomplete"}
+                {fullyConnected ? "Farmer payouts fully enabled" : "Stripe onboarding incomplete"}
               </Text>
 
               <Text style={styles.statusText}>
@@ -854,7 +864,7 @@ export default function ConnectBankScreen() {
               </Text>
 
               <Text style={styles.statusText}>
-                Email: {status?.email || "Not loaded"}
+                Email: {status?.email || status?.farmer_email || "Not loaded"}
               </Text>
             </View>
           </View>
@@ -863,41 +873,23 @@ export default function ConnectBankScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Account Checklist</Text>
 
-          <StatusRow
-            label="Stripe Account"
-            value={accountId || "Not connected"}
-            passed={Boolean(accountId)}
-          />
+          <StatusRow label="Stripe Account" value={accountId || "Not connected"} passed={Boolean(accountId)} />
 
           <StatusRow
             label="Details Submitted"
-            value={
-              status?.detailsSubmitted || status?.stripeOnboardingComplete
-                ? "Complete"
-                : "Incomplete"
-            }
-            passed={Boolean(
-              status?.detailsSubmitted || status?.stripeOnboardingComplete
-            )}
+            value={status?.detailsSubmitted || status?.stripeOnboardingComplete ? "Complete" : "Incomplete"}
+            passed={Boolean(status?.detailsSubmitted || status?.stripeOnboardingComplete)}
           />
 
           <StatusRow
             label="Charges Enabled"
-            value={
-              status?.chargesEnabled || status?.stripeChargesEnabled
-                ? "Enabled"
-                : "Not enabled"
-            }
+            value={status?.chargesEnabled || status?.stripeChargesEnabled ? "Enabled" : "Not enabled"}
             passed={Boolean(status?.chargesEnabled || status?.stripeChargesEnabled)}
           />
 
           <StatusRow
             label="Payouts Enabled"
-            value={
-              status?.payoutsEnabled || status?.stripePayoutsEnabled
-                ? "Enabled"
-                : "Not enabled"
-            }
+            value={status?.payoutsEnabled || status?.stripePayoutsEnabled ? "Enabled" : "Not enabled"}
             passed={Boolean(status?.payoutsEnabled || status?.stripePayoutsEnabled)}
           />
 
@@ -909,27 +901,15 @@ export default function ConnectBankScreen() {
         </View>
 
         <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            pressed && styles.pressed,
-            loading && styles.disabled,
-          ]}
+          style={({ pressed }) => [styles.button, pressed && styles.pressed, loading && styles.disabled]}
           onPress={() => checkStripeStatus(true)}
           disabled={loading}
         >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonText}>Refresh Stripe Status</Text>
-          )}
+          {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>Refresh Stripe Status</Text>}
         </Pressable>
 
         <Pressable
-          style={({ pressed }) => [
-            styles.secondaryButton,
-            pressed && styles.pressed,
-            loading && styles.disabled,
-          ]}
+          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed, loading && styles.disabled]}
           onPress={resumeOnboarding}
           disabled={loading}
         >
