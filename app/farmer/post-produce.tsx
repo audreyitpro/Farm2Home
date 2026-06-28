@@ -1,3 +1,5 @@
+// app/farmer/post-produce.tsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -24,6 +26,7 @@ import {
   getFarmerById,
 } from "../data/farmerStore";
 
+import { supabase } from "../data/supabaseClient";
 import { checkSubscriptionAccess } from "../services/subscriptionService";
 
 const COLORS = {
@@ -56,8 +59,23 @@ const CATEGORIES = [
   "Farm Supplies",
 ];
 
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
+
+function normalizeProductKey(farmerId: string, productName: string) {
+  return `${clean(farmerId)}:${clean(productName).toLowerCase()}`;
+}
+
 function getProductImage(product: Product) {
   return product.image || product.imageUrl || "";
+}
+
+function getDeliveryOption(farmer: Farmer | null) {
+  if (farmer?.pickup && farmer?.delivery) return "Pickup / Delivery Available";
+  if (farmer?.pickup) return "Pickup Only";
+  if (farmer?.delivery) return "Delivery Only";
+  return "Contact Farmer";
 }
 
 export default function PostProduceScreen() {
@@ -67,6 +85,9 @@ export default function PostProduceScreen() {
   const [farmer, setFarmer] = useState<Farmer | null>(null);
   const [farmerId, setFarmerId] = useState("");
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [editingProductId, setEditingProductId] = useState("");
 
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Produce");
@@ -133,7 +154,7 @@ export default function PostProduceScreen() {
 
         if (saved) {
           const parsed = JSON.parse(saved);
-          id = parsed.id;
+          id = parsed.id || parsed.farmer_id || parsed.farmerId;
         }
       }
 
@@ -173,7 +194,7 @@ export default function PostProduceScreen() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ["images"],
         allowsEditing: true,
         quality: 0.8,
       });
@@ -187,66 +208,8 @@ export default function PostProduceScreen() {
     }
   }
 
-  async function addProduce() {
-    if (!farmerId) return;
-
-    const access = await checkSubscriptionAccess({
-      role: "farmer",
-      userId: farmerId,
-      email: farmer?.email || "",
-    });
-
-    if (!access.allowed) {
-      Alert.alert(
-        "Subscription Required",
-        access.reason || "Farmer subscription inactive."
-      );
-      return;
-    }
-
-    if (!name.trim()) {
-      Alert.alert("Missing Produce Name", "Please enter the produce name.");
-      return;
-    }
-
-    if (!price.trim() || Number(price) <= 0) {
-      Alert.alert("Missing Price", "Please enter a valid price.");
-      return;
-    }
-
-    if (!stock.trim() || Number(stock) < 0) {
-      Alert.alert("Missing Stock", "Please enter available stock.");
-      return;
-    }
-
-    const product: Partial<Product> = {
-      id: `product-${Date.now()}`,
-      farmerId,
-      name: name.trim(),
-      category: category.trim() || "Produce",
-      description: description.trim(),
-      price: Number(price),
-      stock: Number(stock),
-      quantity: Number(stock),
-      unit: unit.trim() || "each",
-      imageUrl: imageUrl.trim(),
-      image: imageUrl.trim(),
-      farmName: farmer?.farmName || "",
-      farmerName: farmer?.ownerName || "",
-      deliveryOption:
-        farmer?.pickup && farmer?.delivery
-          ? "Pickup / Delivery Available"
-          : farmer?.pickup
-          ? "Pickup Only"
-          : farmer?.delivery
-          ? "Delivery Only"
-          : "Contact Farmer",
-    };
-
-    await addProductToFarmer(farmerId, product);
-
-    Alert.alert("Produce Added", `${name} was added to your store.`);
-
+  function resetForm() {
+    setEditingProductId("");
     setName("");
     setCategory("Produce");
     setDescription("");
@@ -254,22 +217,193 @@ export default function PostProduceScreen() {
     setStock("");
     setUnit("each");
     setImageUrl("");
-
-    await loadFarmer();
   }
 
-  async function removeProduce(productId: string) {
+  function editProduce(product: Product) {
+    setEditingProductId(product.id);
+    setName(product.name || "");
+    setCategory(product.category || "Produce");
+    setDescription(product.description || "");
+    setPrice(String(product.price || ""));
+    setStock(String(product.stock ?? product.quantity ?? ""));
+    setUnit(product.unit || "each");
+    setImageUrl(getProductImage(product));
+  }
+
+  async function saveToMarketplace(product: Partial<Product>) {
+    const productName = clean(product.name);
+    const productKey = normalizeProductKey(farmerId, productName);
+    const deliveryOption = getDeliveryOption(farmer);
+
+    const payload: Record<string, any> = {
+      farmer_id: farmerId,
+      product_key: productKey,
+      name: productName,
+      description: clean(product.description),
+      category: clean(product.category || "Produce"),
+      price: Number(product.price || 0),
+      inventory: Number(product.stock ?? product.quantity ?? 0),
+      image_url: clean(product.imageUrl || product.image || ""),
+      organic: false,
+      available: true,
+      delivery_option: deliveryOption,
+      active: true,
+      local: true,
+      seasonal: false,
+      featured: false,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existing, error: findError } = await supabase
+      .from("products")
+      .select("*")
+      .eq("farmer_id", farmerId)
+      .eq("product_key", productKey)
+      .maybeSingle();
+
+    if (findError) {
+      console.log("Existing product lookup error:", findError.message);
+    }
+
+    if (existing?.id) {
+      const { error } = await supabase
+        .from("products")
+        .update(payload)
+        .eq("id", existing.id);
+
+      if (error) throw error;
+
+      return {
+        mode: "updated",
+        marketplaceId: existing.id,
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("products")
+      .insert([{ ...payload, created_at: new Date().toISOString() }])
+      .select("id")
+      .single();
+
+    if (error) throw error;
+
+    return {
+      mode: "inserted",
+      marketplaceId: data?.id,
+    };
+  }
+
+  async function addOrUpdateProduce() {
     if (!farmerId) return;
 
-    Alert.alert("Remove Product", "Remove this product from your store?", [
+    try {
+      setSaving(true);
+
+      const access = await checkSubscriptionAccess({
+        role: "farmer",
+        userId: farmerId,
+        email: farmer?.email || "",
+      });
+
+      if (!access.allowed) {
+        Alert.alert(
+          "Subscription Required",
+          access.reason || "Farmer subscription inactive."
+        );
+        return;
+      }
+
+      if (!name.trim()) {
+        Alert.alert("Missing Product Name", "Please enter the product name.");
+        return;
+      }
+
+      if (!price.trim() || Number(price) <= 0) {
+        Alert.alert("Missing Price", "Please enter a valid price.");
+        return;
+      }
+
+      if (!stock.trim() || Number(stock) < 0) {
+        Alert.alert("Missing Stock", "Please enter available stock.");
+        return;
+      }
+
+      const product: Partial<Product> = {
+        id: editingProductId || `product-${Date.now()}`,
+        farmerId,
+        name: name.trim(),
+        category: category.trim() || "Produce",
+        description: description.trim(),
+        price: Number(price),
+        stock: Number(stock),
+        quantity: Number(stock),
+        unit: unit.trim() || "each",
+        imageUrl: imageUrl.trim(),
+        image: imageUrl.trim(),
+        farmName: farmer?.farmName || "",
+        farmerName: farmer?.ownerName || "",
+        deliveryOption: getDeliveryOption(farmer),
+      };
+
+      const marketplaceResult = await saveToMarketplace(product);
+
+      if (editingProductId) {
+        await deleteFarmerProduct(farmerId, editingProductId);
+      }
+
+      await addProductToFarmer(farmerId, {
+        ...product,
+        id: String(product.id),
+      });
+
+      Alert.alert(
+        marketplaceResult.mode === "updated" ? "Product Updated" : "Product Added",
+        marketplaceResult.mode === "updated"
+          ? `${name} already existed, so the marketplace listing was updated.`
+          : `${name} was added to your store and marketplace.`
+      );
+
+      resetForm();
+      await loadFarmer();
+    } catch (error: any) {
+      console.log("Add/update produce error:", error);
+      Alert.alert("Save Error", error?.message || "Unable to save product.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeProduce(productId: string, productName?: string) {
+    if (!farmerId) return;
+
+    Alert.alert("Remove Product", "Remove this product from your store and marketplace?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Remove",
         style: "destructive",
         onPress: async () => {
-          await deleteFarmerProduct(farmerId, productId);
-          Alert.alert("Removed", "Produce item removed.");
-          await loadFarmer();
+          try {
+            const nameKey = productName
+              ? normalizeProductKey(farmerId, productName)
+              : "";
+
+            if (nameKey) {
+              await supabase
+                .from("products")
+                .delete()
+                .eq("farmer_id", farmerId)
+                .eq("product_key", nameKey);
+            }
+
+            await deleteFarmerProduct(farmerId, productId);
+
+            if (editingProductId === productId) resetForm();
+
+            Alert.alert("Removed", "Product removed from store and marketplace.");
+            await loadFarmer();
+          } catch (error: any) {
+            Alert.alert("Remove Error", error?.message || "Unable to remove product.");
+          }
         },
       },
     ]);
@@ -323,10 +457,12 @@ export default function PostProduceScreen() {
 
           <View style={styles.heroTextBlock}>
             <Text style={styles.heroBadge}>Farmer Store</Text>
-            <Text style={styles.heroTitle}>Add fresh products to your store</Text>
+            <Text style={styles.heroTitle}>
+              {editingProductId ? "Update your marketplace product" : "Add fresh products to your store"}
+            </Text>
             <Text style={styles.heroText}>
-              Upload produce, meat, dairy, flowers, hay, supplies, and seasonal
-              goods for customers to shop.
+              Duplicate names are prevented per farmer. Existing products update
+              instead of creating another listing.
             </Text>
           </View>
         </View>
@@ -338,12 +474,20 @@ export default function PostProduceScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Add Produce</Text>
+          <Text style={styles.sectionTitle}>
+            {editingProductId ? "Update Product" : "Add Product"}
+          </Text>
+
+          {editingProductId ? (
+            <Pressable style={styles.cancelEditButton} onPress={resetForm}>
+              <Text style={styles.cancelEditText}>Cancel Edit</Text>
+            </Pressable>
+          ) : null}
 
           <Text style={styles.label}>Product Name</Text>
           <TextInput
             style={styles.input}
-            placeholder="Produce name"
+            placeholder="Product name"
             placeholderTextColor="#8A9482"
             value={name}
             onChangeText={setName}
@@ -465,21 +609,32 @@ export default function PostProduceScreen() {
             ]}
             onPress={pickImage}
           >
-            <Text style={styles.uploadImageButtonText}>Upload Produce Image</Text>
+            <Text style={styles.uploadImageButtonText}>Upload Product Image</Text>
           </Pressable>
 
           <Pressable
-            style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}
-            onPress={addProduce}
+            style={({ pressed }) => [
+              styles.addButton,
+              pressed && styles.pressed,
+              saving && styles.disabledButton,
+            ]}
+            onPress={addOrUpdateProduce}
+            disabled={saving}
           >
-            <Text style={styles.addButtonText}>Add Produce</Text>
+            {saving ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.addButtonText}>
+                {editingProductId ? "Update Product" : "Add Product"}
+              </Text>
+            )}
           </Pressable>
         </View>
 
         <View style={styles.card}>
           <View style={styles.sectionHeaderRow}>
             <View>
-              <Text style={styles.sectionTitle}>Current Produce</Text>
+              <Text style={styles.sectionTitle}>Current Products</Text>
               <Text style={styles.sectionSubtitle}>
                 {productCount} product{productCount === 1 ? "" : "s"} listed
               </Text>
@@ -491,7 +646,7 @@ export default function PostProduceScreen() {
           {!farmer?.products?.length ? (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyIcon}>🌾</Text>
-              <Text style={styles.emptyTitle}>No produce added yet</Text>
+              <Text style={styles.emptyTitle}>No products added yet</Text>
               <Text style={styles.emptyText}>
                 Add your first product to make your farm visible in the customer marketplace.
               </Text>
@@ -530,15 +685,27 @@ export default function PostProduceScreen() {
                     </Text>
                   </View>
 
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.removeButton,
-                      pressed && styles.pressed,
-                    ]}
-                    onPress={() => removeProduce(product.id)}
-                  >
-                    <Text style={styles.removeButtonText}>Remove</Text>
-                  </Pressable>
+                  <View style={styles.productActions}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.editButton,
+                        pressed && styles.pressed,
+                      ]}
+                      onPress={() => editProduce(product)}
+                    >
+                      <Text style={styles.editButtonText}>Edit</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.removeButton,
+                        pressed && styles.pressed,
+                      ]}
+                      onPress={() => removeProduce(product.id, product.name)}
+                    >
+                      <Text style={styles.removeButtonText}>Remove</Text>
+                    </Pressable>
+                  </View>
                 </View>
               );
             })
@@ -836,6 +1003,21 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 16,
   },
+  disabledButton: {
+    opacity: 0.65,
+  },
+  cancelEditButton: {
+    backgroundColor: "#FEF3C7",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignSelf: "flex-start",
+    marginBottom: 10,
+  },
+  cancelEditText: {
+    color: "#92400E",
+    fontWeight: "900",
+  },
   emptyBox: {
     backgroundColor: COLORS.lightGreen,
     borderRadius: 24,
@@ -914,11 +1096,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 11,
   },
+  productActions: {
+    gap: 7,
+  },
+  editButton: {
+    backgroundColor: "#DBEAFE",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: "center",
+  },
+  editButtonText: {
+    color: COLORS.blue,
+    fontWeight: "900",
+    fontSize: 12,
+  },
   removeButton: {
     backgroundColor: "#FEE2E2",
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 999,
+    alignItems: "center",
   },
   removeButtonText: {
     color: COLORS.danger,

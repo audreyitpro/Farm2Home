@@ -29,8 +29,10 @@ const COLORS = {
   green: "#1FA463",
   greenDark: "#0B5D35",
   greenSoft: "#E9F8EF",
+  orange: "#FFB74A",
   orangeSoft: "#FFF3DE",
   red: "#DC2626",
+  redSoft: "#FEE2E2",
   white: "#FFFFFF",
 };
 
@@ -62,27 +64,63 @@ type Bundle = {
 };
 
 const BUNDLE_TYPES = [
-  "Meat",
-  "Seafood",
-  "Mixed Meat + Seafood",
-  "Beef",
-  "Chicken",
-  "Turkey",
-  "Goat",
-  "Lamb",
-  "Halal Meat",
-  "Catfish",
-  "Tilapia",
-  "Shrimp",
+  { label: "Produce", emoji: "🥬" },
+  { label: "Meat", emoji: "🥩" },
+  { label: "Seafood", emoji: "🐟" },
+  { label: "Mixed Farm Box", emoji: "🧺" },
+  { label: "Beef", emoji: "🐄" },
+  { label: "Chicken", emoji: "🐓" },
+  { label: "Turkey", emoji: "🦃" },
+  { label: "Goat", emoji: "🐐" },
+  { label: "Lamb", emoji: "🐑" },
+  { label: "Halal Meat", emoji: "🥩" },
+  { label: "Shrimp", emoji: "🦐" },
+  { label: "Fish", emoji: "🐟" },
 ];
 
 const STARTER_BUNDLES = [
-  "Beef Family Bundle",
-  "Chicken Monthly Box",
-  "Halal Meat Bundle",
-  "Seafood Catch Box",
-  "Shrimp + Fish Bundle",
-  "Mixed Meat + Seafood Bundle",
+  {
+    name: "Fresh Produce Box",
+    type: "Produce",
+    price: "59",
+    items: "Leafy greens\nTomatoes\nSeasonal vegetables\nFarm fruit add-on",
+    description: "A fresh local produce box for customers who want seasonal farm goods.",
+  },
+  {
+    name: "Beef Family Bundle",
+    type: "Beef",
+    price: "139",
+    items: "Steaks\nGround beef\nRoast\nSeasonal farm add-on",
+    description: "A family-size beef bundle for recurring monthly or bi-monthly customers.",
+  },
+  {
+    name: "Chicken Monthly Box",
+    type: "Chicken",
+    price: "99",
+    items: "Chicken breast\nChicken thighs\nWhole chicken\nFarm seasoning add-on",
+    description: "A recurring chicken box with fresh farm selections.",
+  },
+  {
+    name: "Halal Meat Bundle",
+    type: "Halal Meat",
+    price: "149",
+    items: "Halal beef\nHalal chicken\nHalal lamb or goat selection",
+    description: "A halal meat bundle prepared for recurring customers.",
+  },
+  {
+    name: "Seafood Catch Box",
+    type: "Seafood",
+    price: "129",
+    items: "Fresh fish\nShrimp\nSeasonal seafood selection",
+    description: "A curated seafood box for delivery or shipping.",
+  },
+  {
+    name: "Mixed Farm Box",
+    type: "Mixed Farm Box",
+    price: "119",
+    items: "Fresh produce\nMeat selection\nSeafood or protein add-on\nSeasonal item",
+    description: "A mixed farmers market box with produce and protein options.",
+  },
 ];
 
 function clean(value: any) {
@@ -124,13 +162,13 @@ export default function FarmerFarmBundlesScreen() {
   const [bundles, setBundles] = useState<Bundle[]>([]);
 
   const [bundleName, setBundleName] = useState("");
-  const [bundleType, setBundleType] = useState("Meat");
+  const [bundleType, setBundleType] = useState("Produce");
   const [price, setPrice] = useState("");
   const [description, setDescription] = useState("");
   const [itemsText, setItemsText] = useState("");
 
   const [deliveryEnabled, setDeliveryEnabled] = useState(true);
-  const [shippingEnabled, setShippingEnabled] = useState(true);
+  const [shippingEnabled, setShippingEnabled] = useState(false);
   const [monthlyEnabled, setMonthlyEnabled] = useState(true);
   const [bimonthlyEnabled, setBimonthlyEnabled] = useState(true);
 
@@ -142,11 +180,15 @@ export default function FarmerFarmBundlesScreen() {
 
   const farmerId = getFarmerId(farmer);
 
+  const selectedTypeEmoji = useMemo(() => {
+    return BUNDLE_TYPES.find((item) => item.label === bundleType)?.emoji || "🧺";
+  }, [bundleType]);
+
   const stats = useMemo(() => {
     return {
       total: bundles.length,
-      meat: bundles.filter((b) => normalize(b.bundle_type).includes("meat")).length,
-      seafood: bundles.filter((b) => normalize(b.bundle_type).includes("seafood")).length,
+      active: bundles.filter((b) => b.available).length,
+      recurring: bundles.filter((b) => b.monthly_enabled || b.bimonthly_enabled).length,
     };
   }, [bundles]);
 
@@ -206,25 +248,24 @@ export default function FarmerFarmBundlesScreen() {
     );
   }
 
-  function useStarter(name: string) {
-    setBundleName(name);
+  function useStarter(bundle: (typeof STARTER_BUNDLES)[number]) {
+    setBundleName(bundle.name);
+    setBundleType(bundle.type);
+    setPrice(bundle.price);
+    setItemsText(bundle.items);
+    setDescription(bundle.description);
+  }
 
-    if (normalize(name).includes("seafood") || normalize(name).includes("fish")) {
-      setBundleType("Seafood");
-      setItemsText("Fresh fish\nShrimp\nSeasonal seafood selection");
-      setDescription("A curated seafood bundle for monthly or bi-monthly customers.");
-      setPrice("129");
-    } else if (normalize(name).includes("halal")) {
-      setBundleType("Halal Meat");
-      setItemsText("Halal beef\nHalal chicken\nHalal lamb or goat selection");
-      setDescription("A curated halal meat bundle for recurring customers.");
-      setPrice("149");
-    } else {
-      setBundleType("Meat");
-      setItemsText("Beef selection\nChicken selection\nSausage or ground meat\nSeasonal farm add-on");
-      setDescription("A curated farm meat bundle for recurring customers.");
-      setPrice("139");
-    }
+  function resetForm() {
+    setBundleName("");
+    setBundleType("Produce");
+    setPrice("");
+    setDescription("");
+    setItemsText("");
+    setDeliveryEnabled(true);
+    setShippingEnabled(false);
+    setMonthlyEnabled(true);
+    setBimonthlyEnabled(true);
   }
 
   async function createBundle() {
@@ -244,13 +285,18 @@ export default function FarmerFarmBundlesScreen() {
         return;
       }
 
+      if (!splitItems(itemsText).length) {
+        Alert.alert("Bundle Items Needed", "Add at least one item included in the bundle.");
+        return;
+      }
+
       if (!deliveryEnabled && !shippingEnabled) {
-        Alert.alert("Fulfillment Needed", "Enable delivery, shipping, or both.");
+        Alert.alert("Fulfillment Needed", "Enable local delivery, shipping, or both.");
         return;
       }
 
       if (!monthlyEnabled && !bimonthlyEnabled) {
-        Alert.alert("Frequency Needed", "Enable monthly, bi-monthly, or both.");
+        Alert.alert("Subscription Needed", "Enable monthly, bi-monthly, or both.");
         return;
       }
 
@@ -275,18 +321,13 @@ export default function FarmerFarmBundlesScreen() {
 
       if (error) throw error;
 
-      setBundleName("");
-      setPrice("");
-      setDescription("");
-      setItemsText("");
-      setDeliveryEnabled(true);
-      setShippingEnabled(true);
-      setMonthlyEnabled(true);
-      setBimonthlyEnabled(true);
-
+      resetForm();
       await loadBundles(farmerId);
 
-      Alert.alert("Bundle Created", "Your farm bundle is now available.");
+      Alert.alert(
+        "Added to Market",
+        "Your bundle is now available for customers to select and subscribe."
+      );
     } catch (error: any) {
       Alert.alert("Save Error", error?.message || "Unable to create bundle.");
     } finally {
@@ -303,19 +344,58 @@ export default function FarmerFarmBundlesScreen() {
       )
     );
 
-    await supabase
+    const { error } = await supabase
       .from("farm_bundles")
       .update({
         available: next,
         updated_at: new Date().toISOString(),
       })
       .eq("id", bundle.id);
+
+    if (error) {
+      Alert.alert("Update Error", error.message);
+      await loadBundles(farmerId);
+    }
+  }
+
+  async function deleteBundle(bundle: Bundle) {
+    Alert.alert(
+      "Remove Bundle",
+      `Remove ${bundle.bundle_name} from your market?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            const previous = bundles;
+            setBundles((prev) => prev.filter((item) => item.id !== bundle.id));
+
+            const { error } = await supabase
+              .from("farm_bundles")
+              .delete()
+              .eq("id", bundle.id);
+
+            if (error) {
+              setBundles(previous);
+              Alert.alert("Remove Error", error.message);
+            }
+          },
+        },
+      ]
+    );
   }
 
   function renderBundle({ item }: { item: Bundle }) {
     return (
       <View style={styles.bundleCard}>
         <View style={styles.bundleHeader}>
+          <View style={styles.bundleEmoji}>
+            <Text style={styles.bundleEmojiText}>
+              {BUNDLE_TYPES.find((type) => type.label === item.bundle_type)?.emoji || "🧺"}
+            </Text>
+          </View>
+
           <View style={{ flex: 1 }}>
             <Text style={styles.bundleName}>{item.bundle_name}</Text>
             <Text style={styles.bundleType}>{item.bundle_type}</Text>
@@ -329,7 +409,7 @@ export default function FarmerFarmBundlesScreen() {
         </Text>
 
         <View style={styles.itemWrap}>
-          {(item.items || []).slice(0, 6).map((bundleItem, index) => (
+          {(item.items || []).slice(0, 8).map((bundleItem, index) => (
             <Text key={`${item.id}-${index}`} style={styles.itemPill}>
               {bundleItem}
             </Text>
@@ -337,20 +417,34 @@ export default function FarmerFarmBundlesScreen() {
         </View>
 
         <View style={styles.optionRow}>
-          {item.delivery_enabled ? <Text style={styles.optionPill}>Delivery</Text> : null}
+          {item.delivery_enabled ? <Text style={styles.optionPill}>Local Delivery</Text> : null}
           {item.shipping_enabled ? <Text style={styles.optionPill}>Shipping</Text> : null}
           {item.monthly_enabled ? <Text style={styles.optionPill}>Monthly</Text> : null}
           {item.bimonthly_enabled ? <Text style={styles.optionPill}>Bi-Monthly</Text> : null}
         </View>
 
-        <TouchableOpacity
-          style={[styles.availabilityButton, !item.available && styles.unavailableButton]}
-          onPress={() => toggleAvailable(item)}
-        >
-          <Text style={styles.availabilityText}>
-            {item.available ? "Available to Customers" : "Unavailable"}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.bundleActions}>
+          <TouchableOpacity
+            style={[styles.availabilityButton, !item.available && styles.unavailableButton]}
+            onPress={() => toggleAvailable(item)}
+          >
+            <Ionicons
+              name={item.available ? "storefront-outline" : "eye-off-outline"}
+              size={17}
+              color={COLORS.white}
+            />
+            <Text style={styles.availabilityText}>
+              {item.available ? "Live in Market" : "Hidden"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => deleteBundle(item)}
+          >
+            <Ionicons name="trash-outline" size={17} color={COLORS.red} />
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -359,7 +453,7 @@ export default function FarmerFarmBundlesScreen() {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={COLORS.green} size="large" />
-        <Text style={styles.loadingText}>Loading farm bundles...</Text>
+        <Text style={styles.loadingText}>Loading market bundles...</Text>
       </View>
     );
   }
@@ -374,6 +468,7 @@ export default function FarmerFarmBundlesScreen() {
         keyExtractor={(item) => item.id}
         renderItem={renderBundle}
         contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <>
             <View style={styles.topRow}>
@@ -385,10 +480,10 @@ export default function FarmerFarmBundlesScreen() {
               </TouchableOpacity>
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.eyebrow}>Farm2Home Bundles</Text>
-                <Text style={styles.title}>Meat & Seafood Bundles</Text>
+                <Text style={styles.eyebrow}>Farm2Home Market</Text>
+                <Text style={styles.title}>Add Bundles to Market</Text>
                 <Text style={styles.subtitle}>
-                  Create recurring monthly or bi-monthly bundles for delivery or shipping.
+                  Build produce, meat, seafood, or mixed farm boxes customers can subscribe to.
                 </Text>
               </View>
             </View>
@@ -396,108 +491,167 @@ export default function FarmerFarmBundlesScreen() {
             <View style={styles.hero}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.heroBadge}>{getFarmName(farmer)}</Text>
-                <Text style={styles.heroTitle}>Build subscription-ready farm boxes.</Text>
+                <Text style={styles.heroTitle}>Create a market-ready bundle.</Text>
                 <Text style={styles.heroText}>
-                  Customers can choose delivery or shipping, then select monthly or bi-monthly service.
+                  Farmers create the bundle. Customers choose delivery or shipping,
+                  then subscribe monthly or bi-monthly.
                 </Text>
               </View>
-              <Text style={styles.heroEmoji}>🥩</Text>
+              <Text style={styles.heroEmoji}>🧺</Text>
             </View>
 
             <View style={styles.statsRow}>
-              <Stat label="Bundles" value={String(stats.total)} />
-              <Stat label="Meat" value={String(stats.meat)} />
-              <Stat label="Seafood" value={String(stats.seafood)} />
+              <Stat label="Total Bundles" value={String(stats.total)} />
+              <Stat label="Live in Market" value={String(stats.active)} />
+              <Stat label="Recurring" value={String(stats.recurring)} />
+            </View>
+
+            <View style={styles.flowCard}>
+              <Text style={styles.flowTitle}>Market Flow</Text>
+
+              <View style={styles.flowStep}>
+                <Text style={styles.flowNumber}>1</Text>
+                <Text style={styles.flowText}>Choose bundle type</Text>
+              </View>
+
+              <View style={styles.flowStep}>
+                <Text style={styles.flowNumber}>2</Text>
+                <Text style={styles.flowText}>Add price, description, and included items</Text>
+              </View>
+
+              <View style={styles.flowStep}>
+                <Text style={styles.flowNumber}>3</Text>
+                <Text style={styles.flowText}>Enable delivery, shipping, and subscription frequency</Text>
+              </View>
+
+              <View style={styles.flowStep}>
+                <Text style={styles.flowNumber}>4</Text>
+                <Text style={styles.flowText}>Publish bundle to the customer marketplace</Text>
+              </View>
             </View>
 
             <View style={styles.formCard}>
-              <Text style={styles.formTitle}>Create Bundle</Text>
+              <View style={styles.formHeader}>
+                <View>
+                  <Text style={styles.formEyebrow}>Step 1</Text>
+                  <Text style={styles.formTitle}>Choose Bundle Type</Text>
+                </View>
+                <Text style={styles.formEmoji}>{selectedTypeEmoji}</Text>
+              </View>
 
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.starterRow}>
-                {STARTER_BUNDLES.map((name) => (
-                  <TouchableOpacity key={name} style={styles.starterPill} onPress={() => useStarter(name)}>
-                    <Text style={styles.starterText}>{name}</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.typeRow}
+              >
+                {BUNDLE_TYPES.map((type) => {
+                  const active = bundleType === type.label;
+                  return (
+                    <TouchableOpacity
+                      key={type.label}
+                      style={[styles.typePill, active && styles.typePillActive]}
+                      onPress={() => setBundleType(type.label)}
+                    >
+                      <Text style={styles.typeEmoji}>{type.emoji}</Text>
+                      <Text style={[styles.typeText, active && styles.typeTextActive]}>
+                        {type.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={styles.formEyebrow}>Starter Templates</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.starterRow}
+              >
+                {STARTER_BUNDLES.map((bundle) => (
+                  <TouchableOpacity
+                    key={bundle.name}
+                    style={styles.starterPill}
+                    onPress={() => useStarter(bundle)}
+                  >
+                    <Text style={styles.starterText}>{bundle.name}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+
+              <Text style={styles.formEyebrow}>Step 2</Text>
+              <Text style={styles.formTitleSmall}>Bundle Details</Text>
 
               <Text style={styles.label}>Bundle Name</Text>
               <TextInput
                 style={styles.input}
                 value={bundleName}
                 onChangeText={setBundleName}
-                placeholder="Example: Beef Family Bundle"
+                placeholder="Example: Fresh Produce Family Box"
                 placeholderTextColor="#94A3B8"
               />
 
-              <Text style={styles.label}>Bundle Type</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typeRow}>
-                {BUNDLE_TYPES.map((type) => {
-                  const active = bundleType === type;
-                  return (
-                    <TouchableOpacity
-                      key={type}
-                      style={[styles.typePill, active && styles.typePillActive]}
-                      onPress={() => setBundleType(type)}
-                    >
-                      <Text style={[styles.typeText, active && styles.typeTextActive]}>{type}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              <Text style={styles.label}>Price</Text>
+              <Text style={styles.label}>Market Price</Text>
               <TextInput
                 style={styles.input}
                 value={price}
                 onChangeText={setPrice}
-                placeholder="129.00"
+                placeholder="59.00"
                 keyboardType="numeric"
                 placeholderTextColor="#94A3B8"
               />
 
-              <Text style={styles.label}>Description</Text>
+              <Text style={styles.label}>Customer Description</Text>
               <TextInput
                 style={[styles.input, styles.textArea]}
                 value={description}
                 onChangeText={setDescription}
-                placeholder="Describe what customers receive."
+                placeholder="Tell customers what makes this bundle fresh, local, or seasonal."
                 multiline
                 placeholderTextColor="#94A3B8"
               />
 
-              <Text style={styles.label}>Bundle Items</Text>
+              <Text style={styles.label}>Included Items</Text>
               <TextInput
                 style={[styles.input, styles.textArea]}
                 value={itemsText}
                 onChangeText={setItemsText}
-                placeholder={"Beef steaks\nGround beef\nChicken breast\nShrimp"}
+                placeholder={"Leafy greens\nTomatoes\nGround beef\nShrimp"}
                 multiline
                 placeholderTextColor="#94A3B8"
               />
 
-              <Toggle label="Delivery Enabled" value={deliveryEnabled} onValueChange={setDeliveryEnabled} />
-              <Toggle label="Shipping Enabled" value={shippingEnabled} onValueChange={setShippingEnabled} />
-              <Toggle label="Monthly Enabled" value={monthlyEnabled} onValueChange={setMonthlyEnabled} />
-              <Toggle label="Bi-Monthly Enabled" value={bimonthlyEnabled} onValueChange={setBimonthlyEnabled} />
+              <Text style={styles.formEyebrow}>Step 3</Text>
+              <Text style={styles.formTitleSmall}>Customer Options</Text>
 
-              <TouchableOpacity style={styles.createButton} onPress={createBundle} disabled={saving}>
+              <Toggle label="Local Delivery" value={deliveryEnabled} onValueChange={setDeliveryEnabled} />
+              <Toggle label="Shipping" value={shippingEnabled} onValueChange={setShippingEnabled} />
+              <Toggle label="Monthly Subscription" value={monthlyEnabled} onValueChange={setMonthlyEnabled} />
+              <Toggle label="Bi-Monthly Subscription" value={bimonthlyEnabled} onValueChange={setBimonthlyEnabled} />
+
+              <TouchableOpacity
+                style={[styles.createButton, saving && styles.disabledButton]}
+                onPress={createBundle}
+                disabled={saving}
+              >
                 {saving ? (
                   <ActivityIndicator color={COLORS.white} />
                 ) : (
-                  <Text style={styles.createText}>Create Farm Bundle</Text>
+                  <>
+                    <Ionicons name="storefront-outline" size={19} color={COLORS.white} />
+                    <Text style={styles.createText}>Add Bundle to Market</Text>
+                  </>
                 )}
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.sectionTitle}>Your Bundles</Text>
+            <Text style={styles.sectionTitle}>Market Bundles</Text>
 
             {!bundles.length ? (
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyEmoji}>🧺</Text>
-                <Text style={styles.emptyTitle}>No bundles created yet</Text>
+                <Text style={styles.emptyTitle}>No bundles in your market yet</Text>
                 <Text style={styles.emptyText}>
-                  Create your first meat or seafood bundle above.
+                  Create your first bundle above so customers can subscribe.
                 </Text>
               </View>
             ) : null}
@@ -536,10 +690,21 @@ function Toggle({
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: COLORS.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.bg },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.bg,
+  },
   loadingText: { marginTop: 10, color: COLORS.muted, fontWeight: "800" },
   content: { padding: 16, paddingBottom: 110 },
-  topRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+
+  topRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 14,
+  },
   backButton: {
     width: 44,
     height: 44,
@@ -550,9 +715,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  eyebrow: { color: COLORS.green, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8, fontSize: 12 },
-  title: { color: COLORS.text, fontSize: 27, fontWeight: "900", marginTop: 2 },
-  subtitle: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 4 },
+  eyebrow: {
+    color: COLORS.green,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    fontSize: 12,
+  },
+  title: {
+    color: COLORS.text,
+    fontSize: 27,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  subtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 4,
+  },
+
   hero: {
     backgroundColor: COLORS.green,
     borderRadius: 28,
@@ -562,10 +744,27 @@ const styles = StyleSheet.create({
     gap: 12,
     alignItems: "center",
   },
-  heroBadge: { color: "#D9F99D", fontWeight: "900", textTransform: "uppercase", fontSize: 11 },
-  heroTitle: { color: COLORS.white, fontSize: 25, fontWeight: "900", marginTop: 6 },
-  heroText: { color: COLORS.white, opacity: 0.9, fontWeight: "700", lineHeight: 20, marginTop: 8 },
+  heroBadge: {
+    color: "#D9F99D",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    fontSize: 11,
+  },
+  heroTitle: {
+    color: COLORS.white,
+    fontSize: 25,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+  heroText: {
+    color: COLORS.white,
+    opacity: 0.9,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 8,
+  },
   heroEmoji: { fontSize: 46 },
+
   statsRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
   statCard: {
     flex: 1,
@@ -577,6 +776,45 @@ const styles = StyleSheet.create({
   },
   statValue: { color: COLORS.greenDark, fontWeight: "900", fontSize: 24 },
   statLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 3 },
+
+  flowCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    marginBottom: 14,
+  },
+  flowTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 20,
+    marginBottom: 10,
+  },
+  flowStep: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 8,
+  },
+  flowNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: 12,
+    backgroundColor: COLORS.greenSoft,
+    color: COLORS.greenDark,
+    textAlign: "center",
+    textAlignVertical: "center",
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+  flowText: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+
   formCard: {
     backgroundColor: COLORS.card,
     borderRadius: 24,
@@ -585,16 +823,66 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 18,
   },
-  formTitle: { color: COLORS.text, fontWeight: "900", fontSize: 22, marginBottom: 12 },
+  formHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  formEmoji: { fontSize: 38 },
+  formEyebrow: {
+    color: COLORS.green,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    fontSize: 12,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  formTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 22,
+    marginBottom: 12,
+  },
+  formTitleSmall: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 18,
+    marginBottom: 4,
+  },
+
   starterRow: { gap: 8, paddingBottom: 12 },
   starterPill: {
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: COLORS.orangeSoft,
     borderRadius: 999,
     paddingHorizontal: 13,
     paddingVertical: 9,
   },
-  starterText: { color: COLORS.greenDark, fontWeight: "900" },
-  label: { color: COLORS.text, fontWeight: "900", marginBottom: 7, marginTop: 10 },
+  starterText: { color: "#92400E", fontWeight: "900" },
+
+  typeRow: { gap: 8, paddingBottom: 6 },
+  typePill: {
+    backgroundColor: "#F9FAFB",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  typePillActive: { backgroundColor: COLORS.green, borderColor: COLORS.green },
+  typeEmoji: { fontSize: 15 },
+  typeText: { color: COLORS.text, fontWeight: "900" },
+  typeTextActive: { color: COLORS.white },
+
+  label: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginBottom: 7,
+    marginTop: 10,
+  },
   input: {
     backgroundColor: "#F9FAFB",
     borderWidth: 1,
@@ -606,18 +894,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   textArea: { minHeight: 92, textAlignVertical: "top" },
-  typeRow: { gap: 8 },
-  typePill: {
-    backgroundColor: "#F9FAFB",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 999,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-  },
-  typePillActive: { backgroundColor: COLORS.green, borderColor: COLORS.green },
-  typeText: { color: COLORS.text, fontWeight: "900" },
-  typeTextActive: { color: COLORS.white },
+
   toggleRow: {
     marginTop: 10,
     backgroundColor: COLORS.greenSoft,
@@ -628,15 +905,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   toggleLabel: { color: COLORS.greenDark, fontWeight: "900" },
+
   createButton: {
     backgroundColor: COLORS.green,
     borderRadius: 18,
     paddingVertical: 15,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 16,
+    flexDirection: "row",
+    gap: 8,
   },
+  disabledButton: { opacity: 0.7 },
   createText: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
-  sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900", marginBottom: 12 },
+
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: 12,
+  },
+
   bundleCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -645,12 +934,35 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
   },
-  bundleHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  bundleHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  bundleEmoji: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    backgroundColor: COLORS.orangeSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bundleEmojiText: { fontSize: 25 },
   bundleName: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
   bundleType: { color: COLORS.muted, fontWeight: "800", marginTop: 3 },
   bundlePrice: { color: COLORS.greenDark, fontSize: 19, fontWeight: "900" },
-  bundleDescription: { color: COLORS.text, fontWeight: "700", lineHeight: 20, marginTop: 10 },
-  itemWrap: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 12 },
+  bundleDescription: {
+    color: COLORS.text,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 10,
+  },
+  itemWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 12,
+  },
   itemPill: {
     backgroundColor: COLORS.orangeSoft,
     color: "#92400E",
@@ -660,7 +972,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: "hidden",
   },
-  optionRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 12 },
+  optionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 12,
+  },
   optionPill: {
     backgroundColor: COLORS.greenSoft,
     color: COLORS.greenDark,
@@ -670,15 +987,33 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: "hidden",
   },
+  bundleActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 14,
+  },
   availabilityButton: {
+    flex: 1,
     backgroundColor: COLORS.green,
     borderRadius: 16,
     paddingVertical: 12,
     alignItems: "center",
-    marginTop: 14,
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
   },
   unavailableButton: { backgroundColor: COLORS.red },
   availabilityText: { color: COLORS.white, fontWeight: "900" },
+  removeButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   emptyCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -686,8 +1021,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: "center",
+    marginBottom: 12,
   },
   emptyEmoji: { fontSize: 42 },
-  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18, marginTop: 8 },
-  emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", marginTop: 6 },
+  emptyTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 18,
+    marginTop: 8,
+  },
+  emptyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 6,
+  },
 });

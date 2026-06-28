@@ -1,6 +1,6 @@
 // app/farmer/add-product.tsx
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -45,7 +45,11 @@ const PRODUCT_UNITS: FarmProductUnit[] = [
   "flat",
 ];
 
-const DELIVERY_OPTIONS = ["Pickup Only", "Delivery Only", "Pickup and Delivery"];
+const FULFILLMENT_OPTIONS = [
+  "Pickup Only",
+  "Delivery Only",
+  "Pickup and Delivery",
+];
 
 const PROCESSING_OPTIONS = [
   "Not Applicable",
@@ -58,6 +62,22 @@ const PROCESSING_REQUIRED_CATEGORIES: FarmProductCategory[] = [
   "Meat",
   "Fish & Aquaculture",
 ];
+
+const CATEGORY_EMOJIS: Record<string, string> = {
+  Vegetables: "🥬",
+  Fruits: "🍎",
+  Meat: "🥩",
+  "Fish & Aquaculture": "🐟",
+  Eggs: "🥚",
+  Dairy: "🥛",
+  "Honey & Bee Products": "🍯",
+  "Bakery & Cottage Foods": "🥖",
+  Flowers: "💐",
+  "Plants & Nursery": "🌱",
+  "Hay & Feed": "🌾",
+  "Farm Supplies": "🧺",
+  "Seasonal Products": "🎃",
+};
 
 function normalizeUnitForCategory(category: string): FarmProductUnit {
   if (category === "Eggs") return "dozen";
@@ -116,14 +136,30 @@ export default function AddProduct() {
     }, [])
   );
 
+  const categoryEmoji = useMemo(() => {
+    return CATEGORY_EMOJIS[category] || "🧺";
+  }, [category]);
+
+  const marketPreview = useMemo(() => {
+    return {
+      name: productName.trim() || "Product Name",
+      price: Number(price || 0),
+      quantity: Number(quantity || 0),
+      unit,
+      category,
+    };
+  }, [productName, price, quantity, unit, category]);
+
   async function loadCurrentFarmer() {
     try {
       const saved =
         (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
         (await AsyncStorage.getItem("currentUser"));
 
       if (!saved) {
-        router.replace("/farmer/login");
+        router.replace("/farmer/login" as any);
         return;
       }
 
@@ -137,12 +173,18 @@ export default function AddProduct() {
           currentFarmer.name
       );
 
-      setFarmerId(currentFarmer.id || currentFarmer.farmerId || "");
+      setFarmerId(
+        currentFarmer.id ||
+          currentFarmer.farmerId ||
+          currentFarmer.farmer_id ||
+          currentFarmer.profile_id ||
+          ""
+      );
       setFarmerEmail(currentFarmer.email || "");
       setFarmName(loadedFarmName);
     } catch (error) {
       console.log("Load current farmer error:", error);
-      router.replace("/farmer/login");
+      router.replace("/farmer/login" as any);
     }
   }
 
@@ -202,9 +244,26 @@ export default function AddProduct() {
     };
 
     await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("farm2homeCurrentFarmer", JSON.stringify(updatedFarmer));
+    await AsyncStorage.setItem("farm2homeFarmerSession", JSON.stringify(updatedFarmer));
     await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
     await AsyncStorage.setItem("userRole", "farmer");
     await AsyncStorage.setItem("currentUserRole", "farmer");
+  }
+
+  async function checkDuplicateProduct(name: string) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id,name,farmer_id")
+      .eq("farmer_id", farmerId)
+      .ilike("name", name.trim());
+
+    if (error) {
+      console.log("Duplicate check skipped:", error.message);
+      return false;
+    }
+
+    return Array.isArray(data) && data.length > 0;
   }
 
   async function saveProductToMarketplace(product: Product) {
@@ -249,7 +308,7 @@ export default function AddProduct() {
       available: stock > 0,
       active: true,
       marketplace_visible: true,
-      source: "custom_upload",
+      source: "farmer_market_upload",
 
       sold: product.sold || 0,
       gross_sales: product.grossSales || 0,
@@ -280,6 +339,7 @@ export default function AddProduct() {
       image_url: product.image || product.imageUrl || null,
       delivery_option: product.deliveryOption,
       available: stock > 0,
+      marketplace_visible: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -291,49 +351,87 @@ export default function AddProduct() {
     if (minimalError) throw minimalError;
   }
 
-  async function submitProduct() {
-    if (loading) return;
-
+  function validateProduct() {
     if (!farmerId || !farmerEmail) {
       Alert.alert("Session Error", "Please login again.");
-      router.replace("/farmer/login");
-      return;
+      router.replace("/farmer/login" as any);
+      return false;
     }
 
-    const cleanFarmName = getCleanFarmName(farmName);
+    if (!farmName.trim()) {
+      Alert.alert("Farm Name Needed", "Enter your farm name.");
+      return false;
+    }
 
-    if (!cleanFarmName || !productName.trim() || !price.trim() || !quantity.trim()) {
-      Alert.alert(
-        "Missing Info",
-        "Farm name, product name, price, and quantity are required."
-      );
-      return;
+    if (!productName.trim()) {
+      Alert.alert("Product Name Needed", "Enter the product name.");
+      return false;
+    }
+
+    if (!price.trim()) {
+      Alert.alert("Price Needed", "Enter the market price.");
+      return false;
+    }
+
+    if (!quantity.trim()) {
+      Alert.alert("Inventory Needed", "Enter the quantity available.");
+      return false;
     }
 
     const numericPrice = Number(price);
     const numericQuantity = Number(quantity);
-    const numericThreshold = Number(lowStockThreshold || 5);
 
     if (Number.isNaN(numericPrice) || numericPrice <= 0) {
       Alert.alert("Invalid Price", "Enter a valid price greater than 0.");
-      return;
+      return false;
     }
 
     if (Number.isNaN(numericQuantity) || numericQuantity < 0) {
       Alert.alert("Invalid Quantity", "Enter a valid stock quantity.");
-      return;
+      return false;
     }
+
+    if (PROCESSING_REQUIRED_CATEGORIES.includes(category) && processingOption === "Not Applicable") {
+      Alert.alert(
+        "Processing Required",
+        "Meat and seafood products need a processing option."
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  async function submitProduct() {
+    if (loading) return;
+    if (!validateProduct()) return;
 
     try {
       setLoading(true);
 
+      const duplicateExists = await checkDuplicateProduct(productName);
+
+      if (duplicateExists) {
+        Alert.alert(
+          "Duplicate Product",
+          "This product already exists in your market. Update the existing listing instead of creating a duplicate."
+        );
+        return;
+      }
+
+      const numericPrice = Number(price);
+      const numericQuantity = Number(quantity);
+      const numericThreshold = Number(lowStockThreshold || 5);
       const now = new Date().toISOString();
+
+      const cleanFarmName = getCleanFarmName(farmName);
 
       const tags = [
         organic ? "organic" : "",
         local ? "local" : "",
         seasonal ? "seasonal" : "",
         featured ? "featured" : "",
+        category.toLowerCase(),
       ].filter(Boolean);
 
       const newProduct: Product = {
@@ -365,7 +463,7 @@ export default function AddProduct() {
         seasonal,
         featured,
         tags,
-        source: "custom_upload",
+        source: "farmer_market_upload",
         active: true,
         available: numericQuantity > 0,
         marketplaceVisible: true,
@@ -376,12 +474,16 @@ export default function AddProduct() {
       await saveProductToMarketplace(newProduct);
 
       Alert.alert(
-        "Product Posted",
-        `${productName.trim()} was added to your store and posted to the farmer market.`,
+        "Added to Farmer Market",
+        `${productName.trim()} is now live in your farmer market.`,
         [
           {
-            text: "Go to Dashboard",
-            onPress: () => router.replace("/farmer/dashboard"),
+            text: "Add Another",
+            onPress: resetForm,
+          },
+          {
+            text: "Dashboard",
+            onPress: () => router.replace("/farmer/dashboard" as any),
           },
         ]
       );
@@ -394,6 +496,24 @@ export default function AddProduct() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function resetForm() {
+    setProductName("");
+    setDescription("");
+    setCategory("Vegetables");
+    setPrice("");
+    setQuantity("");
+    setLowStockThreshold("5");
+    setUnit("each");
+    setDeliveryOption("Pickup and Delivery");
+    setProcessingOption("Not Applicable");
+    setHarvestDate("");
+    setImage("");
+    setOrganic(false);
+    setLocal(true);
+    setSeasonal(false);
+    setFeatured(true);
   }
 
   function ToggleChip({
@@ -409,6 +529,7 @@ export default function AddProduct() {
       <TouchableOpacity
         style={[styles.chip, active && styles.chipActive]}
         onPress={onPress}
+        activeOpacity={0.88}
       >
         <Text style={[styles.chipText, active && styles.chipTextActive]}>
           {label}
@@ -419,20 +540,93 @@ export default function AddProduct() {
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+      <View style={styles.topRow}>
+        <TouchableOpacity
+          style={styles.backIconButton}
+          onPress={() => router.push("/farmer/dashboard" as any)}
+        >
+          <Ionicons name="arrow-back-outline" size={22} color="#172017" />
+        </TouchableOpacity>
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.eyebrow}>Farm2Home Farmer Market</Text>
+          <Text style={styles.title}>Add Product to Market</Text>
+          <Text style={styles.subtitle}>
+            Create a customer-ready listing with category, photo, pricing,
+            inventory, fulfillment, and market tags.
+          </Text>
+        </View>
+      </View>
+
       <View style={styles.hero}>
-        <View style={styles.heroIcon}>
-          <Ionicons name="storefront-outline" size={30} color="#FFFFFF" />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.heroBadge}>{farmName}</Text>
+          <Text style={styles.heroTitle}>Publish fresh farm goods.</Text>
+          <Text style={styles.heroText}>
+            Products added here become visible in the customer marketplace and
+            can be used later in farm bundles.
+          </Text>
+        </View>
+        <Text style={styles.heroEmoji}>{categoryEmoji}</Text>
+      </View>
+
+      <View style={styles.flowCard}>
+        <Text style={styles.flowTitle}>Product Market Flow</Text>
+        <FlowStep number="1" text="Choose the product category" />
+        <FlowStep number="2" text="Add photo, name, description, and farm details" />
+        <FlowStep number="3" text="Set price, unit, quantity, and stock alert" />
+        <FlowStep number="4" text="Choose pickup or delivery and publish to market" />
+      </View>
+
+      <View style={styles.previewCard}>
+        <View style={styles.previewImageBox}>
+          {image ? (
+            <Image source={{ uri: image }} style={styles.previewThumb} />
+          ) : (
+            <Text style={styles.previewEmoji}>{categoryEmoji}</Text>
+          )}
         </View>
 
-        <Text style={styles.header}>Add Product to Store</Text>
-        <Text style={styles.subheader}>
-          Create a marketplace-ready product listing with photo, price, stock,
-          delivery, and tags.
+        <View style={{ flex: 1 }}>
+          <Text style={styles.previewFarm}>{farmName}</Text>
+          <Text style={styles.previewName}>{marketPreview.name}</Text>
+          <Text style={styles.previewMeta}>
+            {marketPreview.category} • {marketPreview.quantity} {marketPreview.unit}
+          </Text>
+        </View>
+
+        <Text style={styles.previewPrice}>
+          ${marketPreview.price.toFixed(2)}
         </Text>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Product Photo</Text>
+        <SectionHeader
+          step="Step 1"
+          title="Choose Market Category"
+          subtitle="Select where customers will find this product."
+        />
+
+        <View style={styles.chipWrap}>
+          {FARM_PRODUCT_CATEGORIES.map((item) => (
+            <ToggleChip
+              key={item}
+              label={`${CATEGORY_EMOJIS[item] || "🧺"} ${item}`}
+              active={category === item}
+              onPress={() => selectCategory(item)}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <SectionHeader
+          step="Step 2"
+          title="Product Listing Details"
+          subtitle="Add the information customers will see in the marketplace."
+        />
+
+        <Text style={styles.label}>Product Photo</Text>
 
         {image ? (
           <Image source={{ uri: image }} style={styles.previewImage} />
@@ -446,16 +640,13 @@ export default function AddProduct() {
           </TouchableOpacity>
         )}
 
-        {image ? (
-          <TouchableOpacity style={styles.secondaryBtn} onPress={pickImage}>
-            <Text style={styles.secondaryText}>Change Photo</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={pickImage}>
+          <Text style={styles.secondaryText}>
+            {image ? "Change Photo" : "Choose Photo"}
+          </Text>
+        </TouchableOpacity>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Product Details</Text>
-
+        <Text style={styles.label}>Farm Name</Text>
         <TextInput
           style={styles.input}
           placeholder="Farm Name"
@@ -464,77 +655,73 @@ export default function AddProduct() {
           onChangeText={setFarmName}
         />
 
+        <Text style={styles.label}>Product Name</Text>
         <TextInput
           style={styles.input}
-          placeholder="Product Name"
+          placeholder="Example: Roma Tomatoes"
           placeholderTextColor="#8A8F98"
           value={productName}
           onChangeText={setProductName}
         />
 
+        <Text style={styles.label}>Description</Text>
         <TextInput
           style={[styles.input, styles.textArea]}
-          placeholder="Product Description"
+          placeholder="Describe freshness, harvest details, taste, use, or farm story."
           placeholderTextColor="#8A8F98"
           value={description}
           onChangeText={setDescription}
           multiline
         />
-
-        <Text style={styles.label}>Category</Text>
-
-        <View style={styles.chipWrap}>
-          {FARM_PRODUCT_CATEGORIES.map((item) => (
-            <ToggleChip
-              key={item}
-              label={item}
-              active={category === item}
-              onPress={() => selectCategory(item)}
-            />
-          ))}
-        </View>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Pricing & Inventory</Text>
+        <SectionHeader
+          step="Step 3"
+          title="Pricing & Inventory"
+          subtitle="Set how customers buy and how much stock is available."
+        />
 
+        <Text style={styles.label}>Market Price</Text>
         <TextInput
           style={styles.input}
-          placeholder="Price"
+          placeholder="4.99"
           placeholderTextColor="#8A8F98"
           value={price}
           onChangeText={setPrice}
           keyboardType="numeric"
         />
 
+        <Text style={styles.label}>Quantity Available</Text>
         <TextInput
           style={styles.input}
-          placeholder="Quantity In Stock"
+          placeholder="25"
           placeholderTextColor="#8A8F98"
           value={quantity}
           onChangeText={setQuantity}
           keyboardType="numeric"
         />
 
+        <Text style={styles.label}>Low Stock Alert</Text>
         <TextInput
           style={styles.input}
-          placeholder="Low Stock Alert Threshold"
+          placeholder="5"
           placeholderTextColor="#8A8F98"
           value={lowStockThreshold}
           onChangeText={setLowStockThreshold}
           keyboardType="numeric"
         />
 
+        <Text style={styles.label}>Harvest / Available Date</Text>
         <TextInput
           style={styles.input}
-          placeholder="Harvest / Available Date"
+          placeholder="Example: Available this Friday"
           placeholderTextColor="#8A8F98"
           value={harvestDate}
           onChangeText={setHarvestDate}
         />
 
-        <Text style={styles.label}>Unit</Text>
-
+        <Text style={styles.label}>Selling Unit</Text>
         <View style={styles.chipWrap}>
           {PRODUCT_UNITS.map((item) => (
             <ToggleChip
@@ -547,9 +734,13 @@ export default function AddProduct() {
         </View>
       </View>
 
-      {PROCESSING_REQUIRED_CATEGORIES.includes(category) && (
+      {PROCESSING_REQUIRED_CATEGORIES.includes(category) ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Processing Option</Text>
+          <SectionHeader
+            step="Step 4"
+            title="Processing Option"
+            subtitle="Meat and seafood products need clear processing details."
+          />
 
           <View style={styles.chipWrap}>
             {PROCESSING_OPTIONS.map((item) => (
@@ -562,15 +753,18 @@ export default function AddProduct() {
             ))}
           </View>
         </View>
-      )}
+      ) : null}
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Delivery & Tags</Text>
+        <SectionHeader
+          step={PROCESSING_REQUIRED_CATEGORIES.includes(category) ? "Step 5" : "Step 4"}
+          title="Fulfillment & Market Tags"
+          subtitle="Choose how customers receive the product and how it is promoted."
+        />
 
         <Text style={styles.label}>Pickup / Delivery</Text>
-
         <View style={styles.chipWrap}>
-          {DELIVERY_OPTIONS.map((item) => (
+          {FULFILLMENT_OPTIONS.map((item) => (
             <ToggleChip
               key={item}
               label={item}
@@ -581,7 +775,6 @@ export default function AddProduct() {
         </View>
 
         <Text style={styles.label}>Marketplace Tags</Text>
-
         <View style={styles.chipWrap}>
           <ToggleChip
             label="Organic"
@@ -615,19 +808,46 @@ export default function AddProduct() {
           <ActivityIndicator color="#FFFFFF" />
         ) : (
           <>
-            <Ionicons name="cloud-upload-outline" size={20} color="#FFFFFF" />
-            <Text style={styles.submitText}>Post Product to Farmer Market</Text>
+            <Ionicons name="storefront-outline" size={20} color="#FFFFFF" />
+            <Text style={styles.submitText}>Publish Product to Farmer Market</Text>
           </>
         )}
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.backBtn}
-        onPress={() => router.push("/farmer/dashboard")}
+        onPress={() => router.push("/farmer/dashboard" as any)}
       >
         <Text style={styles.backText}>Back to Farmer Dashboard</Text>
       </TouchableOpacity>
     </ScrollView>
+  );
+}
+
+function SectionHeader({
+  step,
+  title,
+  subtitle,
+}: {
+  step: string;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.stepText}>{step}</Text>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSub}>{subtitle}</Text>
+    </View>
+  );
+}
+
+function FlowStep({ number, text }: { number: string; text: string }) {
+  return (
+    <View style={styles.flowStep}>
+      <Text style={styles.flowNumber}>{number}</Text>
+      <Text style={styles.flowText}>{text}</Text>
+    </View>
   );
 }
 
@@ -638,34 +858,163 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 18,
-    paddingBottom: 60,
+    paddingBottom: 70,
   },
+
+  topRow: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  backIconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8DA",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  eyebrow: {
+    color: "#2E7D32",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    fontSize: 12,
+  },
+  title: {
+    color: "#172017",
+    fontSize: 30,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  subtitle: {
+    color: "#64748B",
+    marginTop: 6,
+    lineHeight: 21,
+    fontWeight: "700",
+  },
+
   hero: {
     backgroundColor: "#14532D",
     borderRadius: 30,
     padding: 20,
-    marginBottom: 16,
-  },
-  heroIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
-    backgroundColor: "#2E7D32",
-    justifyContent: "center",
-    alignItems: "center",
     marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  header: {
-    fontSize: 31,
+  heroBadge: {
+    color: "#BBF7D0",
     fontWeight: "900",
-    color: "#FFFFFF",
+    textTransform: "uppercase",
+    fontSize: 11,
   },
-  subheader: {
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 25,
+    fontWeight: "900",
+    marginTop: 7,
+  },
+  heroText: {
     color: "#DCFCE7",
     marginTop: 8,
-    lineHeight: 22,
+    lineHeight: 21,
     fontWeight: "700",
   },
+  heroEmoji: {
+    fontSize: 48,
+  },
+
+  flowCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8DA",
+  },
+  flowTitle: {
+    color: "#172017",
+    fontWeight: "900",
+    fontSize: 20,
+    marginBottom: 10,
+  },
+  flowStep: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 8,
+  },
+  flowNumber: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    backgroundColor: "#E9F8EF",
+    color: "#14532D",
+    textAlign: "center",
+    textAlignVertical: "center",
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+  flowText: {
+    flex: 1,
+    color: "#172017",
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+
+  previewCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8DA",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  previewImageBox: {
+    width: 62,
+    height: 62,
+    borderRadius: 22,
+    backgroundColor: "#FFF3DE",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  previewThumb: {
+    width: "100%",
+    height: "100%",
+  },
+  previewEmoji: {
+    fontSize: 34,
+  },
+  previewFarm: {
+    color: "#2E7D32",
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  previewName: {
+    color: "#172017",
+    fontWeight: "900",
+    fontSize: 17,
+    marginTop: 2,
+  },
+  previewMeta: {
+    color: "#64748B",
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  previewPrice: {
+    color: "#14532D",
+    fontWeight: "900",
+    fontSize: 18,
+  },
+
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 26,
@@ -674,11 +1023,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8DA",
   },
+  sectionHeader: {
+    marginBottom: 12,
+  },
+  stepText: {
+    color: "#2E7D32",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    marginBottom: 4,
+  },
   sectionTitle: {
     color: "#172017",
     fontSize: 21,
     fontWeight: "900",
-    marginBottom: 12,
+  },
+  sectionSub: {
+    color: "#64748B",
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 4,
   },
   label: {
     color: "#172017",
@@ -701,6 +1065,7 @@ const styles = StyleSheet.create({
     height: 96,
     textAlignVertical: "top",
   },
+
   previewImage: {
     width: "100%",
     height: 230,
@@ -732,6 +1097,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 20,
   },
+
   chipWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -755,6 +1121,7 @@ const styles = StyleSheet.create({
   chipTextActive: {
     color: "#FFFFFF",
   },
+
   secondaryBtn: {
     backgroundColor: "#ECFDF5",
     borderWidth: 1,
@@ -762,11 +1129,13 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 16,
     alignItems: "center",
+    marginBottom: 8,
   },
   secondaryText: {
     color: "#14532D",
     fontWeight: "900",
   },
+
   submitBtn: {
     backgroundColor: "#14532D",
     borderRadius: 20,

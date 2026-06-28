@@ -33,11 +33,11 @@ const COLORS = {
   orangeSoft: "#FFF3DE",
   red: "#EF4444",
   redSoft: "#FEE2E2",
+  blueSoft: "#EAF2FF",
   text: "#162115",
   muted: "#667085",
   border: "#E3E8DD",
   white: "#FFFFFF",
-  black: "#111827",
 };
 
 type FarmerSession = {
@@ -224,8 +224,6 @@ async function safeSelectRecent(table: string, limit = 100) {
       return Array.isArray(result.data) ? result.data : [];
     }
 
-    console.log(`${table} created_at order skipped:`, result.error.message);
-
     result = await supabase.from(table).select("*").limit(limit);
 
     if (!result.error) {
@@ -333,15 +331,11 @@ export default function FarmerDashboardScreen() {
 
     const localEmail = normalize(local?.email || authUser?.email);
 
+    const rows = await safeSelectRecent("farmers", 500);
+
     if (localId) {
-      const rows = await safeSelectRecent("farmers", 500);
       const found = rows.find((row: any) =>
-        [
-          row?.id,
-          row?.farmer_id,
-          row?.profile_id,
-          row?.auth_user_id,
-        ]
+        [row?.id, row?.farmer_id, row?.profile_id, row?.auth_user_id]
           .map(clean)
           .includes(localId)
       );
@@ -350,7 +344,6 @@ export default function FarmerDashboardScreen() {
     }
 
     if (localEmail) {
-      const rows = await safeSelectRecent("farmers", 500);
       const found = rows.find((row: any) => normalize(row?.email) === localEmail);
       if (found) return found;
     }
@@ -457,22 +450,18 @@ export default function FarmerDashboardScreen() {
         rowMatchesFarmer(row, activeFarmerId, activeEmail)
       );
 
-      if (filtered.length) {
-        loaded.push(
-          ...filtered.map((row: any) => ({
-            id: clean(row.id || row.product_id || `${table}_${loaded.length}`),
-            name: clean(row.name || row.product_name || row.title || "Farm Product"),
-            price: Number(row.price || row.unit_price || row.amount || 0),
-            quantity: Number(
-              row.quantity || row.inventory_count || row.stock || row.qty || 0
-            ),
-            status: clean(row.status || "active"),
-            image_url: clean(
-              row.image_url || row.product_image_url || row.photo_url
-            ),
-          }))
-        );
-      }
+      loaded.push(
+        ...filtered.map((row: any, index: number) => ({
+          id: clean(row.id || row.product_id || `${table}_${index}`),
+          name: clean(row.name || row.product_name || row.title || "Farm Product"),
+          price: Number(row.price || row.unit_price || row.amount || 0),
+          quantity: Number(
+            row.quantity || row.inventory_count || row.stock || row.qty || 0
+          ),
+          status: clean(row.status || "active"),
+          image_url: clean(row.image_url || row.product_image_url || row.photo_url),
+        }))
+      );
     }
 
     setProducts(
@@ -495,12 +484,14 @@ export default function FarmerDashboardScreen() {
       );
 
       loaded.push(
-        ...filtered.map((row: any) => ({
-          id: clean(row.id || row.order_id || `${table}_${loaded.length}`),
+        ...filtered.map((row: any, index: number) => ({
+          id: clean(row.id || row.order_id || `${table}_${index}`),
           status: clean(
             row.status || row.fulfillment_status || row.order_status || "new"
           ),
-          total: Number(row.total || row.order_total || row.subtotal || row.amount || 0),
+          total: Number(
+            row.total || row.order_total || row.subtotal || row.amount || 0
+          ),
           created_at: clean(row.created_at),
         }))
       );
@@ -523,13 +514,7 @@ export default function FarmerDashboardScreen() {
     const rows = await safeSelectRecent("farmer_drivers", 500);
 
     const filtered = rows.filter((row: any) =>
-      [
-        row?.farmer_id,
-        row?.owner_id,
-        row?.user_id,
-        row?.profile_id,
-        row?.auth_user_id,
-      ]
+      [row?.farmer_id, row?.owner_id, row?.user_id, row?.profile_id, row?.auth_user_id]
         .map(clean)
         .includes(activeFarmerId)
     );
@@ -578,7 +563,7 @@ export default function FarmerDashboardScreen() {
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
         <View style={styles.loadingCenter}>
           <ActivityIndicator color={COLORS.green} size="large" />
-          <Text style={styles.loadingText}>Loading farmer dashboard...</Text>
+          <Text style={styles.loadingText}>Loading farmer market...</Text>
         </View>
       </SafeAreaView>
     );
@@ -597,13 +582,14 @@ export default function FarmerDashboardScreen() {
       >
         <View style={styles.topBar}>
           <View>
-            <Text style={styles.greeting}>Good day 👋</Text>
+            <Text style={styles.greeting}>Welcome back 👋</Text>
             <Text style={styles.pageTitle}>{farmName}</Text>
+            <Text style={styles.pageSub}>Your digital farmers market</Text>
           </View>
 
           <TouchableOpacity
             style={styles.profileCircle}
-            onPress={() => go("/farmer/setup-store")}
+            onPress={() => go("/farmer/profile")}
             activeOpacity={0.9}
           >
             {logoUrl ? (
@@ -616,66 +602,38 @@ export default function FarmerDashboardScreen() {
 
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.heroBadge}>Grocerly Farmer Store</Text>
+            <Text style={styles.heroBadge}>Farm2Home Market</Text>
             <Text style={styles.heroTitle}>
-              Fresh farm products, ready for local customers.
+              List fresh products, build bundles, and serve local customers.
             </Text>
             <Text style={styles.heroSub}>
-              Manage your store, produce, deliveries, payout setup, and preferred
-              drivers.
+              Manage produce, meat, seafood, subscriptions, delivery, shipping,
+              and payouts from one farmer dashboard.
             </Text>
 
             <View style={styles.heroActions}>
               <TouchableOpacity
                 style={styles.heroButton}
-                onPress={() => go("/farmer/setup-store")}
+                onPress={() => go("/farmer/add-product")}
                 activeOpacity={0.9}
               >
-                <Text style={styles.heroButtonText}>Setup Store</Text>
+                <Ionicons name="add-circle-outline" size={18} color={COLORS.greenDark} />
+                <Text style={styles.heroButtonText}>Add Product</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.heroButtonLight}
-                onPress={() => go("/farmer/add-product")}
+                onPress={() => go("/farmer/farm-bundles")}
                 activeOpacity={0.9}
               >
-                <Text style={styles.heroButtonLightText}>Add Product</Text>
+                <Ionicons name="basket-outline" size={18} color={COLORS.white} />
+                <Text style={styles.heroButtonLightText}>Create Bundle</Text>
               </TouchableOpacity>
             </View>
           </View>
 
           <View style={styles.heroBasket}>
-            <Text style={styles.heroBasketEmoji}>🥬</Text>
-          </View>
-        </View>
-
-        <View style={styles.readyCard}>
-          <View
-            style={[
-              styles.readyIcon,
-              dashboardReady ? styles.readyIconGood : styles.readyIconWarn,
-            ]}
-          >
-            <Ionicons
-              name={
-                dashboardReady
-                  ? "checkmark-circle-outline"
-                  : "alert-circle-outline"
-              }
-              size={26}
-              color={dashboardReady ? COLORS.greenDark : COLORS.orange}
-            />
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text style={styles.readyTitle}>
-              {dashboardReady ? "Store is active" : "Store setup needed"}
-            </Text>
-            <Text style={styles.readyText}>
-              {dashboardReady
-                ? "Your farmer dashboard is ready. Continue managing orders and inventory."
-                : "Complete your store profile so customers can find your farm."}
-            </Text>
+            <Text style={styles.heroBasketEmoji}>🧺</Text>
           </View>
         </View>
 
@@ -686,84 +644,108 @@ export default function FarmerDashboardScreen() {
           <StatCard label="Revenue" value={money(stats.revenue)} icon="cash-outline" />
         </View>
 
-        <Text style={styles.sectionTitle}>Store Management</Text>
+        <View style={styles.readyCard}>
+          <View
+            style={[
+              styles.readyIcon,
+              dashboardReady ? styles.readyIconGood : styles.readyIconWarn,
+            ]}
+          >
+            <Ionicons
+              name={dashboardReady ? "checkmark-circle-outline" : "alert-circle-outline"}
+              size={26}
+              color={dashboardReady ? COLORS.greenDark : COLORS.orange}
+            />
+          </View>
 
-        <View style={styles.actionGrid}>
-          <View style={styles.actionGrid}>
-  <ActionCard title="Setup Farmer Store" subtitle="Farm profile, logo, pickup, delivery." icon="storefront-outline" onPress={() => go("/farmer/setup-store")} primary />
-  <ActionCard title="Select Produce" subtitle="Add common grocery produce quickly." icon="nutrition-outline" onPress={() => go("/farmer/select-produce")} />
-  <ActionCard title="Add Custom Product" subtitle="Create your own product listing." icon="add-circle-outline" onPress={() => go("/farmer/add-product")} />
-  <ActionCard title="Connect Bank" subtitle={payoutsReady ? "Stripe payouts ready." : "Finish Stripe Connect payouts."} icon="card-outline" onPress={() => go("/farmer/connect-bank")} />
-  <ActionCard title="Preferred Drivers" subtitle="Manage farmer driver network." icon="people-outline" onPress={() => go("/farmer/driver")} />
-  <ActionCard title="AI Compliance" subtitle="Review compliance alerts." icon="shield-checkmark-outline" onPress={() => go("/farmer/ai-compliance")} />
-  <ActionCard title="Assigned Drivers" subtitle="View assigned delivery drivers." icon="people-circle-outline" onPress={() => go("/farmer/assigned-drivers")} />
-  <ActionCard title="Compliance Upload" subtitle="Upload required farmer documents." icon="cloud-upload-outline" onPress={() => go("/farmer/compliance-upload")} />
-  <ActionCard title="Customer Driver Chat" subtitle="Message customers and drivers." icon="chatbubbles-outline" onPress={() => go("/farmer/customer-driver-chat")} />
-  <ActionCard title="Customer Reviews" subtitle="View customer feedback." icon="star-outline" onPress={() => go("/farmer/customer-reviews")} />
-  <ActionCard title="Delivery Operations" subtitle="Manage delivery workflow." icon="navigate-outline" onPress={() => go("/farmer/delivery-operations")} />
-  <ActionCard title="Delivery Orders" subtitle="Track delivery orders." icon="cube-outline" onPress={() => go("/farmer/delivery-orders")} />
-  <ActionCard title="Pickup Settings" subtitle="Set pickup and delivery rules." icon="settings-outline" onPress={() => go("/farmer/delivery-pickup-settings")} />
-  <ActionCard title="Documents" subtitle="Manage farmer documents." icon="document-text-outline" onPress={() => go("/farmer/documents")} />
-  <ActionCard title="Driver Chat" subtitle="Chat with preferred drivers." icon="chatbox-outline" onPress={() => go("/farmer/driver-chat")} />
-  <ActionCard title="Earnings" subtitle="View payout earnings." icon="cash-outline" onPress={() => go("/farmer/earnings")} />
-  <ActionCard title="AI Growth Center" subtitle="Farm growth insights." icon="trending-up-outline" onPress={() => go("/farmer/farm-ai-growth-center")} />
-  <ActionCard title="Subscription Plans" subtitle="Manage farmer membership." icon="card-outline" onPress={() => go("/farmer/farmer-subscription-plans")} />
-  <ActionCard title="Help Center" subtitle="Get farmer support." icon="help-circle-outline" onPress={() => go("/farmer/help-center")} />
-  <ActionCard title="Inventory Management" subtitle="Manage product inventory." icon="archive-outline" onPress={() => go("/farmer/inventory-management")} />
-  <ActionCard title="Orders" subtitle="Review customer orders." icon="receipt-outline" onPress={() => go("/farmer/orders")} />
-  <ActionCard title="Post Load" subtitle="Post delivery load needs." icon="car-outline" onPress={() => go("/farmer/post-load")} />
-  <ActionCard title="Post Produce" subtitle="Post farm produce." icon="leaf-outline" onPress={() => go("/farmer/post-produce")} />
-  <ActionCard title="Profile" subtitle="Update farmer profile." icon="person-outline" onPress={() => go("/farmer/profile")} />
-  <ActionCard title="Revenue Analytics" subtitle="View sales analytics." icon="bar-chart-outline" onPress={() => go("/farmer/revenue-analytics")} />
-</View>
-          <ActionCard
-          title="Meat & Seafood Bundles"
-          subtitle="Create monthly or bi-monthly farm bundles."
-          icon="fish-outline"
-          onPress={() => go("/farmer/farm-bundles")}
-          />
-          <ActionCard
-            title="Setup Farmer Store"
-            subtitle="Farm profile, logo, pickup, delivery."
-            icon="storefront-outline"
-            onPress={() => go("/farmer/setup-store")}
-            primary
-          />
-          <ActionCard
-            title="Select Produce"
-            subtitle="Add common grocery produce quickly."
-            icon="nutrition-outline"
-            onPress={() => go("/farmer/select-produce")}
-          />
-          <ActionCard
-            title="Add Custom Product"
-            subtitle="Create your own product listing."
-            icon="add-circle-outline"
+          <View style={{ flex: 1 }}>
+            <Text style={styles.readyTitle}>
+              {dashboardReady ? "Market store is active" : "Finish your market setup"}
+            </Text>
+            <Text style={styles.readyText}>
+              {dashboardReady
+                ? payoutsReady
+                  ? "Your store and Stripe payouts are ready."
+                  : "Your store is active. Finish Stripe Connect to receive payouts."
+                : "Complete your farm profile so customers can shop from your farm."}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.readyButton}
+            onPress={() =>
+              payoutsReady ? go("/farmer/setup-store") : go("/farmer/connect-bank")
+            }
+          >
+            <Text style={styles.readyButtonText}>
+              {payoutsReady ? "Store" : "Stripe"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <SectionTitle
+          title="Build Your Farmers Market"
+          subtitle="Start here: products first, then bundles, then customer fulfillment."
+        />
+
+        <View style={styles.flowGrid}>
+          <FlowCard
+            step="1"
+            title="List Products"
+            subtitle="Add everything you grow or sell."
+            icon="leaf-outline"
             onPress={() => go("/farmer/add-product")}
           />
-          <ActionCard
-            title="Connect Bank"
-            subtitle={
-              payoutsReady ? "Stripe payouts ready." : "Finish Stripe Connect payouts."
-            }
-            icon="card-outline"
-            onPress={() => go("/farmer/connect-bank")}
+          <FlowCard
+            step="2"
+            title="Create Bundles"
+            subtitle="Produce, meat, seafood, or mixed boxes."
+            icon="basket-outline"
+            onPress={() => go("/farmer/farm-bundles")}
           />
-          <ActionCard
-            title="Preferred Drivers"
-            subtitle="Manage farmer driver network."
-            icon="people-outline"
-            onPress={() => go("/farmer/driver")}
-          />
-          <ActionCard
-            title="Orders"
-            subtitle="Review farm orders and delivery status."
+          <FlowCard
+            step="3"
+            title="Manage Orders"
+            subtitle="Prepare pickup, delivery, or shipping."
             icon="bag-check-outline"
             onPress={() => go("/farmer/orders")}
           />
         </View>
 
-        <Text style={styles.sectionTitle}>Quick Inventory</Text>
+        <SectionTitle title="Market Tools" subtitle="Daily farmer store actions." />
+
+        <View style={styles.marketGrid}>
+          <MarketTile
+            title="Select Produce"
+            subtitle="Quick-add grocery produce"
+            icon="nutrition-outline"
+            emoji="🥬"
+            onPress={() => go("/farmer/select-produce")}
+          />
+          <MarketTile
+            title="Custom Product"
+            subtitle="Add unique farm items"
+            icon="add-circle-outline"
+            emoji="🍯"
+            onPress={() => go("/farmer/add-product")}
+          />
+          <MarketTile
+            title="Meat Bundles"
+            subtitle="Monthly or bi-monthly"
+            icon="restaurant-outline"
+            emoji="🥩"
+            onPress={() => go("/farmer/farm-bundles")}
+          />
+          <MarketTile
+            title="Seafood Bundles"
+            subtitle="Fresh subscription boxes"
+            icon="fish-outline"
+            emoji="🐟"
+            onPress={() => go("/farmer/farm-bundles")}
+          />
+        </View>
+
+        <SectionTitle title="Quick Inventory" subtitle="Recently loaded products." />
 
         <View style={styles.productList}>
           {products.slice(0, 5).map((product) => (
@@ -785,7 +767,7 @@ export default function FarmerDashboardScreen() {
 
               <TouchableOpacity
                 style={styles.productEdit}
-                onPress={() => go("/farmer/add-product")}
+                onPress={() => go("/farmer/inventory-management")}
               >
                 <Ionicons name="create-outline" size={18} color={COLORS.greenDark} />
               </TouchableOpacity>
@@ -797,16 +779,160 @@ export default function FarmerDashboardScreen() {
               <Text style={styles.emptyEmoji}>🧺</Text>
               <Text style={styles.emptyTitle}>No products listed yet</Text>
               <Text style={styles.emptyText}>
-                Add produce or custom grocery items to open your store.
+                Add produce, meat, seafood, or custom farm goods to open your market.
               </Text>
               <TouchableOpacity
                 style={styles.emptyButton}
-                onPress={() => go("/farmer/select-produce")}
+                onPress={() => go("/farmer/add-product")}
               >
-                <Text style={styles.emptyButtonText}>Add Produce</Text>
+                <Text style={styles.emptyButtonText}>Add First Product</Text>
               </TouchableOpacity>
             </View>
           )}
+        </View>
+
+        <SectionTitle title="Operations" subtitle="Orders, delivery, drivers, and messages." />
+
+        <View style={styles.actionGrid}>
+          <ActionCard
+            title="Orders"
+            subtitle="Review customer orders and status."
+            icon="receipt-outline"
+            onPress={() => go("/farmer/orders")}
+            primary
+          />
+          <ActionCard
+            title="Delivery Orders"
+            subtitle="Track active delivery orders."
+            icon="cube-outline"
+            onPress={() => go("/farmer/delivery-orders")}
+          />
+          <ActionCard
+            title="Delivery Operations"
+            subtitle="Manage delivery workflow."
+            icon="navigate-outline"
+            onPress={() => go("/farmer/delivery-operations")}
+          />
+          <ActionCard
+            title="Pickup & Delivery Settings"
+            subtitle="Set local pickup, delivery, and shipping rules."
+            icon="settings-outline"
+            onPress={() => go("/farmer/delivery-pickup-settings")}
+          />
+          <ActionCard
+            title="Preferred Drivers"
+            subtitle="Manage your farmer driver network."
+            icon="people-outline"
+            onPress={() => go("/farmer/driver")}
+          />
+          <ActionCard
+            title="Assigned Drivers"
+            subtitle="View drivers assigned to farm orders."
+            icon="people-circle-outline"
+            onPress={() => go("/farmer/assigned-drivers")}
+          />
+          <ActionCard
+            title="Customer Driver Chat"
+            subtitle="Message customers and drivers."
+            icon="chatbubbles-outline"
+            onPress={() => go("/farmer/customer-driver-chat")}
+          />
+          <ActionCard
+            title="Driver Chat"
+            subtitle="Chat with preferred drivers."
+            icon="chatbox-outline"
+            onPress={() => go("/farmer/driver-chat")}
+          />
+        </View>
+
+        <SectionTitle title="Business Center" subtitle="Payments, compliance, reviews, and growth." />
+
+        <View style={styles.actionGrid}>
+          <ActionCard
+            title="Setup Farmer Store"
+            subtitle="Farm profile, logo, community market details."
+            icon="storefront-outline"
+            onPress={() => go("/farmer/setup-store")}
+            primary
+          />
+          <ActionCard
+            title="Connect Bank"
+            subtitle={payoutsReady ? "Stripe payouts ready." : "Finish Stripe Connect payouts."}
+            icon="card-outline"
+            onPress={() => go("/farmer/connect-bank")}
+          />
+          <ActionCard
+            title="Inventory Management"
+            subtitle="Update, remove, and control product stock."
+            icon="archive-outline"
+            onPress={() => go("/farmer/inventory-management")}
+          />
+          <ActionCard
+            title="Revenue Analytics"
+            subtitle="View sales and market performance."
+            icon="bar-chart-outline"
+            onPress={() => go("/farmer/revenue-analytics")}
+          />
+          <ActionCard
+            title="Customer Reviews"
+            subtitle="View feedback from local customers."
+            icon="star-outline"
+            onPress={() => go("/farmer/customer-reviews")}
+          />
+          <ActionCard
+            title="AI Growth Center"
+            subtitle="Farm growth and selling insights."
+            icon="trending-up-outline"
+            onPress={() => go("/farmer/farm-ai-growth-center")}
+          />
+          <ActionCard
+            title="AI Compliance"
+            subtitle="Review compliance alerts."
+            icon="shield-checkmark-outline"
+            onPress={() => go("/farmer/ai-compliance")}
+          />
+          <ActionCard
+            title="Compliance Upload"
+            subtitle="Upload required farmer documents."
+            icon="cloud-upload-outline"
+            onPress={() => go("/farmer/compliance-upload")}
+          />
+          <ActionCard
+            title="Documents"
+            subtitle="Manage farmer documents."
+            icon="document-text-outline"
+            onPress={() => go("/farmer/documents")}
+          />
+          <ActionCard
+            title="Subscription Plans"
+            subtitle="Manage farmer membership."
+            icon="calendar-outline"
+            onPress={() => go("/farmer/farmer-subscription-plans")}
+          />
+          <ActionCard
+            title="Post Load"
+            subtitle="Post delivery load needs."
+            icon="car-outline"
+            onPress={() => go("/farmer/post-load")}
+          />
+          <ActionCard
+            title="Post Produce"
+            subtitle="Post farm produce to market."
+            icon="leaf-outline"
+            onPress={() => go("/farmer/post-produce")}
+          />
+          <ActionCard
+            title="Profile"
+            subtitle="Update farmer profile."
+            icon="person-outline"
+            onPress={() => go("/farmer/profile")}
+          />
+          <ActionCard
+            title="Help Center"
+            subtitle="Get farmer support."
+            icon="help-circle-outline"
+            onPress={() => go("/farmer/help-center")}
+          />
         </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={logout}>
@@ -815,6 +941,15 @@ export default function FarmerDashboardScreen() {
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {!!subtitle && <Text style={styles.sectionSub}>{subtitle}</Text>}
+    </View>
   );
 }
 
@@ -835,6 +970,60 @@ function StatCard({
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
+  );
+}
+
+function FlowCard({
+  step,
+  title,
+  subtitle,
+  icon,
+  onPress,
+}: {
+  step: string;
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.flowCard} onPress={onPress} activeOpacity={0.9}>
+      <View style={styles.flowTop}>
+        <View style={styles.flowStep}>
+          <Text style={styles.flowStepText}>{step}</Text>
+        </View>
+        <Ionicons name={icon} size={22} color={COLORS.greenDark} />
+      </View>
+      <Text style={styles.flowTitle}>{title}</Text>
+      <Text style={styles.flowSub}>{subtitle}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function MarketTile({
+  title,
+  subtitle,
+  icon,
+  emoji,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  emoji: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.marketTile} onPress={onPress} activeOpacity={0.9}>
+      <View style={styles.marketEmoji}>
+        <Text style={styles.marketEmojiText}>{emoji}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.marketTitle}>{title}</Text>
+        <Text style={styles.marketSub}>{subtitle}</Text>
+      </View>
+      <Ionicons name={icon} size={20} color={COLORS.greenDark} />
+    </TouchableOpacity>
   );
 }
 
@@ -888,6 +1077,7 @@ const styles = StyleSheet.create({
   loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   loadingText: { marginTop: 10, color: COLORS.muted, fontWeight: "800" },
   content: { padding: 16, paddingBottom: 110 },
+
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -901,6 +1091,11 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 2,
   },
+  pageSub: {
+    color: COLORS.greenDark,
+    fontWeight: "800",
+    marginTop: 3,
+  },
   profileCircle: {
     width: 54,
     height: 54,
@@ -913,6 +1108,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   profileLogo: { width: "100%", height: "100%" },
+
   hero: {
     backgroundColor: COLORS.green,
     borderRadius: 30,
@@ -935,9 +1131,9 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     color: COLORS.white,
-    fontSize: 25,
+    fontSize: 24,
     fontWeight: "900",
-    lineHeight: 31,
+    lineHeight: 30,
     marginTop: 7,
   },
   heroSub: {
@@ -951,15 +1147,21 @@ const styles = StyleSheet.create({
   heroButton: {
     backgroundColor: COLORS.white,
     borderRadius: 999,
-    paddingHorizontal: 17,
+    paddingHorizontal: 15,
     paddingVertical: 11,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
   },
   heroButtonText: { color: COLORS.greenDark, fontWeight: "900" },
   heroButtonLight: {
     backgroundColor: "rgba(255,255,255,0.18)",
     borderRadius: 999,
-    paddingHorizontal: 17,
+    paddingHorizontal: 15,
     paddingVertical: 11,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
   },
   heroButtonLightText: { color: COLORS.white, fontWeight: "900" },
   heroBasket: {
@@ -971,34 +1173,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   heroBasketEmoji: { fontSize: 42 },
-  readyCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 15,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+
+  statsGrid: {
     flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 10,
     marginBottom: 14,
   },
-  readyIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  readyIconGood: { backgroundColor: COLORS.greenSoft },
-  readyIconWarn: { backgroundColor: COLORS.orangeSoft },
-  readyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
-  readyText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 19,
-    marginTop: 3,
-  },
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 18 },
   statCard: {
     width: Platform.OS === "web" ? "24%" : "48%",
     minWidth: 150,
@@ -1020,47 +1201,129 @@ const styles = StyleSheet.create({
   },
   statValue: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
   statLabel: { color: COLORS.muted, fontWeight: "900", marginTop: 2 },
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 21,
-    fontWeight: "900",
-    marginBottom: 12,
-    marginTop: 4,
-  },
-  actionGrid: { gap: 10, marginBottom: 18 },
-  actionCard: {
+
+  readyCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
     padding: 15,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
-    alignItems: "center",
     gap: 12,
+    alignItems: "center",
+    marginBottom: 20,
   },
-  actionCardPrimary: {
-    backgroundColor: COLORS.greenDark,
-    borderColor: COLORS.greenDark,
-  },
-  actionIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 17,
-    backgroundColor: COLORS.greenSoft,
+  readyIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
   },
-  actionIconPrimary: { backgroundColor: "rgba(255,255,255,0.16)" },
-  actionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
-  actionTitlePrimary: { color: COLORS.white },
-  actionSub: {
+  readyIconGood: { backgroundColor: COLORS.greenSoft },
+  readyIconWarn: { backgroundColor: COLORS.orangeSoft },
+  readyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  readyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 19,
+    marginTop: 3,
+  },
+  readyButton: {
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  readyButtonText: { color: COLORS.greenDark, fontWeight: "900" },
+
+  sectionHeader: { marginBottom: 12, marginTop: 8 },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: "900",
+  },
+  sectionSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 4,
+    lineHeight: 19,
+  },
+
+  flowGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 18,
+  },
+  flowCard: {
+    flexGrow: 1,
+    width: Platform.OS === "web" ? "31%" : "100%",
+    minWidth: 190,
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  flowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  flowStep: {
+    width: 34,
+    height: 34,
+    borderRadius: 14,
+    backgroundColor: COLORS.greenDark,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  flowStepText: { color: COLORS.white, fontWeight: "900" },
+  flowTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  flowSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 5,
+    lineHeight: 18,
+  },
+
+  marketGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 18,
+  },
+  marketTile: {
+    width: Platform.OS === "web" ? "48%" : "100%",
+    flexGrow: 1,
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  marketEmoji: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: COLORS.orangeSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  marketEmojiText: { fontSize: 28 },
+  marketTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  marketSub: {
     color: COLORS.muted,
     fontWeight: "700",
     marginTop: 3,
-    lineHeight: 18,
   },
-  actionSubPrimary: { color: "rgba(255,255,255,0.86)" },
-  productList: { gap: 10 },
+
+  productList: { gap: 10, marginBottom: 18 },
   productRow: {
     backgroundColor: COLORS.card,
     borderRadius: 20,
@@ -1122,8 +1385,43 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   emptyButtonText: { color: COLORS.white, fontWeight: "900" },
+
+  actionGrid: { gap: 10, marginBottom: 18 },
+  actionCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  actionCardPrimary: {
+    backgroundColor: COLORS.greenDark,
+    borderColor: COLORS.greenDark,
+  },
+  actionIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 17,
+    backgroundColor: COLORS.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionIconPrimary: { backgroundColor: "rgba(255,255,255,0.16)" },
+  actionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  actionTitlePrimary: { color: COLORS.white },
+  actionSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 3,
+    lineHeight: 18,
+  },
+  actionSubPrimary: { color: "rgba(255,255,255,0.86)" },
+
   logoutButton: {
-    marginTop: 18,
+    marginTop: 4,
     backgroundColor: COLORS.redSoft,
     borderRadius: 18,
     padding: 14,
