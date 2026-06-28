@@ -689,6 +689,33 @@ export default function FarmerDashboardScreen() {
         <Text style={styles.sectionTitle}>Store Management</Text>
 
         <View style={styles.actionGrid}>
+          <View style={styles.actionGrid}>
+  <ActionCard title="Setup Farmer Store" subtitle="Farm profile, logo, pickup, delivery." icon="storefront-outline" onPress={() => go("/farmer/setup-store")} primary />
+  <ActionCard title="Select Produce" subtitle="Add common grocery produce quickly." icon="nutrition-outline" onPress={() => go("/farmer/select-produce")} />
+  <ActionCard title="Add Custom Product" subtitle="Create your own product listing." icon="add-circle-outline" onPress={() => go("/farmer/add-product")} />
+  <ActionCard title="Connect Bank" subtitle={payoutsReady ? "Stripe payouts ready." : "Finish Stripe Connect payouts."} icon="card-outline" onPress={() => go("/farmer/connect-bank")} />
+  <ActionCard title="Preferred Drivers" subtitle="Manage farmer driver network." icon="people-outline" onPress={() => go("/farmer/driver")} />
+  <ActionCard title="AI Compliance" subtitle="Review compliance alerts." icon="shield-checkmark-outline" onPress={() => go("/farmer/ai-compliance")} />
+  <ActionCard title="Assigned Drivers" subtitle="View assigned delivery drivers." icon="people-circle-outline" onPress={() => go("/farmer/assigned-drivers")} />
+  <ActionCard title="Compliance Upload" subtitle="Upload required farmer documents." icon="cloud-upload-outline" onPress={() => go("/farmer/compliance-upload")} />
+  <ActionCard title="Customer Driver Chat" subtitle="Message customers and drivers." icon="chatbubbles-outline" onPress={() => go("/farmer/customer-driver-chat")} />
+  <ActionCard title="Customer Reviews" subtitle="View customer feedback." icon="star-outline" onPress={() => go("/farmer/customer-reviews")} />
+  <ActionCard title="Delivery Operations" subtitle="Manage delivery workflow." icon="navigate-outline" onPress={() => go("/farmer/delivery-operations")} />
+  <ActionCard title="Delivery Orders" subtitle="Track delivery orders." icon="cube-outline" onPress={() => go("/farmer/delivery-orders")} />
+  <ActionCard title="Pickup Settings" subtitle="Set pickup and delivery rules." icon="settings-outline" onPress={() => go("/farmer/delivery-pickup-settings")} />
+  <ActionCard title="Documents" subtitle="Manage farmer documents." icon="document-text-outline" onPress={() => go("/farmer/documents")} />
+  <ActionCard title="Driver Chat" subtitle="Chat with preferred drivers." icon="chatbox-outline" onPress={() => go("/farmer/driver-chat")} />
+  <ActionCard title="Earnings" subtitle="View payout earnings." icon="cash-outline" onPress={() => go("/farmer/earnings")} />
+  <ActionCard title="AI Growth Center" subtitle="Farm growth insights." icon="trending-up-outline" onPress={() => go("/farmer/farm-ai-growth-center")} />
+  <ActionCard title="Subscription Plans" subtitle="Manage farmer membership." icon="card-outline" onPress={() => go("/farmer/farmer-subscription-plans")} />
+  <ActionCard title="Help Center" subtitle="Get farmer support." icon="help-circle-outline" onPress={() => go("/farmer/help-center")} />
+  <ActionCard title="Inventory Management" subtitle="Manage product inventory." icon="archive-outline" onPress={() => go("/farmer/inventory-management")} />
+  <ActionCard title="Orders" subtitle="Review customer orders." icon="receipt-outline" onPress={() => go("/farmer/orders")} />
+  <ActionCard title="Post Load" subtitle="Post delivery load needs." icon="car-outline" onPress={() => go("/farmer/post-load")} />
+  <ActionCard title="Post Produce" subtitle="Post farm produce." icon="leaf-outline" onPress={() => go("/farmer/post-produce")} />
+  <ActionCard title="Profile" subtitle="Update farmer profile." icon="person-outline" onPress={() => go("/farmer/profile")} />
+  <ActionCard title="Revenue Analytics" subtitle="View sales analytics." icon="bar-chart-outline" onPress={() => go("/farmer/revenue-analytics")} />
+</View>
           <ActionCard
             title="Setup Farmer Store"
             subtitle="Farm profile, logo, pickup, delivery."
