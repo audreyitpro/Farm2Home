@@ -532,6 +532,7 @@ export default function SelectProduceScreen() {
 
   async function saveSelectedProducts() {
     try {
+      console.log("ADD SELECTED PRODUCTS STARTED", selectedProducts);
       setSaving(true);
 
       const selected = FARM_PRODUCT_CATALOG.filter((item) => selectedProducts[item.id]);
@@ -772,7 +773,10 @@ export default function SelectProduceScreen() {
           <View style={styles.footer}>
             <TouchableOpacity
               style={[styles.saveButton, saving && styles.disabledButton]}
-              onPress={saveSelectedProducts}
+              onPress={() => {
+                console.log("ADD SELECTED PRODUCTS BUTTON CLICKED");
+                saveSelectedProducts();
+              }}
               disabled={saving}
               activeOpacity={0.9}
             >
