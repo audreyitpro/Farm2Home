@@ -2594,3 +2594,55 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
 });
 
 module.exports = router;
+router.post("/connect-account-status", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+
+    const body = req.body || {};
+
+    const role = roleName(body.role || "farmer");
+
+    const accountId = clean(
+      body.stripeAccountId ||
+      body.stripe_account_id ||
+      body.farmer_account ||
+      body.freight_account ||
+      body.driver_account
+    );
+
+    if (!accountId || !accountId.startsWith("acct_")) {
+      return res.status(400).json({
+        success: false,
+        error: "Valid Stripe account ID required.",
+      });
+    }
+
+    const account = await stripe.accounts.retrieve(accountId);
+
+    return res.json({
+      success: true,
+      role,
+      stripeAccountId: account.id,
+      chargesEnabled: Boolean(account.charges_enabled),
+      payoutsEnabled: Boolean(account.payouts_enabled),
+      detailsSubmitted: Boolean(account.details_submitted),
+      onboardingComplete: Boolean(account.details_submitted),
+      requirementsCurrentlyDue:
+        account.requirements?.currently_due || [],
+      requirementsEventuallyDue:
+        account.requirements?.eventually_due || [],
+      requirementsPastDue:
+        account.requirements?.past_due || [],
+      account,
+    });
+  } catch (error) {
+    console.error("connect-account-status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error:
+        error.message ||
+        "Unable to retrieve Stripe Connect status.",
+    });
+  }
+});
