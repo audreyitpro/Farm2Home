@@ -31,21 +31,20 @@ const ui = {
   soft: "#EFF6FF",
   primary: "#1D4ED8",
   primaryDark: "#1E3A8A",
-  red: "#DC2626",
-  green: "#16A34A",
+  white: "#FFFFFF",
 };
 
 type AdminRow = {
   id: string;
   email: string;
-  username?: string;
-  password?: string;
-  full_name?: string;
-  role?: string;
-  is_active?: boolean;
-  super_admin?: boolean;
-  created_at?: string;
-  updated_at?: string;
+  username?: string | null;
+  password?: string | null;
+  full_name?: string | null;
+  role?: string | null;
+  is_active?: boolean | null;
+  super_admin?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 function clean(value: any) {
@@ -78,8 +77,39 @@ export default function AdminLoginScreen() {
   const [securePassword, setSecurePassword] = useState(true);
   const [loading, setLoading] = useState(false);
 
+  async function findAdminAccount(loginValue: string): Promise<AdminRow | null> {
+    const value = normalize(loginValue);
+
+    const byEmail = await supabase
+      .from("admins")
+      .select("*")
+      .eq("email", value)
+      .maybeSingle();
+
+    if (byEmail.error) throw byEmail.error;
+    if (byEmail.data) return byEmail.data as AdminRow;
+
+    const byUsername = await supabase
+      .from("admins")
+      .select("*")
+      .eq("username", value)
+      .maybeSingle();
+
+    if (byUsername.error) throw byUsername.error;
+    return (byUsername.data as AdminRow) || null;
+  }
+
   async function saveAdminSession(admin: AdminRow) {
     const mapped = mapAdmin(admin);
+
+    await AsyncStorage.multiRemove([
+      "currentFarmer",
+      "currentCustomer",
+      "currentDriver",
+      "currentFreight",
+      "farm2homeCurrentFarmer",
+      "farm2homeFarmerSession",
+    ]);
 
     await AsyncStorage.multiSet([
       ["currentAdmin", JSON.stringify(mapped)],
@@ -89,19 +119,6 @@ export default function AdminLoginScreen() {
     ]);
 
     return mapped;
-  }
-
-  async function findAdminAccount(loginValue: string) {
-    const value = normalize(loginValue);
-
-    const { data, error } = await supabase
-      .from("admins")
-      .select("*")
-      .or(`email.eq.${value},username.eq.${value}`)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data as AdminRow | null;
   }
 
   async function loginAdmin() {
@@ -134,7 +151,6 @@ export default function AdminLoginScreen() {
       }
 
       await saveAdminSession(admin);
-
       router.replace("/admin/dashboard" as any);
     } catch (error: any) {
       console.log("Admin login error:", error);
@@ -170,7 +186,7 @@ export default function AdminLoginScreen() {
           <View style={styles.heroCard}>
             <View style={styles.heroTop}>
               <View style={styles.heroIcon}>
-                <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
+                <Ionicons name="shield-checkmark-outline" size={34} color={ui.white} />
               </View>
 
               <View style={styles.statusPill}>
@@ -181,10 +197,9 @@ export default function AdminLoginScreen() {
 
             <Text style={styles.kicker}>Farm2Home Control Center</Text>
             <Text style={styles.header}>Admin Login</Text>
-
             <Text style={styles.subheader}>
-              Sign in with an active account from the admins table to manage
-              compliance, orders, payouts, freight, drivers, and marketplace operations.
+              Sign in with an active account from the admins table to manage compliance,
+              orders, payouts, freight, drivers, and marketplace operations.
             </Text>
           </View>
 
@@ -239,10 +254,10 @@ export default function AdminLoginScreen() {
               activeOpacity={0.85}
             >
               {loading ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <ActivityIndicator color={ui.white} />
               ) : (
                 <>
-                  <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
+                  <Ionicons name="log-in-outline" size={20} color={ui.white} />
                   <Text style={styles.loginButtonText}>Login to Admin Dashboard</Text>
                 </>
               )}
@@ -252,8 +267,8 @@ export default function AdminLoginScreen() {
           <View style={styles.infoCard}>
             <Text style={styles.infoTitle}>Admin Table Required</Text>
             <Text style={styles.infoText}>
-              Required columns: email, username, password, full_name, role,
-              is_active, and super_admin.
+              Required columns: email, username, password, full_name, role, is_active,
+              and super_admin.
             </Text>
           </View>
         </ScrollView>
@@ -330,7 +345,7 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 34,
     fontWeight: "900",
-    color: "#FFFFFF",
+    color: ui.white,
     marginBottom: 8,
   },
   subheader: {
@@ -398,7 +413,7 @@ const styles = StyleSheet.create({
   },
   disabledButton: { opacity: 0.6 },
   loginButtonText: {
-    color: "#FFFFFF",
+    color: ui.white,
     textAlign: "center",
     fontWeight: "900",
     fontSize: 16,
