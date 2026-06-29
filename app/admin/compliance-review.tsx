@@ -18,14 +18,49 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../services/supabaseClient";
-import {
-  ComplianceRecord,
-  getComplianceRecords,
-  saveComplianceResult,
-} from "../data/complianceStore";
-import { updateFarmerStore } from "../data/farmerStore";
 
-type ReviewFilter = "all" | "under_ai_review" | "approved" | "needs_more_info" | "rejected";
+type ReviewStatus =
+  | "approved"
+  | "rejected"
+  | "needs_more_info"
+  | "under_ai_review";
+
+type ReviewFilter = "all" | ReviewStatus;
+
+type ComplianceDocument = {
+  id: string;
+  label: string;
+  type: string;
+  uri: string;
+  verified: boolean;
+};
+
+type ComplianceResult = {
+  score?: number;
+  idVerified?: boolean;
+  businessVerified?: boolean;
+  einVerified?: boolean;
+  stateRegistrationVerified?: boolean;
+  insuranceVerified?: boolean;
+  payoutVerified?: boolean;
+  noFraudFlags?: boolean;
+  missingItems?: string[];
+  verificationSources?: string[];
+  reviewedAt?: string;
+  autoApproved?: boolean;
+};
+
+type ComplianceRecord = {
+  farmerId: string;
+  businessName: string;
+  ownerName: string;
+  state: string;
+  status: ReviewStatus;
+  documents: ComplianceDocument[];
+  result?: ComplianceResult;
+};
+
+const COMPLIANCE_RESULTS_KEY = "farm2homeComplianceRecords";
 
 const ui = {
   bg: "#F4F7FB",
@@ -37,13 +72,9 @@ const ui = {
   primary: "#2563EB",
   primarySoft: "#EFF6FF",
   green: "#16A34A",
-  greenSoft: "#ECFDF5",
   orange: "#EA580C",
-  orangeSoft: "#FFF7ED",
   red: "#DC2626",
-  redSoft: "#FEF2F2",
   purple: "#7C3AED",
-  purpleSoft: "#F5F3FF",
   white: "#FFFFFF",
 };
 
@@ -68,22 +99,90 @@ function statusColor(status?: string) {
   return ui.primary;
 }
 
+async function getComplianceRecords(): Promise<ComplianceRecord[]> {
+  try {
+    const raw = await AsyncStorage.getItem(COMPLIANCE_RESULTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveComplianceResult(
+  farmerId: string,
+  result: ComplianceResult & Partial<ComplianceRecord>
+) {
+  const records = await getComplianceRecords();
+  const index = records.findIndex((item) => item.farmerId === farmerId);
+
+  const nextRecord: ComplianceRecord = {
+    farmerId,
+    businessName: result.businessName || records[index]?.businessName || "",
+    ownerName: result.ownerName || records[index]?.ownerName || "",
+    state: result.state || records[index]?.state || "",
+    status: (result.status as ReviewStatus) || records[index]?.status || "under_ai_review",
+    documents: records[index]?.documents || [],
+    result: {
+      ...(records[index]?.result || {}),
+      ...result,
+    },
+  };
+
+  const next =
+    index >= 0
+      ? records.map((item, idx) => (idx === index ? nextRecord : item))
+      : [nextRecord, ...records];
+
+  await AsyncStorage.setItem(COMPLIANCE_RESULTS_KEY, JSON.stringify(next));
+}
+
+async function updateFarmerStore(farmerId: string, updates: any) {
+  const keys = [
+    "currentFarmer",
+    "farm2homeCurrentFarmer",
+    "farm2homeFarmerSession",
+    "currentUser",
+  ];
+
+  for (const key of keys) {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) continue;
+
+    try {
+      const parsed = JSON.parse(raw);
+      const id = parsed.id || parsed.farmerId || parsed.farmer_id;
+
+      if (String(id) === String(farmerId)) {
+        await AsyncStorage.setItem(
+          key,
+          JSON.stringify({
+            ...parsed,
+            ...updates,
+          })
+        );
+      }
+    } catch {}
+  }
+}
+
 function mapAdminVerificationToComplianceRecord(row: any): ComplianceRecord {
-  const mappedDocuments = Array.isArray(row.documents)
+  const mappedDocuments: ComplianceDocument[] = Array.isArray(row.documents)
     ? row.documents.map((doc: any, index: number) => ({
-        id: doc.id || `${row.id}_doc_${index}`,
-        label: doc.label || doc.name || doc.type || "Document",
-        type: doc.type || "document",
-        uri: String(doc.uri || ""),
+        id: clean(doc.id || `${row.id}_doc_${index}`),
+        label: clean(doc.label || doc.name || doc.type || "Document"),
+        type: clean(doc.type || "document"),
+        uri: clean(doc.uri),
         verified:
           doc.verified === true ||
-          String(doc.status || "").toUpperCase() === "VERIFIED",
+          clean(doc.status).toUpperCase() === "VERIFIED",
       }))
     : Object.entries(row.uploaded_docs || {}).map(([key, value], index) => ({
         id: `${row.id}_${key}_${index}`,
         label: String(key).replace(/_/g, " "),
         type: String(key),
-        uri: String(value),
+        uri: clean(value),
         verified: false,
       }));
 
@@ -127,7 +226,7 @@ function mapAdminVerificationToComplianceRecord(row: any): ComplianceRecord {
       reviewedAt: row.updated_at || row.created_at || new Date().toISOString(),
       autoApproved: false,
     },
-  } as any;
+  };
 }
 
 export default function AdminComplianceReviewScreen() {
@@ -181,7 +280,7 @@ export default function AdminComplianceReviewScreen() {
 
       const mergedMap = new Map<string, ComplianceRecord>();
 
-      [...supabaseRecords, ...localRecords].forEach((record: any) => {
+      [...supabaseRecords, ...localRecords].forEach((record) => {
         mergedMap.set(String(record.farmerId), record);
       });
 
@@ -249,12 +348,12 @@ export default function AdminComplianceReviewScreen() {
     try {
       const now = new Date().toISOString();
 
-      const result = {
+      await saveComplianceResult(record.farmerId, {
         farmerId: record.farmerId,
         businessName: record.businessName,
         ownerName: record.ownerName,
         state: record.state,
-        status: "approved" as const,
+        status: "approved",
         score: 100,
         idVerified: true,
         businessVerified: true,
@@ -271,9 +370,7 @@ export default function AdminComplianceReviewScreen() {
         ],
         reviewedAt: now,
         autoApproved: false,
-      };
-
-      await saveComplianceResult(record.farmerId, result);
+      });
 
       await updateFarmerStore(record.farmerId, {
         approved: true,
@@ -284,7 +381,7 @@ export default function AdminComplianceReviewScreen() {
         reviewDecision: "approved",
         status: "APPROVED",
         updatedAt: now,
-      } as any);
+      });
 
       await updateAdminAndFarmer(
         record,
@@ -329,12 +426,12 @@ export default function AdminComplianceReviewScreen() {
     try {
       const now = new Date().toISOString();
 
-      const result = {
+      await saveComplianceResult(record.farmerId, {
         farmerId: record.farmerId,
         businessName: record.businessName,
         ownerName: record.ownerName,
         state: record.state,
-        status: "rejected" as const,
+        status: "rejected",
         score: record.result?.score || 0,
         idVerified: false,
         businessVerified: false,
@@ -347,9 +444,7 @@ export default function AdminComplianceReviewScreen() {
         verificationSources: ["Admin manual review", "Farm2Home compliance rejection"],
         reviewedAt: now,
         autoApproved: false,
-      };
-
-      await saveComplianceResult(record.farmerId, result);
+      });
 
       await updateFarmerStore(record.farmerId, {
         approved: false,
@@ -360,7 +455,7 @@ export default function AdminComplianceReviewScreen() {
         reviewDecision: "rejected",
         status: "REJECTED",
         updatedAt: now,
-      } as any);
+      });
 
       await updateAdminAndFarmer(
         record,
@@ -402,12 +497,12 @@ export default function AdminComplianceReviewScreen() {
     try {
       const now = new Date().toISOString();
 
-      const result = {
+      await saveComplianceResult(record.farmerId, {
         farmerId: record.farmerId,
         businessName: record.businessName,
         ownerName: record.ownerName,
         state: record.state,
-        status: "needs_more_info" as const,
+        status: "needs_more_info",
         score: record.result?.score || 0,
         idVerified: Boolean(record.result?.idVerified),
         businessVerified: Boolean(record.result?.businessVerified),
@@ -425,9 +520,7 @@ export default function AdminComplianceReviewScreen() {
         ],
         reviewedAt: now,
         autoApproved: false,
-      };
-
-      await saveComplianceResult(record.farmerId, result);
+      });
 
       await updateFarmerStore(record.farmerId, {
         approved: false,
@@ -436,7 +529,7 @@ export default function AdminComplianceReviewScreen() {
         reviewDecision: "needs_more_info",
         status: "MORE_INFO_REQUIRED",
         updatedAt: now,
-      } as any);
+      });
 
       await updateAdminAndFarmer(
         record,
@@ -601,7 +694,9 @@ function ComplianceCard({
       <View style={styles.scoreBox}>
         <View style={{ flex: 1 }}>
           <Text style={styles.scoreLabel}>AI Compliance Score</Text>
-          <Text style={styles.scoreHelp}>Manual review can approve, reject, or request more info.</Text>
+          <Text style={styles.scoreHelp}>
+            Manual review can approve, reject, or request more info.
+          </Text>
         </View>
         <Text style={styles.scoreValue}>{record.result?.score ?? 0}%</Text>
       </View>
@@ -619,16 +714,21 @@ function ComplianceCard({
 
       <View style={styles.subSection}>
         <Text style={styles.subTitle}>Uploaded Documents</Text>
+
         {record.documents.length === 0 ? (
           <Text style={styles.mutedText}>No documents uploaded.</Text>
         ) : (
-          record.documents.map((doc: any) => (
+          record.documents.map((doc) => (
             <View key={doc.id} style={styles.docRow}>
               <Ionicons name="document-text-outline" size={20} color={ui.primary} />
+
               <View style={{ flex: 1 }}>
                 <Text style={styles.docLabel}>{doc.label}</Text>
-                <Text style={styles.docUri} numberOfLines={1}>{doc.uri}</Text>
+                <Text style={styles.docUri} numberOfLines={1}>
+                  {doc.uri}
+                </Text>
               </View>
+
               <Text style={[styles.docStatus, doc.verified ? styles.verified : styles.unverified]}>
                 {doc.verified ? "Verified" : "Pending"}
               </Text>
@@ -639,9 +739,12 @@ function ComplianceCard({
 
       <View style={styles.subSection}>
         <Text style={styles.subTitle}>Missing / Needed</Text>
+
         {record.result?.missingItems?.length ? (
-          record.result.missingItems.map((item) => (
-            <Text key={item} style={styles.missingItem}>• {item}</Text>
+          record.result.missingItems.map((item: string) => (
+            <Text key={item} style={styles.missingItem}>
+              • {item}
+            </Text>
           ))
         ) : (
           <Text style={styles.successText}>No missing items listed.</Text>
@@ -753,7 +856,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ui.dark },
   page: { flex: 1, backgroundColor: ui.bg },
   content: { padding: 16, paddingBottom: 90 },
-
   hero: {
     backgroundColor: ui.dark,
     borderRadius: 28,
@@ -786,7 +888,6 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   refreshText: { color: ui.white, fontWeight: "900" },
-
   flowCard: {
     backgroundColor: ui.card,
     borderRadius: 22,
@@ -809,7 +910,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   flowText: { flex: 1, color: ui.text, fontWeight: "800", lineHeight: 20 },
-
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   metric: {
     flexGrow: 1,
@@ -830,7 +930,6 @@ const styles = StyleSheet.create({
   },
   metricValue: { color: ui.text, fontSize: 22, fontWeight: "900" },
   metricLabel: { color: ui.muted, fontWeight: "800", marginTop: 4 },
-
   navGrid: { gap: 10, marginTop: 14 },
   navButton: {
     backgroundColor: ui.card,
@@ -843,7 +942,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   navText: { flex: 1, color: ui.text, fontWeight: "900" },
-
   searchCard: {
     backgroundColor: ui.card,
     borderRadius: 18,
@@ -858,7 +956,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   searchInput: { flex: 1, color: ui.text, fontWeight: "800" },
-
   filterRow: { gap: 8, paddingBottom: 14 },
   filterChip: {
     backgroundColor: ui.card,
@@ -872,11 +969,9 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: ui.primary, borderColor: ui.primary },
   filterText: { color: ui.text, fontWeight: "900" },
   filterTextActive: { color: ui.white },
-
   sectionHeader: { marginTop: 4, marginBottom: 12 },
   sectionTitle: { color: ui.text, fontSize: 23, fontWeight: "900" },
   sectionSub: { color: ui.muted, fontWeight: "700", marginTop: 4 },
-
   emptyCard: {
     backgroundColor: ui.card,
     borderRadius: 22,
@@ -894,7 +989,6 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     marginTop: 6,
   },
-
   card: {
     backgroundColor: ui.card,
     borderRadius: 24,
@@ -916,7 +1010,6 @@ const styles = StyleSheet.create({
   ownerName: { color: ui.muted, fontWeight: "700", marginTop: 4 },
   statusBadge: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, maxWidth: 150 },
   statusText: { color: ui.white, fontWeight: "900", fontSize: 11, textAlign: "center" },
-
   scoreBox: {
     backgroundColor: ui.primary,
     borderRadius: 18,
@@ -929,10 +1022,8 @@ const styles = StyleSheet.create({
   scoreLabel: { color: ui.white, fontWeight: "900" },
   scoreHelp: { color: "#DBEAFE", fontWeight: "700", marginTop: 4, lineHeight: 20 },
   scoreValue: { color: ui.white, fontWeight: "900", fontSize: 28 },
-
   subSection: { marginTop: 16 },
   subTitle: { color: ui.text, fontSize: 17, fontWeight: "900", marginBottom: 8 },
-
   checkRow: {
     backgroundColor: ui.bg,
     borderRadius: 14,
@@ -948,7 +1039,6 @@ const styles = StyleSheet.create({
   checkStatus: { fontWeight: "900", fontSize: 12 },
   goodText: { color: ui.green },
   warnText: { color: ui.orange },
-
   mutedText: { color: ui.muted, fontWeight: "700" },
   docRow: {
     flexDirection: "row",
@@ -965,7 +1055,6 @@ const styles = StyleSheet.create({
   unverified: { color: ui.orange },
   missingItem: { color: ui.red, fontWeight: "800", marginBottom: 4 },
   successText: { color: ui.green, fontWeight: "900" },
-
   actions: { flexDirection: "row", gap: 8, marginTop: 18 },
   approveButton: {
     flex: 1,

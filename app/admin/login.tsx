@@ -36,13 +36,13 @@ const ui = {
 
 type AdminRow = {
   id: string;
-  email: string;
-  username?: string | null;
-  password?: string | null;
-  full_name?: string | null;
-  role?: string | null;
-  is_active?: boolean | null;
-  super_admin?: boolean | null;
+  email: string | null;
+  username: string | null;
+  password: string | null;
+  full_name: string | null;
+  role: string | null;
+  is_active: boolean | null;
+  super_admin: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -80,23 +80,19 @@ export default function AdminLoginScreen() {
   async function findAdminAccount(loginValue: string): Promise<AdminRow | null> {
     const value = normalize(loginValue);
 
-    const byEmail = await supabase
+    const { data, error } = await supabase
       .from("admins")
       .select("*")
-      .eq("email", value)
-      .maybeSingle();
+      .or(`email.ilike.${value},username.ilike.${value}`)
+      .limit(1);
 
-    if (byEmail.error) throw byEmail.error;
-    if (byEmail.data) return byEmail.data as AdminRow;
+    if (error) throw error;
 
-    const byUsername = await supabase
-      .from("admins")
-      .select("*")
-      .eq("username", value)
-      .maybeSingle();
+    if (Array.isArray(data) && data.length > 0) {
+      return data[0] as AdminRow;
+    }
 
-    if (byUsername.error) throw byUsername.error;
-    return (byUsername.data as AdminRow) || null;
+    return null;
   }
 
   async function saveAdminSession(admin: AdminRow) {
@@ -136,7 +132,7 @@ export default function AdminLoginScreen() {
       const admin = await findAdminAccount(loginValue);
 
       if (!admin) {
-        Alert.alert("Admin Not Found", "No admin account was found for this login.");
+        Alert.alert("Admin Not Found", "No admin record was found in the admins table.");
         return;
       }
 
@@ -146,11 +142,12 @@ export default function AdminLoginScreen() {
       }
 
       if (clean(admin.password) !== passwordValue) {
-        Alert.alert("Invalid Password", "The password entered does not match this admin account.");
+        Alert.alert("Invalid Password", "The password does not match this admin account.");
         return;
       }
 
       await saveAdminSession(admin);
+
       router.replace("/admin/dashboard" as any);
     } catch (error: any) {
       console.log("Admin login error:", error);
@@ -177,7 +174,6 @@ export default function AdminLoginScreen() {
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => router.replace("/" as any)}
-            activeOpacity={0.85}
           >
             <Ionicons name="arrow-back-outline" size={18} color="#DBEAFE" />
             <Text style={styles.backText}>Back Home</Text>
@@ -198,15 +194,14 @@ export default function AdminLoginScreen() {
             <Text style={styles.kicker}>Farm2Home Control Center</Text>
             <Text style={styles.header}>Admin Login</Text>
             <Text style={styles.subheader}>
-              Sign in with an active account from the admins table to manage compliance,
-              orders, payouts, freight, drivers, and marketplace operations.
+              Sign in with an active record from the admins table.
             </Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Secure Admin Portal</Text>
             <Text style={styles.sectionSubtitle}>
-              This login verifies your email or username against the admins table.
+              Login checks admin email or username directly in Supabase.
             </Text>
 
             <Text style={styles.label}>Admin Email or Username</Text>
@@ -220,7 +215,6 @@ export default function AdminLoginScreen() {
                 onChangeText={setLogin}
                 autoCapitalize="none"
                 autoCorrect={false}
-                keyboardType="email-address"
               />
             </View>
 
@@ -251,7 +245,6 @@ export default function AdminLoginScreen() {
               style={[styles.loginButton, loading && styles.disabledButton]}
               onPress={loginAdmin}
               disabled={loading}
-              activeOpacity={0.85}
             >
               {loading ? (
                 <ActivityIndicator color={ui.white} />
@@ -265,10 +258,10 @@ export default function AdminLoginScreen() {
           </View>
 
           <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Admin Table Required</Text>
+            <Text style={styles.infoTitle}>Admins Table Required</Text>
             <Text style={styles.infoText}>
-              Required columns: email, username, password, full_name, role, is_active,
-              and super_admin.
+              Required columns: id, email, username, password, full_name, role,
+              is_active, and super_admin.
             </Text>
           </View>
         </ScrollView>
@@ -329,11 +322,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  statusText: {
-    color: "#BFDBFE",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  statusText: { color: "#BFDBFE", fontWeight: "900", fontSize: 12 },
   kicker: {
     color: "#93C5FD",
     fontSize: 12,
