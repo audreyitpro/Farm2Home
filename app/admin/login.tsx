@@ -22,16 +22,16 @@ import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
-  bg: "#F6F7FB",
+  bg: "#F4F7FB",
   card: "#FFFFFF",
   surface: "#F8FAFC",
-  black: "#020617",
+  dark: "#07111F",
   primary: "#635BFF",
   primaryDark: "#4638D8",
-  text: "#101828",
-  muted: "#667085",
-  border: "#E5E7EB",
-  green: "#10B981",
+  text: "#0F172A",
+  muted: "#64748B",
+  border: "#E2E8F0",
+  red: "#DC2626",
   white: "#FFFFFF",
 };
 
@@ -57,11 +57,12 @@ function normalize(value: any) {
 }
 
 function buildAdminSession(admin: AdminRow) {
+  const id = clean(admin.id);
+
   return {
-    ...admin,
-    id: clean(admin.id),
-    profileId: clean(admin.id),
-    profile_id: clean(admin.id),
+    id,
+    profileId: id,
+    profile_id: id,
     role: "admin",
     adminRole: clean(admin.role || "admin"),
     admin_role: clean(admin.role || "admin"),
@@ -89,22 +90,22 @@ export default function AdminLoginScreen() {
   async function findAdminAccount(loginValue: string): Promise<AdminRow | null> {
     const value = normalize(loginValue);
 
-    const { data, error } = await supabase
-      .from("admins")
-      .select("*")
-      .or(`email.eq.${value},username.eq.${value}`)
-      .limit(1);
+    let query = supabase.from("admins").select("*").limit(1);
+
+    if (value.includes("@")) {
+      query = query.ilike("email", value);
+    } else {
+      query = query.ilike("username", value);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.log("admins lookup error:", error.message);
       throw error;
     }
 
-    if (Array.isArray(data) && data.length > 0) {
-      return data[0] as AdminRow;
-    }
-
-    return null;
+    return Array.isArray(data) && data.length > 0 ? (data[0] as AdminRow) : null;
   }
 
   async function saveAdminSession(admin: AdminRow) {
@@ -118,7 +119,15 @@ export default function AdminLoginScreen() {
       "farm2homeCurrentFarmer",
       "farm2homeFarmerSession",
       "currentDriver",
+      "farm2homeCurrentDriver",
+      "farm2homeDriverSession",
       "currentFreight",
+      "currentFreightCarrier",
+      "currentFreightUser",
+      "currentUser",
+      "currentUserRole",
+      "userRole",
+      "lastLoginRole",
     ]);
 
     await AsyncStorage.multiSet([
@@ -128,8 +137,6 @@ export default function AdminLoginScreen() {
       ["currentUserRole", "admin"],
       ["lastLoginRole", "admin"],
     ]);
-
-    return mapped;
   }
 
   async function loginAdmin() {
@@ -147,10 +154,7 @@ export default function AdminLoginScreen() {
       const admin = await findAdminAccount(loginValue);
 
       if (!admin) {
-        Alert.alert(
-          "Admin Not Found",
-          "No matching record was found in the admins table."
-        );
+        Alert.alert("Admin Not Found", "No matching record was found in the admins table.");
         return;
       }
 
@@ -165,7 +169,6 @@ export default function AdminLoginScreen() {
       }
 
       await saveAdminSession(admin);
-
       router.replace("/admin/dashboard" as any);
     } catch (error: any) {
       console.log("Admin login error:", error);
@@ -177,7 +180,7 @@ export default function AdminLoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.dark} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -190,10 +193,7 @@ export default function AdminLoginScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.hero}>
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => router.replace("/" as any)}
-            >
+            <TouchableOpacity style={styles.backButton} onPress={() => router.replace("/" as any)}>
               <Ionicons name="arrow-back-outline" size={18} color={COLORS.white} />
               <Text style={styles.backText}>Back Home</Text>
             </TouchableOpacity>
@@ -205,15 +205,15 @@ export default function AdminLoginScreen() {
             <Text style={styles.kicker}>Farm2Home Control Center</Text>
             <Text style={styles.title}>Admin Login</Text>
             <Text style={styles.subtitle}>
-              This login checks the Supabase admins table directly. It does not use
-              customer, driver, farmer, or Supabase Auth login.
+              Direct admin-table login. This does not use Supabase Auth, customer,
+              driver, farmer, or freight login.
             </Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Secure Admin Portal</Text>
             <Text style={styles.sectionSubtitle}>
-              Enter the admin username/email and password saved in the admins table.
+              Enter the admin username/email and password saved in Supabase.
             </Text>
 
             <Text style={styles.label}>Admin Email or Username</Text>
@@ -221,10 +221,10 @@ export default function AdminLoginScreen() {
               <Ionicons name="person-outline" size={19} color={COLORS.muted} />
               <TextInput
                 style={styles.input}
-                placeholder="admin@email.com or admin username"
+                placeholder="admin@email.com or username"
                 placeholderTextColor="#94A3B8"
                 value={login}
-                onChangeText={(value) => setLogin(normalize(value))}
+                onChangeText={(value) => setLogin(value)}
                 autoCapitalize="none"
                 autoCorrect={false}
               />
@@ -274,8 +274,8 @@ export default function AdminLoginScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.infoTitle}>Admins Table Lookup</Text>
               <Text style={styles.infoText}>
-                Reads from admins where email or username matches. Required columns:
-                id, email, username, password, full_name, role, is_active, super_admin.
+                Reads from admins by email or username. Required columns: id, email,
+                username, password, full_name, role, is_active, super_admin.
               </Text>
             </View>
           </View>
@@ -286,15 +286,12 @@ export default function AdminLoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: COLORS.dark },
   keyboard: { flex: 1, backgroundColor: COLORS.bg },
   page: { flex: 1, backgroundColor: COLORS.bg },
-  content: {
-    flexGrow: 1,
-    paddingBottom: 70,
-  },
+  content: { flexGrow: 1, paddingBottom: 70 },
   hero: {
-    backgroundColor: COLORS.black,
+    backgroundColor: COLORS.dark,
     paddingTop: 22,
     paddingHorizontal: 20,
     paddingBottom: 30,
