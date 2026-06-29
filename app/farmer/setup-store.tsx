@@ -85,12 +85,7 @@ type FarmerRecord = {
   description?: string;
   account_active?: boolean;
   approved?: boolean;
-  reviewed?: boolean;
-  rejected?: boolean;
   store_unlocked?: boolean;
-  compliance_status?: string;
-  admin_review_status?: string;
-  review_decision?: string;
   stripe_account_id?: string;
   farmer_stripe_account_id?: string;
   farmer_account?: string;
@@ -194,20 +189,20 @@ export default function FarmerSetupStoreScreen() {
 
   const completionItems = useMemo(
     () => [
+      { label: "Logo", done: Boolean(logoUrl.trim()) },
       { label: "Owner", done: Boolean(ownerName.trim()) },
       { label: "Farm", done: Boolean(farmName.trim()) },
       { label: "Email", done: isValidEmail(email) },
       { label: "Location", done: Boolean(farmLocation.trim()) },
-      { label: "Logo", done: Boolean(logoUrl.trim()) },
       { label: "Fulfillment", done: pickup || delivery },
     ],
     [ownerName, farmName, email, farmLocation, logoUrl, pickup, delivery]
   );
 
   const completion = completionItems.filter((item) => item.done).length;
-  const completionPercent = Math.round(
-    (completion / completionItems.length) * 100
-  );
+  const completionPercent = Math.round((completion / completionItems.length) * 100);
+
+  const marketReady = completionPercent === 100;
 
   useEffect(() => {
     initializeScreen();
@@ -259,7 +254,6 @@ export default function FarmerSetupStoreScreen() {
       hydrate(merged);
       await saveFarmerSession(merged);
     } catch (error: any) {
-      console.log("Initialize setup store error:", error);
       Alert.alert(
         "Access Error",
         error?.message || "Unable to verify farmer profile."
@@ -299,10 +293,8 @@ export default function FarmerSetupStoreScreen() {
 
       if (!result.error) return Array.isArray(result.data) ? result.data : [];
 
-      console.log("farmers safe select skipped:", result.error.message);
       return [];
-    } catch (error: any) {
-      console.log("farmers safe select exception:", error?.message || error);
+    } catch {
       return [];
     }
   }
@@ -444,12 +436,10 @@ export default function FarmerSetupStoreScreen() {
     const filePath = `${activeFarmerId}/farm-logo-${Date.now()}.${ext}`;
     const blob = await uriToBlob(localUri);
 
-    const { error } = await supabase.storage
-      .from(LOGO_BUCKET)
-      .upload(filePath, blob, {
-        contentType,
-        upsert: true,
-      });
+    const { error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, blob, {
+      contentType,
+      upsert: true,
+    });
 
     if (error) throw new Error(error.message || "Unable to upload logo.");
 
@@ -525,34 +515,24 @@ export default function FarmerSetupStoreScreen() {
     let nextPayload: Record<string, any> = { ...payload };
 
     for (let attempt = 0; attempt < 80; attempt += 1) {
-      try {
-        const { data, error } = await supabase
-          .from("farmers")
-          .update(nextPayload)
-          .eq(column, value)
-          .select("*")
-          .maybeSingle();
+      const { data, error } = await supabase
+        .from("farmers")
+        .update(nextPayload)
+        .eq(column, value)
+        .select("*")
+        .maybeSingle();
 
-        if (!error && data) return data;
-        if (!error && !data) return null;
+      if (!error && data) return data;
+      if (!error && !data) return null;
 
-        const missing = missingColumn(error);
+      const missing = missingColumn(error);
 
-        if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-          console.log(`Removing missing farmers column: ${missing}`);
-          nextPayload = removeMissingColumn(nextPayload, missing);
-          continue;
-        }
-
-        console.log(`safePatchFarmers ${column} skipped:`, error?.message);
-        return null;
-      } catch (error: any) {
-        console.log(
-          `safePatchFarmers ${column} exception skipped:`,
-          error?.message || error
-        );
-        return null;
+      if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
+        nextPayload = removeMissingColumn(nextPayload, missing);
+        continue;
       }
+
+      return null;
     }
 
     return null;
@@ -594,7 +574,6 @@ export default function FarmerSetupStoreScreen() {
       const missing = missingColumn(error);
 
       if (missing && Object.prototype.hasOwnProperty.call(nextPayload, missing)) {
-        console.log(`Removing missing farmers column during upsert: ${missing}`);
         nextPayload = removeMissingColumn(nextPayload, missing);
         continue;
       }
@@ -704,10 +683,9 @@ export default function FarmerSetupStoreScreen() {
       hydrate(savedFarmer);
       await saveFarmerSession(savedFarmer);
 
-      if (showAlert) Alert.alert("Store Saved", "Farmer store setup saved.");
+      if (showAlert) Alert.alert("Store Saved", "Your farmer market store is ready.");
       return savedFarmer;
     } catch (error: any) {
-      console.log("Save farmer profile error:", error);
       Alert.alert("Save Error", error?.message || "Unable to save farmer store.");
       return null;
     } finally {
@@ -732,7 +710,7 @@ export default function FarmerSetupStoreScreen() {
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
         <View style={styles.loadingCenter}>
           <ActivityIndicator size="large" color={COLORS.green} />
-          <Text style={styles.loadingText}>Loading store setup...</Text>
+          <Text style={styles.loadingText}>Loading farmer store...</Text>
         </View>
       </SafeAreaView>
     );
@@ -754,43 +732,52 @@ export default function FarmerSetupStoreScreen() {
           <View style={styles.topBar}>
             <TouchableOpacity
               style={styles.backButton}
-              onPress={() => router.back()}
+              onPress={() => router.push("/farmer/dashboard" as any)}
               activeOpacity={0.9}
             >
               <Ionicons name="arrow-back-outline" size={21} color={COLORS.text} />
             </TouchableOpacity>
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.eyebrow}>Grocerly Store</Text>
+              <Text style={styles.eyebrow}>Farm2Home Market</Text>
               <Text style={styles.pageTitle}>Setup Farmer Store</Text>
+              <Text style={styles.pageSub}>Build your public farm profile</Text>
             </View>
 
             <View style={styles.scorePill}>
-              <Text style={styles.scoreText}>{completion}/6</Text>
+              <Text style={styles.scoreText}>{completionPercent}%</Text>
             </View>
           </View>
 
           <View style={styles.hero}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.heroBadge}>Fresh Local Market</Text>
+              <Text style={styles.heroBadge}>Digital Farmers Market</Text>
               <Text style={styles.heroTitle}>
-                Build your grocery-style farm storefront.
+                Turn your farm into a local grocery storefront.
               </Text>
               <Text style={styles.heroSub}>
-                Save your profile first, then add produce, custom products,
-                payouts, and preferred drivers.
+                Customers will use this profile to shop your products, bundles,
+                subscriptions, pickup, and delivery options.
               </Text>
             </View>
 
             <View style={styles.heroImage}>
-              <Text style={styles.heroEmoji}>🥦</Text>
+              <Text style={styles.heroEmoji}>🥬</Text>
             </View>
+          </View>
+
+          <View style={styles.flowCard}>
+            <Text style={styles.flowTitle}>Store Setup Flow</Text>
+            <FlowStep number="1" text="Upload logo and farm identity" />
+            <FlowStep number="2" text="Add public farm profile details" />
+            <FlowStep number="3" text="Choose pickup and delivery options" />
+            <FlowStep number="4" text="Save, then add products and bundles" />
           </View>
 
           <View style={styles.progressCard}>
             <View style={styles.progressHeader}>
-              <Text style={styles.progressTitle}>Store Completion</Text>
-              <Text style={styles.progressPercent}>{completionPercent}%</Text>
+              <Text style={styles.progressTitle}>Market Readiness</Text>
+              <Text style={styles.progressPercent}>{completion}/6 complete</Text>
             </View>
 
             <View style={styles.progressTrack}>
@@ -814,19 +801,24 @@ export default function FarmerSetupStoreScreen() {
           </View>
 
           <View style={styles.statusRow}>
-            <StatusChip label="Store" value="Active" good />
+            <StatusChip label="Store" value={marketReady ? "Ready" : "Setup"} good={marketReady} />
             <StatusChip
               label="Stripe"
               value={stripeConnected ? "Connected" : "Pending"}
               good={stripeConnected}
             />
-            <StatusChip label="Logo" value={logoUrl ? "Ready" : "Needed"} good={Boolean(logoUrl)} />
+            <StatusChip
+              label="Market"
+              value={marketReady ? "Visible" : "Draft"}
+              good={marketReady}
+            />
           </View>
 
           <View style={styles.card}>
             <SectionHeader
-              title="Store Logo"
-              subtitle="Shown in the customer marketplace."
+              step="Step 1"
+              title="Store Identity"
+              subtitle="Add your farm logo and brand identity."
               icon="image-outline"
             />
 
@@ -844,7 +836,7 @@ export default function FarmerSetupStoreScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.logoTitle}>Farm Logo</Text>
                 <Text style={styles.logoText}>
-                  Upload a square logo for your Grocerly-style farm store.
+                  Use a clear square image that customers will recognize in the marketplace.
                 </Text>
 
                 <TouchableOpacity
@@ -864,8 +856,9 @@ export default function FarmerSetupStoreScreen() {
 
           <View style={styles.card}>
             <SectionHeader
-              title="Farm Profile"
-              subtitle="This information appears in marketplace search."
+              step="Step 2"
+              title="Public Farm Profile"
+              subtitle="This appears in customer marketplace search."
               icon="storefront-outline"
             />
 
@@ -876,6 +869,7 @@ export default function FarmerSetupStoreScreen() {
               placeholder="Owner name"
               icon="person-outline"
             />
+
             <Field
               label="Farm Name"
               value={farmName}
@@ -883,6 +877,7 @@ export default function FarmerSetupStoreScreen() {
               placeholder="Farm name"
               icon="leaf-outline"
             />
+
             <Field
               label="Email"
               value={email}
@@ -891,6 +886,7 @@ export default function FarmerSetupStoreScreen() {
               icon="mail-outline"
               keyboardType="email-address"
             />
+
             <Field
               label="Phone"
               value={phone}
@@ -899,6 +895,7 @@ export default function FarmerSetupStoreScreen() {
               icon="call-outline"
               keyboardType="phone-pad"
             />
+
             <Field
               label="Farm Location"
               value={farmLocation}
@@ -914,7 +911,7 @@ export default function FarmerSetupStoreScreen() {
                 style={[styles.input, styles.textArea]}
                 value={about}
                 onChangeText={setAbout}
-                placeholder="Tell customers about your farm"
+                placeholder="Tell customers what you grow, sell, and what makes your farm special."
                 placeholderTextColor="#94A3B8"
                 multiline
               />
@@ -923,59 +920,67 @@ export default function FarmerSetupStoreScreen() {
 
           <View style={styles.card}>
             <SectionHeader
-              title="Pickup / Delivery"
-              subtitle="Choose how customers receive groceries."
-              icon="bicycle-outline"
+              step="Step 3"
+              title="Customer Fulfillment"
+              subtitle="Choose how customers receive orders."
+              icon="car-outline"
             />
 
             <ToggleRow
-              title="Allow Pickup"
-              subtitle="Customers can pick up orders from your farm."
+              title="Farm Pickup"
+              subtitle="Customers can pick up orders from your farm or pickup location."
               value={pickup}
               onValueChange={setPickup}
               icon="bag-handle-outline"
             />
 
             <ToggleRow
-              title="Allow Delivery"
-              subtitle="Orders can be delivered by your team or Farm2Home drivers."
+              title="Local Delivery"
+              subtitle="Orders can be delivered by your farm team or Farm2Home drivers."
               value={delivery}
               onValueChange={setDelivery}
-              icon="car-outline"
+              icon="bicycle-outline"
             />
           </View>
 
           <View style={styles.card}>
             <SectionHeader
-              title="Next Steps"
-              subtitle="Save first, then continue your farmer workflow."
+              step="Step 4"
+              title="Continue Building Your Market"
+              subtitle="Save your store, then add products, bundles, payouts, and drivers."
               icon="trail-sign-outline"
             />
 
             <View style={styles.nextGrid}>
               <NextStep
-                title="Add Produce"
-                subtitle="Select grocery catalog items."
-                icon="nutrition-outline"
-                onPress={() => saveAndRoute("/farmer/select-produce")}
-              />
-              <NextStep
-                title="Custom Product"
-                subtitle="Upload your own farm item."
+                title="Add Products"
+                subtitle="Create marketplace-ready listings."
                 icon="add-circle-outline"
                 onPress={() => saveAndRoute("/farmer/add-product")}
               />
               <NextStep
+                title="Manage Inventory"
+                subtitle="Update stock, hide products, and mark bundle-ready."
+                icon="archive-outline"
+                onPress={() => saveAndRoute("/farmer/inventory-management")}
+              />
+              <NextStep
+                title="Create Bundles"
+                subtitle="Build produce, meat, seafood, or mixed boxes."
+                icon="basket-outline"
+                onPress={() => saveAndRoute("/farmer/farm-bundles")}
+              />
+              <NextStep
                 title="Connect Bank"
-                subtitle="Finish Stripe payouts."
+                subtitle="Finish Stripe Connect payouts."
                 icon="card-outline"
                 onPress={() => saveAndRoute("/farmer/connect-bank")}
               />
               <NextStep
-                title="Preferred Drivers"
-                subtitle="Manage driver network."
+                title="Delivery Drivers"
+                subtitle="Manage preferred and assigned drivers."
                 icon="people-outline"
-                onPress={() => saveAndRoute("/farmer/driver")}
+                onPress={() => saveAndRoute("/farmer/assigned-drivers")}
               />
             </View>
           </View>
@@ -992,19 +997,9 @@ export default function FarmerSetupStoreScreen() {
               ) : (
                 <>
                   <Ionicons name="save-outline" size={18} color={COLORS.white} />
-                  <Text style={styles.primaryButtonText}>Save Store</Text>
+                  <Text style={styles.primaryButtonText}>Save Farmer Store</Text>
                 </>
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => saveAndRoute("/farmer/select-produce")}
-              disabled={loading}
-              activeOpacity={0.9}
-            >
-              <Ionicons name="nutrition-outline" size={18} color={COLORS.greenDark} />
-              <Text style={styles.secondaryButtonText}>Save + Add Produce</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1014,7 +1009,17 @@ export default function FarmerSetupStoreScreen() {
               activeOpacity={0.9}
             >
               <Ionicons name="add-circle-outline" size={18} color={COLORS.greenDark} />
-              <Text style={styles.secondaryButtonText}>Save + Custom Product</Text>
+              <Text style={styles.secondaryButtonText}>Save + Add Product</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => saveAndRoute("/farmer/farm-bundles")}
+              disabled={loading}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="basket-outline" size={18} color={COLORS.greenDark} />
+              <Text style={styles.secondaryButtonText}>Save + Create Bundle</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1058,10 +1063,12 @@ function StatusChip({
 }
 
 function SectionHeader({
+  step,
   title,
   subtitle,
   icon,
 }: {
+  step: string;
   title: string;
   subtitle: string;
   icon: keyof typeof Ionicons.glyphMap;
@@ -1072,9 +1079,19 @@ function SectionHeader({
         <Ionicons name={icon} size={21} color={COLORS.greenDark} />
       </View>
       <View style={{ flex: 1 }}>
+        <Text style={styles.stepText}>{step}</Text>
         <Text style={styles.sectionTitle}>{title}</Text>
         <Text style={styles.sectionSub}>{subtitle}</Text>
       </View>
+    </View>
+  );
+}
+
+function FlowStep({ number, text }: { number: string; text: string }) {
+  return (
+    <View style={styles.flowStep}>
+      <Text style={styles.flowNumber}>{number}</Text>
+      <Text style={styles.flowText}>{text}</Text>
     </View>
   );
 }
@@ -1167,70 +1184,11 @@ function NextStep({
 }
 
 const styles = StyleSheet.create({
-  progressCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 15,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginBottom: 14,
-  },
-  progressHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  progressTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
-  progressPercent: { color: COLORS.greenDark, fontWeight: "900" },
-  progressTrack: {
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: COLORS.greenSoft,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    borderRadius: 999,
-    backgroundColor: COLORS.green,
-  },
-  checkGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
-  checkItem: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  checkText: { color: COLORS.muted, fontWeight: "900", fontSize: 12 },
-  checkTextDone: { color: COLORS.greenDark },
-  nextGrid: { gap: 10 },
-  nextStep: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  nextIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 15,
-    backgroundColor: COLORS.greenSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  nextTitle: { color: COLORS.text, fontWeight: "900" },
-  nextSub: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
   safe: { flex: 1, backgroundColor: COLORS.bg },
   loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   loadingText: { marginTop: 10, color: COLORS.muted, fontWeight: "800" },
   content: { padding: 16, paddingBottom: 110 },
+
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -1255,6 +1213,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   pageTitle: { color: COLORS.text, fontSize: 24, fontWeight: "900", marginTop: 2 },
+  pageSub: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
   scorePill: {
     backgroundColor: COLORS.greenSoft,
     borderRadius: 999,
@@ -1262,6 +1221,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   scoreText: { color: COLORS.greenDark, fontWeight: "900" },
+
   hero: {
     backgroundColor: COLORS.green,
     borderRadius: 30,
@@ -1301,6 +1261,80 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   heroEmoji: { fontSize: 42 },
+
+  flowCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  flowTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18 },
+  flowStep: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+  },
+  flowNumber: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    backgroundColor: COLORS.greenSoft,
+    color: COLORS.greenDark,
+    textAlign: "center",
+    textAlignVertical: "center",
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+  flowText: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+
+  progressCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  progressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  progressTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  progressPercent: { color: COLORS.greenDark, fontWeight: "900" },
+  progressTrack: {
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.greenSoft,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+  },
+  checkGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  checkItem: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  checkText: { color: COLORS.muted, fontWeight: "900", fontSize: 12 },
+  checkTextDone: { color: COLORS.greenDark },
+
   statusRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
   statusChip: { flex: 1, borderRadius: 18, padding: 12, borderWidth: 1 },
   statusChipGood: { backgroundColor: COLORS.greenSoft, borderColor: "#BDECCF" },
@@ -1314,6 +1348,7 @@ const styles = StyleSheet.create({
   statusChipValue: { fontWeight: "900", marginTop: 4 },
   statusChipValueGood: { color: COLORS.greenDark },
   statusChipValueWarn: { color: "#92400E" },
+
   card: {
     backgroundColor: COLORS.card,
     borderRadius: 24,
@@ -1324,7 +1359,7 @@ const styles = StyleSheet.create({
   },
   sectionHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
     marginBottom: 14,
   },
@@ -1336,6 +1371,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  stepText: {
+    color: COLORS.green,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    fontSize: 12,
+    marginBottom: 3,
+  },
   sectionTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
   sectionSub: {
     color: COLORS.muted,
@@ -1343,6 +1386,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 3,
   },
+
   logoRow: { flexDirection: "row", gap: 14, alignItems: "center" },
   logoPreviewWrap: {
     width: 88,
@@ -1372,6 +1416,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   outlineButtonText: { color: COLORS.greenDark, fontWeight: "900" },
+
   fieldWrap: { marginBottom: 12 },
   inputLabel: { color: COLORS.text, fontWeight: "900", marginBottom: 7, fontSize: 13 },
   inputShell: {
@@ -1388,6 +1433,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, minHeight: 52, color: COLORS.text, fontWeight: "800" },
   textAreaShell: { minHeight: 104, alignItems: "flex-start", paddingTop: 13 },
   textArea: { minHeight: 90, textAlignVertical: "top" },
+
   toggleCard: {
     backgroundColor: COLORS.surface,
     borderRadius: 20,
@@ -1414,6 +1460,29 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 3,
   },
+
+  nextGrid: { gap: 10 },
+  nextStep: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  nextIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 15,
+    backgroundColor: COLORS.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nextTitle: { color: COLORS.text, fontWeight: "900" },
+  nextSub: { color: COLORS.muted, fontWeight: "700", marginTop: 2 },
+
   actionGrid: { gap: 10 },
   primaryButton: {
     backgroundColor: COLORS.green,

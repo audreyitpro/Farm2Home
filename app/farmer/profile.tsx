@@ -1,7 +1,6 @@
 // app/farmer/profile.tsx
-// Professional farmer profile + delivery settings + internal drivers + routing
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +14,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
 
@@ -27,9 +27,11 @@ const COLORS = {
   primary: "#2E7D32",
   primaryDark: "#14532D",
   soft: "#EEF5EA",
+  white: "#FFFFFF",
   dark: "#111827",
-  blue: "#2563EB",
   danger: "#DC2626",
+  dangerSoft: "#FEE2E2",
+  orangeSoft: "#FFF3DE",
 };
 
 export default function FarmerProfileScreen() {
@@ -64,12 +66,32 @@ export default function FarmerProfileScreen() {
     loadProfile();
   }, []);
 
+  const readiness = useMemo(() => {
+    const checks = [
+      Boolean(farmName.trim()),
+      Boolean(ownerName.trim()),
+      Boolean(email.trim()),
+      Boolean(phone.trim()),
+      pickupEnabled || deliveryEnabled,
+    ];
+
+    const complete = checks.filter(Boolean).length;
+
+    return {
+      complete,
+      total: checks.length,
+      percent: Math.round((complete / checks.length) * 100),
+    };
+  }, [farmName, ownerName, email, phone, pickupEnabled, deliveryEnabled]);
+
   async function loadProfile() {
     try {
       setLoading(true);
 
       const saved =
         (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
         (await AsyncStorage.getItem("currentUser"));
 
       if (!saved) {
@@ -78,7 +100,7 @@ export default function FarmerProfileScreen() {
       }
 
       const parsed = JSON.parse(saved);
-      const id = parsed.id || parsed.farmerId;
+      const id = parsed.id || parsed.farmerId || parsed.farmer_id || parsed.profile_id;
 
       if (!id) {
         router.replace("/farmer/login" as any);
@@ -101,6 +123,7 @@ export default function FarmerProfileScreen() {
           ...farmerRow,
           id: farmerRow.id,
           farmerId: farmerRow.id,
+          farmer_id: farmerRow.farmer_id || farmerRow.id,
         };
       }
 
@@ -115,7 +138,7 @@ export default function FarmerProfileScreen() {
           ""
       );
       setOwnerName(latestFarmer.ownerName || latestFarmer.owner_name || "");
-      setEmail(String(latestFarmer.email || "").toLowerCase());
+      setEmail(String(latestFarmer.email || latestFarmer.farmer_email || "").toLowerCase());
       setPhone(latestFarmer.phone || "");
 
       const { data: settings } = await supabase
@@ -163,12 +186,23 @@ export default function FarmerProfileScreen() {
         return;
       }
 
+      if (!farmName.trim() || !ownerName.trim() || !email.trim()) {
+        Alert.alert("Missing Details", "Farm name, owner name, and email are required.");
+        return;
+      }
+
+      if (!pickupEnabled && !deliveryEnabled) {
+        Alert.alert("Fulfillment Needed", "Enable pickup, delivery, or both.");
+        return;
+      }
+
       const now = new Date().toISOString();
 
       const updatedFarmer = {
         ...farmer,
         id: farmerId,
         farmerId,
+        farmer_id: farmerId,
         farmName: farmName.trim(),
         farm_name: farmName.trim(),
         businessName: farmName.trim(),
@@ -176,14 +210,20 @@ export default function FarmerProfileScreen() {
         ownerName: ownerName.trim(),
         owner_name: ownerName.trim(),
         email: email.trim().toLowerCase(),
+        farmer_email: email.trim().toLowerCase(),
         phone: phone.trim(),
         updatedAt: now,
+        updated_at: now,
       };
 
-      await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
-      await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
-      await AsyncStorage.setItem("userRole", "farmer");
-      await AsyncStorage.setItem("currentUserRole", "farmer");
+      await AsyncStorage.multiSet([
+        ["currentFarmer", JSON.stringify(updatedFarmer)],
+        ["farm2homeCurrentFarmer", JSON.stringify(updatedFarmer)],
+        ["farm2homeFarmerSession", JSON.stringify(updatedFarmer)],
+        ["currentUser", JSON.stringify(updatedFarmer)],
+        ["userRole", "farmer"],
+        ["currentUserRole", "farmer"],
+      ]);
 
       await supabase
         .from("farmers")
@@ -192,6 +232,7 @@ export default function FarmerProfileScreen() {
           business_name: farmName.trim(),
           owner_name: ownerName.trim(),
           email: email.trim().toLowerCase(),
+          farmer_email: email.trim().toLowerCase(),
           phone: phone.trim(),
           updated_at: now,
         })
@@ -215,7 +256,7 @@ export default function FarmerProfileScreen() {
       );
 
       setFarmer(updatedFarmer);
-      Alert.alert("Saved", "Farmer profile and operations settings were saved.");
+      Alert.alert("Saved", "Farmer profile and market operations settings were saved.");
     } catch (error: any) {
       Alert.alert("Save Error", error?.message || "Unable to save profile.");
     } finally {
@@ -247,26 +288,35 @@ export default function FarmerProfileScreen() {
       setDriverPhone("");
       await loadProfile();
 
-      Alert.alert("Driver Added", "Internal driver was added.");
+      Alert.alert("Driver Added", "Internal driver was added to your farm team.");
     } catch (error: any) {
       Alert.alert("Driver Error", error?.message || "Unable to add driver.");
     }
   }
 
   async function removeDriver(driverId: string) {
-    try {
-      await supabase
-        .from("farmer_internal_drivers")
-        .update({
-          active: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", driverId);
+    Alert.alert("Remove Driver", "Remove this driver from your farm team?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await supabase
+              .from("farmer_internal_drivers")
+              .update({
+                active: false,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", driverId);
 
-      await loadProfile();
-    } catch (error: any) {
-      Alert.alert("Remove Error", error?.message || "Unable to remove driver.");
-    }
+            await loadProfile();
+          } catch (error: any) {
+            Alert.alert("Remove Error", error?.message || "Unable to remove driver.");
+          }
+        },
+      },
+    ]);
   }
 
   function goTo(pathname: string, params?: Record<string, string>) {
@@ -284,18 +334,19 @@ export default function FarmerProfileScreen() {
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => goTo("/farmer/dashboard")}>
+            <Ionicons name="arrow-back-outline" size={22} color={COLORS.text} />
+          </Pressable>
+
           <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farm2Home Market</Text>
             <Text style={styles.title}>Farmer Profile</Text>
             <Text style={styles.subtitle}>
-              Store settings, delivery operations, internal drivers, and communication.
+              Manage store profile, fulfillment, drivers, and operations.
             </Text>
           </View>
-
-          <Pressable style={styles.headerButton} onPress={() => goTo("/farmer/dashboard")}>
-            <Text style={styles.headerButtonText}>Dashboard</Text>
-          </Pressable>
         </View>
 
         <View style={styles.heroCard}>
@@ -306,53 +357,74 @@ export default function FarmerProfileScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
+            <Text style={styles.heroBadge}>Farmer Operations Center</Text>
             <Text style={styles.heroTitle}>{farmName || "Farm2Home Farm"}</Text>
             <Text style={styles.heroSub}>{email || "No email saved"}</Text>
             <Text style={styles.heroMeta}>{drivers.length} internal driver(s)</Text>
           </View>
         </View>
 
+        <View style={styles.flowCard}>
+          <Text style={styles.flowTitle}>Profile Setup Flow</Text>
+          <FlowStep number="1" text="Save business information customers can trust" />
+          <FlowStep number="2" text="Set pickup, delivery radius, and delivery fees" />
+          <FlowStep number="3" text="Add internal drivers for local fulfillment" />
+          <FlowStep number="4" text="Use operations links to manage orders and deliveries" />
+        </View>
+
+        <View style={styles.readinessCard}>
+          <View style={styles.readinessHeader}>
+            <Text style={styles.readinessTitle}>Market Readiness</Text>
+            <Text style={styles.readinessPercent}>{readiness.percent}%</Text>
+          </View>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${readiness.percent}%` }]} />
+          </View>
+          <Text style={styles.readinessText}>
+            {readiness.complete}/{readiness.total} required profile items complete.
+          </Text>
+        </View>
+
         <View style={styles.statsRow}>
-          <StatCard label="Pickup" value={pickupEnabled ? "On" : "Off"} />
-          <StatCard label="Delivery" value={deliveryEnabled ? "On" : "Off"} />
-          <StatCard label="Driver Board" value={postToFarm2Driver ? "Auto" : "Manual"} />
+          <StatCard label="Pickup" value={pickupEnabled ? "On" : "Off"} icon="bag-handle-outline" />
+          <StatCard label="Delivery" value={deliveryEnabled ? "On" : "Off"} icon="car-outline" />
+          <StatCard label="Driver Board" value={postToFarm2Driver ? "Auto" : "Manual"} icon="trail-sign-outline" />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Business Information</Text>
+          <SectionHeader
+            step="Step 1"
+            title="Business Information"
+            subtitle="This information appears across the farmer market."
+            icon="storefront-outline"
+          />
 
-          <Label text="Farm / Business Name" />
-          <TextInput style={styles.input} value={farmName} onChangeText={setFarmName} />
-
-          <Label text="Owner Name" />
-          <TextInput style={styles.input} value={ownerName} onChangeText={setOwnerName} />
-
-          <Label text="Email" />
-          <TextInput
-            style={styles.input}
+          <Field label="Farm / Business Name" value={farmName} onChangeText={setFarmName} icon="leaf-outline" />
+          <Field label="Owner Name" value={ownerName} onChangeText={setOwnerName} icon="person-outline" />
+          <Field
+            label="Email"
             value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
+            onChangeText={(value) => setEmail(value.toLowerCase())}
+            icon="mail-outline"
             keyboardType="email-address"
           />
-
-          <Label text="Phone" />
-          <TextInput
-            style={styles.input}
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-          />
+          <Field label="Phone" value={phone} onChangeText={setPhone} icon="call-outline" keyboardType="phone-pad" />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Delivery / Pickup Settings</Text>
+          <SectionHeader
+            step="Step 2"
+            title="Fulfillment Settings"
+            subtitle="Control how customers receive products and bundles."
+            icon="car-outline"
+          />
 
           <SettingRow
             title="Customer Pickup"
             subtitle="Allow customers to pick up orders from the farm."
             value={pickupEnabled}
             onValueChange={setPickupEnabled}
+            icon="bag-handle-outline"
           />
 
           <SettingRow
@@ -360,20 +432,62 @@ export default function FarmerProfileScreen() {
             subtitle="Allow this farm to offer local delivery."
             value={deliveryEnabled}
             onValueChange={setDeliveryEnabled}
+            icon="bicycle-outline"
+          />
+
+          <View style={styles.rateRow}>
+            <View style={styles.rateField}>
+              <Field
+                label="Radius Miles"
+                value={deliveryRadius}
+                onChangeText={setDeliveryRadius}
+                icon="navigate-outline"
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.rateField}>
+              <Field
+                label="Cost / Mile"
+                value={costPerMile}
+                onChangeText={setCostPerMile}
+                icon="cash-outline"
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          <Field
+            label="Minimum Delivery Fee"
+            value={minimumDeliveryFee}
+            onChangeText={setMinimumDeliveryFee}
+            icon="wallet-outline"
+            keyboardType="numeric"
+          />
+        </View>
+
+        <View style={styles.card}>
+          <SectionHeader
+            step="Step 3"
+            title="Delivery Automation"
+            subtitle="Choose how farm orders become delivery or freight jobs."
+            icon="git-branch-outline"
           />
 
           <SettingRow
             title="Use Internal Drivers First"
-            subtitle="Assign orders to your farm drivers before posting to Farm2Driver."
+            subtitle="Assign orders to farm drivers before posting to Farm2Driver."
             value={internalDriversEnabled}
             onValueChange={setInternalDriversEnabled}
+            icon="people-outline"
           />
 
           <SettingRow
-            title="Post to Farm2Driver if No Internal Driver"
+            title="Post to Farm2Driver if No Driver"
             subtitle="Automatically post open delivery orders to the driver board."
             value={postToFarm2Driver}
             onValueChange={setPostToFarm2Driver}
+            icon="trail-sign-outline"
           />
 
           <SettingRow
@@ -381,6 +495,7 @@ export default function FarmerProfileScreen() {
             subtitle="Hay and bale orders can automatically create freight loads."
             value={autoFreightHay}
             onValueChange={setAutoFreightHay}
+            icon="cube-outline"
           />
 
           <SettingRow
@@ -388,86 +503,59 @@ export default function FarmerProfileScreen() {
             subtitle="Livestock orders can automatically create freight loads."
             value={autoFreightLivestock}
             onValueChange={setAutoFreightLivestock}
-          />
-
-          <View style={styles.rateRow}>
-            <View style={styles.rateField}>
-              <Label text="Radius Miles" />
-              <TextInput
-                style={styles.input}
-                value={deliveryRadius}
-                onChangeText={setDeliveryRadius}
-                keyboardType="numeric"
-              />
-            </View>
-
-            <View style={styles.rateField}>
-              <Label text="Cost / Mile" />
-              <TextInput
-                style={styles.input}
-                value={costPerMile}
-                onChangeText={setCostPerMile}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-
-          <Label text="Minimum Delivery Fee" />
-          <TextInput
-            style={styles.input}
-            value={minimumDeliveryFee}
-            onChangeText={setMinimumDeliveryFee}
-            keyboardType="numeric"
+            icon="paw-outline"
           />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Internal Drivers</Text>
-          <Text style={styles.sectionSub}>
-            Add drivers who belong to this farm. These drivers can receive farm delivery
-            assignments before orders are posted to the public driver board.
-          </Text>
+          <SectionHeader
+            step="Step 4"
+            title="Internal Drivers"
+            subtitle="Add trusted drivers who can deliver local farm orders."
+            icon="people-outline"
+          />
 
-          <Label text="Driver Name" />
-          <TextInput style={styles.input} value={driverName} onChangeText={setDriverName} />
-
-          <Label text="Driver Email" />
-          <TextInput
-            style={styles.input}
+          <Field label="Driver Name" value={driverName} onChangeText={setDriverName} icon="person-add-outline" />
+          <Field
+            label="Driver Email"
             value={driverEmail}
-            onChangeText={setDriverEmail}
-            autoCapitalize="none"
+            onChangeText={(value) => setDriverEmail(value.toLowerCase())}
+            icon="mail-outline"
             keyboardType="email-address"
           />
-
-          <Label text="Driver Phone" />
-          <TextInput
-            style={styles.input}
-            value={driverPhone}
-            onChangeText={setDriverPhone}
-            keyboardType="phone-pad"
-          />
+          <Field label="Driver Phone" value={driverPhone} onChangeText={setDriverPhone} icon="call-outline" keyboardType="phone-pad" />
 
           <Pressable style={styles.secondaryAction} onPress={addInternalDriver}>
+            <Ionicons name="person-add-outline" size={18} color={COLORS.white} />
             <Text style={styles.secondaryActionText}>Add Internal Driver</Text>
           </Pressable>
 
           {drivers.length === 0 ? (
-            <Text style={styles.emptyText}>No internal drivers added.</Text>
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyEmoji}>🚚</Text>
+              <Text style={styles.emptyTitle}>No internal drivers yet</Text>
+              <Text style={styles.emptyText}>
+                Add drivers here or use Farm2Driver for open delivery jobs.
+              </Text>
+            </View>
           ) : (
             drivers.map((driver) => (
               <View key={driver.id} style={styles.driverRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.driverName}>
-                    {driver.driver_name || "Farm Driver"}
+                <View style={styles.driverInitialBox}>
+                  <Text style={styles.driverInitial}>
+                    {String(driver.driver_name || "D").slice(0, 1).toUpperCase()}
                   </Text>
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.driverName}>{driver.driver_name || "Farm Driver"}</Text>
                   <Text style={styles.driverMeta}>
                     {driver.driver_email || "No email"} · {driver.driver_phone || "No phone"}
                   </Text>
                 </View>
 
                 <Pressable style={styles.removeButton} onPress={() => removeDriver(driver.id)}>
-                  <Text style={styles.removeButtonText}>Remove</Text>
+                  <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
                 </Pressable>
               </View>
             ))
@@ -475,22 +563,21 @@ export default function FarmerProfileScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Operations Center</Text>
+          <SectionHeader
+            step="Step 5"
+            title="Operations Center"
+            subtitle="Jump into the farmer tools that run your market."
+            icon="grid-outline"
+          />
 
-          <RouteButton title="Farmer Orders" onPress={() => goTo("/farmer/orders")} />
-          <RouteButton title="Delivery Orders" onPress={() => goTo("/farmer/delivery-orders")} />
-          <RouteButton title="Assigned Drivers" onPress={() => goTo("/farmer/assigned-drivers")} />
-          <RouteButton
-            title="Farmer Driver Chat"
-            onPress={() => goTo("/farmer/driver-chat", { farmerId })}
-          />
-          <RouteButton
-            title="Customer / Driver Chat"
-            onPress={() => goTo("/farmer/customer-driver-chat", { farmerId })}
-          />
-          <RouteButton title="Chat Center" onPress={() => goTo("/chat/chat-center", { role: "farmer" })} />
-          <RouteButton title="Farm2Driver Board" onPress={() => goTo("/driver/board")} />
-          <RouteButton title="Freight Board" onPress={() => goTo("/freight/board")} />
+          <RouteButton title="Farmer Orders" icon="receipt-outline" onPress={() => goTo("/farmer/orders")} />
+          <RouteButton title="Delivery Orders" icon="cube-outline" onPress={() => goTo("/farmer/delivery-orders")} />
+          <RouteButton title="Assigned Drivers" icon="car-outline" onPress={() => goTo("/farmer/assigned-drivers")} />
+          <RouteButton title="Inventory Management" icon="archive-outline" onPress={() => goTo("/farmer/inventory-management")} />
+          <RouteButton title="Farm Bundles" icon="basket-outline" onPress={() => goTo("/farmer/farm-bundles")} />
+          <RouteButton title="Post Load" icon="trail-sign-outline" onPress={() => goTo("/farmer/post-load")} />
+          <RouteButton title="Farmer Driver Chat" icon="chatbox-outline" onPress={() => goTo("/farmer/driver-chat", { farmerId })} />
+          <RouteButton title="Customer / Driver Chat" icon="chatbubbles-outline" onPress={() => goTo("/farmer/customer-driver-chat", { farmerId })} />
         </View>
 
         <Pressable
@@ -499,9 +586,12 @@ export default function FarmerProfileScreen() {
           disabled={saving}
         >
           {saving ? (
-            <ActivityIndicator color="#FFFFFF" />
+            <ActivityIndicator color={COLORS.white} />
           ) : (
-            <Text style={styles.saveButtonText}>Save Profile Settings</Text>
+            <>
+              <Ionicons name="save-outline" size={18} color={COLORS.white} />
+              <Text style={styles.saveButtonText}>Save Profile & Operations</Text>
+            </>
           )}
         </Pressable>
       </ScrollView>
@@ -509,8 +599,71 @@ export default function FarmerProfileScreen() {
   );
 }
 
-function Label({ text }: { text: string }) {
-  return <Text style={styles.label}>{text}</Text>;
+function SectionHeader({
+  step,
+  title,
+  subtitle,
+  icon,
+}: {
+  step: string;
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons name={icon} size={21} color={COLORS.primaryDark} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.stepText}>{step}</Text>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text style={styles.sectionSub}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+function FlowStep({ number, text }: { number: string; text: string }) {
+  return (
+    <View style={styles.flowStep}>
+      <Text style={styles.flowNumber}>{number}</Text>
+      <Text style={styles.flowText}>{text}</Text>
+    </View>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChangeText,
+  icon,
+  keyboardType,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  icon: keyof typeof Ionicons.glyphMap;
+  keyboardType?: any;
+}) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.inputShell}>
+        <Ionicons name={icon} size={18} color={COLORS.muted} />
+        <TextInput
+          style={styles.input}
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType={keyboardType}
+          autoCapitalize={keyboardType === "email-address" ? "none" : "words"}
+          autoCorrect={false}
+          placeholder={label}
+          placeholderTextColor="#94A3B8"
+        />
+      </View>
+    </View>
+  );
 }
 
 function SettingRow({
@@ -518,14 +671,19 @@ function SettingRow({
   subtitle,
   value,
   onValueChange,
+  icon,
 }: {
   title: string;
   subtitle: string;
   value: boolean;
   onValueChange: (value: boolean) => void;
+  icon: keyof typeof Ionicons.glyphMap;
 }) {
   return (
     <View style={styles.settingRow}>
+      <View style={styles.settingIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.primaryDark} />
+      </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.settingTitle}>{title}</Text>
         <Text style={styles.settingSub}>{subtitle}</Text>
@@ -535,18 +693,41 @@ function SettingRow({
   );
 }
 
-function RouteButton({ title, onPress }: { title: string; onPress: () => void }) {
+function RouteButton({
+  title,
+  icon,
+  onPress,
+}: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
   return (
-    <Pressable style={({ pressed }) => [styles.routeButton, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable
+      style={({ pressed }) => [styles.routeButton, pressed && styles.pressed]}
+      onPress={onPress}
+    >
+      <View style={styles.routeIcon}>
+        <Ionicons name={icon} size={18} color={COLORS.primaryDark} />
+      </View>
       <Text style={styles.routeButtonText}>{title}</Text>
-      <Text style={styles.routeArrow}>›</Text>
+      <Ionicons name="chevron-forward-outline" size={18} color={COLORS.muted} />
     </Pressable>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
   return (
     <View style={styles.statCard}>
+      <Ionicons name={icon} size={18} color={COLORS.primaryDark} />
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
@@ -555,7 +736,8 @@ function StatCard({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 16, paddingBottom: 40 },
+  content: { padding: 16, paddingBottom: 90 },
+
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -563,108 +745,253 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   centerText: { marginTop: 10, color: COLORS.primary, fontWeight: "800" },
+
   header: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 14,
-    gap: 10,
-  },
-  title: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
-  subtitle: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-    marginTop: 2,
-    lineHeight: 17,
-  },
-  headerButton: {
-    backgroundColor: COLORS.dark,
-    borderRadius: 12,
-    paddingHorizontal: 13,
-    paddingVertical: 10,
-  },
-  headerButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
-  heroCard: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
+    marginBottom: 14,
   },
-  farmInitialBox: {
-    width: 62,
-    height: 62,
-    borderRadius: 18,
-    backgroundColor: COLORS.dark,
+  backButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  farmInitial: { color: "#FFFFFF", fontWeight: "900", fontSize: 25 },
-  heroTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 21 },
+  eyebrow: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    fontSize: 12,
+  },
+  title: {
+    color: COLORS.text,
+    fontSize: 28,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  subtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 19,
+    marginTop: 4,
+  },
+
+  heroCard: {
+    backgroundColor: COLORS.primaryDark,
+    borderRadius: 28,
+    padding: 18,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 13,
+  },
+  farmInitialBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  farmInitial: { color: COLORS.white, fontWeight: "900", fontSize: 26 },
+  heroBadge: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    fontSize: 11,
+  },
+  heroTitle: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 22,
+    marginTop: 4,
+  },
   heroSub: { color: "#EAF7E6", fontWeight: "700", marginTop: 4 },
-  heroMeta: { color: "#EAF7E6", fontWeight: "900", marginTop: 6, fontSize: 12 },
+  heroMeta: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    marginTop: 6,
+    fontSize: 12,
+  },
+
+  flowCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  flowTitle: { color: COLORS.text, fontWeight: "900", fontSize: 19 },
+  flowStep: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  flowNumber: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    backgroundColor: COLORS.soft,
+    color: COLORS.primaryDark,
+    textAlign: "center",
+    textAlignVertical: "center",
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+  flowText: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+
+  readinessCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  readinessHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  readinessTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  readinessPercent: { color: COLORS.primaryDark, fontWeight: "900" },
+  progressTrack: {
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.soft,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: COLORS.primary,
+    borderRadius: 999,
+  },
+  readinessText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 9,
+  },
+
   statsRow: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   statCard: {
     flex: 1,
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 18,
+    padding: 13,
   },
-  statValue: { color: COLORS.primary, fontWeight: "900", fontSize: 14 },
-  statLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 4, fontSize: 11 },
+  statValue: {
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+    fontSize: 15,
+    marginTop: 7,
+  },
+  statLabel: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 3,
+    fontSize: 11,
+  },
+
   card: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 24,
+    padding: 16,
+    marginBottom: 14,
   },
-  sectionTitle: { color: COLORS.text, fontSize: 18, fontWeight: "900", marginBottom: 10 },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 14,
+  },
+  sectionIcon: {
+    width: 43,
+    height: 43,
+    borderRadius: 16,
+    backgroundColor: COLORS.soft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    fontSize: 12,
+    marginBottom: 3,
+  },
+  sectionTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
   sectionSub: {
     color: COLORS.muted,
     fontWeight: "700",
-    lineHeight: 18,
-    fontSize: 12,
-    marginBottom: 10,
+    lineHeight: 19,
+    marginTop: 3,
   },
+
+  fieldWrap: { marginBottom: 12 },
   label: {
-    color: COLORS.muted,
+    color: COLORS.text,
     fontWeight: "900",
-    fontSize: 12,
-    marginBottom: 5,
-    marginTop: 6,
+    fontSize: 13,
+    marginBottom: 7,
   },
-  input: {
+  inputShell: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: COLORS.text,
-    fontWeight: "700",
-    marginBottom: 6,
+    borderRadius: 17,
+    minHeight: 54,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
   },
+  input: {
+    flex: 1,
+    minHeight: 52,
+    color: COLORS.text,
+    fontWeight: "800",
+  },
+
   settingRow: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
+    borderRadius: 18,
+    padding: 13,
+    marginBottom: 10,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 11,
+  },
+  settingIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 15,
+    backgroundColor: COLORS.card,
+    alignItems: "center",
+    justifyContent: "center",
   },
   settingTitle: { color: COLORS.text, fontWeight: "900", fontSize: 14 },
   settingSub: {
@@ -674,57 +1001,114 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginTop: 3,
   },
+
   rateRow: { flexDirection: "row", gap: 10 },
   rateField: { flex: 1 },
+
   secondaryAction: {
-    backgroundColor: COLORS.primaryDark,
-    borderRadius: 12,
-    paddingVertical: 12,
+    backgroundColor: COLORS.primary,
+    borderRadius: 17,
+    minHeight: 52,
     alignItems: "center",
-    marginTop: 8,
-    marginBottom: 10,
-  },
-  secondaryActionText: { color: "#FFFFFF", fontWeight: "900" },
-  emptyText: { color: COLORS.muted, fontWeight: "700", textAlign: "center", marginTop: 8 },
-  driverRow: {
-    backgroundColor: COLORS.soft,
-    borderRadius: 12,
-    padding: 12,
+    justifyContent: "center",
     flexDirection: "row",
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  secondaryActionText: { color: COLORS.white, fontWeight: "900" },
+
+  emptyBox: {
+    backgroundColor: COLORS.soft,
+    borderRadius: 18,
+    padding: 18,
     alignItems: "center",
-    marginTop: 8,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  driverName: { color: COLORS.text, fontWeight: "900" },
-  driverMeta: { color: COLORS.muted, fontWeight: "700", fontSize: 12, marginTop: 3 },
-  removeButton: {
-    backgroundColor: "#FEE2E2",
-    borderRadius: 10,
-    paddingHorizontal: 11,
-    paddingVertical: 8,
+  emptyEmoji: { fontSize: 36 },
+  emptyTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+    marginTop: 7,
   },
-  removeButtonText: { color: "#991B1B", fontWeight: "900", fontSize: 12 },
+  emptyText: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 20,
+    marginTop: 5,
+  },
+
+  driverRow: {
+    backgroundColor: COLORS.soft,
+    borderRadius: 18,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 9,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 10,
+  },
+  driverInitialBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: COLORS.primaryDark,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  driverInitial: { color: COLORS.white, fontWeight: "900", fontSize: 18 },
+  driverName: { color: COLORS.text, fontWeight: "900" },
+  driverMeta: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 12,
+    marginTop: 3,
+  },
+  removeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: COLORS.dangerSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   routeButton: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
+    borderRadius: 17,
     padding: 13,
-    marginBottom: 8,
+    marginBottom: 9,
     flexDirection: "row",
     alignItems: "center",
+    gap: 10,
+  },
+  routeIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    backgroundColor: COLORS.card,
+    alignItems: "center",
+    justifyContent: "center",
   },
   routeButtonText: { flex: 1, color: COLORS.text, fontWeight: "900" },
-  routeArrow: { color: COLORS.muted, fontSize: 22, fontWeight: "900" },
+
   saveButton: {
     backgroundColor: COLORS.primary,
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 18,
+    minHeight: 56,
     alignItems: "center",
-    marginTop: 4,
+    justifyContent: "center",
+    marginTop: 2,
+    flexDirection: "row",
+    gap: 8,
   },
-  saveButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 15 },
+  saveButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
   disabled: { opacity: 0.6 },
   pressed: { opacity: 0.75 },
 });

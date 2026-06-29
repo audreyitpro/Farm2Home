@@ -1,6 +1,6 @@
 // app/farmer/driver-chat.tsx
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,9 +17,23 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../services/supabaseClient";
-import freightTheme from "../styles/freightTheme";
+
+const COLORS = {
+  bg: "#F6F8F2",
+  card: "#FFFFFF",
+  text: "#162115",
+  muted: "#667085",
+  border: "#E3E8DD",
+  green: "#1FA463",
+  greenDark: "#0B5D35",
+  greenSoft: "#E9F8EF",
+  dark: "#111827",
+  white: "#FFFFFF",
+  orangeSoft: "#FFF3DE",
+};
 
 function getParamString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0] || "";
@@ -35,9 +49,13 @@ export default function FarmerDriverChatScreen() {
 
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+
   const [farmerId, setFarmerId] = useState("");
+  const [farmName, setFarmName] = useState("Farm2Home Farm");
+
   const [driverId, setDriverId] = useState(driverIdParam || "");
   const [driverName, setDriverName] = useState("Assigned Driver");
+
   const [messages, setMessages] = useState<any[]>([]);
   const [message, setMessage] = useState("");
 
@@ -45,12 +63,20 @@ export default function FarmerDriverChatScreen() {
     initialize();
   }, []);
 
+  const chatTitle = useMemo(() => {
+    if (orderId) return `Order #${orderId.slice(-8)}`;
+    if (deliveryOrderId) return `Delivery #${deliveryOrderId.slice(-8)}`;
+    return "General Driver Coordination";
+  }, [orderId, deliveryOrderId]);
+
   async function initialize() {
     try {
       setLoading(true);
 
       const saved =
         (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
         (await AsyncStorage.getItem("currentUser"));
 
       if (!saved) {
@@ -59,7 +85,7 @@ export default function FarmerDriverChatScreen() {
       }
 
       const farmer = JSON.parse(saved);
-      const id = farmer.id || farmer.farmerId;
+      const id = farmer.id || farmer.farmerId || farmer.farmer_id || farmer.profile_id;
 
       if (!id) {
         router.replace("/farmer/login" as any);
@@ -67,6 +93,13 @@ export default function FarmerDriverChatScreen() {
       }
 
       setFarmerId(id);
+      setFarmName(
+        farmer.farmName ||
+          farmer.farm_name ||
+          farmer.businessName ||
+          farmer.business_name ||
+          "Farm2Home Farm"
+      );
 
       const activeDriver = await resolveDriver(id);
       setDriverId(activeDriver.id);
@@ -204,13 +237,25 @@ export default function FarmerDriverChatScreen() {
     } as any);
   }
 
+  function openAssignedDrivers() {
+    router.push("/farmer/assigned-drivers" as any);
+  }
+
+  function openDeliveryOrders() {
+    router.push("/farmer/delivery-orders" as any);
+  }
+
+  function quickMessage(text: string) {
+    setMessage(text);
+  }
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor="#020617" />
+        <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#10B981" />
-          <Text style={styles.centerText}>Loading driver chat...</Text>
+          <ActivityIndicator size="large" color={COLORS.green} />
+          <Text style={styles.centerText}>Loading driver coordination...</Text>
         </View>
       </SafeAreaView>
     );
@@ -218,7 +263,7 @@ export default function FarmerDriverChatScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#020617" />
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -226,27 +271,76 @@ export default function FarmerDriverChatScreen() {
       >
         <View style={styles.header}>
           <Pressable style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backText}>‹</Text>
+            <Ionicons name="arrow-back-outline" size={22} color={COLORS.text} />
           </Pressable>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.eyebrow}>Farmer Operations</Text>
+            <Text style={styles.eyebrow}>Farmer Delivery Operations</Text>
             <Text style={styles.title}>Driver Chat</Text>
             <Text style={styles.subtitle}>
-              {driverName} · {orderId ? `Order ${orderId.slice(-8)}` : "General coordination"}
+              {farmName} · {chatTitle}
             </Text>
           </View>
+        </View>
 
-          <Pressable style={styles.trackButton} onPress={openTracking}>
-            <Text style={styles.trackButtonText}>Track</Text>
+        <View style={styles.heroCard}>
+          <View style={styles.driverIcon}>
+            <Ionicons name="car-outline" size={26} color={COLORS.white} />
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={styles.heroBadge}>Assigned Driver</Text>
+            <Text style={styles.driverName}>{driverName}</Text>
+            <Text style={styles.heroSub}>
+              Coordinate pickup, route changes, delivery proof, and customer updates.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.contextCard}>
+          <InfoPill label="Driver" value={driverId || "Not assigned"} />
+          <InfoPill label="Delivery" value={deliveryOrderId || "Not linked"} />
+          <InfoPill label="Order" value={orderId || "General"} />
+        </View>
+
+        <View style={styles.actionRow}>
+          <Pressable style={styles.actionButton} onPress={openTracking}>
+            <Ionicons name="navigate-outline" size={16} color={COLORS.greenDark} />
+            <Text style={styles.actionText}>Track</Text>
+          </Pressable>
+
+          <Pressable style={styles.actionButton} onPress={openAssignedDrivers}>
+            <Ionicons name="people-outline" size={16} color={COLORS.greenDark} />
+            <Text style={styles.actionText}>Drivers</Text>
+          </Pressable>
+
+          <Pressable style={styles.actionButton} onPress={openDeliveryOrders}>
+            <Ionicons name="cube-outline" size={16} color={COLORS.greenDark} />
+            <Text style={styles.actionText}>Orders</Text>
           </Pressable>
         </View>
 
-        <View style={styles.metaBar}>
-          <Text style={styles.metaText}>Driver ID: {driverId || "Not assigned"}</Text>
-          <Text style={styles.metaText}>
-            Delivery ID: {deliveryOrderId || "Not linked"}
-          </Text>
+        <View style={styles.quickRow}>
+          <Pressable
+            style={styles.quickChip}
+            onPress={() => quickMessage("Please confirm pickup time and location.")}
+          >
+            <Text style={styles.quickText}>Confirm pickup</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickChip}
+            onPress={() => quickMessage("Please send an update when the order is out for delivery.")}
+          >
+            <Text style={styles.quickText}>Out for delivery</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickChip}
+            onPress={() => quickMessage("Please upload proof of delivery once completed.")}
+          >
+            <Text style={styles.quickText}>Proof needed</Text>
+          </Pressable>
         </View>
 
         <FlatList
@@ -255,9 +349,10 @@ export default function FarmerDriverChatScreen() {
           contentContainerStyle={styles.messageList}
           ListEmptyComponent={
             <View style={styles.emptyCard}>
+              <Text style={styles.emptyEmoji}>💬</Text>
               <Text style={styles.emptyTitle}>No messages yet</Text>
               <Text style={styles.emptyText}>
-                Start a professional delivery conversation with the assigned driver.
+                Start the delivery conversation with the assigned driver.
               </Text>
             </View>
           }
@@ -285,7 +380,7 @@ export default function FarmerDriverChatScreen() {
         <View style={styles.inputBar}>
           <TextInput
             style={styles.input}
-            placeholder="Type driver message..."
+            placeholder="Message the assigned driver..."
             placeholderTextColor="#94A3B8"
             value={message}
             onChangeText={setMessage}
@@ -298,9 +393,9 @@ export default function FarmerDriverChatScreen() {
             disabled={sending}
           >
             {sending ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={COLORS.white} />
             ) : (
-              <Text style={styles.sendText}>Send</Text>
+              <Ionicons name="send-outline" size={20} color={COLORS.white} />
             )}
           </Pressable>
         </View>
@@ -309,135 +404,240 @@ export default function FarmerDriverChatScreen() {
   );
 }
 
+function InfoPill({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoPill}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: freightTheme.colors.background },
-  keyboard: { flex: 1, backgroundColor: freightTheme.colors.background },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+
   center: {
     flex: 1,
-    backgroundColor: freightTheme.colors.background,
+    backgroundColor: COLORS.bg,
     alignItems: "center",
     justifyContent: "center",
   },
-  centerText: { color: "#CBD5E1", marginTop: 10, fontWeight: "800" },
+  centerText: { color: COLORS.muted, marginTop: 10, fontWeight: "800" },
+
   header: {
-    backgroundColor: "#020617",
-    paddingTop: 18,
     paddingHorizontal: 16,
-    paddingBottom: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E293B",
+    paddingVertical: 14,
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
     alignItems: "center",
   },
   backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: "#111827",
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  backText: { color: "#FFFFFF", fontSize: 28, fontWeight: "900", marginTop: -4 },
   eyebrow: {
-    color: "#10B981",
+    color: COLORS.green,
     fontWeight: "900",
     fontSize: 11,
     textTransform: "uppercase",
     letterSpacing: 1,
   },
-  title: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 3 },
-  subtitle: { color: "#CBD5E1", fontWeight: "700", fontSize: 12, marginTop: 2 },
-  trackButton: {
-    backgroundColor: "#10B981",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+  title: { color: COLORS.text, fontSize: 24, fontWeight: "900", marginTop: 2 },
+  subtitle: { color: COLORS.muted, fontWeight: "700", fontSize: 12, marginTop: 2 },
+
+  heroCard: {
+    backgroundColor: COLORS.greenDark,
+    marginHorizontal: 16,
+    borderRadius: 24,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  trackButtonText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12 },
-  metaBar: {
-    backgroundColor: freightTheme.colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: freightTheme.colors.border,
+  driverIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroBadge: {
+    color: "#BBF7D0",
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  driverName: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 20,
+    marginTop: 3,
+  },
+  heroSub: {
+    color: "#DCFCE7",
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 4,
+  },
+
+  contextCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     padding: 10,
-    gap: 3,
+    gap: 8,
   },
-  metaText: { color: freightTheme.colors.mutedText, fontWeight: "800", fontSize: 11 },
+  infoPill: {
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 14,
+    padding: 10,
+  },
+  infoLabel: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  infoValue: {
+    color: COLORS.text,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+
+  actionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+  },
+  actionButton: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    paddingVertical: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  actionText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+
+  quickRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+  },
+  quickChip: {
+    backgroundColor: COLORS.orangeSoft,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  quickText: {
+    color: "#92400E",
+    fontWeight: "900",
+    fontSize: 12,
+  },
+
   messageList: { padding: 16, paddingBottom: 100 },
   emptyCard: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    borderRadius: 16,
-    padding: 20,
+    borderColor: COLORS.border,
+    borderRadius: 20,
+    padding: 22,
     alignItems: "center",
   },
-  emptyTitle: { color: freightTheme.colors.text, fontWeight: "900", fontSize: 18 },
+  emptyEmoji: { fontSize: 38 },
+  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18, marginTop: 8 },
   emptyText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontWeight: "700",
     textAlign: "center",
     marginTop: 6,
+    lineHeight: 20,
   },
+
   bubble: {
     alignSelf: "flex-start",
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: freightTheme.colors.border,
-    borderRadius: 14,
+    borderColor: COLORS.border,
+    borderRadius: 18,
     padding: 12,
     marginBottom: 10,
     maxWidth: "84%",
   },
   myBubble: {
     alignSelf: "flex-end",
-    backgroundColor: freightTheme.colors.primary,
-    borderColor: freightTheme.colors.primary,
+    backgroundColor: COLORS.green,
+    borderColor: COLORS.green,
   },
-  sender: { color: freightTheme.colors.mutedText, fontSize: 11, fontWeight: "900" },
-  mySender: { color: "#BBF7D0" },
+  sender: { color: COLORS.muted, fontSize: 11, fontWeight: "900" },
+  mySender: { color: "#DDF8C8" },
   messageText: {
-    color: freightTheme.colors.text,
+    color: COLORS.text,
     fontWeight: "700",
-    lineHeight: 19,
+    lineHeight: 20,
     marginTop: 4,
   },
-  myMessageText: { color: "#FFFFFF" },
+  myMessageText: { color: COLORS.white },
   timeText: {
-    color: freightTheme.colors.mutedText,
+    color: COLORS.muted,
     fontSize: 10,
     marginTop: 6,
     fontWeight: "700",
   },
-  myTimeText: { color: "#D1FAE5" },
+  myTimeText: { color: "#DDF8C8" },
+
   inputBar: {
-    backgroundColor: freightTheme.colors.card,
+    backgroundColor: COLORS.card,
     borderTopWidth: 1,
-    borderTopColor: freightTheme.colors.border,
+    borderTopColor: COLORS.border,
     padding: 12,
     flexDirection: "row",
     gap: 8,
   },
   input: {
     flex: 1,
-    minHeight: 44,
-    maxHeight: 100,
-    backgroundColor: "#FFFFFF",
+    minHeight: 46,
+    maxHeight: 110,
+    backgroundColor: "#F9FAFB",
     borderWidth: 1,
     borderColor: "#CBD5E1",
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    borderRadius: 16,
+    paddingHorizontal: 13,
     paddingVertical: 10,
-    color: "#111827",
-    fontWeight: "700",
+    color: COLORS.text,
+    fontWeight: "800",
   },
   sendButton: {
-    backgroundColor: freightTheme.colors.primary,
-    borderRadius: 12,
-    paddingHorizontal: 16,
+    width: 48,
+    borderRadius: 16,
+    backgroundColor: COLORS.green,
     justifyContent: "center",
     alignItems: "center",
   },
-  sendText: { color: "#FFFFFF", fontWeight: "900" },
   disabledButton: { opacity: 0.65 },
 });

@@ -1,3 +1,5 @@
+// app/farmer/revenue-analytics.tsx
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -8,7 +10,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../services/supabaseClient";
 import farmTheme from "../styles/farmTheme";
@@ -36,7 +40,11 @@ type FarmerPayout = {
   created_at: string;
 };
 
-const FARMER_EMAIL = "sunnybrook@test.com";
+const periods: Period[] = ["Today", "This Week", "This Month", "This Year"];
+
+function money(value: any) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
 
 function isWithinPeriod(dateValue: string, period: Period) {
   const date = new Date(dateValue);
@@ -44,30 +52,25 @@ function isWithinPeriod(dateValue: string, period: Period) {
 
   if (Number.isNaN(date.getTime())) return false;
 
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
+  const start = new Date(now);
 
   if (period === "Today") {
-    return date >= startOfToday;
+    start.setHours(0, 0, 0, 0);
+    return date >= start;
   }
 
   if (period === "This Week") {
-    const startOfWeek = new Date(now);
-    const day = startOfWeek.getDay();
-    startOfWeek.setDate(startOfWeek.getDate() - day);
-    startOfWeek.setHours(0, 0, 0, 0);
-
-    return date >= startOfWeek;
+    start.setDate(start.getDate() - start.getDay());
+    start.setHours(0, 0, 0, 0);
+    return date >= start;
   }
 
   if (period === "This Month") {
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    return date >= startOfMonth;
+    return date >= new Date(now.getFullYear(), now.getMonth(), 1);
   }
 
   if (period === "This Year") {
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    return date >= startOfYear;
+    return date >= new Date(now.getFullYear(), 0, 1);
   }
 
   return true;
@@ -78,21 +81,81 @@ export default function RevenueAnalytics() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [farmerProfile, setFarmerProfile] = useState<FarmerProfile | null>(
-    null
-  );
+  const [farmerProfile, setFarmerProfile] = useState<FarmerProfile | null>(null);
   const [payouts, setPayouts] = useState<FarmerPayout[]>([]);
 
-  const periods: Period[] = ["Today", "This Week", "This Month", "This Year"];
+  useFocusEffect(
+    useCallback(() => {
+      loadRevenueAnalytics();
+    }, [])
+  );
 
-  const loadRevenueAnalytics = async () => {
+  const filteredPayouts = useMemo(() => {
+    return payouts.filter((item) => isWithinPeriod(item.created_at, period));
+  }, [payouts, period]);
+
+  const totals = useMemo(() => {
+    const gross = filteredPayouts.reduce(
+      (sum, item) => sum + Number(item.gross_amount || 0),
+      0
+    );
+
+    const net = filteredPayouts.reduce(
+      (sum, item) => sum + Number(item.net_amount || 0),
+      0
+    );
+
+    const fees = filteredPayouts.reduce(
+      (sum, item) => sum + Number(item.platform_fee || 0),
+      0
+    );
+
+    const average = filteredPayouts.length ? net / filteredPayouts.length : 0;
+
+    return {
+      gross,
+      net,
+      fees,
+      average,
+      orders: filteredPayouts.length,
+    };
+  }, [filteredPayouts]);
+
+  const feeRate = totals.gross > 0 ? (totals.fees / totals.gross) * 100 : 0;
+
+  async function readCurrentFarmerEmail() {
+    const saved =
+      (await AsyncStorage.getItem("currentFarmer")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
+      (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
+      (await AsyncStorage.getItem("currentUser"));
+
+    if (!saved) return "";
+
+    try {
+      const farmer = JSON.parse(saved);
+      return String(farmer.email || farmer.farmer_email || "").trim().toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+
+  async function loadRevenueAnalytics() {
     try {
       setLoading(true);
+
+      const farmerEmail = await readCurrentFarmerEmail();
+
+      if (!farmerEmail) {
+        setFarmerProfile(null);
+        setPayouts([]);
+        return;
+      }
 
       const { data: profileData, error: profileError } = await supabase
         .from("farmer_profiles")
         .select("*")
-        .eq("farmer_email", FARMER_EMAIL)
+        .eq("farmer_email", farmerEmail)
         .single();
 
       if (profileError) {
@@ -125,54 +188,18 @@ export default function RevenueAnalytics() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }
 
-  useFocusEffect(
-    useCallback(() => {
-      loadRevenueAnalytics();
-    }, [])
-  );
-
-  const filteredPayouts = useMemo(() => {
-    return payouts.filter((item) => isWithinPeriod(item.created_at, period));
-  }, [payouts, period]);
-
-  const totalGross = useMemo(() => {
-    return filteredPayouts.reduce(
-      (sum, item) => sum + Number(item.gross_amount || 0),
-      0
-    );
-  }, [filteredPayouts]);
-
-  const totalNet = useMemo(() => {
-    return filteredPayouts.reduce(
-      (sum, item) => sum + Number(item.net_amount || 0),
-      0
-    );
-  }, [filteredPayouts]);
-
-  const totalPlatformFees = useMemo(() => {
-    return filteredPayouts.reduce(
-      (sum, item) => sum + Number(item.platform_fee || 0),
-      0
-    );
-  }, [filteredPayouts]);
-
-  const averagePayout = useMemo(() => {
-    if (filteredPayouts.length === 0) return 0;
-    return totalNet / filteredPayouts.length;
-  }, [filteredPayouts.length, totalNet]);
-
-  const onRefresh = async () => {
+  async function onRefresh() {
     setRefreshing(true);
     await loadRevenueAnalytics();
-  };
+  }
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={farmTheme.colors.primary} />
-        <Text style={styles.loadingText}>Loading revenue analytics...</Text>
+        <Text style={styles.loadingText}>Loading market revenue...</Text>
       </View>
     );
   }
@@ -186,11 +213,18 @@ export default function RevenueAnalytics() {
       }
     >
       <View style={styles.hero}>
-        <Text style={styles.eyebrow}>Farm2Home Farmer Analytics</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.push("/farmer/dashboard" as any)}
+        >
+          <Ionicons name="arrow-back-outline" size={22} color="#FFFFFF" />
+        </TouchableOpacity>
+
+        <Text style={styles.eyebrow}>Farm2Home Farmer Market</Text>
         <Text style={styles.title}>Revenue Analytics</Text>
         <Text style={styles.subtitle}>
-          Track Stripe payouts, farmer revenue, order earnings, and marketplace
-          performance.
+          Track market sales, Stripe payouts, platform fees, subscription orders,
+          and farmer business growth.
         </Text>
 
         <View style={styles.profileBadge}>
@@ -198,9 +232,17 @@ export default function RevenueAnalytics() {
             {farmerProfile?.farmer_name || "Farmer Profile Not Found"}
           </Text>
           <Text style={styles.profileSubText}>
-            {farmerProfile?.stripe_account_id || FARMER_EMAIL}
+            {farmerProfile?.stripe_account_id || "Stripe account not connected"}
           </Text>
         </View>
+      </View>
+
+      <View style={styles.flowCard}>
+        <Text style={styles.flowTitle}>Revenue Flow</Text>
+        <FlowStep number="1" text="Customer buys products or subscribes to bundles" />
+        <FlowStep number="2" text="Stripe collects payment and records order revenue" />
+        <FlowStep number="3" text="Farm2Home platform fee is deducted" />
+        <FlowStep number="4" text="Farmer net payout is transferred through Stripe Connect" />
       </View>
 
       <Text style={styles.sectionTitle}>Time Period</Text>
@@ -229,32 +271,72 @@ export default function RevenueAnalytics() {
       </ScrollView>
 
       <View style={styles.revenueCard}>
-        <Text style={styles.revenueLabel}>{period} Net Earnings</Text>
-        <Text style={styles.revenueNumber}>${totalNet.toFixed(2)}</Text>
+        <Text style={styles.revenueLabel}>{period} Net Farmer Earnings</Text>
+        <Text style={styles.revenueNumber}>{money(totals.net)}</Text>
         <Text style={styles.revenueSub}>
-          Actual farmer payout revenue from Stripe Connect transfers
+          Actual farmer payout revenue after platform fees.
         </Text>
+
+        <View style={styles.revenueMiniRow}>
+          <MiniMetric label="Paid Orders" value={String(totals.orders)} />
+          <MiniMetric label="Avg Payout" value={money(totals.average)} />
+        </View>
       </View>
 
       <View style={styles.statsGrid}>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>${totalGross.toFixed(2)}</Text>
-          <Text style={styles.statLabel}>Gross Payouts</Text>
-        </View>
+        <StatBox
+          label="Gross Sales"
+          value={money(totals.gross)}
+          icon="cash-outline"
+        />
+        <StatBox
+          label="Net Payouts"
+          value={money(totals.net)}
+          icon="wallet-outline"
+        />
+        <StatBox
+          label="Platform Fees"
+          value={money(totals.fees)}
+          icon="pricetag-outline"
+        />
+        <StatBox
+          label="Fee Rate"
+          value={`${feeRate.toFixed(1)}%`}
+          icon="analytics-outline"
+        />
+      </View>
 
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>${averagePayout.toFixed(2)}</Text>
-          <Text style={styles.statLabel}>Avg Payout</Text>
-        </View>
+      <View style={styles.actionCard}>
+        <Text style={styles.actionTitle}>Use revenue to grow your farm</Text>
+        <Text style={styles.actionText}>
+          Review which orders paid out, compare fees, and use your best-selling
+          products to build higher-value bundles.
+        </Text>
 
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{filteredPayouts.length}</Text>
-          <Text style={styles.statLabel}>Paid Orders</Text>
-        </View>
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push("/farmer/inventory-management" as any)}
+          >
+            <Ionicons name="basket-outline" size={17} color={farmTheme.colors.primary} />
+            <Text style={styles.actionButtonText}>Products</Text>
+          </TouchableOpacity>
 
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>${totalPlatformFees.toFixed(2)}</Text>
-          <Text style={styles.statLabel}>Platform Fees</Text>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push("/farmer/farm-bundles" as any)}
+          >
+            <Ionicons name="cube-outline" size={17} color={farmTheme.colors.primary} />
+            <Text style={styles.actionButtonText}>Bundles</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push("/farmer/orders" as any)}
+          >
+            <Ionicons name="receipt-outline" size={17} color={farmTheme.colors.primary} />
+            <Text style={styles.actionButtonText}>Orders</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -262,71 +344,111 @@ export default function RevenueAnalytics() {
 
       {filteredPayouts.length === 0 ? (
         <View style={styles.emptyCard}>
+          <Text style={styles.emptyEmoji}>💸</Text>
           <Text style={styles.emptyTitle}>No payouts found</Text>
           <Text style={styles.emptyText}>
-            This farmer has no payouts for {period.toLowerCase()}.
+            No farmer payouts were found for {period.toLowerCase()}. Once
+            customer orders or subscriptions are paid, payouts will appear here.
           </Text>
         </View>
       ) : (
         filteredPayouts.map((payout) => (
           <View key={payout.id} style={styles.saleCard}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.saleProduct}>{payout.farmer_name}</Text>
+              <View style={styles.saleHeader}>
+                <Text style={styles.saleProduct}>Order #{payout.order_id}</Text>
+                <Text style={styles.statusPill}>{payout.payout_status}</Text>
+              </View>
 
               <Text style={styles.saleMeta}>
-                Order: {payout.order_id}
-              </Text>
-
-              <Text style={styles.saleMeta}>
-                Transfer: {payout.stripe_transfer_id}
-              </Text>
-
-              <Text style={styles.saleMeta}>
-                Status: {payout.payout_status}
+                Transfer: {payout.stripe_transfer_id || "Pending transfer"}
               </Text>
 
               <Text style={styles.saleDate}>
                 {new Date(payout.created_at).toLocaleString()}
               </Text>
+
+              <View style={styles.payoutRow}>
+                <Text style={styles.payoutSmall}>
+                  Gross {money(payout.gross_amount)}
+                </Text>
+                <Text style={styles.payoutSmall}>
+                  Fee {money(payout.platform_fee)}
+                </Text>
+              </View>
             </View>
 
             <View style={styles.amountBox}>
               <Text style={styles.saleRevenue}>
-                ${Number(payout.net_amount || 0).toFixed(2)}
+                {money(payout.net_amount)}
               </Text>
-
-              <Text style={styles.grossText}>
-                Gross ${Number(payout.gross_amount || 0).toFixed(2)}
-              </Text>
+              <Text style={styles.grossText}>Net payout</Text>
             </View>
           </View>
         ))
       )}
 
       <View style={styles.aiCard}>
-        <Text style={styles.aiTitle}>AI Revenue Insights</Text>
+        <Text style={styles.aiTitle}>Farm Growth Insights</Text>
         <Text style={styles.aiText}>
-          Later this can forecast weekly sales, compare farm performance,
-          identify best-selling products, and recommend pricing adjustments.
+          Based on this period, use your revenue data to decide what products to
+          restock, which bundles to promote, and whether to adjust pricing.
         </Text>
 
         <Text style={styles.aiItem}>
-          • {farmerProfile?.farmer_name || "This farmer"} has{" "}
-          {filteredPayouts.length} paid payout record(s) for {period}.
+          • {totals.orders} paid payout record(s) found for {period}.
         </Text>
         <Text style={styles.aiItem}>
-          • Total net earnings for this period: ${totalNet.toFixed(2)}
+          • Net farmer earnings: {money(totals.net)}.
         </Text>
         <Text style={styles.aiItem}>
-          • Average payout amount: ${averagePayout.toFixed(2)}
+          • Average payout per paid order: {money(totals.average)}.
         </Text>
         <Text style={styles.aiItem}>
-          • Stripe transfer IDs are now saved for payout reconciliation.
+          • Platform fees for this period: {money(totals.fees)}.
         </Text>
       </View>
 
       <View style={{ height: 90 }} />
     </ScrollView>
+  );
+}
+
+function FlowStep({ number, text }: { number: string; text: string }) {
+  return (
+    <View style={styles.flowStep}>
+      <Text style={styles.flowNumber}>{number}</Text>
+      <Text style={styles.flowText}>{text}</Text>
+    </View>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.miniMetric}>
+      <Text style={styles.miniValue}>{value}</Text>
+      <Text style={styles.miniLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function StatBox({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={styles.statBox}>
+      <View style={styles.statIcon}>
+        <Ionicons name={icon} size={18} color={farmTheme.colors.primary} />
+      </View>
+      <Text style={styles.statNumber}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
   );
 }
 
@@ -348,14 +470,35 @@ const styles = StyleSheet.create({
 
   hero: {
     backgroundColor: farmTheme.colors.primary,
-    paddingTop: 64,
+    paddingTop: 58,
     paddingHorizontal: 20,
     paddingBottom: 30,
   },
 
-  eyebrow: { color: "#D1FAE5", fontWeight: "900", marginBottom: 8 },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
 
-  title: { color: "#FFFFFF", fontSize: 35, fontWeight: "900", marginBottom: 10 },
+  eyebrow: {
+    color: "#D1FAE5",
+    fontWeight: "900",
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+
+  title: {
+    color: "#FFFFFF",
+    fontSize: 35,
+    fontWeight: "900",
+    marginBottom: 10,
+  },
 
   subtitle: { color: "#E8F5E9", fontWeight: "700", lineHeight: 23 },
 
@@ -376,6 +519,49 @@ const styles = StyleSheet.create({
     color: "#D1FAE5",
     fontWeight: "700",
     marginTop: 4,
+  },
+
+  flowCard: {
+    backgroundColor: "#FFFFFF",
+    margin: 18,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: farmTheme.colors.border,
+    ...farmTheme.shadow,
+  },
+
+  flowTitle: {
+    color: farmTheme.colors.text,
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: 12,
+  },
+
+  flowStep: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 10,
+    alignItems: "center",
+  },
+
+  flowNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 13,
+    backgroundColor: "#E9F8EF",
+    color: farmTheme.colors.primary,
+    fontWeight: "900",
+    textAlign: "center",
+    textAlignVertical: "center",
+    overflow: "hidden",
+  },
+
+  flowText: {
+    flex: 1,
+    color: farmTheme.colors.text,
+    fontWeight: "800",
+    lineHeight: 20,
   },
 
   sectionTitle: {
@@ -426,6 +612,32 @@ const styles = StyleSheet.create({
 
   revenueSub: { color: "#D1FAE5", fontWeight: "700", marginTop: 8 },
 
+  revenueMiniRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+
+  miniMetric: {
+    flex: 1,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: 16,
+    padding: 12,
+  },
+
+  miniValue: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    fontSize: 18,
+  },
+
+  miniLabel: {
+    color: "#BBF7D0",
+    fontWeight: "800",
+    marginTop: 4,
+    fontSize: 12,
+  },
+
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -443,6 +655,16 @@ const styles = StyleSheet.create({
     ...farmTheme.shadow,
   },
 
+  statIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 15,
+    backgroundColor: "#E9F8EF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+
   statNumber: {
     color: farmTheme.colors.primary,
     fontSize: 22,
@@ -455,24 +677,88 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
+  actionCard: {
+    backgroundColor: "#FFFFFF",
+    margin: 18,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: farmTheme.colors.border,
+    ...farmTheme.shadow,
+  },
+
+  actionTitle: {
+    color: farmTheme.colors.text,
+    fontWeight: "900",
+    fontSize: 20,
+  },
+
+  actionText: {
+    color: farmTheme.colors.mutedText,
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
+  },
+
+  actionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 14,
+  },
+
+  actionButton: {
+    backgroundColor: "#E9F8EF",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
+
+  actionButtonText: {
+    color: farmTheme.colors.primary,
+    fontWeight: "900",
+  },
+
   saleCard: {
     backgroundColor: "#FFFFFF",
     marginHorizontal: 18,
     marginBottom: 12,
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
     borderColor: farmTheme.colors.border,
     flexDirection: "row",
     alignItems: "center",
+    ...farmTheme.shadow,
+  },
+
+  saleHeader: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
   },
 
   saleProduct: { color: farmTheme.colors.text, fontSize: 18, fontWeight: "900" },
 
+  statusPill: {
+    backgroundColor: "#E9F8EF",
+    color: farmTheme.colors.primary,
+    fontWeight: "900",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    fontSize: 11,
+  },
+
   saleMeta: {
     color: farmTheme.colors.mutedText,
     fontWeight: "700",
-    marginTop: 4,
+    marginTop: 6,
   },
 
   saleDate: {
@@ -482,6 +768,24 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
+  payoutRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+
+  payoutSmall: {
+    backgroundColor: "#F9FAFB",
+    color: farmTheme.colors.mutedText,
+    fontWeight: "800",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    fontSize: 11,
+  },
+
   amountBox: {
     alignItems: "flex-end",
     marginLeft: 12,
@@ -489,7 +793,7 @@ const styles = StyleSheet.create({
 
   saleRevenue: {
     color: farmTheme.colors.primary,
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: "900",
   },
 
@@ -503,16 +807,21 @@ const styles = StyleSheet.create({
   emptyCard: {
     backgroundColor: "#FFFFFF",
     marginHorizontal: 18,
-    borderRadius: 18,
-    padding: 20,
+    borderRadius: 22,
+    padding: 22,
     borderWidth: 1,
     borderColor: farmTheme.colors.border,
+    alignItems: "center",
+    ...farmTheme.shadow,
   },
+
+  emptyEmoji: { fontSize: 42 },
 
   emptyTitle: {
     color: farmTheme.colors.text,
     fontSize: 18,
     fontWeight: "900",
+    marginTop: 8,
   },
 
   emptyText: {
@@ -520,6 +829,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 8,
     lineHeight: 22,
+    textAlign: "center",
   },
 
   aiCard: {
@@ -530,9 +840,19 @@ const styles = StyleSheet.create({
     padding: 18,
   },
 
-  aiTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "900", marginBottom: 8 },
+  aiTitle: {
+    color: "#FFFFFF",
+    fontSize: 23,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
 
-  aiText: { color: "#BBF7D0", fontWeight: "700", lineHeight: 22, marginBottom: 12 },
+  aiText: {
+    color: "#BBF7D0",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginBottom: 12,
+  },
 
   aiItem: { color: "#D1FAE5", fontWeight: "800", lineHeight: 25 },
 });

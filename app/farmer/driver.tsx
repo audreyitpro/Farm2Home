@@ -1,542 +1,261 @@
-// app/farmer/driver.tsx
+// app/farmer/driver-chat.tsx
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Linking,
+  KeyboardAvoidingView,
   Platform,
-  RefreshControl,
+  Pressable,
   SafeAreaView,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, useFocusEffect } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL } from "../config/api";
 import { supabase } from "../services/supabaseClient";
-
-type FarmerDriver = {
-  id: string;
-  farmer_id: string;
-  driver_id?: string;
-  driver_name: string;
-  driver_email: string;
-  driver_phone?: string;
-  status?: string;
-  invite_status?: string;
-  created_at?: string;
-  updated_at?: string;
-};
-
-type FarmerSession = {
-  id: string;
-  farmer_id?: string;
-  full_name?: string;
-  name?: string;
-  farm_name?: string;
-  business_name?: string;
-  email?: string;
-  role?: string;
-};
 
 const COLORS = {
   bg: "#F6F8F2",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  text: "#111827",
+  text: "#162115",
   muted: "#667085",
-  border: "#E5E7EB",
-  green: "#15803D",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  amber: "#F59E0B",
-  amberSoft: "#FEF3C7",
-  red: "#DC2626",
-  redSoft: "#FEE2E2",
-  blue: "#2563EB",
-  blueSoft: "#DBEAFE",
-  black: "#111827",
+  border: "#E3E8DD",
+  green: "#1FA463",
+  greenDark: "#0B5D35",
+  greenSoft: "#E9F8EF",
+  dark: "#111827",
   white: "#FFFFFF",
+  orangeSoft: "#FFF3DE",
 };
 
-function clean(value: any) {
-  return String(value ?? "").trim();
+function getParamString(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0] || "";
+  return value || "";
 }
 
-function normalize(value: any) {
-  return clean(value).toLowerCase();
-}
+export default function FarmerDriverChatScreen() {
+  const params = useLocalSearchParams();
 
-function isEmail(value: string) {
-  return /\S+@\S+\.\S+/.test(value);
-}
+  const orderId = getParamString(params.orderId);
+  const deliveryOrderId = getParamString(params.deliveryOrderId || params.deliveryJobId);
+  const driverIdParam = getParamString(params.driverId);
 
-function titleCase(value: any) {
-  return clean(value)
-    .toLowerCase()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function getFarmerName(farmer: FarmerSession | null) {
-  return (
-    clean(farmer?.farm_name) ||
-    clean(farmer?.business_name) ||
-    clean(farmer?.full_name) ||
-    clean(farmer?.name) ||
-    "Farm2Home Farmer"
-  );
-}
-
-export default function FarmerDriversScreen() {
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
 
   const [farmerId, setFarmerId] = useState("");
-  const [farmerName, setFarmerName] = useState("Farm2Home Farmer");
+  const [farmName, setFarmName] = useState("Farm2Home Farm");
 
-  const [driverName, setDriverName] = useState("");
-  const [driverEmail, setDriverEmail] = useState("");
-  const [driverPhone, setDriverPhone] = useState("");
+  const [driverId, setDriverId] = useState(driverIdParam || "");
+  const [driverName, setDriverName] = useState("Assigned Driver");
 
-  const [drivers, setDrivers] = useState<FarmerDriver[]>([]);
-  const [search, setSearch] = useState("");
+  const [messages, setMessages] = useState<any[]>([]);
+  const [message, setMessage] = useState("");
 
-  useFocusEffect(
-    useCallback(() => {
-      initialize();
-    }, [])
-  );
+  useEffect(() => {
+    initialize();
+  }, []);
 
-  const filteredDrivers = useMemo(() => {
-    const term = normalize(search);
-
-    if (!term) return drivers;
-
-    return drivers.filter((driver) => {
-      return (
-        normalize(driver.driver_name).includes(term) ||
-        normalize(driver.driver_email).includes(term) ||
-        normalize(driver.driver_phone).includes(term) ||
-        normalize(driver.status).includes(term) ||
-        normalize(driver.invite_status).includes(term)
-      );
-    });
-  }, [drivers, search]);
-
-  const stats = useMemo(() => {
-    const active = drivers.filter((item) => isActiveDriver(item)).length;
-    const pending = drivers.filter((item) => normalize(item.invite_status || item.status).includes("pending")).length;
-
-    return {
-      total: drivers.length,
-      active,
-      pending,
-    };
-  }, [drivers]);
+  const chatTitle = useMemo(() => {
+    if (orderId) return `Order #${orderId.slice(-8)}`;
+    if (deliveryOrderId) return `Delivery #${deliveryOrderId.slice(-8)}`;
+    return "General Driver Coordination";
+  }, [orderId, deliveryOrderId]);
 
   async function initialize() {
     try {
       setLoading(true);
 
-      const currentFarmer = await getCurrentFarmer();
+      const saved =
+        (await AsyncStorage.getItem("currentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
+        (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
+        (await AsyncStorage.getItem("currentUser"));
 
-      if (!currentFarmer?.id) {
-        Alert.alert("Missing Farmer", "Farmer account not found. Please login again.");
+      if (!saved) {
         router.replace("/farmer/login" as any);
         return;
       }
 
-      setFarmerId(currentFarmer.id);
-      setFarmerName(getFarmerName(currentFarmer));
+      const farmer = JSON.parse(saved);
+      const id = farmer.id || farmer.farmerId || farmer.farmer_id || farmer.profile_id;
 
-      await loadDrivers(currentFarmer.id);
-    } catch (error) {
-      console.log("Initialize farmer drivers error:", error);
-      Alert.alert("Load Error", "Unable to load farmer driver screen.");
+      if (!id) {
+        router.replace("/farmer/login" as any);
+        return;
+      }
+
+      setFarmerId(id);
+      setFarmName(
+        farmer.farmName ||
+          farmer.farm_name ||
+          farmer.businessName ||
+          farmer.business_name ||
+          "Farm2Home Farm"
+      );
+
+      const activeDriver = await resolveDriver(id);
+      setDriverId(activeDriver.id);
+      setDriverName(activeDriver.name);
+
+      await loadMessages(id, activeDriver.id);
+    } catch (error: any) {
+      Alert.alert("Chat Error", error?.message || "Unable to load driver chat.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function getCurrentFarmer(): Promise<FarmerSession | null> {
-    const raw =
-      (await AsyncStorage.getItem("currentFarmer")) ||
-      (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
-      (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
-      (await AsyncStorage.getItem("currentUser"));
-
-    let parsed: any = null;
-
-    if (raw) {
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = null;
-      }
+  async function resolveDriver(activeFarmerId: string) {
+    if (driverIdParam) {
+      return { id: driverIdParam, name: "Assigned Driver" };
     }
 
-    if (parsed?.role && parsed.role !== "farmer") return null;
-
-    const { data: authData } = await supabase.auth.getUser();
-    const authUser = authData?.user;
-
-    const authId = clean(authUser?.id || parsed?.id || parsed?.farmer_id || parsed?.farmerId);
-    const authEmail = normalize(authUser?.email || parsed?.email);
-
-    let dbFarmer: any = null;
-
-    if (authId) {
-      const byId = await supabase.from("farmers").select("*").eq("id", authId).maybeSingle();
-      if (!byId.error && byId.data) dbFarmer = byId.data;
-    }
-
-    if (!dbFarmer && authEmail) {
-      const byEmail = await supabase.from("farmers").select("*").eq("email", authEmail).maybeSingle();
-      if (!byEmail.error && byEmail.data) dbFarmer = byEmail.data;
-    }
-
-    const stableId = clean(dbFarmer?.id || parsed?.id || parsed?.farmer_id || parsed?.farmerId || authId);
-
-    if (!stableId) return null;
-
-    const currentFarmer = {
-      ...(parsed || {}),
-      ...(dbFarmer || {}),
-      id: stableId,
-      farmer_id: stableId,
-      role: "farmer",
-      email: normalize(dbFarmer?.email || parsed?.email || authEmail),
-    };
-
-    await AsyncStorage.multiSet([
-      ["currentFarmer", JSON.stringify(currentFarmer)],
-      ["currentUser", JSON.stringify(currentFarmer)],
-      ["farm2homeCurrentFarmer", JSON.stringify(currentFarmer)],
-      ["farm2homeFarmerSession", JSON.stringify(currentFarmer)],
-      ["userRole", "farmer"],
-      ["currentUserRole", "farmer"],
-    ]);
-
-    return currentFarmer;
-  }
-
-  async function loadDrivers(activeFarmerId = farmerId) {
-    try {
-      if (!activeFarmerId) return;
-
-      setRefreshing(true);
-
-      const loaded: FarmerDriver[] = [];
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/driver/farmer-drivers/${encodeURIComponent(activeFarmerId)}`);
-        const data = await response.json();
-
-        if (response.ok && data.success && Array.isArray(data.drivers)) {
-          loaded.push(...data.drivers.map(normalizeFarmerDriver));
-        }
-      } catch (error) {
-        console.log("Backend farmer-drivers skipped:", error);
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("farmer_drivers")
-          .select("*")
-          .eq("farmer_id", activeFarmerId)
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          console.log("farmer_drivers query skipped:", error.message);
-        }
-
-        if (Array.isArray(data)) {
-          loaded.push(...data.map(normalizeFarmerDriver));
-        }
-      } catch (error) {
-        console.log("farmer_drivers fallback skipped:", error);
-      }
-
-      setDrivers(Array.from(new Map(loaded.map((item) => [item.id, item])).values()));
-    } catch (error: any) {
-      console.log("Load farmer drivers error:", error);
-      Alert.alert("Load Error", error?.message || "Unable to load drivers.");
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  function normalizeFarmerDriver(row: any): FarmerDriver {
-    return {
-      id: clean(row.id || `${row.farmer_id || farmerId}_${row.driver_email || row.driver_id || Date.now()}`),
-      farmer_id: clean(row.farmer_id || farmerId),
-      driver_id: clean(row.driver_id),
-      driver_name: clean(row.driver_name || row.name || row.full_name || "Farm2Home Driver"),
-      driver_email: normalize(row.driver_email || row.email),
-      driver_phone: clean(row.driver_phone || row.phone),
-      status: clean(row.status || "active"),
-      invite_status: clean(row.invite_status || row.invitation_status || ""),
-      created_at: clean(row.created_at),
-      updated_at: clean(row.updated_at),
-    };
-  }
-
-  async function addDriver() {
-    try {
-      const name = driverName.trim();
-      const email = normalize(driverEmail);
-      const phone = driverPhone.trim();
-
-      if (!farmerId) {
-        Alert.alert("Missing Farmer", "Please login again.");
-        return;
-      }
-
-      if (!name) {
-        Alert.alert("Driver Name Required", "Please enter the driver name.");
-        return;
-      }
-
-      if (!email || !isEmail(email)) {
-        Alert.alert("Driver Email Required", "Please enter a valid driver email.");
-        return;
-      }
-
-      setLoading(true);
-
-      let backendSuccess = false;
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/driver/add-farmer-driver`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            farmerId,
-            farmer_id: farmerId,
-            driverName: name,
-            driver_name: name,
-            driverEmail: email,
-            driver_email: email,
-            driverPhone: phone,
-            driver_phone: phone,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-          backendSuccess = true;
-        } else {
-          console.log("add-farmer-driver backend skipped:", data?.error || response.status);
-        }
-      } catch (error) {
-        console.log("add-farmer-driver backend error skipped:", error);
-      }
-
-      if (!backendSuccess) {
-        const existingDriver = await findDriverByEmail(email);
-
-        const payload = {
-          farmer_id: farmerId,
-          driver_id: existingDriver?.id || null,
-          driver_name: name,
-          driver_email: email,
-          driver_phone: phone,
-          status: "active",
-          invite_status: existingDriver?.id ? "matched" : "invited",
-          updated_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-        };
-
-        const { error } = await supabase.from("farmer_drivers").insert(payload);
-
-        if (error) throw error;
-      }
-
-      Alert.alert("Driver Added", `${name} was added to your preferred drivers.`);
-
-      setDriverName("");
-      setDriverEmail("");
-      setDriverPhone("");
-
-      await loadDrivers(farmerId);
-    } catch (error: any) {
-      console.log("Add farmer driver error:", error);
-      Alert.alert("Add Driver Error", error?.message || "Unable to add driver.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function findDriverByEmail(email: string) {
-    try {
-      const { data, error } = await supabase
-        .from("drivers")
-        .select("id, full_name, name, email, phone")
-        .eq("email", email)
+    if (deliveryOrderId) {
+      const { data } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .eq("id", deliveryOrderId)
         .maybeSingle();
 
-      if (error) {
-        console.log("findDriverByEmail skipped:", error.message);
-        return null;
-      }
+      const id = data?.driver_id || data?.assigned_driver_id || "";
+      const name = data?.driver_name || data?.assigned_driver_name || "Assigned Driver";
 
-      return data;
-    } catch (error) {
-      console.log("findDriverByEmail error skipped:", error);
-      return null;
+      if (id) return { id, name };
     }
+
+    if (orderId) {
+      const { data } = await supabase
+        .from("delivery_orders")
+        .select("*")
+        .eq("order_id", orderId)
+        .eq("farmer_id", activeFarmerId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const id = data?.driver_id || data?.assigned_driver_id || "";
+      const name = data?.driver_name || data?.assigned_driver_name || "Assigned Driver";
+
+      if (id) return { id, name };
+    }
+
+    const { data: internalDriver } = await supabase
+      .from("farmer_internal_drivers")
+      .select("*")
+      .eq("farmer_id", activeFarmerId)
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return {
+      id: internalDriver?.driver_id || internalDriver?.id || "internal-driver",
+      name: internalDriver?.driver_name || "Internal Farm Driver",
+    };
   }
 
-  async function toggleDriverStatus(item: FarmerDriver) {
-    try {
-      const nextStatus = isActiveDriver(item) ? "inactive" : "active";
+  async function loadMessages(activeFarmerId = farmerId, activeDriverId = driverId) {
+    let query = supabase
+      .from("order_chats")
+      .select("*")
+      .eq("sender_context", "farmer_driver")
+      .order("created_at", { ascending: true });
 
-      const { error } = await supabase
-        .from("farmer_drivers")
-        .update({
-          status: nextStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", item.id);
+    if (deliveryOrderId) {
+      query = query.eq("delivery_order_id", deliveryOrderId);
+    } else if (orderId) {
+      query = query.eq("order_id", orderId);
+    } else {
+      query = query.eq("farmer_id", activeFarmerId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.log("Farmer driver chat load skipped:", error.message);
+      setMessages([]);
+      return;
+    }
+
+    setMessages(Array.isArray(data) ? data : []);
+  }
+
+  async function sendMessage() {
+    if (!message.trim()) return;
+
+    if (!farmerId) {
+      Alert.alert("Session Error", "Please login again.");
+      return;
+    }
+
+    try {
+      setSending(true);
+
+      const payload = {
+        order_id: orderId || "general",
+        delivery_order_id: deliveryOrderId || null,
+        farmer_id: farmerId,
+        driver_id: driverId || null,
+        sender_role: "farmer",
+        sender_id: farmerId,
+        sender_context: "farmer_driver",
+        message: message.trim(),
+        read_by_farmer: true,
+        read_by_driver: false,
+        read_by_customer: true,
+        created_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("order_chats").insert(payload);
 
       if (error) throw error;
 
-      setDrivers((current) =>
-        current.map((driver) =>
-          driver.id === item.id ? { ...driver, status: nextStatus } : driver
-        )
-      );
+      setMessage("");
+      await loadMessages(farmerId, driverId);
     } catch (error: any) {
-      Alert.alert("Update Error", error?.message || "Unable to update driver status.");
+      Alert.alert("Send Error", error?.message || "Unable to send message.");
+    } finally {
+      setSending(false);
     }
   }
 
-  async function removeDriver(item: FarmerDriver) {
-    Alert.alert("Remove Driver", `Remove ${item.driver_name} from your preferred drivers?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            const { error } = await supabase.from("farmer_drivers").delete().eq("id", item.id);
-            if (error) throw error;
-
-            setDrivers((current) => current.filter((driver) => driver.id !== item.id));
-          } catch (error: any) {
-            Alert.alert("Remove Error", error?.message || "Unable to remove driver.");
-          }
-        },
+  function openTracking() {
+    router.push({
+      pathname: "/customer/order-tracking",
+      params: {
+        orderId,
+        deliveryOrderId,
       },
-    ]);
+    } as any);
   }
 
-  function isActiveDriver(item: FarmerDriver) {
-    const status = normalize(item.status || "active");
-    return status === "active" || status === "approved" || status === "matched";
+  function openAssignedDrivers() {
+    router.push("/farmer/assigned-drivers" as any);
   }
 
-  function callDriver(phone?: string) {
-    if (!phone) {
-      Alert.alert("Phone Missing", "No phone number is available for this driver.");
-      return;
-    }
-
-    Linking.openURL(`tel:${phone}`).catch(() => {
-      Alert.alert("Call Error", "Unable to start phone call.");
-    });
+  function openDeliveryOrders() {
+    router.push("/farmer/delivery-orders" as any);
   }
 
-  function emailDriver(email?: string) {
-    if (!email) {
-      Alert.alert("Email Missing", "No email is available for this driver.");
-      return;
-    }
-
-    Linking.openURL(`mailto:${email}`).catch(() => {
-      Alert.alert("Email Error", "Unable to open email app.");
-    });
+  function quickMessage(text: string) {
+    setMessage(text);
   }
 
-  function renderDriver({ item }: { item: FarmerDriver }) {
-    const isActive = isActiveDriver(item);
-
-    return (
-      <View style={styles.driverCard}>
-        <View style={styles.driverHeader}>
-          <View style={styles.avatar}>
-            <Ionicons name="car-outline" size={22} color={COLORS.green} />
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text style={styles.driverName}>{item.driver_name}</Text>
-            <Text style={styles.driverInfo}>{item.driver_email}</Text>
-          </View>
-
-          <View style={[styles.statusBadge, isActive ? styles.activeBadge : styles.inactiveBadge]}>
-            <Text style={[styles.statusText, !isActive && styles.inactiveStatusText]}>
-              {titleCase(item.status || "active")}
-            </Text>
-          </View>
-        </View>
-
-        {!!item.driver_phone && <Text style={styles.driverInfo}>{item.driver_phone}</Text>}
-
-        {!!item.invite_status && (
-          <View style={styles.invitePill}>
-            <Ionicons name="mail-outline" size={14} color={COLORS.blue} />
-            <Text style={styles.inviteText}>Invite Status: {titleCase(item.invite_status)}</Text>
-          </View>
-        )}
-
-        <Text style={styles.driverDescription}>
-          Preferred drivers receive delivery notifications first before orders are released to the open driver board.
-        </Text>
-
-        <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.secondaryAction} onPress={() => callDriver(item.driver_phone)}>
-            <Ionicons name="call-outline" size={16} color={COLORS.green} />
-            <Text style={styles.secondaryActionText}>Call</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.secondaryAction} onPress={() => emailDriver(item.driver_email)}>
-            <Ionicons name="mail-outline" size={16} color={COLORS.green} />
-            <Text style={styles.secondaryActionText}>Email</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.secondaryAction} onPress={() => toggleDriverStatus(item)}>
-            <Ionicons name={isActive ? "pause-circle-outline" : "checkmark-circle-outline"} size={16} color={COLORS.green} />
-            <Text style={styles.secondaryActionText}>{isActive ? "Pause" : "Activate"}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.removeAction} onPress={() => removeDriver(item)}>
-            <Ionicons name="trash-outline" size={16} color={COLORS.red} />
-            <Text style={styles.removeActionText}>Remove</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  if (loading && !drivers.length) {
+  if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.greenDark} />
-        <View style={styles.loadingCenter}>
+        <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+        <View style={styles.center}>
           <ActivityIndicator size="large" color={COLORS.green} />
-          <Text style={styles.loadingText}>Loading preferred drivers...</Text>
+          <Text style={styles.centerText}>Loading driver coordination...</Text>
         </View>
       </SafeAreaView>
     );
@@ -544,434 +263,381 @@ export default function FarmerDriversScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.greenDark} />
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()} activeOpacity={0.9}>
-          <Ionicons name="arrow-back-outline" size={21} color={COLORS.text} />
-        </TouchableOpacity>
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back-outline" size={22} color={COLORS.text} />
+          </Pressable>
 
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerEyebrow}>Farm2Home Farmer</Text>
-          <Text style={styles.headerTitle}>Preferred Drivers</Text>
-          <Text style={styles.headerSub}>Manage driver priority for {farmerName}</Text>
-        </View>
-
-        <TouchableOpacity style={styles.homeButton} onPress={() => router.push("/farmer/dashboard" as any)} activeOpacity={0.9}>
-          <Ionicons name="home-outline" size={21} color={COLORS.white} />
-        </TouchableOpacity>
-      </View>
-
-      <FlatList
-        data={filteredDrivers}
-        keyExtractor={(item) => item.id}
-        renderItem={renderDriver}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadDrivers(farmerId)} />}
-        ListHeaderComponent={
-          <ScrollView showsVerticalScrollIndicator={false} scrollEnabled={false}>
-            <View style={styles.heroCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.heroLabel}>Priority Dispatch</Text>
-                <Text style={styles.heroTitle}>Farmer Driver Network</Text>
-                <Text style={styles.heroText}>
-                  Preferred drivers can receive farm delivery opportunities before they go to the public Driver Board.
-                </Text>
-              </View>
-
-              <View style={styles.heroIcon}>
-                <Ionicons name="people-outline" size={30} color={COLORS.white} />
-              </View>
-            </View>
-
-            <View style={styles.statsRow}>
-              <StatCard label="Total" value={stats.total} icon="people-outline" />
-              <StatCard label="Active" value={stats.active} icon="checkmark-circle-outline" />
-              <StatCard label="Pending" value={stats.pending} icon="time-outline" />
-            </View>
-
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <View style={styles.cardIcon}>
-                  <Ionicons name="person-add-outline" size={22} color={COLORS.green} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.sectionTitle}>Add Preferred Driver</Text>
-                  <Text style={styles.sectionSub}>Invite a driver by name, email, and phone.</Text>
-                </View>
-              </View>
-
-              <TextInput
-                style={styles.input}
-                placeholder="Driver Name"
-                placeholderTextColor="#94A3B8"
-                value={driverName}
-                onChangeText={setDriverName}
-              />
-
-              <TextInput
-                style={styles.input}
-                placeholder="Driver Email"
-                placeholderTextColor="#94A3B8"
-                value={driverEmail}
-                onChangeText={(value) => setDriverEmail(normalize(value))}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-
-              <TextInput
-                style={styles.input}
-                placeholder="Driver Phone"
-                placeholderTextColor="#94A3B8"
-                value={driverPhone}
-                onChangeText={setDriverPhone}
-                keyboardType="phone-pad"
-              />
-
-              <TouchableOpacity
-                style={[styles.addButton, loading && styles.disabled]}
-                onPress={addDriver}
-                disabled={loading}
-                activeOpacity={0.9}
-              >
-                {loading ? (
-                  <ActivityIndicator color={COLORS.white} />
-                ) : (
-                  <>
-                    <Ionicons name="add-circle-outline" size={18} color={COLORS.white} />
-                    <Text style={styles.addButtonText}>Add Preferred Driver</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.searchBox}>
-              <Ionicons name="search-outline" size={18} color={COLORS.muted} />
-              <TextInput
-                value={search}
-                onChangeText={setSearch}
-                placeholder="Search drivers..."
-                placeholderTextColor="#94A3B8"
-                style={styles.searchInput}
-              />
-            </View>
-
-            <Text style={styles.listTitle}>Preferred Drivers</Text>
-          </ScrollView>
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIcon}>
-              <Ionicons name="car-outline" size={34} color={COLORS.green} />
-            </View>
-            <Text style={styles.emptyTitle}>No preferred drivers added yet</Text>
-            <Text style={styles.emptyText}>
-              Add trusted drivers to give them priority access to your delivery opportunities.
+          <View style={{ flex: 1 }}>
+            <Text style={styles.eyebrow}>Farmer Delivery Operations</Text>
+            <Text style={styles.title}>Driver Chat</Text>
+            <Text style={styles.subtitle}>
+              {farmName} · {chatTitle}
             </Text>
           </View>
-        }
-        contentContainerStyle={styles.listContent}
-      />
+        </View>
+
+        <View style={styles.heroCard}>
+          <View style={styles.driverIcon}>
+            <Ionicons name="car-outline" size={26} color={COLORS.white} />
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={styles.heroBadge}>Assigned Driver</Text>
+            <Text style={styles.driverName}>{driverName}</Text>
+            <Text style={styles.heroSub}>
+              Coordinate pickup, route changes, delivery proof, and customer updates.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.contextCard}>
+          <InfoPill label="Driver" value={driverId || "Not assigned"} />
+          <InfoPill label="Delivery" value={deliveryOrderId || "Not linked"} />
+          <InfoPill label="Order" value={orderId || "General"} />
+        </View>
+
+        <View style={styles.actionRow}>
+          <Pressable style={styles.actionButton} onPress={openTracking}>
+            <Ionicons name="navigate-outline" size={16} color={COLORS.greenDark} />
+            <Text style={styles.actionText}>Track</Text>
+          </Pressable>
+
+          <Pressable style={styles.actionButton} onPress={openAssignedDrivers}>
+            <Ionicons name="people-outline" size={16} color={COLORS.greenDark} />
+            <Text style={styles.actionText}>Drivers</Text>
+          </Pressable>
+
+          <Pressable style={styles.actionButton} onPress={openDeliveryOrders}>
+            <Ionicons name="cube-outline" size={16} color={COLORS.greenDark} />
+            <Text style={styles.actionText}>Orders</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.quickRow}>
+          <Pressable
+            style={styles.quickChip}
+            onPress={() => quickMessage("Please confirm pickup time and location.")}
+          >
+            <Text style={styles.quickText}>Confirm pickup</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickChip}
+            onPress={() => quickMessage("Please send an update when the order is out for delivery.")}
+          >
+            <Text style={styles.quickText}>Out for delivery</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickChip}
+            onPress={() => quickMessage("Please upload proof of delivery once completed.")}
+          >
+            <Text style={styles.quickText}>Proof needed</Text>
+          </Pressable>
+        </View>
+
+        <FlatList
+          data={messages}
+          keyExtractor={(item, index) => String(item.id || `${item.created_at}_${index}`)}
+          contentContainerStyle={styles.messageList}
+          ListEmptyComponent={
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyEmoji}>💬</Text>
+              <Text style={styles.emptyTitle}>No messages yet</Text>
+              <Text style={styles.emptyText}>
+                Start the delivery conversation with the assigned driver.
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const isFarmer = item.sender_role === "farmer";
+
+            return (
+              <View style={[styles.bubble, isFarmer && styles.myBubble]}>
+                <Text style={[styles.sender, isFarmer && styles.mySender]}>
+                  {isFarmer ? "Farmer" : "Driver"}
+                </Text>
+
+                <Text style={[styles.messageText, isFarmer && styles.myMessageText]}>
+                  {item.message}
+                </Text>
+
+                <Text style={[styles.timeText, isFarmer && styles.myTimeText]}>
+                  {item.created_at ? new Date(item.created_at).toLocaleString() : ""}
+                </Text>
+              </View>
+            );
+          }}
+        />
+
+        <View style={styles.inputBar}>
+          <TextInput
+            style={styles.input}
+            placeholder="Message the assigned driver..."
+            placeholderTextColor="#94A3B8"
+            value={message}
+            onChangeText={setMessage}
+            multiline
+          />
+
+          <Pressable
+            style={[styles.sendButton, sending && styles.disabledButton]}
+            onPress={sendMessage}
+            disabled={sending}
+          >
+            {sending ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <Ionicons name="send-outline" size={20} color={COLORS.white} />
+            )}
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function StatCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: number;
-  icon: keyof typeof Ionicons.glyphMap;
-}) {
+function InfoPill({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.statCard}>
-      <View style={styles.statIcon}>
-        <Ionicons name={icon} size={17} color={COLORS.green} />
-      </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={styles.infoPill}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue} numberOfLines={1}>
+        {value}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  loadingText: { marginTop: 12, color: COLORS.muted, fontWeight: "800" },
-  header: {
-    backgroundColor: COLORS.greenDark,
-    paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 18,
-    flexDirection: "row",
+  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+
+  center: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
     alignItems: "center",
+    justifyContent: "center",
+  },
+  centerText: { color: COLORS.muted, marginTop: 10, fontWeight: "800" },
+
+  header: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
     gap: 12,
+    alignItems: "center",
   },
   backButton: {
-    width: 42,
-    height: 42,
+    width: 44,
+    height: 44,
     borderRadius: 16,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  homeButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 16,
-    backgroundColor: COLORS.green,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerEyebrow: {
-    color: "#BBF7D0",
-    fontSize: 11,
+  eyebrow: {
+    color: COLORS.green,
     fontWeight: "900",
+    fontSize: 11,
     textTransform: "uppercase",
     letterSpacing: 1,
   },
-  headerTitle: { color: COLORS.white, fontSize: 24, fontWeight: "900", marginTop: 2 },
-  headerSub: { color: "#DCFCE7", fontWeight: "700", marginTop: 2 },
-  listContent: {
-    padding: 16,
-    paddingBottom: 120,
-  },
+  title: { color: COLORS.text, fontSize: 24, fontWeight: "900", marginTop: 2 },
+  subtitle: { color: COLORS.muted, fontWeight: "700", fontSize: 12, marginTop: 2 },
+
   heroCard: {
-    backgroundColor: COLORS.green,
-    borderRadius: 26,
-    padding: 20,
-    marginBottom: 14,
+    backgroundColor: COLORS.greenDark,
+    marginHorizontal: 16,
+    borderRadius: 24,
+    padding: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
+    gap: 12,
   },
-  heroLabel: { color: "#DCFCE7", fontWeight: "900", fontSize: 12, textTransform: "uppercase" },
-  heroTitle: { color: COLORS.white, fontSize: 28, fontWeight: "900", marginTop: 6 },
-  heroText: { color: COLORS.white, opacity: 0.92, fontWeight: "700", lineHeight: 21, marginTop: 6 },
-  heroIcon: {
-    width: 62,
-    height: 62,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 14,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: COLORS.card,
+  driverIcon: {
+    width: 56,
+    height: 56,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 14,
-  },
-  statIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 13,
-    backgroundColor: COLORS.greenSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-  },
-  statValue: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
-  statLabel: { color: COLORS.muted, fontWeight: "900", marginTop: 2 },
-  card: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  cardIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 15,
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: "rgba(255,255,255,0.16)",
     alignItems: "center",
     justifyContent: "center",
   },
-  sectionTitle: {
-    fontSize: 20,
+  heroBadge: {
+    color: "#BBF7D0",
     fontWeight: "900",
-    color: COLORS.text,
-  },
-  sectionSub: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
-  input: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 14,
-    marginBottom: 12,
-    fontSize: 15,
-    fontWeight: "700",
-    color: COLORS.text,
-  },
-  addButton: {
-    backgroundColor: COLORS.green,
-    paddingVertical: 16,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 4,
-    flexDirection: "row",
-    gap: 8,
-  },
-  addButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  disabled: { opacity: 0.6 },
-  searchBox: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 18,
-    minHeight: 52,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 16,
-  },
-  searchInput: { flex: 1, color: COLORS.text, fontWeight: "800", minHeight: 50 },
-  listTitle: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: COLORS.text,
-    marginBottom: 12,
-  },
-  driverCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  driverHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 17,
-    backgroundColor: COLORS.greenSoft,
-    alignItems: "center",
-    justifyContent: "center",
+    fontSize: 11,
+    textTransform: "uppercase",
   },
   driverName: {
-    color: COLORS.text,
-    fontSize: 18,
+    color: COLORS.white,
     fontWeight: "900",
+    fontSize: 20,
+    marginTop: 3,
   },
-  driverInfo: {
-    color: COLORS.muted,
-    marginTop: 5,
+  heroSub: {
+    color: "#DCFCE7",
     fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 4,
   },
-  driverDescription: {
-    color: COLORS.muted,
-    marginTop: 12,
-    lineHeight: 22,
-    fontWeight: "700",
+
+  contextCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 10,
+    gap: 8,
   },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
+  infoPill: {
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 14,
+    padding: 10,
   },
-  activeBadge: { backgroundColor: COLORS.greenSoft },
-  inactiveBadge: { backgroundColor: COLORS.redSoft },
-  statusText: {
-    fontWeight: "900",
+  infoLabel: {
     color: COLORS.greenDark,
-    fontSize: 12,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
   },
-  inactiveStatusText: { color: "#991B1B" },
-  invitePill: {
-    backgroundColor: COLORS.blueSoft,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+  infoValue: {
+    color: COLORS.text,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+
+  actionRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    alignSelf: "flex-start",
+    gap: 8,
+    marginHorizontal: 16,
     marginTop: 10,
   },
-  inviteText: { color: COLORS.blue, fontWeight: "900", fontSize: 12 },
-  actionRow: {
+  actionButton: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    paddingVertical: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  actionText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+
+  quickRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginTop: 14,
+    marginHorizontal: 16,
+    marginTop: 10,
   },
-  secondaryAction: {
-    backgroundColor: COLORS.greenSoft,
+  quickChip: {
+    backgroundColor: COLORS.orangeSoft,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+    paddingVertical: 8,
   },
-  secondaryActionText: { color: COLORS.greenDark, fontWeight: "900", fontSize: 12 },
-  removeAction: {
-    backgroundColor: COLORS.redSoft,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+  quickText: {
+    color: "#92400E",
+    fontWeight: "900",
+    fontSize: 12,
   },
-  removeActionText: { color: COLORS.red, fontWeight: "900", fontSize: 12 },
-  emptyContainer: {
-    marginTop: 26,
-    alignItems: "center",
+
+  messageList: { padding: 16, paddingBottom: 100 },
+  emptyCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 22,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 26,
-  },
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 24,
-    backgroundColor: COLORS.greenSoft,
+    borderRadius: 20,
+    padding: 22,
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 12,
   },
-  emptyTitle: {
-    color: COLORS.text,
-    fontSize: 18,
-    fontWeight: "900",
-    textAlign: "center",
-  },
+  emptyEmoji: { fontSize: 38 },
+  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18, marginTop: 8 },
   emptyText: {
     color: COLORS.muted,
     fontWeight: "700",
-    lineHeight: 21,
     textAlign: "center",
-    marginTop: 7,
+    marginTop: 6,
+    lineHeight: 20,
   },
+
+  bubble: {
+    alignSelf: "flex-start",
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: 10,
+    maxWidth: "84%",
+  },
+  myBubble: {
+    alignSelf: "flex-end",
+    backgroundColor: COLORS.green,
+    borderColor: COLORS.green,
+  },
+  sender: { color: COLORS.muted, fontSize: 11, fontWeight: "900" },
+  mySender: { color: "#DDF8C8" },
+  messageText: {
+    color: COLORS.text,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  myMessageText: { color: COLORS.white },
+  timeText: {
+    color: COLORS.muted,
+    fontSize: 10,
+    marginTop: 6,
+    fontWeight: "700",
+  },
+  myTimeText: { color: "#DDF8C8" },
+
+  inputBar: {
+    backgroundColor: COLORS.card,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    padding: 12,
+    flexDirection: "row",
+    gap: 8,
+  },
+  input: {
+    flex: 1,
+    minHeight: 46,
+    maxHeight: 110,
+    backgroundColor: "#F9FAFB",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    color: COLORS.text,
+    fontWeight: "800",
+  },
+  sendButton: {
+    width: 48,
+    borderRadius: 16,
+    backgroundColor: COLORS.green,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  disabledButton: { opacity: 0.65 },
 });
