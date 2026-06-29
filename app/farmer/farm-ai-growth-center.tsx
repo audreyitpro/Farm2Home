@@ -20,6 +20,7 @@ const screenWidth = Dimensions.get("window").width;
 
 type FarmerProduct = {
   id: string;
+  farmer_id?: string;
   name?: string;
   category?: string;
   price?: number;
@@ -46,25 +47,57 @@ export default function FarmAiGrowthCenter() {
   const [orders, setOrders] = useState<any[]>([]);
   const [insights, setInsights] = useState<GrowthInsight[]>([]);
 
+  const farmerId = useMemo(() => {
+    return (
+      user?.id ||
+      (profile as any)?.id ||
+      (profile as any)?.farmer_id ||
+      (profile as any)?.user_id ||
+      null
+    );
+  }, [user?.id, profile]);
+
   useFocusEffect(
     React.useCallback(() => {
-      loadGrowthData();
-    }, [])
+      if (!farmerId) {
+        setProducts([]);
+        setOrders([]);
+        setInsights(buildInsights([], []));
+        return;
+      }
+
+      loadGrowthData(farmerId);
+    }, [farmerId])
   );
 
-  async function loadGrowthData() {
+  async function loadGrowthData(activeFarmerId?: string | null) {
+    const currentFarmerId = activeFarmerId || farmerId;
+
+    if (!currentFarmerId) {
+      console.log("Farm AI Growth Center: farmerId missing. Skipping Supabase query.");
+      return;
+    }
+
     try {
       setLoading(true);
 
-      const { data: productData } = await supabase
+      const { data: productData, error: productError } = await supabase
         .from("products")
         .select("*")
-        .eq("farmer_id", user?.id);
+        .eq("farmer_id", currentFarmerId);
 
-      const { data: orderData } = await supabase
+      if (productError) {
+        console.log("Farm AI products error:", productError);
+      }
+
+      const { data: orderData, error: orderError } = await supabase
         .from("orders")
         .select("*")
-        .eq("farmer_id", user?.id);
+        .eq("farmer_id", currentFarmerId);
+
+      if (orderError) {
+        console.log("Farm AI orders error:", orderError);
+      }
 
       const cleanProducts = (productData || []) as FarmerProduct[];
       const cleanOrders = orderData || [];
@@ -153,12 +186,10 @@ export default function FarmAiGrowthCenter() {
   }
 
   const totalRevenue = useMemo(() => {
-    return orders.reduce((sum, item) => sum + Number(item.total || item.order_total || 0), 0);
+    return orders.reduce((sum, item) => {
+      return sum + Number(item.total || item.order_total || item.total_amount || 0);
+    }, 0);
   }, [orders]);
-
-  const totalInventory = useMemo(() => {
-    return products.reduce((sum, item) => sum + getStock(item), 0);
-  }, [products]);
 
   const liveProducts = useMemo(() => {
     return products.filter((item) => item.marketplace_visible !== false).length;
@@ -247,7 +278,7 @@ export default function FarmAiGrowthCenter() {
           style={styles.panel}
           contentContainerStyle={styles.panelInner}
           refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={loadGrowthData} />
+            <RefreshControl refreshing={loading} onRefresh={() => loadGrowthData(farmerId)} />
           }
           showsVerticalScrollIndicator={false}
         >
@@ -269,25 +300,33 @@ export default function FarmAiGrowthCenter() {
             </TouchableOpacity>
           </View>
 
-          {profile ? (
-            <View style={styles.profileCard}>
-              <Text style={styles.profileTitle}>
-                Growth profile for {profile.full_name || "your farm"}
-              </Text>
-              <Text style={styles.profileText}>
-                AI reviews your product listings, stock levels, marketplace visibility,
-                and order activity to suggest the next best farm business actions.
+          {!farmerId ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyEmoji}>⚠️</Text>
+              <Text style={styles.emptyTitle}>Farmer profile still loading</Text>
+              <Text style={styles.emptyText}>
+                Farm2Home could not find a farmer ID yet. Go back to the dashboard and reopen this page after login finishes.
               </Text>
             </View>
-          ) : null}
-
-          {loading ? (
+          ) : loading ? (
             <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color="#10B981" />
               <Text style={styles.loadingText}>Analyzing farm growth opportunities...</Text>
             </View>
           ) : (
             <>
+              {profile ? (
+                <View style={styles.profileCard}>
+                  <Text style={styles.profileTitle}>
+                    Growth profile for {(profile as any).full_name || "your farm"}
+                  </Text>
+                  <Text style={styles.profileText}>
+                    AI reviews your product listings, stock levels, marketplace visibility,
+                    and order activity to suggest the next best farm business actions.
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.scoreCard}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.scoreLabel}>AI Growth Score</Text>
@@ -322,12 +361,7 @@ export default function FarmAiGrowthCenter() {
                       <Text style={styles.insightTitle}>{item.title}</Text>
                     </View>
 
-                    <View
-                      style={[
-                        styles.typeBadge,
-                        { backgroundColor: insightColor(item.type) },
-                      ]}
-                    >
+                    <View style={[styles.typeBadge, { backgroundColor: insightColor(item.type) }]}>
                       <Text style={styles.typeText}>{item.type}</Text>
                     </View>
                   </View>
@@ -393,12 +427,7 @@ export default function FarmAiGrowthCenter() {
                           </Text>
                         </View>
 
-                        <View
-                          style={[
-                            styles.stockBadge,
-                            stock <= 5 && styles.stockBadgeLow,
-                          ]}
-                        >
+                        <View style={[styles.stockBadge, stock <= 5 && styles.stockBadgeLow]}>
                           <Text style={styles.stockText}>{stock} left</Text>
                         </View>
                       </View>
@@ -453,7 +482,6 @@ function PlanStep({ number, text }: { number: string; text: string }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F3F4F6" },
-
   hero: {
     backgroundColor: "#14532D",
     paddingTop: 58,
@@ -487,7 +515,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: "700",
   },
-
   panel: {
     flex: 1,
     marginTop: -20,
@@ -496,7 +523,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
   },
   panelInner: { padding: 18, paddingBottom: 80 },
-
   navRow: { flexDirection: "row", gap: 10, marginBottom: 16 },
   navButton: {
     flex: 1,
@@ -522,7 +548,6 @@ const styles = StyleSheet.create({
   },
   navText: { color: "#FFFFFF", fontWeight: "900" },
   navTextOutline: { color: "#10B981", fontWeight: "900" },
-
   profileCard: {
     backgroundColor: "#064E3B",
     borderRadius: 22,
@@ -536,7 +561,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   profileText: { color: "#BBF7D0", lineHeight: 22, fontWeight: "700" },
-
   loadingCard: {
     backgroundColor: "#FFFFFF",
     padding: 24,
@@ -546,7 +570,6 @@ const styles = StyleSheet.create({
     borderColor: "#E5E7EB",
   },
   loadingText: { color: "#6B7280", fontWeight: "800", marginTop: 10 },
-
   scoreCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -575,14 +598,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   scoreCircleText: { color: "#064E3B", fontWeight: "900", fontSize: 22 },
-
   sectionTitle: {
     color: "#111827",
     fontSize: 23,
     fontWeight: "900",
     marginBottom: 12,
   },
-
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -614,7 +635,6 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   metricLabel: { color: "#6B7280", fontWeight: "800" },
-
   insightCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
@@ -649,7 +669,6 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   insightButtonText: { color: "#064E3B", fontWeight: "900" },
-
   forecastCard: {
     backgroundColor: "#064E3B",
     borderRadius: 24,
@@ -689,7 +708,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   planText: { flex: 1, color: "#DCFCE7", fontWeight: "800", lineHeight: 20 },
-
   productCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
@@ -715,7 +733,6 @@ const styles = StyleSheet.create({
   stockBadgeLow: { backgroundColor: "#DC2626" },
   stockText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
   productText: { color: "#374151", lineHeight: 22, fontWeight: "700" },
-
   emptyCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
