@@ -31,7 +31,6 @@ const COLORS = {
   text: "#0F172A",
   muted: "#64748B",
   border: "#E2E8F0",
-  red: "#DC2626",
   white: "#FFFFFF",
 };
 
@@ -88,15 +87,13 @@ export default function AdminLoginScreen() {
   const [securePassword, setSecurePassword] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  async function findAdminAccount(loginValue: string): Promise<AdminRow | null> {
-    const value = normalize(loginValue);
-
+  async function queryAdmins(filter: string) {
     const { data, error } = await supabase
       .from("admins")
       .select(
         "id,email,username,password,full_name,role,is_active,super_admin,created_at,updated_at"
       )
-      .or(`email.ilike.${value},username.ilike.${value}`)
+      .or(filter)
       .limit(1);
 
     if (error) {
@@ -104,9 +101,24 @@ export default function AdminLoginScreen() {
       throw error;
     }
 
-    console.log("Admin lookup result:", data);
-
     return Array.isArray(data) && data.length > 0 ? (data[0] as AdminRow) : null;
+  }
+
+  async function findAdminAccount(loginValue: string): Promise<AdminRow | null> {
+    const value = normalize(loginValue);
+
+    console.log("Searching admin login:", value);
+
+    let admin = await queryAdmins(`email.eq.${value},username.eq.${value}`);
+    if (admin) return admin;
+
+    admin = await queryAdmins(`email.ilike.${value},username.ilike.${value}`);
+    if (admin) return admin;
+
+    admin = await queryAdmins(`email.ilike.%${value}%,username.ilike.%${value}%`);
+    if (admin) return admin;
+
+    return null;
   }
 
   async function saveAdminSession(admin: AdminRow) {
@@ -155,7 +167,10 @@ export default function AdminLoginScreen() {
       const admin = await findAdminAccount(loginValue);
 
       if (!admin) {
-        Alert.alert("Admin Not Found", "No matching record was found in the admins table.");
+        Alert.alert(
+          "Admin Not Found",
+          `No admins table row matched: ${loginValue}\n\nCheck the username/email in Supabase exactly.`
+        );
         return;
       }
 
@@ -163,10 +178,6 @@ export default function AdminLoginScreen() {
         Alert.alert("Account Disabled", "This admin account is not active.");
         return;
       }
-
-      console.log("Admin found:", admin.email || admin.username);
-      console.log("Entered password:", passwordValue);
-      console.log("Stored password:", admin.password);
 
       if (normalize(admin.password) !== normalize(passwordValue)) {
         Alert.alert("Invalid Password", "Password does not match.");
@@ -210,15 +221,14 @@ export default function AdminLoginScreen() {
             <Text style={styles.kicker}>Farm2Home Control Center</Text>
             <Text style={styles.title}>Admin Login</Text>
             <Text style={styles.subtitle}>
-              Direct admin-table login. This does not use Supabase Auth, customer,
-              driver, farmer, or freight login.
+              Direct admins table login. No Supabase Auth is used.
             </Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Secure Admin Portal</Text>
             <Text style={styles.sectionSubtitle}>
-              Enter the admin username/email and password saved in Supabase.
+              Enter the email or username exactly as saved in the admins table.
             </Text>
 
             <Text style={styles.label}>Admin Email or Username</Text>
@@ -279,8 +289,7 @@ export default function AdminLoginScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.infoTitle}>Admins Table Lookup</Text>
               <Text style={styles.infoText}>
-                Reads from admins by email or username. Required columns: id, email,
-                username, password, full_name, role, is_active, super_admin.
+                Looks up admins by email or username, then checks password and is_active.
               </Text>
             </View>
           </View>
