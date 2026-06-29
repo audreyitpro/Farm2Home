@@ -1,3 +1,5 @@
+// app/farmer/inventory-management.tsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,6 +22,7 @@ type InventoryStatus = "In Stock" | "Low Stock" | "Out of Stock";
 
 type InventoryItem = {
   id: string;
+  ids: string[];
   farmer_id: string;
   name: string;
   category: string;
@@ -50,6 +53,10 @@ function clean(value: any) {
   return String(value ?? "").trim();
 }
 
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
 function money(value: any) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
@@ -58,6 +65,15 @@ function getStatus(qty: number): InventoryStatus {
   if (qty <= 0) return "Out of Stock";
   if (qty <= 15) return "Low Stock";
   return "In Stock";
+}
+
+function productKey(row: any) {
+  return [
+    normalize(row.farmer_id),
+    normalize(row.name || row.product_name),
+    normalize(row.category || "Produce"),
+    normalize(row.unit || "each"),
+  ].join("|");
 }
 
 export default function InventoryManagement() {
@@ -158,11 +174,16 @@ export default function InventoryManagement() {
       return;
     }
 
-    const mapped = (data || []).map((row: any) => {
-      const qty = Number(row.quantity || row.stock || row.inventory || 0);
+    const grouped = new Map<string, InventoryItem>();
 
-      return {
-        id: clean(row.id),
+    (data || []).forEach((row: any) => {
+      const qty = Number(row.quantity || row.stock || row.inventory || 0);
+      const key = productKey(row);
+      const rowId = clean(row.id);
+
+      const mapped: InventoryItem = {
+        id: rowId,
+        ids: rowId ? [rowId] : [],
         farmer_id: clean(row.farmer_id),
         name: clean(row.name || row.product_name),
         category: clean(row.category || "Produce"),
@@ -175,9 +196,31 @@ export default function InventoryManagement() {
         bundle_eligible: Boolean(row.bundle_eligible ?? true),
         available: row.available !== false && qty > 0,
       };
+
+      const existing = grouped.get(key);
+
+      if (!existing) {
+        grouped.set(key, mapped);
+        return;
+      }
+
+      const combinedQty = Number(existing.quantity || 0) + qty;
+
+      grouped.set(key, {
+        ...existing,
+        ids: Array.from(new Set([...existing.ids, ...mapped.ids])),
+        quantity: combinedQty,
+        stock: combinedQty,
+        price: mapped.price || existing.price,
+        status: getStatus(combinedQty),
+        marketplace_visible:
+          existing.marketplace_visible || mapped.marketplace_visible,
+        bundle_eligible: existing.bundle_eligible || mapped.bundle_eligible,
+        available: existing.available || mapped.available,
+      });
     });
 
-    setItems(mapped);
+    setItems(Array.from(grouped.values()));
   }
 
   function resetForm() {
@@ -198,13 +241,16 @@ export default function InventoryManagement() {
     }
 
     const duplicate = items.some(
-      (item) => item.name.toLowerCase() === name.trim().toLowerCase()
+      (item) =>
+        normalize(item.name) === normalize(name) &&
+        normalize(item.category) === normalize(category) &&
+        normalize(item.unit) === normalize(unit)
     );
 
     if (duplicate) {
       Alert.alert(
         "Duplicate Product",
-        "This product already exists. Update the existing product instead."
+        "This product already exists in inventory. Update the existing product instead of adding it again."
       );
       return;
     }
@@ -245,13 +291,17 @@ export default function InventoryManagement() {
     }
   }
 
-  async function updateProduct(id: string, updates: Partial<InventoryItem>) {
+  async function updateProduct(item: InventoryItem, updates: Partial<InventoryItem>) {
     const qty = Number(updates.quantity ?? updates.stock);
 
     const payload: any = {
       ...updates,
       updated_at: new Date().toISOString(),
     };
+
+    delete payload.id;
+    delete payload.ids;
+    delete payload.status;
 
     if (!Number.isNaN(qty)) {
       payload.quantity = qty;
@@ -261,20 +311,25 @@ export default function InventoryManagement() {
     }
 
     setItems((prev) =>
-      prev.map((item) =>
-        item.id === id
+      prev.map((current) =>
+        current.id === item.id
           ? {
-              ...item,
+              ...current,
               ...updates,
-              quantity: payload.quantity ?? item.quantity,
-              stock: payload.stock ?? item.stock,
-              status: getStatus(payload.quantity ?? item.quantity),
+              quantity: payload.quantity ?? current.quantity,
+              stock: payload.stock ?? current.stock,
+              status: getStatus(payload.quantity ?? current.quantity),
             }
-          : item
+          : current
       )
     );
 
-    const { error } = await supabase.from("products").update(payload).eq("id", id);
+    const idsToUpdate = item.ids?.length ? item.ids : [item.id];
+
+    const { error } = await supabase
+      .from("products")
+      .update(payload)
+      .in("id", idsToUpdate);
 
     if (error) {
       Alert.alert("Update Error", error.message);
@@ -283,7 +338,7 @@ export default function InventoryManagement() {
   }
 
   function restockItem(item: InventoryItem) {
-    updateProduct(item.id, {
+    updateProduct(item, {
       quantity: Number(item.quantity || 0) + 25,
       stock: Number(item.quantity || 0) + 25,
       available: true,
@@ -292,7 +347,7 @@ export default function InventoryManagement() {
 
   function markSold(item: InventoryItem) {
     const nextQty = Math.max(0, Number(item.quantity || 0) - 1);
-    updateProduct(item.id, {
+    updateProduct(item, {
       quantity: nextQty,
       stock: nextQty,
       available: nextQty > 0,
@@ -300,36 +355,51 @@ export default function InventoryManagement() {
   }
 
   function toggleMarketplace(item: InventoryItem) {
-    updateProduct(item.id, {
+    updateProduct(item, {
       marketplace_visible: !item.marketplace_visible,
     });
   }
 
   function toggleBundleReady(item: InventoryItem) {
-    updateProduct(item.id, {
+    updateProduct(item, {
       bundle_eligible: !item.bundle_eligible,
     });
   }
 
-  function deleteProduct(item: InventoryItem) {
-    Alert.alert("Remove Product", `Remove ${item.name} from inventory and marketplace?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: async () => {
-          const previous = items;
-          setItems((prev) => prev.filter((product) => product.id !== item.id));
+  function removeFromInventory(item: InventoryItem) {
+    Alert.alert(
+      "Remove from Inventory",
+      `Remove ${item.name} from inventory and customer marketplace? This will also remove duplicate copies of this product.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            const previous = items;
+            const idsToDelete = item.ids?.length ? item.ids : [item.id];
 
-          const { error } = await supabase.from("products").delete().eq("id", item.id);
+            setItems((prev) => prev.filter((product) => product.id !== item.id));
 
-          if (error) {
-            setItems(previous);
-            Alert.alert("Remove Error", error.message);
-          }
+            const { error } = await supabase
+              .from("products")
+              .delete()
+              .in("id", idsToDelete);
+
+            if (error) {
+              setItems(previous);
+              Alert.alert("Remove Error", error.message);
+              return;
+            }
+
+            Alert.alert(
+              "Removed",
+              `${item.name} was removed from inventory and marketplace.`
+            );
+          },
         },
-      },
-    ]);
+      ]
+    );
   }
 
   function goToBundleBuilder() {
@@ -358,17 +428,17 @@ export default function InventoryManagement() {
         <Text style={styles.eyebrow}>Farm2Home Farmer Market</Text>
         <Text style={styles.title}>Manage Products & Marketplace</Text>
         <Text style={styles.subtitle}>
-          Control inventory, publish products to the marketplace, and mark
-          products as bundle-ready for customer subscription boxes.
+          Control inventory, publish products, remove duplicates, and mark products
+          as bundle-ready for subscription boxes.
         </Text>
       </View>
 
       <View style={styles.flowCard}>
         <Text style={styles.flowTitle}>Product Management Flow</Text>
-        <FlowStep number="1" text="Add or update products your farm sells" />
-        <FlowStep number="2" text="Publish products to the customer marketplace" />
-        <FlowStep number="3" text="Mark products bundle-ready for subscription boxes" />
-        <FlowStep number="4" text="Create bundles from eligible products" />
+        <FlowStep number="1" text="Add products your farm sells" />
+        <FlowStep number="2" text="Publish or hide products in the marketplace" />
+        <FlowStep number="3" text="Mark products bundle-ready for customer boxes" />
+        <FlowStep number="4" text="Remove products from inventory when no longer sold" />
       </View>
 
       <View style={styles.summaryCard}>
@@ -485,6 +555,11 @@ export default function InventoryManagement() {
                 <Text style={styles.itemMeta}>
                   {item.category} · {item.quantity} {item.unit}
                 </Text>
+                {item.ids.length > 1 ? (
+                  <Text style={styles.duplicateNote}>
+                    {item.ids.length} duplicate records grouped
+                  </Text>
+                ) : null}
               </View>
 
               <Text style={[styles.statusBadge, statusStyle(item.status)]}>
@@ -526,11 +601,13 @@ export default function InventoryManagement() {
             </View>
 
             <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => deleteProduct(item)}
+              style={styles.removeInventoryButton}
+              onPress={() => removeFromInventory(item)}
             >
               <Ionicons name="trash-outline" size={17} color="#991B1B" />
-              <Text style={styles.deleteText}>Remove Product from Market</Text>
+              <Text style={styles.removeInventoryText}>
+                Remove from Inventory & Marketplace
+              </Text>
             </TouchableOpacity>
           </View>
         ))
@@ -894,6 +971,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 5,
   },
+  duplicateNote: {
+    color: "#92400E",
+    fontWeight: "900",
+    marginTop: 5,
+    fontSize: 12,
+  },
   priceRow: {
     marginTop: 10,
     flexDirection: "row",
@@ -972,7 +1055,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
-  deleteButton: {
+  removeInventoryButton: {
     marginTop: 12,
     backgroundColor: "#FEE2E2",
     borderRadius: 14,
@@ -982,7 +1065,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
   },
-  deleteText: {
+  removeInventoryText: {
     color: "#991B1B",
     fontWeight: "900",
   },
