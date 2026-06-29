@@ -1,7 +1,7 @@
 // app/_layout.tsx
 
 import React, { useEffect } from "react";
-import { Stack, router } from "expo-router";
+import { Stack, router, usePathname } from "expo-router";
 import * as Notifications from "expo-notifications";
 import { StatusBar } from "expo-status-bar";
 
@@ -13,77 +13,9 @@ import {
   stopAutonomousScheduler,
 } from "./services/autonomousScheduler";
 
-export default function RootLayout() {
-  useEffect(() => {
-    async function setupNotifications() {
-      try {
-        await registerPushNotifications();
-      } catch (error) {
-        console.log("Notification setup error:", error);
-      }
-    }
-
-    setupNotifications();
-    startAutonomousScheduler();
-
-    const listener = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
-        const data = response.notification.request.content.data || {};
-
-        const type = String(data.type || "");
-        const orderId = String(data.orderId || "");
-        const loadId = String(data.loadId || "");
-
-        if (
-          type === "ORDER_ACCEPTED" ||
-          type === "ORDER_IN_TRANSIT" ||
-          type === "ORDER_DELIVERED"
-        ) {
-          router.push({
-            pathname: "/customer/order-tracking",
-            params: { orderId, loadId },
-          });
-          return;
-        }
-
-        if (type === "NEW_CHAT_MESSAGE") {
-          router.push("/chat/chat-center");
-          return;
-        }
-
-        if (type === "NEW_FREIGHT_LOAD") {
-          router.push("/freight/board");
-          return;
-        }
-
-        if (type === "LOAD_STATUS_UPDATE") {
-          router.push({
-            pathname: "/freight/tracking",
-            params: { loadId },
-          });
-          return;
-        }
-
-        if (type === "AI_DISPATCH_COMPLETE") {
-          router.push("/ai/dispatch-intelligence-center");
-          return;
-        }
-
-        if (type === "HIGH_DELAY_RISK" || type === "ADMIN_ALERT") {
-          console.log("Admin-only notification ignored for user app:", type);
-          return;
-        }
-      }
-    );
-
-    return () => {
-      listener.remove();
-      stopAutonomousScheduler();
-    };
-  }, []);
-
+function AppStack() {
   return (
-    <AuthProvider>
+    <>
       <StatusBar style="dark" />
 
       <Stack
@@ -94,20 +26,13 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
 
-        {/* AUTH */}
         <Stack.Screen name="auth/login" options={{ title: "Login", headerShown: false }} />
         <Stack.Screen name="auth/register" options={{ title: "Create Account", headerShown: false }} />
 
-        {/* GENERAL */}
         <Stack.Screen name="compliance-center" options={{ title: "Compliance Resources" }} />
-
-        {/* ONBOARDING */}
         <Stack.Screen name="onboarding/index" options={{ title: "Account Setup", headerShown: false }} />
-
-        {/* PROFILE */}
         <Stack.Screen name="profile/edit-profile" options={{ title: "Edit Profile", headerShown: false }} />
 
-        {/* CUSTOMER */}
         <Stack.Screen name="customer/dashboard" options={{ title: "Customer Dashboard" }} />
         <Stack.Screen name="customer/customer-dashboard" options={{ title: "Customer Dashboard" }} />
         <Stack.Screen name="customer/login" options={{ title: "Customer Login" }} />
@@ -145,7 +70,6 @@ export default function RootLayout() {
         <Stack.Screen name="customer/order-confirmation" options={{ title: "Order Confirmation" }} />
         <Stack.Screen name="customer/order-tracking" options={{ title: "Live Order Tracking" }} />
 
-        {/* FARMER */}
         <Stack.Screen name="farmer/login" options={{ title: "Farmer Login" }} />
         <Stack.Screen name="farmer/password-recovery" options={{ title: "Farmer Recovery" }} />
         <Stack.Screen name="farmer/register" options={{ title: "Farmer Registration" }} />
@@ -162,7 +86,6 @@ export default function RootLayout() {
         <Stack.Screen name="farmer/stripe-banking" options={{ title: "Farmer Payouts" }} />
         <Stack.Screen name="farmer/farm-ai-growth-center" options={{ title: "Farm AI Growth Center" }} />
 
-        {/* FREIGHT */}
         <Stack.Screen name="freight/login" options={{ title: "Freight Login" }} />
         <Stack.Screen name="freight/password-recovery" options={{ title: "Freight Recovery" }} />
         <Stack.Screen name="freight/register" options={{ title: "Freight Registration" }} />
@@ -177,7 +100,6 @@ export default function RootLayout() {
         <Stack.Screen name="freight/documents" options={{ title: "Carrier Documents" }} />
         <Stack.Screen name="freight/load-payment-tracking" options={{ title: "Load Payment Tracking" }} />
 
-        {/* DRIVER */}
         <Stack.Screen name="driver/login" options={{ title: "Driver Login" }} />
         <Stack.Screen name="driver/register" options={{ title: "Driver Registration" }} />
         <Stack.Screen name="driver/password-recovery" options={{ title: "Driver Recovery" }} />
@@ -195,13 +117,93 @@ export default function RootLayout() {
         <Stack.Screen name="driver/earnings" options={{ title: "Driver Earnings" }} />
         <Stack.Screen name="driver/notifications" options={{ title: "Driver Notifications" }} />
 
-        {/* ADMIN ROUTES EXIST BUT SHOULD NOT BE LINKED FROM USER UI */}
         <Stack.Screen name="admin/login" options={{ title: "Admin Login", headerShown: false }} />
         <Stack.Screen name="admin/dashboard" options={{ title: "Admin Dashboard", headerShown: false }} />
 
-        {/* CHAT */}
         <Stack.Screen name="chat/chat-center" options={{ title: "Farm2Home Chat" }} />
       </Stack>
+    </>
+  );
+}
+
+export default function RootLayout() {
+  const pathname = usePathname();
+  const isAdminRoute = pathname?.startsWith("/admin");
+
+  useEffect(() => {
+    if (isAdminRoute) return;
+
+    async function setupNotifications() {
+      try {
+        await registerPushNotifications();
+      } catch (error) {
+        console.log("Notification setup error:", error);
+      }
+    }
+
+    setupNotifications();
+    startAutonomousScheduler();
+
+    const listener = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data || {};
+
+      const type = String(data.type || "");
+      const orderId = String(data.orderId || "");
+      const loadId = String(data.loadId || "");
+
+      if (
+        type === "ORDER_ACCEPTED" ||
+        type === "ORDER_IN_TRANSIT" ||
+        type === "ORDER_DELIVERED"
+      ) {
+        router.push({
+          pathname: "/customer/order-tracking",
+          params: { orderId, loadId },
+        });
+        return;
+      }
+
+      if (type === "NEW_CHAT_MESSAGE") {
+        router.push("/chat/chat-center");
+        return;
+      }
+
+      if (type === "NEW_FREIGHT_LOAD") {
+        router.push("/freight/board");
+        return;
+      }
+
+      if (type === "LOAD_STATUS_UPDATE") {
+        router.push({
+          pathname: "/freight/tracking",
+          params: { loadId },
+        });
+        return;
+      }
+
+      if (type === "AI_DISPATCH_COMPLETE") {
+        router.push("/ai/dispatch-intelligence-center");
+        return;
+      }
+
+      if (type === "HIGH_DELAY_RISK" || type === "ADMIN_ALERT") {
+        console.log("Admin-only notification ignored for user app:", type);
+      }
+    });
+
+    return () => {
+      listener.remove();
+      stopAutonomousScheduler();
+    };
+  }, [isAdminRoute]);
+
+  if (isAdminRoute) {
+    return <AppStack />;
+  }
+
+  return (
+    <AuthProvider>
+      <AppStack />
     </AuthProvider>
   );
 }
