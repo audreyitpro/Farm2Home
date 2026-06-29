@@ -37,13 +37,13 @@ const COLORS = {
 
 type AdminRow = {
   id: string;
-  email?: string | null;
-  username?: string | null;
-  password?: string | null;
-  full_name?: string | null;
-  role?: string | null;
-  is_active?: boolean | null;
-  super_admin?: boolean | null;
+  email: string | null;
+  username: string | null;
+  password: string | null;
+  full_name: string | null;
+  role: string | null;
+  is_active: boolean | null;
+  super_admin: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -58,6 +58,7 @@ function normalize(value: any) {
 
 function buildAdminSession(admin: AdminRow) {
   const id = clean(admin.id);
+  const fullName = clean(admin.full_name || admin.username || "Farm2Home Admin");
 
   return {
     id,
@@ -66,8 +67,8 @@ function buildAdminSession(admin: AdminRow) {
     role: "admin",
     adminRole: clean(admin.role || "admin"),
     admin_role: clean(admin.role || "admin"),
-    fullName: clean(admin.full_name || admin.username || "Farm2Home Admin"),
-    full_name: clean(admin.full_name || admin.username || "Farm2Home Admin"),
+    fullName,
+    full_name: fullName,
     email: normalize(admin.email),
     username: normalize(admin.username),
     isActive: admin.is_active !== false,
@@ -90,20 +91,20 @@ export default function AdminLoginScreen() {
   async function findAdminAccount(loginValue: string): Promise<AdminRow | null> {
     const value = normalize(loginValue);
 
-    let query = supabase.from("admins").select("*").limit(1);
-
-    if (value.includes("@")) {
-      query = query.ilike("email", value);
-    } else {
-      query = query.ilike("username", value);
-    }
-
-    const { data, error } = await query;
+    const { data, error } = await supabase
+      .from("admins")
+      .select(
+        "id,email,username,password,full_name,role,is_active,super_admin,created_at,updated_at"
+      )
+      .or(`email.ilike.${value},username.ilike.${value}`)
+      .limit(1);
 
     if (error) {
-      console.log("admins lookup error:", error.message);
+      console.log("Admin lookup error:", error.message);
       throw error;
     }
+
+    console.log("Admin lookup result:", data);
 
     return Array.isArray(data) && data.length > 0 ? (data[0] as AdminRow) : null;
   }
@@ -163,8 +164,12 @@ export default function AdminLoginScreen() {
         return;
       }
 
-      if (clean(admin.password) !== passwordValue) {
-        Alert.alert("Invalid Password", "Password does not match the admins table.");
+      console.log("Admin found:", admin.email || admin.username);
+      console.log("Entered password:", passwordValue);
+      console.log("Stored password:", admin.password);
+
+      if (normalize(admin.password) !== normalize(passwordValue)) {
+        Alert.alert("Invalid Password", "Password does not match.");
         return;
       }
 
@@ -224,7 +229,7 @@ export default function AdminLoginScreen() {
                 placeholder="admin@email.com or username"
                 placeholderTextColor="#94A3B8"
                 value={login}
-                onChangeText={(value) => setLogin(value)}
+                onChangeText={setLogin}
                 autoCapitalize="none"
                 autoCorrect={false}
               />
