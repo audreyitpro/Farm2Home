@@ -19,30 +19,31 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { supabase } from "../services/supabaseClient";
+import { supabase } from "../data/supabaseClient";
 
-const ui = {
-  bg: "#F8FAFC",
-  dark: "#020617",
+const COLORS = {
+  bg: "#F6F7FB",
   card: "#FFFFFF",
-  border: "#CBD5E1",
-  text: "#0F172A",
-  muted: "#64748B",
-  soft: "#EFF6FF",
-  primary: "#1D4ED8",
-  primaryDark: "#1E3A8A",
+  surface: "#F8FAFC",
+  black: "#020617",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  text: "#101828",
+  muted: "#667085",
+  border: "#E5E7EB",
+  green: "#10B981",
   white: "#FFFFFF",
 };
 
 type AdminRow = {
   id: string;
-  email: string | null;
-  username: string | null;
-  password: string | null;
-  full_name: string | null;
-  role: string | null;
-  is_active: boolean | null;
-  super_admin: boolean | null;
+  email?: string | null;
+  username?: string | null;
+  password?: string | null;
+  full_name?: string | null;
+  role?: string | null;
+  is_active?: boolean | null;
+  super_admin?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -55,19 +56,27 @@ function normalize(value: any) {
   return clean(value).toLowerCase();
 }
 
-function mapAdmin(admin: AdminRow) {
+function buildAdminSession(admin: AdminRow) {
   return {
-    id: admin.id,
-    profileId: admin.id,
+    ...admin,
+    id: clean(admin.id),
+    profileId: clean(admin.id),
+    profile_id: clean(admin.id),
     role: "admin",
-    adminRole: admin.role || "admin",
-    fullName: admin.full_name || admin.username || "Farm2Home Admin",
+    adminRole: clean(admin.role || "admin"),
+    admin_role: clean(admin.role || "admin"),
+    fullName: clean(admin.full_name || admin.username || "Farm2Home Admin"),
+    full_name: clean(admin.full_name || admin.username || "Farm2Home Admin"),
     email: normalize(admin.email),
-    username: clean(admin.username),
+    username: normalize(admin.username),
     isActive: admin.is_active !== false,
+    is_active: admin.is_active !== false,
     superAdmin: Boolean(admin.super_admin),
+    super_admin: Boolean(admin.super_admin),
     createdAt: admin.created_at || "",
+    created_at: admin.created_at || "",
     updatedAt: admin.updated_at || new Date().toISOString(),
+    updated_at: admin.updated_at || new Date().toISOString(),
   };
 }
 
@@ -83,10 +92,13 @@ export default function AdminLoginScreen() {
     const { data, error } = await supabase
       .from("admins")
       .select("*")
-      .or(`email.ilike.${value},username.ilike.${value}`)
+      .or(`email.eq.${value},username.eq.${value}`)
       .limit(1);
 
-    if (error) throw error;
+    if (error) {
+      console.log("admins lookup error:", error.message);
+      throw error;
+    }
 
     if (Array.isArray(data) && data.length > 0) {
       return data[0] as AdminRow;
@@ -96,15 +108,17 @@ export default function AdminLoginScreen() {
   }
 
   async function saveAdminSession(admin: AdminRow) {
-    const mapped = mapAdmin(admin);
+    const mapped = buildAdminSession(admin);
 
     await AsyncStorage.multiRemove([
-      "currentFarmer",
       "currentCustomer",
-      "currentDriver",
-      "currentFreight",
+      "pendingCustomer",
+      "farm2homeCurrentCustomer",
+      "currentFarmer",
       "farm2homeCurrentFarmer",
       "farm2homeFarmerSession",
+      "currentDriver",
+      "currentFreight",
     ]);
 
     await AsyncStorage.multiSet([
@@ -112,6 +126,7 @@ export default function AdminLoginScreen() {
       ["currentUser", JSON.stringify(mapped)],
       ["userRole", "admin"],
       ["currentUserRole", "admin"],
+      ["lastLoginRole", "admin"],
     ]);
 
     return mapped;
@@ -132,7 +147,10 @@ export default function AdminLoginScreen() {
       const admin = await findAdminAccount(loginValue);
 
       if (!admin) {
-        Alert.alert("Admin Not Found", "No admin record was found in the admins table.");
+        Alert.alert(
+          "Admin Not Found",
+          "No matching record was found in the admins table."
+        );
         return;
       }
 
@@ -142,7 +160,7 @@ export default function AdminLoginScreen() {
       }
 
       if (clean(admin.password) !== passwordValue) {
-        Alert.alert("Invalid Password", "The password does not match this admin account.");
+        Alert.alert("Invalid Password", "Password does not match the admins table.");
         return;
       }
 
@@ -159,7 +177,7 @@ export default function AdminLoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={ui.dark} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
 
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -171,48 +189,42 @@ export default function AdminLoginScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.replace("/" as any)}
-          >
-            <Ionicons name="arrow-back-outline" size={18} color="#DBEAFE" />
-            <Text style={styles.backText}>Back Home</Text>
-          </TouchableOpacity>
+          <View style={styles.hero}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.replace("/" as any)}
+            >
+              <Ionicons name="arrow-back-outline" size={18} color={COLORS.white} />
+              <Text style={styles.backText}>Back Home</Text>
+            </TouchableOpacity>
 
-          <View style={styles.heroCard}>
-            <View style={styles.heroTop}>
-              <View style={styles.heroIcon}>
-                <Ionicons name="shield-checkmark-outline" size={34} color={ui.white} />
-              </View>
-
-              <View style={styles.statusPill}>
-                <Ionicons name="lock-closed-outline" size={14} color="#BFDBFE" />
-                <Text style={styles.statusText}>Private Admin Access</Text>
-              </View>
+            <View style={styles.heroIcon}>
+              <Ionicons name="shield-checkmark-outline" size={34} color={COLORS.white} />
             </View>
 
             <Text style={styles.kicker}>Farm2Home Control Center</Text>
-            <Text style={styles.header}>Admin Login</Text>
-            <Text style={styles.subheader}>
-              Sign in with an active record from the admins table.
+            <Text style={styles.title}>Admin Login</Text>
+            <Text style={styles.subtitle}>
+              This login checks the Supabase admins table directly. It does not use
+              customer, driver, farmer, or Supabase Auth login.
             </Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Secure Admin Portal</Text>
             <Text style={styles.sectionSubtitle}>
-              Login checks admin email or username directly in Supabase.
+              Enter the admin username/email and password saved in the admins table.
             </Text>
 
             <Text style={styles.label}>Admin Email or Username</Text>
             <View style={styles.inputShell}>
-              <Ionicons name="person-outline" size={19} color={ui.muted} />
+              <Ionicons name="person-outline" size={19} color={COLORS.muted} />
               <TextInput
                 style={styles.input}
-                placeholder="admin@email.com or username"
-                placeholderTextColor={ui.muted}
+                placeholder="admin@email.com or admin username"
+                placeholderTextColor="#94A3B8"
                 value={login}
-                onChangeText={setLogin}
+                onChangeText={(value) => setLogin(normalize(value))}
                 autoCapitalize="none"
                 autoCorrect={false}
               />
@@ -220,11 +232,11 @@ export default function AdminLoginScreen() {
 
             <Text style={styles.label}>Password</Text>
             <View style={styles.inputShell}>
-              <Ionicons name="key-outline" size={19} color={ui.muted} />
+              <Ionicons name="key-outline" size={19} color={COLORS.muted} />
               <TextInput
                 style={styles.input}
                 placeholder="Enter password"
-                placeholderTextColor={ui.muted}
+                placeholderTextColor="#94A3B8"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={securePassword}
@@ -236,7 +248,7 @@ export default function AdminLoginScreen() {
                 <Ionicons
                   name={securePassword ? "eye-outline" : "eye-off-outline"}
                   size={20}
-                  color={ui.primaryDark}
+                  color={COLORS.primaryDark}
                 />
               </TouchableOpacity>
             </View>
@@ -247,10 +259,10 @@ export default function AdminLoginScreen() {
               disabled={loading}
             >
               {loading ? (
-                <ActivityIndicator color={ui.white} />
+                <ActivityIndicator color={COLORS.white} />
               ) : (
                 <>
-                  <Ionicons name="log-in-outline" size={20} color={ui.white} />
+                  <Ionicons name="log-in-outline" size={20} color={COLORS.white} />
                   <Text style={styles.loginButtonText}>Login to Admin Dashboard</Text>
                 </>
               )}
@@ -258,11 +270,14 @@ export default function AdminLoginScreen() {
           </View>
 
           <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Admins Table Required</Text>
-            <Text style={styles.infoText}>
-              Required columns: id, email, username, password, full_name, role,
-              is_active, and super_admin.
-            </Text>
+            <Ionicons name="server-outline" size={22} color={COLORS.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.infoTitle}>Admins Table Lookup</Text>
+              <Text style={styles.infoText}>
+                Reads from admins where email or username matches. Required columns:
+                id, email, username, password, full_name, role, is_active, super_admin.
+              </Text>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -271,94 +286,79 @@ export default function AdminLoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: ui.dark },
-  keyboard: { flex: 1, backgroundColor: ui.bg },
-  page: { flex: 1, backgroundColor: ui.bg },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  keyboard: { flex: 1, backgroundColor: COLORS.bg },
+  page: { flex: 1, backgroundColor: COLORS.bg },
   content: {
     flexGrow: 1,
-    padding: 20,
-    paddingBottom: 60,
-    justifyContent: "center",
+    paddingBottom: 70,
+  },
+  hero: {
+    backgroundColor: COLORS.black,
+    paddingTop: 22,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
   },
   backButton: {
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#1E293B",
+    backgroundColor: COLORS.primary,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    marginBottom: 14,
+    marginBottom: 18,
   },
-  backText: { color: "#DBEAFE", fontWeight: "900" },
-
-  heroCard: {
-    backgroundColor: ui.dark,
-    borderRadius: 30,
-    padding: 22,
-    marginBottom: 16,
-  },
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 14,
-  },
+  backText: { color: COLORS.white, fontWeight: "900" },
   heroIcon: {
-    width: 62,
-    height: 62,
-    borderRadius: 22,
-    backgroundColor: ui.primary,
+    width: 64,
+    height: 64,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: 14,
   },
-  statusPill: {
-    backgroundColor: "rgba(29,78,216,0.22)",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  statusText: { color: "#BFDBFE", fontWeight: "900", fontSize: 12 },
   kicker: {
-    color: "#93C5FD",
+    color: "#A5B4FC",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginBottom: 6,
+    letterSpacing: 1,
   },
-  header: {
+  title: {
     fontSize: 34,
+    lineHeight: 40,
     fontWeight: "900",
-    color: ui.white,
-    marginBottom: 8,
+    color: COLORS.white,
+    marginTop: 6,
   },
-  subheader: {
+  subtitle: {
     color: "#CBD5E1",
     lineHeight: 22,
     fontWeight: "700",
     fontSize: 15,
+    marginTop: 8,
   },
-
   card: {
-    backgroundColor: ui.card,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: ui.border,
+    borderColor: COLORS.border,
     borderRadius: 26,
     padding: 20,
+    marginHorizontal: 18,
+    marginTop: 18,
+    marginBottom: 16,
   },
   sectionTitle: {
-    color: ui.text,
-    fontSize: 25,
+    color: COLORS.text,
+    fontSize: 24,
     fontWeight: "900",
     textAlign: "center",
   },
   sectionSubtitle: {
-    color: ui.muted,
+    color: COLORS.muted,
     fontWeight: "700",
     textAlign: "center",
     lineHeight: 21,
@@ -366,16 +366,16 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   label: {
-    color: ui.text,
+    color: COLORS.text,
     fontWeight: "900",
     fontSize: 13,
     marginBottom: 7,
     marginTop: 6,
   },
   inputShell: {
-    backgroundColor: ui.soft,
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: ui.border,
+    borderColor: COLORS.border,
     borderRadius: 17,
     paddingHorizontal: 13,
     minHeight: 56,
@@ -387,11 +387,11 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     minHeight: 54,
-    color: ui.text,
+    color: COLORS.text,
     fontWeight: "800",
   },
   loginButton: {
-    backgroundColor: ui.primary,
+    backgroundColor: COLORS.primary,
     padding: 17,
     borderRadius: 18,
     marginTop: 8,
@@ -402,27 +402,29 @@ const styles = StyleSheet.create({
   },
   disabledButton: { opacity: 0.6 },
   loginButtonText: {
-    color: ui.white,
+    color: COLORS.white,
     textAlign: "center",
     fontWeight: "900",
     fontSize: 16,
   },
-
   infoCard: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#EEF2FF",
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+    borderColor: "#C7D2FE",
     borderRadius: 22,
     padding: 16,
-    marginTop: 16,
+    marginHorizontal: 18,
+    marginBottom: 16,
+    flexDirection: "row",
+    gap: 12,
   },
   infoTitle: {
-    color: ui.primaryDark,
+    color: COLORS.primaryDark,
     fontWeight: "900",
     marginBottom: 6,
   },
   infoText: {
-    color: "#1E40AF",
+    color: COLORS.primaryDark,
     fontWeight: "700",
     lineHeight: 21,
   },
