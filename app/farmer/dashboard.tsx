@@ -885,12 +885,7 @@ export default function FarmerDashboardScreen() {
             icon="trending-up-outline"
             onPress={() => go("/farmer/farm-ai-growth-center")}
           />
-          <ActionCard
-            title="AI Compliance"
-            subtitle="Review compliance alerts."
-            icon="shield-checkmark-outline"
-            onPress={() => go("/farmer/ai-compliance")}
-          />
+          
           <ActionCard
             title="Compliance Upload"
             subtitle="Upload required farmer documents."
@@ -903,12 +898,7 @@ export default function FarmerDashboardScreen() {
             icon="document-text-outline"
             onPress={() => go("/farmer/documents")}
           />
-          <ActionCard
-            title="Subscription Plans"
-            subtitle="Manage farmer membership."
-            icon="calendar-outline"
-            onPress={() => go("/farmer/farmer-subscription-plans")}
-          />
+         
           <ActionCard
             title="Post Load"
             subtitle="Post delivery load needs."

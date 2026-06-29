@@ -1,6 +1,6 @@
 // app/admin/dashboard.tsx
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,914 +14,715 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import {
-  getAdminSession,
-  getPendingVerificationRecords,
-  getVerificationQueue,
-  logoutAdmin,
-  upsertVerificationRecord,
-} from "../data/adminStore";
-
-import { updateFarmerStore } from "../data/farmerStore";
-
-type VerificationRecord = any;
+import { supabase } from "../services/supabaseClient";
 
 const ui = {
-  bg: "#F5F7FB",
+  bg: "#F4F7FB",
+  dark: "#07111F",
   card: "#FFFFFF",
-  border: "#E5E7EB",
-  text: "#111827",
-  muted: "#6B7280",
-  soft: "#F9FAFB",
-  primary: "#7C3AED",
-  primarySoft: "#EDE9FE",
-  green: "#10B981",
+  text: "#0F172A",
+  muted: "#64748B",
+  border: "#E2E8F0",
   blue: "#2563EB",
-  orange: "#F59E0B",
-  red: "#EF4444",
+  green: "#16A34A",
+  orange: "#EA580C",
+  red: "#DC2626",
+  purple: "#7C3AED",
+  white: "#FFFFFF",
 };
 
-const QUEUE_KEYS = ["farm2homeVerificationQueue", "adminVerificationQueue"];
-const FARMER_KEYS = ["farm2homeFarmers", "farmers", "approvedFarmers"];
+type IssueSeverity = "High" | "Medium" | "Low";
 
-const APPROVAL_EMAIL_WORDING = `Congratulations!
+type Issue = {
+  id: string;
+  title: string;
+  detail: string;
+  area: string;
+  severity: IssueSeverity;
+};
 
-Your Farm2Home farmer application has been approved. Welcome to the Farm2Home family.
+function money(value: any) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
 
-You can now log in and set up your farmer market store, add products, manage orders, and start selling to customers in your community.
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
 
-Next step:
-Log in to your Farm2Home farmer account and complete your store setup.
+function lower(value: any) {
+  return clean(value).toLowerCase();
+}
 
-Thank you for joining Farm2Home.`;
+function sumRows(rows: any[], keys: string[]) {
+  return rows.reduce((sum, row) => {
+    const key = keys.find((item) => row?.[item] !== undefined);
+    return sum + Number(key ? row[key] || 0 : 0);
+  }, 0);
+}
+
+async function safeRead(table: string, limit = 1000) {
+  try {
+    const { data, error } = await supabase.from(table).select("*").limit(limit);
+    if (error) {
+      console.log(`${table} skipped:`, error.message);
+      return [];
+    }
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.log(`${table} failed:`, error);
+    return [];
+  }
+}
 
 export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
-  const [adminEmail, setAdminEmail] = useState("");
-  const [pendingRecords, setPendingRecords] = useState<VerificationRecord[]>([]);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [approvedCount, setApprovedCount] = useState(0);
-  const [rejectedCount, setRejectedCount] = useState(0);
-  const [farmerCount, setFarmerCount] = useState(0);
-  const [freightCount, setFreightCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [actionLoadingId, setActionLoadingId] = useState("");
 
-  useFocusEffect(
-    useCallback(() => {
-      loadDashboard();
-    }, [])
-  );
+  const [admin, setAdmin] = useState<any>(null);
 
-  function normalizeStatus(value: any) {
-    return String(value || "").trim().toLowerCase();
-  }
+  const [admins, setAdmins] = useState<any[]>([]);
+  const [farmers, setFarmers] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [freightUsers, setFreightUsers] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [bundles, setBundles] = useState<any[]>([]);
+  const [deliveryOrders, setDeliveryOrders] = useState<any[]>([]);
+  const [freightLoads, setFreightLoads] = useState<any[]>([]);
+  const [payouts, setPayouts] = useState<any[]>([]);
 
-  function isApproved(item: any) {
-    const status = normalizeStatus(item.status);
-    const review = normalizeStatus(item.adminReviewStatus);
-    return item.approved === true || status === "approved" || status === "approved_verification" || review === "approved";
-  }
+  useEffect(() => {
+    initialize();
+  }, []);
 
-  function isRejected(item: any) {
-    const status = normalizeStatus(item.status);
-    const review = normalizeStatus(item.adminReviewStatus);
-    return item.rejected === true || status === "rejected" || review === "rejected";
-  }
-
-  function isPending(item: any) {
-    return !isApproved(item) && !isRejected(item);
-  }
-
-  function getFarmerId(record: any) {
-    return String(record?.farmerId || record?.id || record?.farmer_id || "");
-  }
-
-  function getBusinessName(record: any) {
-    return record?.businessName || record?.farmName || record?.farm_name || "Farm2Home Farm";
-  }
-
-  function getOwnerName(record: any) {
-    return record?.ownerName || record?.owner_name || "Farmer";
-  }
-
-  function getEmail(record: any) {
-    return String(record?.email || record?.farmerEmail || "").toLowerCase();
-  }
-
-  function getAccountType(record: any) {
-    return String(record?.accountType || record?.account_type || "FARMER");
-  }
-
-  async function readArray(key: string) {
-    const raw = await AsyncStorage.getItem(key);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-
-  async function writeArray(key: string, value: any[]) {
-    await AsyncStorage.setItem(key, JSON.stringify(value));
-  }
-
-  async function upsertInArrayStorage(key: string, record: any) {
-    const id = getFarmerId(record);
-    const email = getEmail(record);
-    const current = await readArray(key);
-
-    const next = [
-      record,
-      ...current.filter((item: any) => getFarmerId(item) !== id && getEmail(item) !== email),
-    ];
-
-    await writeArray(key, next);
-  }
-
-  async function updateQueueRecord(updatedRecord: any) {
-    for (const key of QUEUE_KEYS) {
-      const current = await readArray(key);
-
-      const next = current.map((item: any) => {
-        const sameId = getFarmerId(item) === getFarmerId(updatedRecord);
-        const sameEmail = getEmail(item) === getEmail(updatedRecord);
-        return sameId || sameEmail ? { ...item, ...updatedRecord } : item;
-      });
-
-      const exists = current.some(
-        (item: any) =>
-          getFarmerId(item) === getFarmerId(updatedRecord) ||
-          getEmail(item) === getEmail(updatedRecord)
-      );
-
-      await writeArray(key, exists ? next : [updatedRecord, ...current]);
-    }
-  }
-
-  async function sendFarmerApprovalEmail(record: any) {
-    try {
-      const email = getEmail(record);
-      if (!email || !email.includes("@")) return;
-
-      await fetch("http://10.0.0.216:4242/email/send-farmer-approval", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          businessName: getBusinessName(record),
-        }),
-      });
-    } catch (error) {
-      console.log("Approval email skipped:", error);
-    }
-  }
-
-  async function saveApprovedFarmer(record: any) {
-    const farmerId = getFarmerId(record);
-    const approvedAt = new Date().toISOString();
-
-    const approvedFarmer = {
-      ...record,
-      id: farmerId,
-      farmerId,
-      farmName: getBusinessName(record),
-      businessName: getBusinessName(record),
-      ownerName: getOwnerName(record),
-      email: getEmail(record),
-      approved: true,
-      rejected: false,
-      reviewed: true,
-      needsMoreInfo: false,
-      accountActive: true,
-      storeUnlocked: true,
-      complianceSubmitted: true,
-      complianceStatus: "approved",
-      adminReviewStatus: "approved",
-      reviewDecision: "approved",
-      status: "APPROVED",
-      membershipStatus: "Active",
-      subscriptionStatus: "active",
-      farmerMembershipPaid: true,
-      monthlyMembershipStarted: true,
-      approvalEmailQueued: true,
-      approvalEmailText: APPROVAL_EMAIL_WORDING,
-      approvedAt,
-      reviewedAt: approvedAt,
-      updatedAt: approvedAt,
-    };
-
-    await updateFarmerStore(farmerId, approvedFarmer as any);
-
-    for (const key of FARMER_KEYS) {
-      await upsertInArrayStorage(key, approvedFarmer);
-    }
-
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(approvedFarmer));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(approvedFarmer));
-    await AsyncStorage.setItem("userRole", "farmer");
-    await AsyncStorage.setItem("currentUserRole", "farmer");
-
-    await updateQueueRecord(approvedFarmer);
-
-    try {
-      await upsertVerificationRecord(approvedFarmer as any);
-    } catch (error) {
-      console.log("upsertVerificationRecord approve skipped:", error);
-    }
-
-    await sendFarmerApprovalEmail(approvedFarmer);
-    return approvedFarmer;
-  }
-
-  async function approveRecord(record: VerificationRecord) {
-    try {
-      const farmerId = getFarmerId(record);
-      if (!farmerId) {
-        Alert.alert("Missing Farmer ID", "Unable to approve this record.");
-        return;
-      }
-
-      setActionLoadingId(farmerId);
-      await saveApprovedFarmer(record);
-
-      Alert.alert(
-        "Farmer Approved",
-        "The farmer account is approved, active, unlocked, and approval email was triggered."
-      );
-
-      await loadDashboard();
-    } catch (error: any) {
-      Alert.alert("Approval Error", error?.message || "Unable to approve farmer.");
-    } finally {
-      setActionLoadingId("");
-    }
-  }
-
-  async function rejectRecord(record: VerificationRecord) {
-    try {
-      const farmerId = getFarmerId(record);
-      const rejectedAt = new Date().toISOString();
-
-      if (!farmerId) {
-        Alert.alert("Missing Farmer ID", "Unable to reject this record.");
-        return;
-      }
-
-      setActionLoadingId(farmerId);
-
-      const rejectedRecord = {
-        ...record,
-        id: farmerId,
-        farmerId,
-        approved: false,
-        rejected: true,
-        reviewed: true,
-        needsMoreInfo: false,
-        accountActive: false,
-        storeUnlocked: false,
-        status: "REJECTED",
-        complianceStatus: "rejected",
-        adminReviewStatus: "rejected",
-        reviewDecision: "rejected",
-        rejectedAt,
-        reviewedAt: rejectedAt,
-        updatedAt: rejectedAt,
-      };
-
-      await updateFarmerStore(farmerId, rejectedRecord as any);
-      await updateQueueRecord(rejectedRecord);
-
-      try {
-        await upsertVerificationRecord(rejectedRecord as any);
-      } catch (error) {
-        console.log("upsertVerificationRecord reject skipped:", error);
-      }
-
-      Alert.alert("Rejected", "The application was rejected.");
-      await loadDashboard();
-    } catch (error: any) {
-      Alert.alert("Reject Error", error?.message || "Unable to reject farmer.");
-    } finally {
-      setActionLoadingId("");
-    }
-  }
-
-  async function loadDashboard() {
+  async function initialize() {
     try {
       setLoading(true);
 
-      const session = await getAdminSession();
-      if (!session) {
+      const raw = await AsyncStorage.getItem("currentAdmin");
+
+      if (!raw) {
         router.replace("/admin/login" as any);
         return;
       }
 
-      setAdminEmail(session.email || "");
+      const session = JSON.parse(raw);
 
-      const fullQueue = await getVerificationQueue();
-      const pending = await getPendingVerificationRecords();
+      if (session.role !== "admin" || session.isActive === false) {
+        router.replace("/admin/login" as any);
+        return;
+      }
 
-      const finalQueue = Array.isArray(fullQueue) ? fullQueue : [];
-      const finalPending =
-        Array.isArray(pending) && pending.length > 0
-          ? pending
-          : finalQueue.filter(isPending);
-
-      setPendingRecords(finalPending);
-      setPendingCount(finalPending.length);
-      setApprovedCount(finalQueue.filter(isApproved).length);
-      setRejectedCount(finalQueue.filter(isRejected).length);
-      setFarmerCount(finalQueue.filter((item) => getAccountType(item) === "FARMER").length);
-      setFreightCount(finalQueue.filter((item) => getAccountType(item) === "FREIGHT_CARRIER").length);
-    } catch (error) {
-      console.log("Admin dashboard load error:", error);
-      Alert.alert("Dashboard Error", "Unable to load admin dashboard.");
+      setAdmin(session);
+      await loadDashboard();
+    } catch (error: any) {
+      Alert.alert("Admin Error", error?.message || "Unable to load dashboard.");
+      router.replace("/admin/login" as any);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }
 
+  async function loadDashboard() {
+    const [
+      adminRows,
+      farmerRows,
+      customerRows,
+      driverRows,
+      freightRows,
+      orderRows,
+      productRows,
+      bundleRows,
+      deliveryRows,
+      loadRows,
+      payoutRows,
+    ] = await Promise.all([
+      safeRead("admins"),
+      safeRead("farmers"),
+      safeRead("customers"),
+      safeRead("drivers"),
+      safeRead("freight_users"),
+      safeRead("orders"),
+      safeRead("products"),
+      safeRead("farm_bundles"),
+      safeRead("delivery_orders"),
+      safeRead("freight_loads"),
+      safeRead("farmer_payouts"),
+    ]);
+
+    setAdmins(adminRows);
+    setFarmers(farmerRows);
+    setCustomers(customerRows);
+    setDrivers(driverRows);
+    setFreightUsers(freightRows);
+    setOrders(orderRows);
+    setProducts(productRows);
+    setBundles(bundleRows);
+    setDeliveryOrders(deliveryRows);
+    setFreightLoads(loadRows);
+    setPayouts(payoutRows);
+  }
+
   async function refreshDashboard() {
     setRefreshing(true);
     await loadDashboard();
+    setRefreshing(false);
   }
 
-  async function signOut() {
-    try {
-      await logoutAdmin();
-    } catch {}
+  async function logout() {
+    await AsyncStorage.multiRemove([
+      "currentAdmin",
+      "currentUser",
+      "userRole",
+      "currentUserRole",
+    ]);
+
     router.replace("/admin/login" as any);
   }
 
-  const productionStatus = useMemo(() => {
-    if (pendingCount > 0) return "Manual reviews pending";
-    return "Operational";
-  }, [pendingCount]);
+  const grossSales = useMemo(
+    () => sumRows(orders, ["total", "order_total", "amount", "subtotal"]),
+    [orders]
+  );
+
+  const grossPayouts = useMemo(
+    () => sumRows(payouts, ["gross_amount", "amount"]),
+    [payouts]
+  );
+
+  const platformFees = useMemo(
+    () => sumRows(payouts, ["platform_fee", "fee"]),
+    [payouts]
+  );
+
+  const issues = useMemo<Issue[]>(() => {
+    const list: Issue[] = [];
+
+    farmers.forEach((farmer) => {
+      const name =
+        farmer.farm_name ||
+        farmer.business_name ||
+        farmer.full_name ||
+        farmer.email ||
+        "Farmer";
+
+      const stripe =
+        farmer.stripe_account_id ||
+        farmer.farmer_stripe_account_id ||
+        farmer.farmer_account;
+
+      if (!stripe) {
+        list.push({
+          id: `farmer-stripe-${farmer.id}`,
+          title: "Farmer missing Stripe Connect",
+          detail: `${name} cannot receive payouts until Stripe is connected.`,
+          area: "Payouts",
+          severity: "High",
+        });
+      }
+
+      if (farmer.is_active === false || farmer.account_active === false) {
+        list.push({
+          id: `farmer-inactive-${farmer.id}`,
+          title: "Inactive farmer profile",
+          detail: `${name} is inactive and may not be able to sell.`,
+          area: "Profiles",
+          severity: "Medium",
+        });
+      }
+    });
+
+    products.forEach((product) => {
+      const qty = Number(product.quantity || product.stock || product.inventory || 0);
+
+      if (qty <= 0 && product.marketplace_visible !== false) {
+        list.push({
+          id: `product-stock-${product.id}`,
+          title: "Out of stock product still visible",
+          detail: `${product.name || "Product"} has no inventory.`,
+          area: "Marketplace",
+          severity: "Medium",
+        });
+      }
+
+      if (!product.farmer_id) {
+        list.push({
+          id: `product-farmer-${product.id}`,
+          title: "Product missing farmer link",
+          detail: `${product.name || "Product"} does not have farmer_id.`,
+          area: "Marketplace",
+          severity: "High",
+        });
+      }
+    });
+
+    deliveryOrders.forEach((delivery) => {
+      const status = lower(delivery.status || "open");
+      const assigned = delivery.driver_id || delivery.assigned_driver_id;
+
+      if (!assigned && ["new", "pending", "paid", "open", "available"].includes(status)) {
+        list.push({
+          id: `delivery-driver-${delivery.id}`,
+          title: "Delivery missing driver",
+          detail: `Delivery ${String(delivery.id).slice(-8)} has no assigned driver.`,
+          area: "Delivery",
+          severity: "High",
+        });
+      }
+    });
+
+    freightLoads.forEach((load) => {
+      const status = lower(load.status);
+
+      if (status === "available" || status === "open") {
+        list.push({
+          id: `freight-open-${load.id}`,
+          title: "Open freight load",
+          detail: `${load.title || "Freight load"} is still available.`,
+          area: "Freight",
+          severity: "Low",
+        });
+      }
+    });
+
+    admins.forEach((item) => {
+      if (item.is_active === false) {
+        list.push({
+          id: `admin-disabled-${item.id}`,
+          title: "Disabled admin account",
+          detail: `${item.email || item.username} is disabled.`,
+          area: "Admin",
+          severity: "Low",
+        });
+      }
+    });
+
+    return list;
+  }, [farmers, products, deliveryOrders, freightLoads, admins]);
+
+  const totals = useMemo(() => {
+    return {
+      profiles:
+        admins.length +
+        farmers.length +
+        customers.length +
+        drivers.length +
+        freightUsers.length,
+      admins: admins.length,
+      farmers: farmers.length,
+      customers: customers.length,
+      drivers: drivers.length,
+      freight: freightUsers.length,
+      orders: orders.length,
+      products: products.length,
+      bundles: bundles.length,
+      deliveries: deliveryOrders.length,
+      loads: freightLoads.length,
+      issues: issues.length,
+    };
+  }, [
+    admins,
+    farmers,
+    customers,
+    drivers,
+    freightUsers,
+    orders,
+    products,
+    bundles,
+    deliveryOrders,
+    freightLoads,
+    issues,
+  ]);
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.loadingScreen}>
-        <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
-        <ActivityIndicator size="large" color={ui.primary} />
-        <Text style={styles.loadingText}>Loading Farm2Home admin dashboard...</Text>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={ui.blue} />
+          <Text style={styles.centerText}>Loading admin dashboard...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={ui.dark} />
 
-      <View style={styles.shell}>
-        <View style={styles.sidebar}>
-          <View style={styles.logoRow}>
-            <View style={styles.logoMark}>
-              <Text style={styles.logoText}>F2H</Text>
-            </View>
-            <View>
-              <Text style={styles.logoTitle}>Farm2Home</Text>
-              <Text style={styles.logoSub}>Admin Portal</Text>
-            </View>
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.hero}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.kicker}>Farm2Home Admin</Text>
+            <Text style={styles.title}>Operations Dashboard</Text>
+            <Text style={styles.subtitle}>
+              Monitor all profiles, marketplace activity, gross sales, payouts,
+              delivery, freight, and possible issues.
+            </Text>
+
+            <Text style={styles.adminLine}>
+              Logged in: {admin?.fullName || "Admin"} · {admin?.email}
+            </Text>
           </View>
 
-          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" active />
-          <NavButton label="Control Tower" icon="radio-outline" route="/admin/control-tower" />
-          <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" />
-          <NavButton label="Live Ops" icon="navigate-outline" route="/admin/live-operations-center" />
-          <NavButton label="Revenue" icon="cash-outline" route="/admin/revenue" />
-          <NavButton label="Settings" icon="settings-outline" route="/admin/admin-settings" />
+          <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+            <Ionicons name="log-out-outline" size={18} color={ui.white} />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.main}>
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.content}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshDashboard} />}
-          >
-            <View style={styles.topbar}>
-              <View>
-                <Text style={styles.welcome}>Welcome back, Admin</Text>
-                <Text style={styles.pageTitle}>Admin Dashboard</Text>
-                <Text style={styles.pageSub}>
-                  Monitor approvals, marketplace operations, freight activity, payouts, subscriptions, and system health.
-                </Text>
-              </View>
+        <View style={styles.moneyCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.moneyLabel}>Gross Marketplace Sales</Text>
+            <Text style={styles.moneyValue}>{money(grossSales)}</Text>
+            <Text style={styles.moneySub}>
+              Orders: {totals.orders} · Payout Gross: {money(grossPayouts)} · Platform Fees:{" "}
+              {money(platformFees)}
+            </Text>
+          </View>
 
-              <TouchableOpacity style={styles.refreshPill} onPress={refreshDashboard}>
-                <Ionicons name="refresh-outline" size={18} color={ui.primary} />
-                <Text style={styles.refreshPillText}>Refresh</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.adminCard}>
-              <View style={styles.adminIcon}>
-                <Ionicons name="shield-checkmark-outline" size={24} color={ui.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.adminLabel}>Logged in as</Text>
-                <Text style={styles.adminEmail}>{adminEmail || "Administrator"}</Text>
-              </View>
-              <View style={[styles.statusBadge, { backgroundColor: pendingCount > 0 ? ui.orange : ui.green }]}>
-                <Text style={styles.statusBadgeText}>{productionStatus}</Text>
-              </View>
-            </View>
-
-            <View style={styles.heroCard}>
-              <View style={styles.heroIcon}>
-                <Ionicons name="shield-checkmark-outline" size={28} color="#FFFFFF" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.heroTitle}>Production Status</Text>
-                <Text style={styles.heroText}>
-                  {pendingCount > 0
-                    ? `${pendingCount} applications require admin review.`
-                    : "All core admin operations are ready."}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.statsGrid}>
-              <StatCard label="Pending Reviews" value={String(pendingCount)} icon="time-outline" warning />
-              <StatCard label="Approved" value={String(approvedCount)} icon="checkmark-circle-outline" success />
-              <StatCard label="Rejected" value={String(rejectedCount)} icon="close-circle-outline" danger />
-              <StatCard label="Farmers" value={String(farmerCount)} icon="leaf-outline" success />
-              <StatCard label="Freight" value={String(freightCount)} icon="trail-sign-outline" />
-              <StatCard label="AI Compliance" value="Ready" icon="sparkles-outline" accent />
-            </View>
-
-            <View style={styles.quickGrid}>
-              <QuickAction label="Accounts" icon="people-outline" route="/admin/accounts" />
-              <QuickAction label="Documents" icon="document-text-outline" route="/admin/documents" />
-              <QuickAction label="Revenue" icon="cash-outline" route="/admin/revenue" />
-              <QuickAction label="Fleet Map" icon="map-outline" route="/admin/fleet-map" />
-              <QuickAction label="System Audit" icon="shield-checkmark-outline" route="/admin/system-audit" />
-              <QuickAction label="Platform Health" icon="pulse-outline" route="/admin/platform-health" />
-            </View>
-
-            <View style={styles.dataSection}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Pending Farmer Approvals</Text>
-                <Text style={styles.sectionLink}>{pendingRecords.length} records</Text>
-              </View>
-
-              {pendingRecords.length === 0 ? (
-                <EmptyCard
-                  title="No pending applications."
-                  text="Approved accounts can log in and continue store setup."
-                />
-              ) : (
-                pendingRecords.map((record) => {
-                  const id = getFarmerId(record);
-                  const actionLoading = actionLoadingId === id;
-
-                  return (
-                    <View key={id || getEmail(record)} style={styles.reviewCard}>
-                      <View style={styles.reviewHeader}>
-                        <View style={styles.reviewIcon}>
-                          <Ionicons name="leaf-outline" size={22} color={ui.primary} />
-                        </View>
-
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.reviewTitle}>{getBusinessName(record)}</Text>
-                          <Text style={styles.meta}>Owner: {getOwnerName(record)}</Text>
-                          <Text style={styles.meta}>Email: {getEmail(record)}</Text>
-                          <Text style={styles.meta}>
-                            Status: {record.status || record.complianceStatus || "Pending"}
-                          </Text>
-                        </View>
-
-                        <View style={[styles.statusBadge, { backgroundColor: ui.orange }]}>
-                          <Text style={styles.statusBadgeText}>Pending</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.reviewButtonRow}>
-                        <TouchableOpacity
-                          style={[styles.approveButton, actionLoading && styles.disabled]}
-                          disabled={actionLoading}
-                          onPress={() => approveRecord(record)}
-                        >
-                          {actionLoading ? (
-                            <ActivityIndicator color="#FFFFFF" />
-                          ) : (
-                            <>
-                              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
-                              <Text style={styles.reviewButtonText}>Approve & Unlock</Text>
-                            </>
-                          )}
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[styles.rejectButton, actionLoading && styles.disabled]}
-                          disabled={actionLoading}
-                          onPress={() => rejectRecord(record)}
-                        >
-                          <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
-                          <Text style={styles.reviewButtonText}>Reject</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  );
-                })
-              )}
-            </View>
-
-            <View style={styles.actionGrid}>
-              <AdminActionCard
-                icon="shield-checkmark-outline"
-                title="AI Compliance Queue"
-                description="Review farmer and freight applications, Stripe onboarding status, uploaded documents, and final approval."
-                route="/admin/documents"
-              />
-              <AdminActionCard
-                icon="document-text-outline"
-                title="Compliance Review"
-                description="Review verification findings, missing documents, and business validation checks."
-                route="/admin/compliance-review"
-              />
-              <AdminActionCard
-                icon="radio-outline"
-                title="Live Operations"
-                description="Monitor deliveries, drivers, routes, freight operations, and fulfillment activity."
-                route="/admin/live-operations-center"
-              />
-              <AdminActionCard
-                icon="analytics-outline"
-                title="Analytics Center"
-                description="Review platform growth, AI metrics, operational activity, and marketplace trends."
-                route="/admin/analytics-center"
-              />
-            </View>
-
-            <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
-              <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.logoutText}>Logout Admin</Text>
-            </TouchableOpacity>
-          </ScrollView>
+          <View style={styles.moneyIcon}>
+            <Ionicons name="analytics-outline" size={32} color={ui.white} />
+          </View>
         </View>
-      </View>
+
+        <View style={styles.grid}>
+          <Metric title="All Profiles" value={totals.profiles} icon="people-outline" color={ui.blue} />
+          <Metric title="Admins" value={totals.admins} icon="shield-checkmark-outline" color={ui.purple} />
+          <Metric title="Farmers" value={totals.farmers} icon="leaf-outline" color={ui.green} />
+          <Metric title="Customers" value={totals.customers} icon="person-outline" color={ui.purple} />
+          <Metric title="Drivers" value={totals.drivers} icon="car-outline" color={ui.orange} />
+          <Metric title="Freight Users" value={totals.freight} icon="trail-sign-outline" color={ui.blue} />
+          <Metric title="Products" value={totals.products} icon="basket-outline" color={ui.green} />
+          <Metric title="Bundles" value={totals.bundles} icon="cube-outline" color={ui.purple} />
+          <Metric title="Issues" value={totals.issues} icon="warning-outline" color={ui.red} />
+        </View>
+
+        <Section title="Possible Issues" subtitle="Items that need admin attention." />
+
+        {issues.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyEmoji}>✅</Text>
+            <Text style={styles.emptyTitle}>No major issues detected</Text>
+            <Text style={styles.emptyText}>
+              Profiles, products, delivery, freight, and admin records look clean.
+            </Text>
+          </View>
+        ) : (
+          issues.slice(0, 25).map((issue) => <IssueCard key={issue.id} issue={issue} />)
+        )}
+
+        <Section title="Profile Overview" subtitle="Review all active account groups." />
+
+        <View style={styles.profileGrid}>
+          <ProfileGroup title="Admins" rows={admins} nameKey="full_name" />
+          <ProfileGroup title="Farmers" rows={farmers} nameKey="farm_name" />
+          <ProfileGroup title="Customers" rows={customers} nameKey="full_name" />
+          <ProfileGroup title="Drivers" rows={drivers} nameKey="full_name" />
+          <ProfileGroup title="Freight" rows={freightUsers} nameKey="company_name" />
+        </View>
+
+        <Section title="Admin Actions" subtitle="Jump into core operations." />
+
+        <View style={styles.actions}>
+          <Action label="Farmers" icon="leaf-outline" route="/admin/farmers" />
+          <Action label="Orders" icon="receipt-outline" route="/admin/orders" />
+          <Action label="Compliance" icon="shield-checkmark-outline" route="/admin/compliance" />
+          <Action label="Payouts" icon="wallet-outline" route="/admin/payouts" />
+          <Action label="Freight" icon="trail-sign-outline" route="/admin/freight" />
+          <Action label="Drivers" icon="car-outline" route="/admin/drivers" />
+        </View>
+
+        <View style={{ height: 80 }} />
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
-function NavButton({
+function Section({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSub}>{subtitle}</Text>
+    </View>
+  );
+}
+
+function Metric({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: string | number;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+}) {
+  return (
+    <View style={styles.metric}>
+      <View style={[styles.metricIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name={icon} size={22} color={color} />
+      </View>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricTitle}>{title}</Text>
+    </View>
+  );
+}
+
+function IssueCard({ issue }: { issue: Issue }) {
+  const color =
+    issue.severity === "High"
+      ? ui.red
+      : issue.severity === "Medium"
+      ? ui.orange
+      : ui.blue;
+
+  return (
+    <View style={styles.issueCard}>
+      <View style={[styles.issueIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name="warning-outline" size={20} color={color} />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text style={styles.issueTitle}>{issue.title}</Text>
+        <Text style={styles.issueDetail}>{issue.detail}</Text>
+        <Text style={styles.issueArea}>{issue.area}</Text>
+      </View>
+
+      <Text style={[styles.severity, { color }]}>{issue.severity}</Text>
+    </View>
+  );
+}
+
+function ProfileGroup({
+  title,
+  rows,
+  nameKey,
+}: {
+  title: string;
+  rows: any[];
+  nameKey: string;
+}) {
+  return (
+    <View style={styles.profileCard}>
+      <Text style={styles.profileTitle}>{title}</Text>
+      <Text style={styles.profileCount}>{rows.length}</Text>
+
+      {rows.slice(0, 5).map((row, index) => (
+        <View key={row.id || index} style={styles.profileRow}>
+          <Text style={styles.profileName}>
+            {row[nameKey] || row.full_name || row.email || row.username || "Profile"}
+          </Text>
+          <Text style={styles.profileMeta}>
+            {row.email || row.username || row.role || "No email"}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function Action({
   label,
   icon,
   route,
-  active = false,
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   route: string;
-  active?: boolean;
 }) {
   return (
     <TouchableOpacity
-      style={[styles.navButton, active && styles.navButtonActive]}
+      style={styles.action}
       onPress={() => router.push(route as any)}
+      activeOpacity={0.85}
     >
-      <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
-      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+      <Ionicons name={icon} size={20} color={ui.blue} />
+      <Text style={styles.actionText}>{label}</Text>
+      <Ionicons name="chevron-forward-outline" size={18} color={ui.muted} />
     </TouchableOpacity>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  icon,
-  accent = false,
-  success = false,
-  warning = false,
-  danger = false,
-}: {
-  label: string;
-  value: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  accent?: boolean;
-  success?: boolean;
-  warning?: boolean;
-  danger?: boolean;
-}) {
-  const color = danger ? ui.red : warning ? ui.orange : success ? ui.green : accent ? ui.primary : ui.blue;
-
-  return (
-    <View style={styles.statCard}>
-      <View style={[styles.statIcon, { backgroundColor: `${color}18` }]}>
-        <Ionicons name={icon} size={20} color={color} />
-      </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function QuickAction({
-  label,
-  icon,
-  route,
-}: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  route: string;
-}) {
-  return (
-    <TouchableOpacity style={styles.quickAction} onPress={() => router.push(route as any)}>
-      <Ionicons name={icon} size={18} color={ui.primary} />
-      <Text style={styles.quickText}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function AdminActionCard({
-  icon,
-  title,
-  description,
-  route,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  description: string;
-  route: string;
-}) {
-  return (
-    <TouchableOpacity style={styles.actionCard} onPress={() => router.push(route as any)}>
-      <View style={styles.actionIcon}>
-        <Ionicons name={icon} size={22} color={ui.primary} />
-      </View>
-      <Text style={styles.actionTitle}>{title}</Text>
-      <Text style={styles.actionDescription}>{description}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function EmptyCard({ title, text }: { title: string; text?: string }) {
-  return (
-    <View style={styles.emptyCard}>
-      <Ionicons name="checkmark-done-outline" size={30} color={ui.green} />
-      <Text style={styles.emptyTitle}>{title}</Text>
-      {!!text && <Text style={styles.emptyText}>{text}</Text>}
-    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: ui.bg },
-  loadingScreen: {
+  safe: { flex: 1, backgroundColor: ui.dark },
+  page: { flex: 1, backgroundColor: ui.bg },
+  content: { padding: 16, paddingBottom: 90 },
+  center: {
     flex: 1,
     backgroundColor: ui.bg,
     alignItems: "center",
     justifyContent: "center",
   },
-  loadingText: { color: ui.muted, marginTop: 10, fontWeight: "800" },
-  shell: { flex: 1, backgroundColor: ui.bg },
-  sidebar: {
-    backgroundColor: ui.card,
-    borderBottomWidth: 1,
-    borderBottomColor: ui.border,
-    paddingHorizontal: 16,
-    paddingTop: 18,
-    paddingBottom: 12,
+  centerText: { marginTop: 10, color: ui.muted, fontWeight: "800" },
+
+  hero: {
+    backgroundColor: ui.dark,
+    borderRadius: 28,
+    padding: 22,
+    marginBottom: 14,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
   },
-  logoRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 },
-  logoMark: {
+  kicker: {
+    color: "#93C5FD",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  title: { color: ui.white, fontSize: 33, fontWeight: "900", marginTop: 6 },
+  subtitle: {
+    color: "#CBD5E1",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 8,
+    maxWidth: 780,
+  },
+  adminLine: { color: "#BFDBFE", fontWeight: "800", marginTop: 12 },
+  logoutButton: {
+    backgroundColor: ui.blue,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    alignSelf: "flex-start",
+  },
+  logoutText: { color: ui.white, fontWeight: "900" },
+
+  moneyCard: {
+    backgroundColor: ui.blue,
+    borderRadius: 26,
+    padding: 22,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  moneyLabel: { color: "#DBEAFE", fontWeight: "900" },
+  moneyValue: { color: ui.white, fontSize: 42, fontWeight: "900", marginTop: 5 },
+  moneySub: { color: "#DBEAFE", fontWeight: "700", marginTop: 6 },
+  moneyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  metric: {
+    flexGrow: 1,
+    width: "47%",
+    backgroundColor: ui.card,
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: ui.border,
+  },
+  metricIcon: {
     width: 42,
     height: 42,
-    borderRadius: 14,
-    backgroundColor: ui.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  logoText: { color: "#FFFFFF", fontWeight: "900", fontSize: 13 },
-  logoTitle: { color: ui.text, fontWeight: "900", fontSize: 18 },
-  logoSub: { color: ui.muted, fontWeight: "700", fontSize: 12 },
-  navButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    marginBottom: 6,
-    backgroundColor: ui.soft,
-  },
-  navButtonActive: { backgroundColor: ui.primary },
-  navText: { color: ui.muted, fontWeight: "900", fontSize: 13 },
-  navTextActive: { color: "#FFFFFF" },
-  main: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
-  content: { paddingBottom: 90 },
-  topbar: {
-    backgroundColor: ui.card,
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: ui.border,
-    marginBottom: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  welcome: { color: ui.muted, fontWeight: "800", marginBottom: 4 },
-  pageTitle: { color: ui.text, fontSize: 26, fontWeight: "900" },
-  pageSub: { color: ui.muted, marginTop: 4, fontWeight: "700", maxWidth: 760 },
-  refreshPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: ui.primarySoft,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  refreshPillText: { color: ui.primary, fontWeight: "900" },
-  adminCard: {
-    backgroundColor: ui.card,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: ui.border,
-    padding: 16,
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  adminIcon: {
-    width: 48,
-    height: 48,
     borderRadius: 16,
-    backgroundColor: ui.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  adminLabel: { color: ui.muted, fontWeight: "900" },
-  adminEmail: { color: ui.text, fontWeight: "900", marginTop: 3 },
-  statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  statusBadgeText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
-  heroCard: {
-    backgroundColor: ui.primary,
-    borderRadius: 24,
-    padding: 18,
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  heroIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 22 },
-  heroText: { color: "#EDE9FE", fontWeight: "700", marginTop: 5, lineHeight: 20 },
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 14 },
-  statCard: {
-    width: "48%",
-    backgroundColor: ui.card,
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: ui.border,
-  },
-  statIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 10,
   },
-  statValue: { color: ui.text, fontSize: 22, fontWeight: "900" },
-  statLabel: { color: ui.muted, fontWeight: "800", marginTop: 4 },
-  quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 14 },
-  quickAction: {
-    width: "48%",
-    backgroundColor: ui.card,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: ui.border,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  quickText: { color: ui.text, fontWeight: "900", fontSize: 13 },
-  dataSection: {
+  metricValue: { color: ui.text, fontSize: 25, fontWeight: "900" },
+  metricTitle: { color: ui.muted, fontWeight: "800", marginTop: 4 },
+
+  section: { marginTop: 22, marginBottom: 12 },
+  sectionTitle: { color: ui.text, fontSize: 23, fontWeight: "900" },
+  sectionSub: { color: ui.muted, fontWeight: "700", marginTop: 4 },
+
+  issueCard: {
     backgroundColor: ui.card,
     borderRadius: 20,
     padding: 14,
     borderWidth: 1,
     borderColor: ui.border,
-    marginBottom: 14,
-  },
-  sectionHeader: {
+    marginBottom: 10,
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
+    gap: 12,
   },
-  sectionTitle: { color: ui.text, fontSize: 19, fontWeight: "900" },
-  sectionLink: { color: ui.primary, fontWeight: "900", fontSize: 12 },
-  reviewCard: {
-    backgroundColor: ui.soft,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: ui.border,
-    marginBottom: 12,
-  },
-  reviewHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
-  reviewIcon: {
+  issueIcon: {
     width: 42,
     height: 42,
-    borderRadius: 14,
-    backgroundColor: ui.primarySoft,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
   },
-  reviewTitle: { color: ui.text, fontWeight: "900", fontSize: 17, marginBottom: 4 },
-  meta: { color: ui.muted, fontWeight: "700", marginTop: 4, lineHeight: 18, fontSize: 12 },
-  reviewButtonRow: { flexDirection: "row", gap: 10, marginTop: 14 },
-  approveButton: {
-    flex: 1,
-    backgroundColor: ui.green,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 7,
-  },
-  rejectButton: {
-    flex: 1,
-    backgroundColor: ui.red,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 7,
-  },
-  reviewButtonText: { color: "#FFFFFF", fontWeight: "900" },
-  disabled: { opacity: 0.55 },
+  issueTitle: { color: ui.text, fontWeight: "900", fontSize: 16 },
+  issueDetail: { color: ui.muted, fontWeight: "700", lineHeight: 20, marginTop: 3 },
+  issueArea: { color: ui.blue, fontWeight: "900", marginTop: 6, fontSize: 12 },
+  severity: { fontWeight: "900", fontSize: 12 },
+
   emptyCard: {
-    borderTopWidth: 1,
-    borderTopColor: ui.border,
-    padding: 18,
+    backgroundColor: ui.card,
+    borderRadius: 22,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: ui.border,
     alignItems: "center",
   },
-  emptyTitle: {
-    color: ui.text,
-    fontWeight: "900",
-    fontSize: 17,
-    marginTop: 8,
-    textAlign: "center",
-  },
+  emptyEmoji: { fontSize: 38 },
+  emptyTitle: { color: ui.text, fontWeight: "900", fontSize: 18, marginTop: 8 },
   emptyText: {
     color: ui.muted,
     fontWeight: "700",
-    lineHeight: 21,
     textAlign: "center",
-    marginTop: 5,
+    marginTop: 6,
   },
-  actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 14 },
-  actionCard: {
-    width: "48%",
+
+  profileGrid: { gap: 12 },
+  profileCard: {
     backgroundColor: ui.card,
-    borderRadius: 20,
-    padding: 16,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: ui.border,
+    padding: 16,
   },
-  actionIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: ui.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
+  profileTitle: { color: ui.muted, fontWeight: "900" },
+  profileCount: {
+    color: ui.text,
+    fontSize: 28,
+    fontWeight: "900",
+    marginVertical: 5,
   },
-  actionTitle: { color: ui.text, fontWeight: "900", fontSize: 16 },
-  actionDescription: { color: ui.muted, fontWeight: "700", marginTop: 6, lineHeight: 20 },
-  logoutButton: {
-    backgroundColor: ui.red,
-    padding: 15,
+  profileRow: {
+    backgroundColor: ui.bg,
     borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
+    padding: 10,
+    marginTop: 8,
+  },
+  profileName: { color: ui.text, fontWeight: "900" },
+  profileMeta: { color: ui.muted, fontWeight: "700", marginTop: 3 },
+
+  actions: { gap: 10 },
+  action: {
+    backgroundColor: ui.card,
+    borderWidth: 1,
+    borderColor: ui.border,
+    borderRadius: 18,
+    padding: 14,
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 30,
+    alignItems: "center",
+    gap: 10,
   },
-  logoutText: { color: "#FFFFFF", fontWeight: "900" },
+  actionText: { flex: 1, color: ui.text, fontWeight: "900" },
 });

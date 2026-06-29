@@ -26,7 +26,6 @@ const ui = {
   greenSoft: "#DCFCE7",
   orange: "#EA580C",
   blue: "#1D4ED8",
-  purple: "#7C3AED",
   border: "#DDE7D6",
 };
 
@@ -53,10 +52,14 @@ export default function HomeScreen() {
 
             <View style={styles.badge}>
               <Ionicons name="leaf-outline" size={17} color={ui.greenDark} />
-              <Text style={styles.badgeText}>Local Farms • Fresh Food • Fast Delivery</Text>
+              <Text style={styles.badgeText}>
+                Local Farms • Fresh Food • Fast Delivery
+              </Text>
             </View>
 
-            <Text style={styles.heroTitle}>Fresh From Local Farms To Your Family</Text>
+            <Text style={styles.heroTitle}>
+              Fresh From Local Farms To Your Family
+            </Text>
 
             <Text style={styles.heroSubtitle}>
               Shop fresh produce, eggs, dairy, meat, fish, honey, baked goods,
@@ -66,7 +69,7 @@ export default function HomeScreen() {
             <View style={styles.heroActions}>
               <TouchableOpacity
                 style={styles.primaryButton}
-                onPress={() => router.push("/customer/login")}
+                onPress={() => router.push("/customer/login" as any)}
                 activeOpacity={0.88}
               >
                 <Ionicons name="basket-outline" size={20} color="#FFFFFF" />
@@ -75,7 +78,7 @@ export default function HomeScreen() {
 
               <TouchableOpacity
                 style={styles.lightButton}
-                onPress={() => router.push("/farmer/register")}
+                onPress={() => router.push("/farmer/register" as any)}
                 activeOpacity={0.88}
               >
                 <Ionicons name="leaf-outline" size={20} color={ui.greenDark} />
@@ -87,7 +90,9 @@ export default function HomeScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionEyebrow}>How it works</Text>
-          <Text style={styles.sectionTitle}>Farm2Home connects the whole farm market.</Text>
+          <Text style={styles.sectionTitle}>
+            Farm2Home connects the whole farm market.
+          </Text>
 
           <View style={styles.cardRow}>
             <FeatureCard
@@ -160,23 +165,6 @@ export default function HomeScreen() {
               color={ui.orange}
             />
           </View>
-
-          <View style={styles.adminStrip}>
-            <View>
-              <Text style={styles.adminTitle}>Farm2Home Admin</Text>
-              <Text style={styles.adminText}>
-                Manage compliance, orders, freight, payouts, subscriptions, and live operations.
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.adminButton}
-              onPress={() => router.push("/admin/login")}
-              activeOpacity={0.88}
-            >
-              <Text style={styles.adminButtonText}>Admin Login</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -244,7 +232,9 @@ function PortalCard({
         onPress={() => router.push(secondaryRoute as any)}
         activeOpacity={0.88}
       >
-        <Text style={[styles.portalSecondaryText, { color }]}>{secondaryLabel}</Text>
+        <Text style={[styles.portalSecondaryText, { color }]}>
+          {secondaryLabel}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -465,37 +455,5 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 15,
     textAlign: "center",
-  },
-  adminStrip: {
-    marginTop: 28,
-    backgroundColor: ui.text,
-    borderRadius: 26,
-    padding: 20,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 14,
-  },
-  adminTitle: {
-    color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  adminText: {
-    color: "#D1D5DB",
-    fontWeight: "700",
-    marginTop: 5,
-    lineHeight: 20,
-    maxWidth: 760,
-  },
-  adminButton: {
-    backgroundColor: ui.purple,
-    borderRadius: 16,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-  },
-  adminButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
   },
 });

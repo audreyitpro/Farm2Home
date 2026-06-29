@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -36,162 +35,112 @@ const ui = {
   green: "#16A34A",
 };
 
-function normalize(value: any) {
-  return String(value || "").trim().toLowerCase();
+type AdminRow = {
+  id: string;
+  email: string;
+  username?: string;
+  password?: string;
+  full_name?: string;
+  role?: string;
+  is_active?: boolean;
+  super_admin?: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+function clean(value: any) {
+  return String(value ?? "").trim();
 }
 
-function mapAdmin(profile: any) {
+function normalize(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function mapAdmin(admin: AdminRow) {
   return {
-    id: profile.id,
-    profileId: profile.id,
-    authUserId: profile.auth_user_id || "",
+    id: admin.id,
+    profileId: admin.id,
     role: "admin",
-    fullName: profile.full_name || profile.name || "Farm2Home Admin",
-    email: normalize(profile.email),
-    phone: profile.phone || "",
-    accountActive: profile.account_active ?? true,
-    createdAt: profile.created_at || "",
-    updatedAt: new Date().toISOString(),
+    adminRole: admin.role || "admin",
+    fullName: admin.full_name || admin.username || "Farm2Home Admin",
+    email: normalize(admin.email),
+    username: clean(admin.username),
+    isActive: admin.is_active !== false,
+    superAdmin: Boolean(admin.super_admin),
+    createdAt: admin.created_at || "",
+    updatedAt: admin.updated_at || new Date().toISOString(),
   };
 }
 
 export default function AdminLoginScreen() {
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
-
+  const [securePassword, setSecurePassword] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [resetVisible, setResetVisible] = useState(false);
-  const [resetEmail, setResetEmail] = useState("");
-  const [resetLoading, setResetLoading] = useState(false);
 
-  async function saveAdminSession(admin: any) {
+  async function saveAdminSession(admin: AdminRow) {
     const mapped = mapAdmin(admin);
 
-    await AsyncStorage.setItem("currentAdmin", JSON.stringify(mapped));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(mapped));
-    await AsyncStorage.setItem("userRole", "admin");
-    await AsyncStorage.setItem("currentUserRole", "admin");
+    await AsyncStorage.multiSet([
+      ["currentAdmin", JSON.stringify(mapped)],
+      ["currentUser", JSON.stringify(mapped)],
+      ["userRole", "admin"],
+      ["currentUserRole", "admin"],
+    ]);
 
     return mapped;
   }
 
-  async function findAdminProfile(userId: string, cleanEmail: string) {
-    let admin: any = null;
+  async function findAdminAccount(loginValue: string) {
+    const value = normalize(loginValue);
 
-    const byAuth = await supabase
-      .from("profiles")
+    const { data, error } = await supabase
+      .from("admins")
       .select("*")
-      .eq("auth_user_id", userId)
-      .eq("role", "admin")
+      .or(`email.eq.${value},username.eq.${value}`)
       .maybeSingle();
 
-    if (byAuth.error) throw byAuth.error;
-    if (byAuth.data) admin = byAuth.data;
-
-    if (!admin && cleanEmail) {
-      const byEmail = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("email", cleanEmail)
-        .eq("role", "admin")
-        .maybeSingle();
-
-      if (byEmail.error) throw byEmail.error;
-      if (byEmail.data) admin = byEmail.data;
-    }
-
-    return admin;
+    if (error) throw error;
+    return data as AdminRow | null;
   }
 
   async function loginAdmin() {
-    const cleanEmail = normalize(email);
-    const cleanPassword = String(password || "").trim();
+    const loginValue = normalize(login);
+    const passwordValue = clean(password);
 
-    if (!cleanEmail || !cleanPassword) {
-      Alert.alert("Missing Login", "Enter admin email and password.");
+    if (!loginValue || !passwordValue) {
+      Alert.alert("Missing Login", "Enter admin email/username and password.");
       return;
     }
 
     try {
       setLoading(true);
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password: cleanPassword,
-      });
+      const admin = await findAdminAccount(loginValue);
 
-      if (error) {
-        Alert.alert("Login Failed", error.message);
+      if (!admin) {
+        Alert.alert("Admin Not Found", "No admin account was found for this login.");
         return;
       }
 
-      const userId = data?.user?.id || "";
-
-      if (!userId) {
-        Alert.alert("Login Error", "Unable to confirm admin account.");
+      if (admin.is_active === false) {
+        Alert.alert("Account Disabled", "This admin account is not active.");
         return;
       }
 
-      const adminProfile = await findAdminProfile(userId, cleanEmail);
-
-      if (!adminProfile) {
-        Alert.alert(
-          "Admin Profile Missing",
-          "Your email/password is valid, but no admin profile was found. Add this user to profiles with role = admin."
-        );
+      if (clean(admin.password) !== passwordValue) {
+        Alert.alert("Invalid Password", "The password entered does not match this admin account.");
         return;
       }
 
-      const mappedAdmin = await saveAdminSession(adminProfile);
-
-      if (mappedAdmin.accountActive === false) {
-        Alert.alert("Account Disabled", "This admin account is disabled.");
-        return;
-      }
+      await saveAdminSession(admin);
 
       router.replace("/admin/dashboard" as any);
     } catch (error: any) {
       console.log("Admin login error:", error);
-      Alert.alert("Login Error", error?.message || "Unable to login.");
+      Alert.alert("Login Error", error?.message || "Unable to login admin.");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handlePasswordReset() {
-    const cleanEmail = normalize(resetEmail || email);
-
-    if (!cleanEmail) {
-      Alert.alert("Email Required", "Enter your admin email.");
-      return;
-    }
-
-    try {
-      setResetLoading(true);
-
-      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: "farm2home://reset-password",
-      });
-
-      if (error) {
-        Alert.alert("Reset Error", error.message);
-        return;
-      }
-
-      Alert.alert(
-        "Password Reset Sent",
-        "Check your email for the secure password reset link."
-      );
-
-      setResetVisible(false);
-      setResetEmail("");
-    } catch (error: any) {
-      Alert.alert(
-        "Reset Error",
-        error?.message || "Unable to send password reset email."
-      );
-    } finally {
-      setResetLoading(false);
     }
   }
 
@@ -219,49 +168,69 @@ export default function AdminLoginScreen() {
           </TouchableOpacity>
 
           <View style={styles.heroCard}>
-            <View style={styles.heroIcon}>
-              <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
+            <View style={styles.heroTop}>
+              <View style={styles.heroIcon}>
+                <Ionicons name="shield-checkmark-outline" size={34} color="#FFFFFF" />
+              </View>
+
+              <View style={styles.statusPill}>
+                <Ionicons name="lock-closed-outline" size={14} color="#BFDBFE" />
+                <Text style={styles.statusText}>Private Admin Access</Text>
+              </View>
             </View>
 
             <Text style={styles.kicker}>Farm2Home Control Center</Text>
             <Text style={styles.header}>Admin Login</Text>
 
             <Text style={styles.subheader}>
-              Review farmer applications, documents, compliance status,
-              approvals, marketplace activity, drivers, freight, and operations.
+              Sign in with an active account from the admins table to manage
+              compliance, orders, payouts, freight, drivers, and marketplace operations.
             </Text>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Secure Admin Access</Text>
-
+            <Text style={styles.sectionTitle}>Secure Admin Portal</Text>
             <Text style={styles.sectionSubtitle}>
-              Use your Farm2Home admin email and password.
+              This login verifies your email or username against the admins table.
             </Text>
 
-            <Text style={styles.label}>Admin Email</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="admin@email.com"
-              placeholderTextColor={ui.muted}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-            />
+            <Text style={styles.label}>Admin Email or Username</Text>
+            <View style={styles.inputShell}>
+              <Ionicons name="person-outline" size={19} color={ui.muted} />
+              <TextInput
+                style={styles.input}
+                placeholder="admin@email.com or username"
+                placeholderTextColor={ui.muted}
+                value={login}
+                onChangeText={setLogin}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+              />
+            </View>
 
             <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter password"
-              placeholderTextColor={ui.muted}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            <View style={styles.inputShell}>
+              <Ionicons name="key-outline" size={19} color={ui.muted} />
+              <TextInput
+                style={styles.input}
+                placeholder="Enter password"
+                placeholderTextColor={ui.muted}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={securePassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <TouchableOpacity onPress={() => setSecurePassword((prev) => !prev)}>
+                <Ionicons
+                  name={securePassword ? "eye-outline" : "eye-off-outline"}
+                  size={20}
+                  color={ui.primaryDark}
+                />
+              </TouchableOpacity>
+            </View>
 
             <TouchableOpacity
               style={[styles.loginButton, loading && styles.disabledButton]}
@@ -274,87 +243,21 @@ export default function AdminLoginScreen() {
               ) : (
                 <>
                   <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
-                  <Text style={styles.loginButtonText}>
-                    Login to Admin Dashboard
-                  </Text>
+                  <Text style={styles.loginButtonText}>Login to Admin Dashboard</Text>
                 </>
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.linkButton}
-              onPress={() => {
-                setResetEmail(email);
-                setResetVisible(true);
-              }}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.linkText}>Forgot password?</Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Admin Requirements</Text>
+            <Text style={styles.infoTitle}>Admin Table Required</Text>
             <Text style={styles.infoText}>
-              This login requires a Supabase Auth account and a matching row in
-              the profiles table with role set to admin.
+              Required columns: email, username, password, full_name, role,
+              is_active, and super_admin.
             </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-
-      <Modal visible={resetVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <View style={styles.modalIcon}>
-                <Ionicons name="key-outline" size={28} color={ui.primary} />
-              </View>
-
-              <Text style={styles.modalTitle}>Reset Admin Password</Text>
-
-              <Text style={styles.modalSubtitle}>
-                Enter your admin email. Farm2Home will send a secure reset link
-                if the Auth account exists.
-              </Text>
-
-              <TextInput
-                style={styles.input}
-                placeholder="Admin Email"
-                placeholderTextColor={ui.muted}
-                value={resetEmail}
-                onChangeText={setResetEmail}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-              />
-
-              <TouchableOpacity
-                style={[styles.loginButton, resetLoading && styles.disabledButton]}
-                onPress={handlePasswordReset}
-                disabled={resetLoading}
-                activeOpacity={0.85}
-              >
-                {resetLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.loginButtonText}>Send Reset Link</Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={() => {
-                  setResetVisible(false);
-                  setResetEmail("");
-                }}
-              >
-                <Text style={styles.closeText}>Close</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -381,11 +284,18 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   backText: { color: "#DBEAFE", fontWeight: "900" },
+
   heroCard: {
     backgroundColor: ui.dark,
     borderRadius: 30,
     padding: 22,
     marginBottom: 16,
+  },
+  heroTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
   },
   heroIcon: {
     width: 62,
@@ -394,7 +304,20 @@ const styles = StyleSheet.create({
     backgroundColor: ui.primary,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
+  },
+  statusPill: {
+    backgroundColor: "rgba(29,78,216,0.22)",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  statusText: {
+    color: "#BFDBFE",
+    fontWeight: "900",
+    fontSize: 12,
   },
   kicker: {
     color: "#93C5FD",
@@ -416,6 +339,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 15,
   },
+
   card: {
     backgroundColor: ui.card,
     borderWidth: 1,
@@ -444,13 +368,21 @@ const styles = StyleSheet.create({
     marginBottom: 7,
     marginTop: 6,
   },
-  input: {
+  inputShell: {
     backgroundColor: ui.soft,
     borderWidth: 1,
     borderColor: ui.border,
     borderRadius: 17,
-    padding: 15,
+    paddingHorizontal: 13,
+    minHeight: 56,
     marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  input: {
+    flex: 1,
+    minHeight: 54,
     color: ui.text,
     fontWeight: "800",
   },
@@ -471,12 +403,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 16,
   },
-  linkButton: { marginTop: 16 },
-  linkText: {
-    textAlign: "center",
-    color: ui.primaryDark,
-    fontWeight: "900",
-  },
+
   infoCard: {
     backgroundColor: "#EFF6FF",
     borderWidth: 1,
@@ -494,49 +421,5 @@ const styles = StyleSheet.create({
     color: "#1E40AF",
     fontWeight: "700",
     lineHeight: 21,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    padding: 22,
-  },
-  modalCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 26,
-    padding: 22,
-    maxHeight: "90%",
-  },
-  modalIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 20,
-    backgroundColor: "#DBEAFE",
-    alignSelf: "center",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 12,
-  },
-  modalTitle: {
-    color: ui.text,
-    fontSize: 26,
-    fontWeight: "900",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  modalSubtitle: {
-    color: ui.muted,
-    fontWeight: "700",
-    lineHeight: 22,
-    textAlign: "center",
-    marginBottom: 18,
-  },
-  closeButton: {
-    marginTop: 16,
-    alignItems: "center",
-  },
-  closeText: {
-    color: ui.red,
-    fontWeight: "900",
   },
 });

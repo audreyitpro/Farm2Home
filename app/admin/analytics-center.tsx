@@ -1,10 +1,11 @@
 // app/admin/analytics-center.tsx
 
-import React, { useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -13,250 +14,172 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../services/supabaseClient";
 
 const ui = {
-  bg: "#F5F7FB",
+  bg: "#F4F7FB",
+  dark: "#07111F",
   card: "#FFFFFF",
-  border: "#E5E7EB",
-  text: "#111827",
-  muted: "#6B7280",
-  soft: "#F9FAFB",
-  primary: "#7C3AED",
-  primarySoft: "#EDE9FE",
-  green: "#10B981",
-  blue: "#2563EB",
-  orange: "#F59E0B",
-  red: "#EF4444",
+  border: "#E2E8F0",
+  text: "#0F172A",
+  muted: "#64748B",
+  primary: "#2563EB",
+  primarySoft: "#EFF6FF",
+  green: "#16A34A",
+  orange: "#EA580C",
+  red: "#DC2626",
+  purple: "#7C3AED",
+  white: "#FFFFFF",
 };
 
-type AnalyticsStats = {
-  totalRevenue: number;
-  totalOrders: number;
-  avgOrderValue: number;
-  activeOrders: number;
-  deliveredOrders: number;
-  cancelledOrders: number;
-  totalLoads: number;
-  openLoads: number;
-  bookedLoads: number;
-  deliveredLoads: number;
-  freightRevenue: number;
-  pendingVerifications: number;
-  approvedFarmers: number;
-  approvedCarriers: number;
-};
+type StatusMetric = { status: string; count: number };
+type TopFarm = { farmer_id: string; farm_name: string; revenue: number; orders: number };
+type Severity = "High" | "Medium" | "Low";
+type Issue = { id: string; title: string; detail: string; severity: Severity };
 
-type TopFarm = {
-  farmer_id: string;
-  farm_name: string;
-  revenue: number;
-  orders: number;
-};
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
 
-type StatusMetric = {
-  status: string;
-  count: number;
-};
+function lower(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function money(value: any) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function getAmount(row: any) {
+  return Number(
+    row?.total ||
+      row?.order_total ||
+      row?.total_amount ||
+      row?.amount ||
+      row?.price ||
+      row?.rate ||
+      0
+  );
+}
+
+async function safeRead<T = any>(table: string, select = "*"): Promise<T[]> {
+  try {
+    const { data, error } = await supabase.from(table).select(select).limit(2000);
+    if (error) {
+      console.log(`${table} skipped:`, error.message);
+      return [];
+    }
+    return Array.isArray(data) ? (data as T[]) : [];
+  } catch (error) {
+    console.log(`${table} failed:`, error);
+    return [];
+  }
+}
 
 export default function AdminAnalyticsCenter() {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
 
-  const [stats, setStats] = useState<AnalyticsStats>({
-    totalRevenue: 0,
-    totalOrders: 0,
-    avgOrderValue: 0,
-    activeOrders: 0,
-    deliveredOrders: 0,
-    cancelledOrders: 0,
-    totalLoads: 0,
-    openLoads: 0,
-    bookedLoads: 0,
-    deliveredLoads: 0,
-    freightRevenue: 0,
-    pendingVerifications: 0,
-    approvedFarmers: 0,
-    approvedCarriers: 0,
-  });
-
-  const [orderStatuses, setOrderStatuses] = useState<StatusMetric[]>([]);
-  const [loadStatuses, setLoadStatuses] = useState<StatusMetric[]>([]);
-  const [topFarms, setTopFarms] = useState<TopFarm[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [farmers, setFarmers] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [freightUsers, setFreightUsers] = useState<any[]>([]);
+  const [loads, setLoads] = useState<any[]>([]);
+  const [payouts, setPayouts] = useState<any[]>([]);
+  const [applicationPayments, setApplicationPayments] = useState<any[]>([]);
+  const [verifications, setVerifications] = useState<any[]>([]);
 
   useFocusEffect(
-    React.useCallback(() => {
-      loadAnalytics();
+    useCallback(() => {
+      initialize();
     }, [])
   );
+
+  async function initialize() {
+    const raw = await AsyncStorage.getItem("currentAdmin");
+
+    if (!raw) {
+      router.replace("/admin/login" as any);
+      return;
+    }
+
+    try {
+      const admin = JSON.parse(raw);
+
+      if (admin.role !== "admin" || admin.isActive === false) {
+        router.replace("/admin/login" as any);
+        return;
+      }
+
+      setAdminEmail(admin.email || "");
+      await loadAnalytics();
+    } catch {
+      router.replace("/admin/login" as any);
+    }
+  }
 
   async function loadAnalytics() {
     try {
       setLoading(true);
 
-      const { data: orders, error: orderError } = await supabase
-        .from("orders")
-        .select(
-          `
-          *,
-          farmers (
-            id,
-            farm_name
-          )
-        `
-        );
+      const [
+        orderRows,
+        productRows,
+        farmerRows,
+        customerRows,
+        driverRows,
+        freightRows,
+        loadRows,
+        payoutRows,
+        appPaymentRows,
+        verificationRows,
+      ] = await Promise.all([
+        safeRead("orders"),
+        safeRead("products"),
+        safeRead("farmers"),
+        safeRead("customers"),
+        safeRead("drivers"),
+        safeRead("freight_users"),
+        safeRead("freight_loads"),
+        safeRead("farmer_payouts"),
+        safeRead("farmer_application_payments"),
+        safeRead("verification_records"),
+      ]);
 
-      if (orderError) console.log("Analytics orders error:", orderError.message);
-
-      const { data: loads, error: loadError } = await supabase
-        .from("freight_loads")
-        .select("*");
-
-      if (loadError) console.log("Analytics loads error:", loadError.message);
-
-      const { data: verifications, error: verificationError } = await supabase
-        .from("verification_records")
-        .select("*");
-
-      if (verificationError) {
-        console.log("Analytics verification error:", verificationError.message);
-      }
-
-      const { data: farmers, error: farmerError } = await supabase
-        .from("farmers")
-        .select("*");
-
-      if (farmerError) console.log("Analytics farmers error:", farmerError.message);
-
-      const { data: carriers, error: carrierError } = await supabase
-        .from("freight_carriers")
-        .select("*");
-
-      if (carrierError) console.log("Analytics carriers error:", carrierError.message);
-
-      const orderRows = Array.isArray(orders) ? orders : [];
-      const loadRows = Array.isArray(loads) ? loads : [];
-      const verificationRows = Array.isArray(verifications) ? verifications : [];
-      const farmerRows = Array.isArray(farmers) ? farmers : [];
-      const carrierRows = Array.isArray(carriers) ? carriers : [];
-
-      const totalRevenue = orderRows.reduce(
-        (sum: number, item: any) =>
-          sum + Number(item.total || item.total_amount || item.amount || 0),
-        0
-      );
-
-      const freightRevenue = loadRows.reduce(
-        (sum: number, item: any) =>
-          sum + Number(item.rate || item.amount || item.price || 0),
-        0
-      );
-
-      const activeOrderStatuses = [
-        "PAID",
-        "ACCEPTED",
-        "PREPARING",
-        "READY_FOR_PICKUP",
-        "PICKED_UP",
-        "IN_TRANSIT",
-        "PENDING_PAYMENT",
-        "paid",
-        "accepted",
-        "preparing",
-        "ready_for_pickup",
-        "picked_up",
-        "in_transit",
-        "pending_payment",
-      ];
-
-      const pendingVerificationStatuses = [
-        "PENDING",
-        "PENDING_VERIFICATION",
-        "DOCUMENTS_SUBMITTED",
-        "PENDING_ADMIN_REVIEW",
-        "pending",
-        "pending_verification",
-        "documents_submitted",
-        "pending_admin_review",
-      ];
-
-      setOrderStatuses(buildStatusCounts(orderRows, "status"));
-      setLoadStatuses(buildStatusCounts(loadRows, "status"));
-      setTopFarms(buildTopFarmRevenue(orderRows));
-
-      setStats({
-        totalRevenue,
-        totalOrders: orderRows.length,
-        avgOrderValue: orderRows.length > 0 ? totalRevenue / orderRows.length : 0,
-        activeOrders: orderRows.filter((item: any) =>
-          activeOrderStatuses.includes(String(item.status || ""))
-        ).length,
-        deliveredOrders: orderRows.filter((item: any) =>
-          ["DELIVERED", "delivered"].includes(String(item.status || ""))
-        ).length,
-        cancelledOrders: orderRows.filter((item: any) =>
-          ["CANCELLED", "REFUNDED", "cancelled", "refunded"].includes(
-            String(item.status || "")
-          )
-        ).length,
-        totalLoads: loadRows.length,
-        openLoads: loadRows.filter((item: any) =>
-          ["OPEN", "available", "AVAILABLE", "open", "pending", "PENDING"].includes(
-            String(item.status || "")
-          )
-        ).length,
-        bookedLoads: loadRows.filter((item: any) =>
-          [
-            "BOOKED",
-            "ACCEPTED",
-            "accepted",
-            "ASSIGNED",
-            "assigned",
-            "arrived_pickup",
-            "PICKED_UP",
-            "picked_up",
-            "IN_TRANSIT",
-            "in_transit",
-          ].includes(String(item.status || ""))
-        ).length,
-        deliveredLoads: loadRows.filter((item: any) =>
-          ["DELIVERED", "delivered"].includes(String(item.status || ""))
-        ).length,
-        freightRevenue,
-        pendingVerifications: verificationRows.filter((item: any) =>
-          pendingVerificationStatuses.includes(String(item.status || ""))
-        ).length,
-        approvedFarmers: farmerRows.filter(
-          (item: any) =>
-            item.approved === true ||
-            item.status === "APPROVED" ||
-            item.status === "approved"
-        ).length,
-        approvedCarriers: carrierRows.filter(
-          (item: any) =>
-            item.approved === true ||
-            item.status === "APPROVED" ||
-            item.status === "approved"
-        ).length,
-      });
+      setOrders(orderRows);
+      setProducts(productRows);
+      setFarmers(farmerRows);
+      setCustomers(customerRows);
+      setDrivers(driverRows);
+      setFreightUsers(freightRows);
+      setLoads(loadRows);
+      setPayouts(payoutRows);
+      setApplicationPayments(appPaymentRows);
+      setVerifications(verificationRows);
     } catch (error: any) {
-      console.log("Analytics load error:", error);
-      Alert.alert(
-        "Analytics Error",
-        error?.message || "Unable to load analytics data."
-      );
+      Alert.alert("Analytics Error", error?.message || "Unable to load analytics.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
-  function buildStatusCounts(rows: any[], field: string): StatusMetric[] {
+  async function onRefresh() {
+    setRefreshing(true);
+    await loadAnalytics();
+  }
+
+  function buildStatusCounts(rows: any[]): StatusMetric[] {
     const counts: Record<string, number> = {};
 
     rows.forEach((row) => {
-      const status = String(row[field] || "UNKNOWN").toUpperCase();
+      const status = clean(row.status || "UNKNOWN").toUpperCase();
       counts[status] = (counts[status] || 0) + 1;
     });
 
@@ -265,551 +188,586 @@ export default function AdminAnalyticsCenter() {
       .sort((a, b) => b.count - a.count);
   }
 
-  function buildTopFarmRevenue(orderRows: any[]): TopFarm[] {
-    const farmMap: Record<string, TopFarm> = {};
+  function buildTopFarms(orderRows: any[]): TopFarm[] {
+    const map: Record<string, TopFarm> = {};
 
-    orderRows.forEach((order: any) => {
-      const farmerId = String(order.farmer_id || order.farm_id || "unknown");
-      const farmName =
-        order.farmers?.farm_name ||
-        order.farm_name ||
-        order.farmer_name ||
+    orderRows.forEach((order) => {
+      const id = clean(order.farmer_id || order.farm_id || "unknown");
+      const name =
+        clean(order.farm_name || order.farmer_name || order.farmers?.farm_name) ||
         "Unknown Farm";
 
-      if (!farmMap[farmerId]) {
-        farmMap[farmerId] = {
-          farmer_id: farmerId,
-          farm_name: farmName,
-          revenue: 0,
-          orders: 0,
-        };
+      if (!map[id]) {
+        map[id] = { farmer_id: id, farm_name: name, revenue: 0, orders: 0 };
       }
 
-      farmMap[farmerId].revenue += Number(
-        order.total || order.total_amount || order.amount || 0
-      );
-      farmMap[farmerId].orders += 1;
+      map[id].revenue += getAmount(order);
+      map[id].orders += 1;
     });
 
-    return Object.values(farmMap)
+    return Object.values(map)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10);
   }
 
-  function formatMoney(value: number) {
-    return `$${Number(value || 0).toFixed(2)}`;
+  const orderStatuses = useMemo(() => buildStatusCounts(orders), [orders]);
+  const loadStatuses = useMemo(() => buildStatusCounts(loads), [loads]);
+  const topFarms = useMemo(() => buildTopFarms(orders), [orders]);
+
+  const stats = useMemo(() => {
+    const marketplaceRevenue = orders.reduce((sum, row) => sum + getAmount(row), 0);
+    const freightRevenue = loads.reduce((sum, row) => sum + getAmount(row), 0);
+
+    const platformFees = payouts.reduce(
+      (sum, row) => sum + Number(row.platform_fee || row.fee || 0),
+      0
+    );
+
+    const applicationRevenue = applicationPayments
+      .filter((row) =>
+        ["paid", "succeeded", "complete", "completed"].includes(lower(row.status))
+      )
+      .reduce((sum, row) => {
+        if (Number(row.amount || 0) > 0) return sum + Number(row.amount);
+        if (Number(row.amount_cents || 0) > 0) return sum + Number(row.amount_cents) / 100;
+        return sum + 29.99;
+      }, 0);
+
+    const activeOrders = orders.filter((row) =>
+      ["paid", "accepted", "preparing", "ready_for_pickup", "picked_up", "in_transit"].includes(
+        lower(row.status)
+      )
+    ).length;
+
+    const deliveredOrders = orders.filter((row) => lower(row.status) === "delivered").length;
+
+    const cancelledOrders = orders.filter((row) =>
+      ["cancelled", "canceled", "refunded"].includes(lower(row.status))
+    ).length;
+
+    const openLoads = loads.filter((row) =>
+      ["open", "available", "pending"].includes(lower(row.status))
+    ).length;
+
+    const bookedLoads = loads.filter((row) =>
+      ["booked", "accepted", "assigned", "picked_up", "in_transit"].includes(lower(row.status))
+    ).length;
+
+    const deliveredLoads = loads.filter((row) => lower(row.status) === "delivered").length;
+
+    const lowStock = products.filter(
+      (row) => Number(row.quantity || row.stock || row.inventory || 0) <= 5
+    ).length;
+
+    const pendingVerifications = verifications.filter((row) =>
+      ["pending", "pending_verification", "documents_submitted", "pending_admin_review"].includes(
+        lower(row.status)
+      )
+    ).length;
+
+    return {
+      marketplaceRevenue,
+      freightRevenue,
+      platformFees,
+      applicationRevenue,
+      totalGross: marketplaceRevenue + freightRevenue + applicationRevenue,
+      totalOrders: orders.length,
+      avgOrder: orders.length ? marketplaceRevenue / orders.length : 0,
+      activeOrders,
+      deliveredOrders,
+      cancelledOrders,
+      totalLoads: loads.length,
+      openLoads,
+      bookedLoads,
+      deliveredLoads,
+      farmers: farmers.length,
+      customers: customers.length,
+      drivers: drivers.length,
+      freightUsers: freightUsers.length,
+      products: products.length,
+      lowStock,
+      pendingVerifications,
+    };
+  }, [orders, loads, payouts, applicationPayments, products, verifications, farmers, customers, drivers, freightUsers]);
+
+  const issues = useMemo<Issue[]>(() => {
+    const list: Issue[] = [];
+
+    farmers.forEach((farmer) => {
+      const stripe =
+        farmer.stripe_account_id || farmer.farmer_stripe_account_id || farmer.farmer_account;
+
+      if (!stripe) {
+        list.push({
+          id: `stripe-${farmer.id}`,
+          title: "Farmer missing Stripe Connect",
+          detail: `${farmer.farm_name || farmer.business_name || farmer.email || "Farmer"} cannot receive payouts.`,
+          severity: "High",
+        });
+      }
+    });
+
+    products.forEach((product) => {
+      const qty = Number(product.quantity || product.stock || product.inventory || 0);
+
+      if (qty <= 0 && product.marketplace_visible !== false) {
+        list.push({
+          id: `stock-${product.id}`,
+          title: "Visible product out of stock",
+          detail: `${product.name || "Product"} has no inventory but may still be visible.`,
+          severity: "Medium",
+        });
+      }
+    });
+
+    if (stats.openLoads > 0) {
+      list.push({
+        id: "open-loads",
+        title: "Open freight loads need carrier attention",
+        detail: `${stats.openLoads} freight load(s) are still open or available.`,
+        severity: "Low",
+      });
+    }
+
+    if (stats.pendingVerifications > 0) {
+      list.push({
+        id: "pending-verifications",
+        title: "Pending verification reviews",
+        detail: `${stats.pendingVerifications} verification record(s) need admin review.`,
+        severity: "High",
+      });
+    }
+
+    return list;
+  }, [farmers, products, stats.openLoads, stats.pendingVerifications]);
+
+  async function logoutAdmin() {
+    await AsyncStorage.multiRemove(["currentAdmin", "currentUser", "userRole", "currentUserRole"]);
+    router.replace("/admin/login" as any);
   }
 
-  function renderBar(item: StatusMetric, maxCount: number) {
-    const widthPercent =
-      maxCount > 0 ? Math.max(12, (item.count / maxCount) * 100) : 12;
-
+  if (loading) {
     return (
-      <View style={styles.barRow} key={item.status}>
-        <View style={styles.barLabelRow}>
-          <Text style={styles.barLabel}>{item.status}</Text>
-          <Text style={styles.barCount}>{item.count}</Text>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor={ui.dark} />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={ui.primary} />
+          <Text style={styles.centerText}>Loading analytics center...</Text>
         </View>
-
-        <View style={styles.barTrack}>
-          <View style={[styles.barFill, { width: `${widthPercent}%` }]} />
-        </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
-  const maxOrderStatus = Math.max(1, ...orderStatuses.map((item) => item.count));
-  const maxLoadStatus = Math.max(1, ...loadStatuses.map((item) => item.count));
-
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor={ui.bg} />
+      <StatusBar barStyle="light-content" backgroundColor={ui.dark} />
 
-      <View style={styles.shell}>
-        <View style={styles.sidebar}>
-          <View style={styles.logoRow}>
-            <View style={styles.logoMark}>
-              <Text style={styles.logoText}>F2H</Text>
-            </View>
-            <View>
-              <Text style={styles.logoTitle}>Farm2Home</Text>
-              <Text style={styles.logoSub}>Admin Analytics</Text>
-            </View>
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.hero}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.kicker}>Farm2Home Admin</Text>
+            <Text style={styles.title}>Analytics Center</Text>
+            <Text style={styles.subtitle}>
+              Analyze gross revenue, farmer growth, customer demand, marketplace health,
+              freight activity, payouts, and operational issues.
+            </Text>
+            <Text style={styles.adminLine}>Logged in: {adminEmail || "Admin"}</Text>
           </View>
 
-          <NavButton label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
-          <NavButton label="Control Tower" icon="radio-outline" route="/admin/control-tower" />
-          <NavButton label="Live Ops" icon="navigate-outline" route="/admin/live-operations-center" />
-          <NavButton label="Analytics" icon="analytics-outline" route="/admin/analytics-center" active />
-          <NavButton label="Documents" icon="document-text-outline" route="/admin/documents" />
-          <NavButton label="AI Dispatch" icon="sparkles-outline" route="/ai/dispatch-intelligence-center" />
+          <TouchableOpacity style={styles.logoutButton} onPress={logoutAdmin}>
+            <Ionicons name="log-out-outline" size={18} color={ui.white} />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.main}>
-          <View style={styles.topbar}>
-            <View>
-              <Text style={styles.welcome}>Welcome back, Admin</Text>
-              <Text style={styles.pageTitle}>Analytics Center</Text>
-              <Text style={styles.pageSub}>
-                Revenue, marketplace, freight, farmer, and carrier performance.
+        <View style={styles.grossCard}>
+          <Text style={styles.grossLabel}>Total Gross Platform Revenue</Text>
+          <Text style={styles.grossValue}>{money(stats.totalGross)}</Text>
+          <Text style={styles.grossSub}>
+            Marketplace {money(stats.marketplaceRevenue)} · Freight{" "}
+            {money(stats.freightRevenue)} · Applications {money(stats.applicationRevenue)}
+          </Text>
+        </View>
+
+        <View style={styles.grid}>
+          <Metric title="Marketplace Revenue" value={money(stats.marketplaceRevenue)} icon="basket-outline" color={ui.green} />
+          <Metric title="Freight Revenue" value={money(stats.freightRevenue)} icon="trail-sign-outline" color={ui.primary} />
+          <Metric title="Application Revenue" value={money(stats.applicationRevenue)} icon="card-outline" color={ui.purple} />
+          <Metric title="Platform Fees" value={money(stats.platformFees)} icon="pricetag-outline" color={ui.orange} />
+          <Metric title="Total Orders" value={stats.totalOrders} icon="receipt-outline" color={ui.primary} />
+          <Metric title="Avg Order" value={money(stats.avgOrder)} icon="analytics-outline" color={ui.green} />
+          <Metric title="Active Orders" value={stats.activeOrders} icon="time-outline" color={ui.orange} />
+          <Metric title="Delivered Orders" value={stats.deliveredOrders} icon="checkmark-done-outline" color={ui.green} />
+          <Metric title="Cancelled" value={stats.cancelledOrders} icon="close-circle-outline" color={ui.red} />
+          <Metric title="Open Loads" value={stats.openLoads} icon="cube-outline" color={ui.orange} />
+          <Metric title="Booked Loads" value={stats.bookedLoads} icon="navigate-outline" color={ui.primary} />
+          <Metric title="Delivered Loads" value={stats.deliveredLoads} icon="flag-outline" color={ui.green} />
+          <Metric title="Farmers" value={stats.farmers} icon="leaf-outline" color={ui.green} />
+          <Metric title="Customers" value={stats.customers} icon="person-outline" color={ui.purple} />
+          <Metric title="Drivers" value={stats.drivers} icon="car-outline" color={ui.orange} />
+          <Metric title="Freight Users" value={stats.freightUsers} icon="business-outline" color={ui.primary} />
+          <Metric title="Products" value={stats.products} icon="storefront-outline" color={ui.green} />
+          <Metric title="Low Stock" value={stats.lowStock} icon="warning-outline" color={ui.red} />
+        </View>
+
+        <Section title="Issues to Review" subtitle="AI-style operational flags for admin attention." />
+
+        {issues.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyEmoji}>✅</Text>
+            <Text style={styles.emptyTitle}>No major issues detected</Text>
+            <Text style={styles.emptyText}>Marketplace, payments, verification, and freight look stable.</Text>
+          </View>
+        ) : (
+          issues.map((issue) => <IssueCard key={issue.id} issue={issue} />)
+        )}
+
+        <Section title="Order Status Breakdown" subtitle="Customer order movement by status." />
+        <StatusBars rows={orderStatuses} />
+
+        <Section title="Freight Load Breakdown" subtitle="Freight activity by status." />
+        <StatusBars rows={loadStatuses} />
+
+        <Section title="Top Farms by Revenue" subtitle="Best performing farmer stores." />
+
+        <FlatList
+          data={topFarms}
+          keyExtractor={(item) => item.farmer_id}
+          scrollEnabled={false}
+          ListEmptyComponent={
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No farm revenue yet</Text>
+              <Text style={styles.emptyText}>
+                Top farms will appear after customer orders are created.
               </Text>
             </View>
+          }
+          renderItem={({ item, index }) => (
+            <View style={styles.farmRow}>
+              <View style={styles.rankCircle}>
+                <Text style={styles.rankText}>{index + 1}</Text>
+              </View>
 
-            <TouchableOpacity style={styles.refreshPill} onPress={loadAnalytics}>
-              <Ionicons name="refresh-outline" size={18} color={ui.primary} />
-              <Text style={styles.refreshPillText}>Refresh</Text>
-            </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.farmName}>{item.farm_name}</Text>
+                <Text style={styles.farmMeta}>{item.orders} order(s)</Text>
+              </View>
+
+              <Text style={styles.farmRevenue}>{money(item.revenue)}</Text>
+            </View>
+          )}
+        />
+
+        <View style={styles.aiCard}>
+          <View style={styles.aiHeader}>
+            <View style={styles.aiIcon}>
+              <Ionicons name="sparkles-outline" size={22} color={ui.primary} />
+            </View>
+            <Text style={styles.aiTitle}>Growth Snapshot</Text>
           </View>
 
-          {loading ? (
-            <View style={styles.loadingCard}>
-              <ActivityIndicator size="large" color={ui.primary} />
-              <Text style={styles.loadingText}>Loading analytics...</Text>
-            </View>
-          ) : (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={styles.statsGrid}>
-                <StatCard label="Marketplace Revenue" value={formatMoney(stats.totalRevenue)} icon="cash-outline" accent />
-                <StatCard label="Freight Revenue" value={formatMoney(stats.freightRevenue)} icon="trail-sign-outline" accent />
-                <StatCard label="Total Orders" value={String(stats.totalOrders)} icon="receipt-outline" />
-                <StatCard label="Avg Order Value" value={formatMoney(stats.avgOrderValue)} icon="analytics-outline" />
-                <StatCard label="Active Orders" value={String(stats.activeOrders)} icon="time-outline" />
-                <StatCard label="Delivered Orders" value={String(stats.deliveredOrders)} icon="checkmark-done-outline" />
-                <StatCard label="Cancelled / Refunded" value={String(stats.cancelledOrders)} icon="close-circle-outline" danger />
-                <StatCard label="Total Loads" value={String(stats.totalLoads)} icon="cube-outline" />
-                <StatCard label="Open Loads" value={String(stats.openLoads)} icon="file-tray-outline" />
-                <StatCard label="Booked Loads" value={String(stats.bookedLoads)} icon="navigate-outline" />
-                <StatCard label="Delivered Loads" value={String(stats.deliveredLoads)} icon="flag-outline" />
-                <StatCard label="Pending Reviews" value={String(stats.pendingVerifications)} icon="shield-checkmark-outline" warning />
-                <StatCard label="Approved Farmers" value={String(stats.approvedFarmers)} icon="leaf-outline" success />
-                <StatCard label="Approved Carriers" value={String(stats.approvedCarriers)} icon="business-outline" success />
-              </View>
-
-              <View style={styles.dashboardGrid}>
-                <View style={styles.chartCard}>
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Order Status Breakdown</Text>
-                    <Text style={styles.sectionLink}>Orders</Text>
-                  </View>
-
-                  {orderStatuses.length === 0 ? (
-                    <Text style={styles.emptyText}>No order status data yet.</Text>
-                  ) : (
-                    orderStatuses.map((item) => renderBar(item, maxOrderStatus))
-                  )}
-                </View>
-
-                <View style={styles.chartCard}>
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Freight Load Breakdown</Text>
-                    <Text style={styles.sectionLink}>Freight</Text>
-                  </View>
-
-                  {loadStatuses.length === 0 ? (
-                    <Text style={styles.emptyText}>No freight load data yet.</Text>
-                  ) : (
-                    loadStatuses.map((item) => renderBar(item, maxLoadStatus))
-                  )}
-                </View>
-              </View>
-
-              <View style={styles.chartCard}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Top Farms by Revenue</Text>
-                  <Text style={styles.sectionLink}>Top 10</Text>
-                </View>
-
-                <FlatList
-                  data={topFarms}
-                  keyExtractor={(item) => item.farmer_id}
-                  scrollEnabled={false}
-                  ListEmptyComponent={
-                    <Text style={styles.emptyText}>No farm revenue data yet.</Text>
-                  }
-                  renderItem={({ item, index }) => (
-                    <View style={styles.farmRow}>
-                      <View style={styles.rankCircle}>
-                        <Text style={styles.rankText}>{index + 1}</Text>
-                      </View>
-
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.farmName}>{item.farm_name}</Text>
-                        <Text style={styles.farmMeta}>{item.orders} orders</Text>
-                      </View>
-
-                      <Text style={styles.farmRevenue}>
-                        {formatMoney(item.revenue)}
-                      </Text>
-                    </View>
-                  )}
-                />
-              </View>
-
-              <View style={styles.forecastCard}>
-                <View style={styles.forecastHeader}>
-                  <View style={styles.forecastIcon}>
-                    <Ionicons name="sparkles-outline" size={22} color={ui.primary} />
-                  </View>
-                  <Text style={styles.forecastTitle}>AI Growth Snapshot</Text>
-                </View>
-
-                <Text style={styles.forecastText}>
-                  Estimated monthly marketplace revenue at current pace:{" "}
-                  <Text style={styles.forecastStrong}>
-                    {formatMoney(stats.totalRevenue * 4)}
-                  </Text>
-                </Text>
-
-                <Text style={styles.forecastText}>
-                  Estimated monthly freight opportunity volume:{" "}
-                  <Text style={styles.forecastStrong}>
-                    {formatMoney(stats.freightRevenue * 4)}
-                  </Text>
-                </Text>
-
-                <Text style={styles.forecastText}>
-                  Recommended focus: grow approved farmers, increase recurring
-                  customer subscriptions, and convert open freight loads into booked
-                  carrier jobs.
-                </Text>
-              </View>
-
-              <View style={{ height: 80 }} />
-            </ScrollView>
-          )}
+          <Text style={styles.aiText}>
+            Estimated 30-day marketplace run-rate:{" "}
+            <Text style={styles.aiStrong}>{money(stats.marketplaceRevenue * 4)}</Text>
+          </Text>
+          <Text style={styles.aiText}>
+            Estimated 30-day freight run-rate:{" "}
+            <Text style={styles.aiStrong}>{money(stats.freightRevenue * 4)}</Text>
+          </Text>
+          <Text style={styles.aiText}>
+            Recommended focus: approve pending farmers, fix payout gaps, restock low
+            inventory, and convert open freight loads into booked carrier jobs.
+          </Text>
         </View>
-      </View>
+
+        <View style={styles.actions}>
+          <AdminNav label="Dashboard" icon="grid-outline" route="/admin/dashboard" />
+          <AdminNav label="Application Payments" icon="card-outline" route="/admin/application-payments" />
+          <AdminNav label="Verification" icon="shield-checkmark-outline" route="/admin/verification-records" />
+          <AdminNav label="Farmers" icon="leaf-outline" route="/admin/farmers" />
+          <AdminNav label="Drivers" icon="car-outline" route="/admin/drivers" />
+          <AdminNav label="Freight" icon="trail-sign-outline" route="/admin/freight" />
+        </View>
+
+        <View style={{ height: 80 }} />
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
-function NavButton({
-  label,
-  icon,
-  route,
-  active = false,
-}: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  route: string;
-  active?: boolean;
-}) {
+function Section({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <TouchableOpacity
-      style={[styles.navButton, active && styles.navButtonActive]}
-      onPress={() => router.push(route as any)}
-    >
-      <Ionicons name={icon} size={18} color={active ? "#FFFFFF" : ui.muted} />
-      <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  icon,
-  accent = false,
-  warning = false,
-  danger = false,
-  success = false,
-}: {
-  label: string;
-  value: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  accent?: boolean;
-  warning?: boolean;
-  danger?: boolean;
-  success?: boolean;
-}) {
-  const color = danger
-    ? ui.red
-    : warning
-    ? ui.orange
-    : success
-    ? ui.green
-    : accent
-    ? ui.primary
-    : ui.blue;
-
-  return (
-    <View style={styles.statCard}>
-      <View style={[styles.statIcon, { backgroundColor: `${color}18` }]}>
-        <Ionicons name={icon} size={20} color={color} />
-      </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSub}>{subtitle}</Text>
     </View>
   );
 }
 
+function Metric({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: string | number;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+}) {
+  return (
+    <View style={styles.metric}>
+      <View style={[styles.metricIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricTitle}>{title}</Text>
+    </View>
+  );
+}
+
+function IssueCard({ issue }: { issue: Issue }) {
+  const color =
+    issue.severity === "High" ? ui.red : issue.severity === "Medium" ? ui.orange : ui.primary;
+
+  return (
+    <View style={styles.issueCard}>
+      <View style={[styles.issueIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name="warning-outline" size={20} color={color} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.issueTitle}>{issue.title}</Text>
+        <Text style={styles.issueDetail}>{issue.detail}</Text>
+      </View>
+      <Text style={[styles.issueSeverity, { color }]}>{issue.severity}</Text>
+    </View>
+  );
+}
+
+function StatusBars({ rows }: { rows: StatusMetric[] }) {
+  const max = Math.max(1, ...rows.map((row) => row.count));
+
+  if (rows.length === 0) {
+    return (
+      <View style={styles.emptyCard}>
+        <Text style={styles.emptyTitle}>No status data</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.statusCard}>
+      {rows.map((row) => {
+        const widthPercent = Math.max(12, (row.count / max) * 100);
+
+        return (
+          <View key={row.status} style={styles.barRow}>
+            <View style={styles.barTop}>
+              <Text style={styles.barLabel}>{row.status}</Text>
+              <Text style={styles.barCount}>{row.count}</Text>
+            </View>
+
+            <View style={styles.barTrack}>
+              <View
+                style={[
+                  styles.barFill,
+                  { width: `${widthPercent}%` as `${number}%` },
+                ]}
+              />
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function AdminNav({
+  label,
+  icon,
+  route,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  route: string;
+}) {
+  return (
+    <TouchableOpacity style={styles.navButton} onPress={() => router.push(route as any)}>
+      <Ionicons name={icon} size={18} color={ui.primary} />
+      <Text style={styles.navText}>{label}</Text>
+      <Ionicons name="chevron-forward-outline" size={17} color={ui.muted} />
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: {
+  safe: { flex: 1, backgroundColor: ui.dark },
+  page: { flex: 1, backgroundColor: ui.bg },
+  content: { padding: 16, paddingBottom: 90 },
+  center: {
     flex: 1,
     backgroundColor: ui.bg,
-  },
-  shell: {
-    flex: 1,
-    backgroundColor: ui.bg,
-  },
-  sidebar: {
-    backgroundColor: ui.card,
-    borderBottomWidth: 1,
-    borderBottomColor: ui.border,
-    paddingHorizontal: 16,
-    paddingTop: 18,
-    paddingBottom: 12,
-  },
-  logoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 16,
-  },
-  logoMark: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: ui.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  logoText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-    fontSize: 13,
-  },
-  logoTitle: {
-    color: ui.text,
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  logoSub: {
-    color: ui.muted,
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  navButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    marginBottom: 6,
-    backgroundColor: ui.soft,
-  },
-  navButtonActive: {
-    backgroundColor: ui.primary,
-  },
-  navText: {
-    color: ui.muted,
-    fontWeight: "900",
-    fontSize: 13,
-  },
-  navTextActive: {
-    color: "#FFFFFF",
-  },
-  main: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  topbar: {
-    backgroundColor: ui.card,
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: ui.border,
+  centerText: { marginTop: 10, color: ui.muted, fontWeight: "800" },
+
+  hero: {
+    backgroundColor: ui.dark,
+    borderRadius: 28,
+    padding: 22,
     marginBottom: 14,
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  welcome: {
-    color: ui.muted,
-    fontWeight: "800",
-    marginBottom: 4,
-  },
-  pageTitle: {
-    color: ui.text,
-    fontSize: 26,
-    fontWeight: "900",
-  },
-  pageSub: {
-    color: ui.muted,
-    marginTop: 4,
-    fontWeight: "700",
-  },
-  refreshPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: ui.primarySoft,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  refreshPillText: {
-    color: ui.primary,
-    fontWeight: "900",
-  },
-  loadingCard: {
-    backgroundColor: ui.card,
-    padding: 28,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: ui.border,
-    alignItems: "center",
-  },
-  loadingText: {
-    color: ui.muted,
-    marginTop: 10,
-    fontWeight: "800",
-  },
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
     gap: 12,
+  },
+  kicker: {
+    color: "#93C5FD",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  title: { color: ui.white, fontSize: 33, fontWeight: "900", marginTop: 6 },
+  subtitle: { color: "#CBD5E1", fontWeight: "700", lineHeight: 22, marginTop: 8 },
+  adminLine: { color: "#BFDBFE", fontWeight: "800", marginTop: 12 },
+  logoutButton: {
+    backgroundColor: ui.primary,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    alignSelf: "flex-start",
+  },
+  logoutText: { color: ui.white, fontWeight: "900" },
+
+  grossCard: {
+    backgroundColor: ui.primary,
+    borderRadius: 26,
+    padding: 22,
     marginBottom: 14,
   },
-  statCard: {
-    width: "48%",
+  grossLabel: { color: "#DBEAFE", fontWeight: "900" },
+  grossValue: { color: ui.white, fontSize: 42, fontWeight: "900", marginTop: 5 },
+  grossSub: { color: "#DBEAFE", fontWeight: "700", marginTop: 6, lineHeight: 21 },
+
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  metric: {
+    flexGrow: 1,
+    width: "47%",
     backgroundColor: ui.card,
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 16,
     borderWidth: 1,
     borderColor: ui.border,
   },
-  statIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+  metricIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 10,
   },
-  statValue: {
-    color: ui.text,
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  statLabel: {
-    color: ui.muted,
-    fontWeight: "800",
-    marginTop: 4,
-  },
-  dashboardGrid: {
-    gap: 12,
-    marginBottom: 14,
-  },
-  chartCard: {
+  metricValue: { color: ui.text, fontSize: 22, fontWeight: "900" },
+  metricTitle: { color: ui.muted, fontWeight: "800", marginTop: 4 },
+
+  section: { marginTop: 22, marginBottom: 12 },
+  sectionTitle: { color: ui.text, fontSize: 23, fontWeight: "900" },
+  sectionSub: { color: ui.muted, fontWeight: "700", marginTop: 4 },
+
+  issueCard: {
     backgroundColor: ui.card,
     borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: ui.border,
+    marginBottom: 10,
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  issueIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  issueTitle: { color: ui.text, fontWeight: "900", fontSize: 16 },
+  issueDetail: { color: ui.muted, fontWeight: "700", marginTop: 4, lineHeight: 20 },
+  issueSeverity: { fontWeight: "900", fontSize: 12 },
+
+  emptyCard: {
+    backgroundColor: ui.card,
+    borderRadius: 22,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: ui.border,
+    alignItems: "center",
+  },
+  emptyEmoji: { fontSize: 38 },
+  emptyTitle: { color: ui.text, fontWeight: "900", fontSize: 18 },
+  emptyText: { color: ui.muted, fontWeight: "700", textAlign: "center", marginTop: 6 },
+
+  statusCard: {
+    backgroundColor: ui.card,
+    borderRadius: 22,
     padding: 16,
     borderWidth: 1,
     borderColor: ui.border,
-    marginBottom: 14,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 14,
-  },
-  sectionTitle: {
-    color: ui.text,
-    fontSize: 19,
-    fontWeight: "900",
-  },
-  sectionLink: {
-    color: ui.primary,
-    fontWeight: "900",
-    fontSize: 12,
-  },
-  barRow: {
-    marginBottom: 14,
-  },
-  barLabelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
-  barLabel: {
-    color: ui.text,
-    fontWeight: "900",
-  },
-  barCount: {
-    color: ui.muted,
-    fontWeight: "900",
-  },
+  barRow: { marginBottom: 14 },
+  barTop: { flexDirection: "row", justifyContent: "space-between", marginBottom: 6 },
+  barLabel: { color: ui.text, fontWeight: "900" },
+  barCount: { color: ui.muted, fontWeight: "900" },
   barTrack: {
     height: 12,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: ui.primarySoft,
     borderRadius: 999,
     overflow: "hidden",
   },
-  barFill: {
-    height: "100%",
-    borderRadius: 999,
-    backgroundColor: ui.primary,
-  },
-  emptyText: {
-    color: ui.muted,
-    fontWeight: "700",
-    lineHeight: 22,
-  },
+  barFill: { height: "100%", backgroundColor: ui.primary, borderRadius: 999 },
+
   farmRow: {
+    backgroundColor: ui.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: ui.border,
+    padding: 14,
+    marginBottom: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: ui.border,
   },
   rankCircle: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: 16,
     backgroundColor: ui.primarySoft,
     alignItems: "center",
     justifyContent: "center",
   },
-  rankText: {
-    color: ui.primary,
-    fontWeight: "900",
-    fontSize: 17,
-  },
-  farmName: {
-    color: ui.text,
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  farmMeta: {
-    color: ui.muted,
-    fontWeight: "700",
-    marginTop: 3,
-  },
-  farmRevenue: {
-    color: ui.primary,
-    fontWeight: "900",
-    fontSize: 16,
-  },
-  forecastCard: {
+  rankText: { color: ui.primary, fontWeight: "900", fontSize: 16 },
+  farmName: { color: ui.text, fontWeight: "900", fontSize: 16 },
+  farmMeta: { color: ui.muted, fontWeight: "700", marginTop: 3 },
+  farmRevenue: { color: ui.primary, fontWeight: "900", fontSize: 16 },
+
+  aiCard: {
     backgroundColor: ui.card,
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
     borderColor: ui.border,
-    marginBottom: 18,
+    marginTop: 14,
   },
-  forecastHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    marginBottom: 12,
-  },
-  forecastIcon: {
+  aiHeader: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 12 },
+  aiIcon: {
     width: 40,
     height: 40,
     borderRadius: 14,
@@ -817,19 +775,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  forecastTitle: {
-    color: ui.text,
-    fontSize: 21,
-    fontWeight: "900",
+  aiTitle: { color: ui.text, fontSize: 21, fontWeight: "900" },
+  aiText: { color: ui.muted, lineHeight: 23, fontWeight: "700", marginBottom: 8 },
+  aiStrong: { color: ui.primary, fontWeight: "900" },
+
+  actions: { gap: 10, marginTop: 18 },
+  navButton: {
+    backgroundColor: ui.card,
+    borderWidth: 1,
+    borderColor: ui.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
-  forecastText: {
-    color: ui.muted,
-    lineHeight: 23,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  forecastStrong: {
-    color: ui.primary,
-    fontWeight: "900",
-  },
+  navText: { flex: 1, color: ui.text, fontWeight: "900" },
 });
