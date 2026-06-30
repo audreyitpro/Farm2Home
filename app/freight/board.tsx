@@ -110,8 +110,8 @@ type FreightLoad = {
   status: LoadStatus;
   carrier_id?: string | null;
   freight_user_id?: string | null;
-  accepted_by?: string | null;
-  batch_id?: string | null;
+  assigned_driver_id?: string | null;
+  assigned_carrier_id?: string | null;
   created_at?: string | null;
 };
 
@@ -232,8 +232,8 @@ function mapLoad(row: any): FreightLoad {
     status: normalizeStatus(row.status),
     carrier_id: row.carrier_id || null,
     freight_user_id: row.freight_user_id || null,
-    accepted_by: row.accepted_by || null,
-    batch_id: row.batch_id || null,
+    assigned_driver_id: row.assigned_driver_id || null,
+    assigned_carrier_id: row.assigned_carrier_id || null,
     created_at: row.created_at || null,
   };
 }
@@ -517,7 +517,7 @@ export default function FreightBoardScreen() {
         .from(TABLE_NAME)
         .select("*")
         .or(
-          `status.eq.available,status.eq.open,carrier_id.eq.${carrierId},freight_user_id.eq.${carrierId},accepted_by.eq.${carrierId}`
+          `status.eq.available,status.eq.open,carrier_id.eq.${carrierId},freight_user_id.eq.${carrierId},driver_id.eq.${carrierId},assigned_driver_id.eq.${carrierId},assigned_carrier_id.eq.${carrierId}`
         )
         .order("created_at", { ascending: false });
 
@@ -682,13 +682,11 @@ export default function FreightBoardScreen() {
         status: "accepted",
         carrier_id: currentFreight.id,
         freight_user_id: currentFreight.id,
-        accepted_by: currentFreight.id,
+        driver_id: currentFreight.id,
+        assigned_driver_id: currentFreight.id,
+        assigned_carrier_id: currentFreight.id,
         accepted_at: now,
         updated_at: now,
-        carrier_name:
-          currentFreight.companyName || currentFreight.businessName || currentFreight.contactName || "Farm2Home Freight Carrier",
-        carrier_email: currentFreight.email || null,
-        carrier_account_id: currentFreight.account_id || currentFreight.accountId || null,
       };
 
       const { error } = await supabase
@@ -754,17 +752,11 @@ export default function FreightBoardScreen() {
             status: "accepted",
             carrier_id: currentFreight.id,
             freight_user_id: currentFreight.id,
-            accepted_by: currentFreight.id,
+            driver_id: currentFreight.id,
+        assigned_driver_id: currentFreight.id,
+        assigned_carrier_id: currentFreight.id,
             accepted_at: now,
             updated_at: now,
-            batch_id: batchId,
-            carrier_name:
-              currentFreight.companyName ||
-              currentFreight.businessName ||
-              currentFreight.contactName ||
-              "Farm2Home Freight Carrier",
-            carrier_email: currentFreight.email || null,
-            carrier_account_id: currentFreight.account_id || currentFreight.accountId || null,
           })
           .eq("id", load.id)
           .in("status", ["available", "open"]);
