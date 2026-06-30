@@ -34,7 +34,8 @@ import { supabase } from "../data/supabaseClient";
  * - Color scheme matches Freight/Fina UI: navy + purple, soft cards, light surfaces.
  * - Removed red/black marketplace theme.
  * - Keeps existing marketplace logic and routes.
- * - Still groups each farmer into its own grocery row.
+ * - Loads normal farm products AND farmer bundles.
+ * - Groups each farmer into its own grocery row.
  */
 
 const COLORS = {
@@ -69,6 +70,10 @@ const DEFAULT_CATEGORIES = [
   "Eggs",
   "Honey",
   "Meat",
+  "Meat Bundles",
+  "Seafood Bundles",
+  "Farm Bundles",
+  "Subscription Bundles",
   "Poultry",
   "Fish & Aquaculture",
   "Dairy",
@@ -113,6 +118,17 @@ type Product = {
   seasonal?: boolean;
   featured?: boolean;
   tags?: string[];
+  isBundle?: boolean;
+  bundleId?: string;
+  bundle_id?: string;
+  bundleType?: string;
+  bundle_type?: string;
+  subscriptionEligible?: boolean;
+  subscription_eligible?: boolean;
+  deliveryFrequency?: string;
+  delivery_frequency?: string;
+  billingInterval?: string;
+  billing_interval?: string;
 };
 
 type Farmer = {
@@ -279,11 +295,18 @@ function getProductStock(product: any) {
 }
 
 function isProductAvailable(product: Product) {
+  const row: any = product;
+
   if (!clean(product.name)) return false;
   if (product.available === false) return false;
   if (product.active === false) return false;
+  if (row.is_active === false) return false;
   if (product.marketplace_visible === false) return false;
+  if (row.marketplace === false) return false;
   if (product.removed_from_inventory === true) return false;
+
+  if (product.isBundle) return true;
+
   return getProductStock(product) > 0;
 }
 
@@ -308,6 +331,10 @@ function normalizeCategory(category?: string) {
   if (value === "Bale of Hay" || value === "Hay") return "Hay & Feed";
   if (value === "Plants & Herbs") return "Plants & Nursery";
   if (value === "Seasonal") return "Seasonal Products";
+  if (value === "Bundle" || value === "Bundles" || value === "Farm Bundle") return "Farm Bundles";
+  if (value === "Subscription" || value === "Subscription Bundle") return "Subscription Bundles";
+  if (value === "Seafood Bundle") return "Seafood Bundles";
+  if (value === "Meat Bundle") return "Meat Bundles";
   return value;
 }
 
@@ -431,7 +458,111 @@ function mapProductRow(row: any): Product {
     seasonal: Boolean(row.seasonal),
     featured: Boolean(row.featured),
     tags: Array.isArray(row.tags) ? row.tags : [],
+    isBundle: false,
   };
+}
+
+
+function mapBundleRow(row: any): Product {
+  const farmerId = clean(row.farmer_id || row.farmerId || row.owner_id || row.created_by || "");
+  const image = clean(
+    row.image_url ||
+      row.image ||
+      row.imageUrl ||
+      row.photo_url ||
+      row.bundle_image_url ||
+      row.cover_image_url ||
+      ""
+  );
+
+  const rawCategory = clean(
+    row.category ||
+      row.bundle_category ||
+      row.bundle_type ||
+      row.type ||
+      row.product_category ||
+      ""
+  );
+
+  const isSubscription =
+    row.subscription_eligible === true ||
+    row.is_subscription === true ||
+    row.recurring === true ||
+    Boolean(clean(row.billing_interval || row.delivery_frequency || row.frequency));
+
+  const category =
+    rawCategory ||
+    (isSubscription ? "Subscription Bundles" : "Farm Bundles");
+
+  const price =
+    row.price ??
+    row.bundle_price ??
+    row.monthly_price ??
+    row.subscription_price ??
+    row.amount ??
+    row.total_price ??
+    0;
+
+  return {
+    id: clean(row.id || row.bundle_id || `bundle_${Date.now()}_${Math.random()}`),
+    bundleId: clean(row.id || row.bundle_id || ""),
+    bundle_id: clean(row.id || row.bundle_id || ""),
+    name: clean(row.name || row.title || row.bundle_name || row.box_name || "Farm Bundle"),
+    description: clean(row.description || row.bundle_description || row.summary || ""),
+    category: normalizeCategory(category),
+    price: Number(price || 0),
+    unit: clean(row.unit || row.sell_by || row.billing_interval || row.delivery_frequency || "bundle"),
+    image,
+    imageUrl: image,
+    image_url: image,
+    farmerId,
+    farmer_id: farmerId,
+    farmName: clean(row.farm_name || row.farmName || row.business_name || "Local Farm"),
+    farm_name: clean(row.farm_name || row.farmName || row.business_name || "Local Farm"),
+    farmerEmail: clean(row.farmer_email || row.email || ""),
+    farmer_email: clean(row.farmer_email || row.email || ""),
+    farmerStripeAccountId: clean(row.farmer_stripe_account_id || row.stripe_account_id || ""),
+    farmer_stripe_account_id: clean(row.farmer_stripe_account_id || row.stripe_account_id || ""),
+    stripeAccountId: clean(row.stripe_account_id || ""),
+    stripe_account_id: clean(row.stripe_account_id || ""),
+    stock: Number(row.stock ?? row.quantity ?? row.inventory ?? 999),
+    quantity: Number(row.quantity ?? row.stock ?? row.inventory ?? 999),
+    inventory: Number(row.inventory ?? row.stock ?? row.quantity ?? 999),
+    available: row.available !== false,
+    active: row.active !== false && row.is_active !== false,
+    marketplace_visible: row.marketplace_visible !== false,
+    removed_from_inventory: false,
+    organic: Boolean(row.organic),
+    local: Boolean(row.local ?? true),
+    seasonal: Boolean(row.seasonal),
+    featured: Boolean(row.featured ?? true),
+    tags: Array.isArray(row.tags) ? row.tags : ["bundle"],
+    isBundle: true,
+    bundleType: clean(row.bundle_type || row.type || ""),
+    bundle_type: clean(row.bundle_type || row.type || ""),
+    subscriptionEligible: isSubscription,
+    subscription_eligible: isSubscription,
+    deliveryFrequency: clean(row.delivery_frequency || row.frequency || ""),
+    delivery_frequency: clean(row.delivery_frequency || row.frequency || ""),
+    billingInterval: clean(row.billing_interval || ""),
+    billing_interval: clean(row.billing_interval || ""),
+  };
+}
+
+async function queryBundleTable(tableName: string): Promise<Product[]> {
+  try {
+    const { data, error } = await supabase.from(tableName).select("*");
+
+    if (error || !Array.isArray(data)) {
+      if (error) console.log(`${tableName} marketplace bundle query skipped:`, error.message);
+      return [];
+    }
+
+    return data.map(mapBundleRow).filter((bundle) => bundle.farmerId && isProductAvailable(bundle));
+  } catch (error) {
+    console.log(`${tableName} marketplace bundle query failed:`, error);
+    return [];
+  }
 }
 
 function mapFarmerRow(row: any, fallbackId = ""): Farmer {
@@ -548,6 +679,14 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
     "inventory",
   ];
 
+  const bundleTables = [
+    "farm_bundles",
+    "farmer_bundles",
+    "farm_subscription_bundles",
+    "subscription_bundles",
+    "bundles",
+  ];
+
   let products: Product[] = [];
 
   for (const tableName of productTables) {
@@ -555,8 +694,18 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
     products.push(...rows);
   }
 
+  for (const tableName of bundleTables) {
+    const rows = await queryBundleTable(tableName);
+    products.push(...rows);
+  }
+
   products = Array.from(
-    new Map(products.map((product) => [`${product.farmerId}_${product.id}`, product])).values()
+    new Map(
+      products.map((product) => [
+        `${product.farmerId}_${product.isBundle ? "bundle" : "product"}_${product.id}`,
+        product,
+      ])
+    ).values()
   );
 
   const farmerIds = Array.from(
@@ -801,8 +950,8 @@ export default function MarketplaceScreen() {
 
       const localCurrentFarmer =
         currentFarmer?.role === "farmer" &&
-        Array.isArray(currentFarmer.products) &&
-        currentFarmer.products.length > 0
+        (Array.isArray(currentFarmer.products) || Array.isArray(currentFarmer.bundles)) &&
+        ((currentFarmer.products || []).length > 0 || (currentFarmer.bundles || []).length > 0)
           ? [
               {
                 ...currentFarmer,
@@ -814,7 +963,16 @@ export default function MarketplaceScreen() {
                   currentFarmer.business_name ||
                   currentFarmer.farm_name ||
                   "Local Farm",
-                products: currentFarmer.products,
+                products: [
+                  ...(Array.isArray(currentFarmer.products) ? currentFarmer.products : []),
+                  ...(Array.isArray(currentFarmer.bundles)
+                    ? currentFarmer.bundles.map((bundle: any) => ({
+                        ...bundle,
+                        isBundle: true,
+                        category: bundle.category || bundle.bundle_type || "Farm Bundles",
+                      }))
+                    : []),
+                ],
               },
             ]
           : [];
@@ -842,7 +1000,7 @@ export default function MarketplaceScreen() {
         const productMap = new Map<string, Product>();
 
         [...(existing?.products || []), ...(farmer.products || [])].forEach((product) => {
-          productMap.set(clean(product.id), product);
+          productMap.set(`${product.isBundle ? "bundle" : "product"}_${clean(product.id)}`, product);
         });
 
         farmerMap.set(farmerId, {
@@ -982,6 +1140,18 @@ export default function MarketplaceScreen() {
         unit: product.unit || "each",
         category: normalizeCategory(product.category),
         stock: getProductStock(product),
+        isBundle: Boolean(product.isBundle),
+        is_bundle: Boolean(product.isBundle),
+        bundleId: product.bundleId || product.bundle_id || "",
+        bundle_id: product.bundleId || product.bundle_id || "",
+        productType: product.isBundle ? "bundle" : "product",
+        product_type: product.isBundle ? "bundle" : "product",
+        subscriptionEligible: Boolean(product.subscriptionEligible || product.subscription_eligible),
+        subscription_eligible: Boolean(product.subscriptionEligible || product.subscription_eligible),
+        deliveryFrequency: product.deliveryFrequency || product.delivery_frequency || "",
+        delivery_frequency: product.deliveryFrequency || product.delivery_frequency || "",
+        billingInterval: product.billingInterval || product.billing_interval || "",
+        billing_interval: product.billingInterval || product.billing_interval || "",
         addedAt: new Date().toISOString(),
       } as any);
 
@@ -1022,6 +1192,10 @@ export default function MarketplaceScreen() {
     const imageSource = getProductImage(product);
     const stock = getProductStock(product);
     const category = normalizeCategory(product.category);
+    const isBundle = Boolean(product.isBundle);
+    const subscriptionLabel = product.subscriptionEligible || product.subscription_eligible
+      ? product.deliveryFrequency || product.delivery_frequency || product.billingInterval || product.billing_interval || "Recurring"
+      : "";
 
     return (
       <View
@@ -1049,10 +1223,10 @@ export default function MarketplaceScreen() {
             </Text>
           </View>
 
-          {product.featured || product.seasonal ? (
-            <View style={styles.featuredBadge}>
+          {isBundle || product.featured || product.seasonal ? (
+            <View style={[styles.featuredBadge, isBundle && styles.bundleBadge]}>
               <Text style={styles.featuredBadgeText}>
-                {product.featured ? "Featured" : "Seasonal"}
+                {isBundle ? "Bundle" : product.featured ? "Featured" : "Seasonal"}
               </Text>
             </View>
           ) : null}
@@ -1067,6 +1241,8 @@ export default function MarketplaceScreen() {
         </Text>
 
         <View style={styles.tagLine}>
+          {isBundle ? <Text style={styles.miniTag}>Bundle</Text> : null}
+          {subscriptionLabel ? <Text style={styles.miniTag}>{subscriptionLabel}</Text> : null}
           {product.organic ? <Text style={styles.miniTag}>Organic</Text> : null}
           {product.local ? <Text style={styles.miniTag}>Local</Text> : null}
           {product.seasonal ? <Text style={styles.miniTag}>Seasonal</Text> : null}
@@ -1076,7 +1252,9 @@ export default function MarketplaceScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.productPrice}>{formatPrice(product.price)}</Text>
             <Text style={styles.productUnit}>
-              {product.unit ? `per ${product.unit}` : "each"} · {stock} left
+              {isBundle
+                ? `${product.unit || "bundle"}${subscriptionLabel ? ` · ${subscriptionLabel}` : ""}`
+                : `${product.unit ? `per ${product.unit}` : "each"} · ${stock} left`}
             </Text>
           </View>
 
@@ -1088,7 +1266,7 @@ export default function MarketplaceScreen() {
             onPress={() => handleAddToCart(farmer, product)}
           >
             <Ionicons name="add-outline" size={16} color={COLORS.white} />
-            <Text style={styles.addButtonText}>Add</Text>
+            <Text style={styles.addButtonText}>{isBundle ? "Add Bundle" : "Add"}</Text>
           </Pressable>
         </View>
       </View>
@@ -1155,7 +1333,7 @@ export default function MarketplaceScreen() {
           <View style={styles.noProductsBox}>
             <Ionicons name="leaf-outline" size={20} color={COLORS.muted} />
             <Text style={styles.noProductsText}>
-              This farm is approved and unlocked, but no marketplace products are listed yet.
+              This farm is approved and unlocked, but no marketplace products or bundles are listed yet.
             </Text>
           </View>
         )}
@@ -1196,7 +1374,7 @@ export default function MarketplaceScreen() {
             <Text style={styles.heroBadge}>Fresh Marketplace</Text>
             <Text style={styles.heroTitle}>Groceries directly from local farmers</Text>
             <Text style={styles.heroSubtitle}>
-              Browse each farm row like a grocery aisle. Add produce, eggs, honey, meat, hay, flowers, and seasonal goods.
+              Browse each farm row like a grocery aisle. Add produce, eggs, honey, meat, seafood, bundles, flowers, and seasonal goods.
             </Text>
 
             <View style={styles.heroButtons}>
@@ -1233,7 +1411,7 @@ export default function MarketplaceScreen() {
               <Ionicons name="leaf-outline" size={18} color={COLORS.primary} />
             </View>
             <Text style={styles.quickStatValue}>{allProductCount}</Text>
-            <Text style={styles.quickStatLabel}>Products</Text>
+            <Text style={styles.quickStatLabel}>Items</Text>
           </View>
 
           <View style={styles.quickStat}>
@@ -1294,7 +1472,7 @@ export default function MarketplaceScreen() {
               <View>
                 <Text style={styles.sectionTitle}>Featured Fresh Picks</Text>
                 <Text style={styles.sectionSubtitle}>
-                  Popular items across nearby farms
+                  Popular products and farmer bundles across nearby farms
                 </Text>
               </View>
             </View>
@@ -1387,7 +1565,7 @@ export default function MarketplaceScreen() {
               {loading ? "Loading marketplace..." : "No farm rows found"}
             </Text>
             <Text style={styles.emptySubtitle}>
-              Active farms with available marketplace products will appear here by farmer row.
+              Active farms with available marketplace products or bundles will appear here by farmer row.
             </Text>
 
             <TouchableOpacity style={styles.emptyButton} onPress={loadMarketplace}>
@@ -1793,6 +1971,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
+  },
+  bundleBadge: {
+    backgroundColor: COLORS.accent,
   },
   featuredBadgeText: { color: COLORS.navy, fontSize: 10, fontWeight: "900" },
   productName: { fontWeight: "900", fontSize: 15, color: COLORS.text },

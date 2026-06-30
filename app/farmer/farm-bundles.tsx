@@ -50,16 +50,23 @@ type Farmer = {
 type Bundle = {
   id: string;
   farmer_id: string;
+  name?: string;
   bundle_name: string;
+  category?: string;
   bundle_type: string;
   description: string;
   price: number;
+  monthly_price: number;
+  bimonthly_price: number;
   items: string[];
   available: boolean;
+  is_active?: boolean;
+  marketplace_visible?: boolean;
   delivery_enabled: boolean;
   shipping_enabled: boolean;
   monthly_enabled: boolean;
   bimonthly_enabled: boolean;
+  delivery_frequency?: "monthly" | "bimonthly" | "both";
   created_at?: string;
 };
 
@@ -82,42 +89,48 @@ const STARTER_BUNDLES = [
   {
     name: "Fresh Produce Box",
     type: "Produce",
-    price: "59",
+    monthlyPrice: "59",
+    bimonthlyPrice: "109",
     items: "Leafy greens\nTomatoes\nSeasonal vegetables\nFarm fruit add-on",
     description: "A fresh local produce box for customers who want seasonal farm goods.",
   },
   {
     name: "Beef Family Bundle",
     type: "Beef",
-    price: "139",
+    monthlyPrice: "139",
+    bimonthlyPrice: "259",
     items: "Steaks\nGround beef\nRoast\nSeasonal farm add-on",
     description: "A family-size beef bundle for recurring monthly or bi-monthly customers.",
   },
   {
     name: "Chicken Monthly Box",
     type: "Chicken",
-    price: "99",
+    monthlyPrice: "99",
+    bimonthlyPrice: "189",
     items: "Chicken breast\nChicken thighs\nWhole chicken\nFarm seasoning add-on",
     description: "A recurring chicken box with fresh farm selections.",
   },
   {
     name: "Halal Meat Bundle",
     type: "Halal Meat",
-    price: "149",
+    monthlyPrice: "149",
+    bimonthlyPrice: "279",
     items: "Halal beef\nHalal chicken\nHalal lamb or goat selection",
     description: "A halal meat bundle prepared for recurring customers.",
   },
   {
     name: "Seafood Catch Box",
     type: "Seafood",
-    price: "129",
+    monthlyPrice: "129",
+    bimonthlyPrice: "239",
     items: "Fresh fish\nShrimp\nSeasonal seafood selection",
     description: "A curated seafood box for delivery or shipping.",
   },
   {
     name: "Mixed Farm Box",
     type: "Mixed Farm Box",
-    price: "119",
+    monthlyPrice: "119",
+    bimonthlyPrice: "219",
     items: "Fresh produce\nMeat selection\nSeafood or protein add-on\nSeasonal item",
     description: "A mixed farmers market box with produce and protein options.",
   },
@@ -163,7 +176,8 @@ export default function FarmerFarmBundlesScreen() {
 
   const [bundleName, setBundleName] = useState("");
   const [bundleType, setBundleType] = useState("Produce");
-  const [price, setPrice] = useState("");
+  const [monthlyPrice, setMonthlyPrice] = useState("");
+  const [bimonthlyPrice, setBimonthlyPrice] = useState("");
   const [description, setDescription] = useState("");
   const [itemsText, setItemsText] = useState("");
 
@@ -243,6 +257,16 @@ export default function FarmerFarmBundlesScreen() {
     setBundles(
       (data || []).map((row: any) => ({
         ...row,
+        name: row.name || row.bundle_name || "Farm Bundle",
+        bundle_name: row.bundle_name || row.name || "Farm Bundle",
+        category: row.category || row.bundle_type || "Farm Bundle",
+        bundle_type: row.bundle_type || row.category || "Farm Bundle",
+        price: Number(row.price || row.monthly_price || row.bimonthly_price || 0),
+        monthly_price: Number(row.monthly_price || row.price || 0),
+        bimonthly_price: Number(row.bimonthly_price || 0),
+        available: row.available !== false && row.is_active !== false && row.marketplace_visible !== false,
+        is_active: row.is_active !== false,
+        marketplace_visible: row.marketplace_visible !== false,
         items: Array.isArray(row.items) ? row.items : [],
       }))
     );
@@ -251,7 +275,8 @@ export default function FarmerFarmBundlesScreen() {
   function useStarter(bundle: (typeof STARTER_BUNDLES)[number]) {
     setBundleName(bundle.name);
     setBundleType(bundle.type);
-    setPrice(bundle.price);
+    setMonthlyPrice(bundle.monthlyPrice);
+    setBimonthlyPrice(bundle.bimonthlyPrice);
     setItemsText(bundle.items);
     setDescription(bundle.description);
   }
@@ -259,7 +284,8 @@ export default function FarmerFarmBundlesScreen() {
   function resetForm() {
     setBundleName("");
     setBundleType("Produce");
-    setPrice("");
+    setMonthlyPrice("");
+    setBimonthlyPrice("");
     setDescription("");
     setItemsText("");
     setDeliveryEnabled(true);
@@ -280,8 +306,13 @@ export default function FarmerFarmBundlesScreen() {
         return;
       }
 
-      if (!Number(price)) {
-        Alert.alert("Price Needed", "Enter a valid bundle price.");
+      if (monthlyEnabled && Number(monthlyPrice) <= 0) {
+        Alert.alert("Monthly Price Needed", "Enter a valid monthly bundle price.");
+        return;
+      }
+
+      if (bimonthlyEnabled && Number(bimonthlyPrice) <= 0) {
+        Alert.alert("Bi-Monthly Price Needed", "Enter a valid bi-monthly bundle price.");
         return;
       }
 
@@ -302,19 +333,45 @@ export default function FarmerFarmBundlesScreen() {
 
       setSaving(true);
 
+      const monthlyAmount = monthlyEnabled ? Number(monthlyPrice) : 0;
+      const bimonthlyAmount = bimonthlyEnabled ? Number(bimonthlyPrice) : 0;
+      const primaryPrice = monthlyEnabled ? monthlyAmount : bimonthlyAmount;
+
       const payload = {
         farmer_id: farmerId,
+
+        // Keep both names so the marketplace can read either field.
+        name: bundleName.trim(),
         bundle_name: bundleName.trim(),
+
+        // Keep both category fields so customer marketplace filters can use category.
+        category: bundleType,
         bundle_type: bundleType,
+
         description: description.trim(),
-        price: Number(price),
+        price: primaryPrice,
+        monthly_price: monthlyAmount,
+        bimonthly_price: bimonthlyAmount,
+
         items: splitItems(itemsText),
+
         available: true,
+        is_active: true,
+        marketplace_visible: true,
+
         delivery_enabled: deliveryEnabled,
         shipping_enabled: shippingEnabled,
         monthly_enabled: monthlyEnabled,
         bimonthly_enabled: bimonthlyEnabled,
+        delivery_frequency:
+          monthlyEnabled && bimonthlyEnabled
+            ? "both"
+            : monthlyEnabled
+              ? "monthly"
+              : "bimonthly",
+
         updated_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
       };
 
       const { error } = await supabase.from("farm_bundles").insert([payload]);
@@ -348,6 +405,8 @@ export default function FarmerFarmBundlesScreen() {
       .from("farm_bundles")
       .update({
         available: next,
+        is_active: next,
+        marketplace_visible: next,
         updated_at: new Date().toISOString(),
       })
       .eq("id", bundle.id);
@@ -401,7 +460,14 @@ export default function FarmerFarmBundlesScreen() {
             <Text style={styles.bundleType}>{item.bundle_type}</Text>
           </View>
 
-          <Text style={styles.bundlePrice}>{money(item.price)}</Text>
+          <View style={{ alignItems: "flex-end" }}>
+            {item.monthly_enabled ? (
+              <Text style={styles.bundlePrice}>M: {money(item.monthly_price)}</Text>
+            ) : null}
+            {item.bimonthly_enabled ? (
+              <Text style={styles.bundlePriceSmall}>Bi: {money(item.bimonthly_price)}</Text>
+            ) : null}
+          </View>
         </View>
 
         <Text style={styles.bundleDescription}>
@@ -516,7 +582,7 @@ export default function FarmerFarmBundlesScreen() {
 
               <View style={styles.flowStep}>
                 <Text style={styles.flowNumber}>2</Text>
-                <Text style={styles.flowText}>Add price, description, and included items</Text>
+                <Text style={styles.flowText}>Add monthly / bi-monthly prices, description, and included items</Text>
               </View>
 
               <View style={styles.flowStep}>
@@ -590,12 +656,22 @@ export default function FarmerFarmBundlesScreen() {
                 placeholderTextColor="#94A3B8"
               />
 
-              <Text style={styles.label}>Market Price</Text>
+              <Text style={styles.label}>Monthly Price</Text>
               <TextInput
                 style={styles.input}
-                value={price}
-                onChangeText={setPrice}
+                value={monthlyPrice}
+                onChangeText={setMonthlyPrice}
                 placeholder="59.00"
+                keyboardType="numeric"
+                placeholderTextColor="#94A3B8"
+              />
+
+              <Text style={styles.label}>Bi-Monthly Price</Text>
+              <TextInput
+                style={styles.input}
+                value={bimonthlyPrice}
+                onChangeText={setBimonthlyPrice}
+                placeholder="109.00"
                 keyboardType="numeric"
                 placeholderTextColor="#94A3B8"
               />
@@ -950,7 +1026,8 @@ const styles = StyleSheet.create({
   bundleEmojiText: { fontSize: 25 },
   bundleName: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
   bundleType: { color: COLORS.muted, fontWeight: "800", marginTop: 3 },
-  bundlePrice: { color: COLORS.greenDark, fontSize: 19, fontWeight: "900" },
+  bundlePrice: { color: COLORS.greenDark, fontSize: 16, fontWeight: "900" },
+  bundlePriceSmall: { color: COLORS.muted, fontSize: 13, fontWeight: "900", marginTop: 3 },
   bundleDescription: {
     color: COLORS.text,
     fontWeight: "700",
