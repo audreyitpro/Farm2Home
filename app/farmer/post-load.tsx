@@ -73,32 +73,53 @@ const ADDRESS_SUGGESTIONS = [
     city: "Sterling Heights",
     state: "MI",
     address: "3876 Summit Dr, Sterling Heights, MI 48314",
+    lat: 42.5803,
+    lng: -83.0302,
   },
   {
     label: "Eastern Market",
     city: "Detroit",
     state: "MI",
     address: "2934 Russell St, Detroit, MI 48207",
+    lat: 42.3480,
+    lng: -83.0414,
   },
   {
     label: "Detroit Delivery Zone",
     city: "Detroit",
     state: "MI",
     address: "19376 Packard St, Detroit, MI 48234",
+    lat: 42.4383,
+    lng: -83.0301,
   },
   {
     label: "Royal Oak Pickup",
     city: "Royal Oak",
     state: "MI",
     address: "200 S Main St, Royal Oak, MI 48067",
+    lat: 42.4882,
+    lng: -83.1446,
   },
   {
     label: "Ann Arbor Delivery",
     city: "Ann Arbor",
     state: "MI",
     address: "500 S State St, Ann Arbor, MI 48109",
+    lat: 42.2766,
+    lng: -83.7416,
   },
 ];
+
+const CITY_COORDS: Record<string, { lat: number; lng: number }> = {
+  "sterling heights mi": { lat: 42.5803, lng: -83.0302 },
+  "sterling heights, mi": { lat: 42.5803, lng: -83.0302 },
+  "detroit mi": { lat: 42.3314, lng: -83.0458 },
+  "detroit, mi": { lat: 42.3314, lng: -83.0458 },
+  "royal oak mi": { lat: 42.4895, lng: -83.1446 },
+  "royal oak, mi": { lat: 42.4895, lng: -83.1446 },
+  "ann arbor mi": { lat: 42.2808, lng: -83.7430 },
+  "ann arbor, mi": { lat: 42.2808, lng: -83.7430 },
+};
 
 const TIME_OPTIONS = [
   "06:00 AM",
@@ -157,6 +178,59 @@ function parseState(address: string) {
   return "";
 }
 
+function normalizeLocation(value: string) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\./g, "")
+    .replace(/,/g, ",")
+    .trim();
+}
+
+function findKnownLocation(address: string, city?: string) {
+  const addressLower = normalizeLocation(address);
+  const cityLower = normalizeLocation(city || "");
+
+  const exactSuggestion = ADDRESS_SUGGESTIONS.find((item) => {
+    const itemAddress = normalizeLocation(item.address);
+    return addressLower === itemAddress || addressLower.includes(itemAddress) || itemAddress.includes(addressLower);
+  });
+
+  if (exactSuggestion) return { lat: exactSuggestion.lat, lng: exactSuggestion.lng };
+
+  const suggestionByCity = ADDRESS_SUGGESTIONS.find((item) => {
+    const key = `${item.city}, ${item.state}`.toLowerCase();
+    return cityLower === key || addressLower.includes(key.toLowerCase());
+  });
+
+  if (suggestionByCity) return { lat: suggestionByCity.lat, lng: suggestionByCity.lng };
+
+  const cityKey = cityLower || `${parseCity(address)} ${parseState(address)}`.toLowerCase();
+  const cleanedCityKey = cityKey.replace(",", "").replace(/\s+/g, " ").trim();
+  const withComma = cityKey.replace(/\s+/g, " ").trim();
+
+  return CITY_COORDS[withComma] || CITY_COORDS[cleanedCityKey] || null;
+}
+
+function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const earthRadiusMiles = 3958.8;
+  const toRad = (value: number) => (value * Math.PI) / 180;
+
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+
+  const straightLine = 2 * earthRadiusMiles * Math.asin(Math.sqrt(h));
+
+  return straightLine * 1.22;
+}
+
 export default function FarmerPostLoadScreen() {
   const params = useLocalSearchParams();
   const farmerIdParam = firstParam(params.farmerId || params.farmer_id || params.id);
@@ -169,7 +243,7 @@ export default function FarmerPostLoadScreen() {
   const [requiredEquipment, setRequiredEquipment] = useState("Refrigerated Truck");
 
   const [pickupName, setPickupName] = useState("Farm2Home");
-  const [pickupCity, setPickupCity] = useState("Sterling Heights");
+  const [pickupCity, setPickupCity] = useState("Sterling Heights, MI");
   const [pickupAddress, setPickupAddress] = useState("3876 Summit Dr, Sterling Heights, MI 48314");
 
   const [dropoffName, setDropoffName] = useState("");
@@ -185,6 +259,9 @@ export default function FarmerPostLoadScreen() {
   const [weight, setWeight] = useState("");
   const [miles, setMiles] = useState("");
   const [ratePerMile, setRatePerMile] = useState("1.50");
+  const [milesAutoCalculated, setMilesAutoCalculated] = useState(false);
+  const [milesCalculating, setMilesCalculating] = useState(false);
+  const [milesMessage, setMilesMessage] = useState("");
 
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
@@ -243,6 +320,14 @@ export default function FarmerPostLoadScreen() {
     hydrateFarmer();
   }, []);
 
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      autoCalculateMiles();
+    }, 700);
+
+    return () => clearTimeout(timer);
+  }, [pickupAddress, pickupCity, dropoffAddress, dropoffCity]);
+
   async function hydrateFarmer() {
     try {
       const raw =
@@ -278,6 +363,43 @@ export default function FarmerPostLoadScreen() {
     } catch {
       return;
     }
+  }
+
+  function autoCalculateMiles() {
+    const pickupReady = pickupAddress.trim().length > 8 || pickupCity.trim().length > 3;
+    const dropoffReady = dropoffAddress.trim().length > 8 || dropoffCity.trim().length > 3;
+
+    if (!pickupReady || !dropoffReady) {
+      setMilesAutoCalculated(false);
+      setMilesMessage("");
+      return;
+    }
+
+    setMilesCalculating(true);
+
+    const pickupPoint = findKnownLocation(pickupAddress, pickupCity);
+    const dropoffPoint = findKnownLocation(dropoffAddress, dropoffCity);
+
+    if (pickupPoint && dropoffPoint) {
+      const calculatedMiles = haversineMiles(pickupPoint, dropoffPoint);
+      const finalMiles = Math.max(1, calculatedMiles);
+
+      setMiles(finalMiles.toFixed(1));
+      setMilesAutoCalculated(true);
+      setMilesMessage("Miles auto-calculated from pickup and dropoff.");
+      setMilesCalculating(false);
+      return;
+    }
+
+    setMilesAutoCalculated(false);
+    setMilesMessage("Enter a known city/address or manually enter miles.");
+    setMilesCalculating(false);
+  }
+
+  function manualSetMiles(value: string) {
+    setMiles(value);
+    setMilesAutoCalculated(false);
+    setMilesMessage(value ? "Miles manually entered." : "");
   }
 
   function selectEquipment(value: string) {
@@ -371,7 +493,7 @@ export default function FarmerPostLoadScreen() {
 
         notes:
           description.trim() ||
-          `Pickup: ${pickupName.trim()} | Dropoff: ${dropoffName.trim()} | Contact: ${contactName.trim()} | Phone: ${contactPhone.trim()} | Rate per mile: $${rateNumber.toFixed(2)}`,
+          `Pickup: ${pickupName.trim()} | Dropoff: ${dropoffName.trim()} | Contact: ${contactName.trim()} | Phone: ${contactPhone.trim()} | Rate per mile: $${rateNumber.toFixed(2)} | Miles ${milesAutoCalculated ? "auto-calculated" : "manual"}`,
 
         status: "available",
         created_at: now,
@@ -424,7 +546,7 @@ export default function FarmerPostLoadScreen() {
           <Text style={styles.eyebrow}>Farm2Home Logistics</Text>
           <Text style={styles.title}>Post Farm Load</Text>
           <Text style={styles.subtitle}>
-            Create a live freight load with address lookup, route details, calendar scheduling, and driver payout.
+            Create a live freight load with address lookup, auto miles, calendar scheduling, and driver payout.
           </Text>
         </View>
       </View>
@@ -436,7 +558,7 @@ export default function FarmerPostLoadScreen() {
         <Text style={styles.heroBadge}>Load Board Posting</Text>
         <Text style={styles.heroTitle}>Move farm goods with the right driver.</Text>
         <Text style={styles.heroText}>
-          Build the load, set pickup and dropoff, choose dates and times, then post it to the live board.
+          Build the load, set pickup and dropoff, auto-calculate miles, then post it to the live board.
         </Text>
       </View>
 
@@ -473,9 +595,18 @@ export default function FarmerPostLoadScreen() {
           </View>
         </View>
 
-        <Text style={styles.previewMeta}>
-          {milesNumber.toFixed(1)} miles × ${rateNumber.toFixed(2)} / mile · {requiredEquipment}
-        </Text>
+        <View style={styles.milesPreviewRow}>
+          <Text style={styles.previewMeta}>
+            {milesNumber.toFixed(1)} miles × ${rateNumber.toFixed(2)} / mile · {requiredEquipment}
+          </Text>
+
+          {milesAutoCalculated ? (
+            <View style={styles.autoBadge}>
+              <Ionicons name="checkmark-circle-outline" size={14} color={COLORS.greenDark} />
+              <Text style={styles.autoBadgeText}>Auto Miles</Text>
+            </View>
+          ) : null}
+        </View>
       </View>
 
       <View style={styles.card}>
@@ -628,17 +759,37 @@ export default function FarmerPostLoadScreen() {
         <SectionTitle
           step="Step 4"
           title="Rate & Payout"
-          subtitle="Set a fair payout so drivers can accept the load."
+          subtitle="Miles are auto-calculated after pickup and dropoff are selected. You can still edit them manually."
         />
 
-        <TextInput
-          style={styles.input}
-          value={miles}
-          onChangeText={setMiles}
-          placeholder="Total Miles"
-          placeholderTextColor="#98A2B3"
-          keyboardType="numeric"
-        />
+        <View style={styles.milesInputWrap}>
+          <TextInput
+            style={[styles.input, styles.milesInput]}
+            value={miles}
+            onChangeText={manualSetMiles}
+            placeholder={milesCalculating ? "Calculating miles..." : "Total Miles"}
+            placeholderTextColor="#98A2B3"
+            keyboardType="numeric"
+          />
+
+          <TouchableOpacity style={styles.recalcButton} onPress={autoCalculateMiles}>
+            <Ionicons name="map-outline" size={17} color={COLORS.primary} />
+            <Text style={styles.recalcText}>Recalc</Text>
+          </TouchableOpacity>
+        </View>
+
+        {milesMessage ? (
+          <View style={[styles.milesMessageBox, milesAutoCalculated ? styles.milesSuccess : styles.milesWarning]}>
+            <Ionicons
+              name={milesAutoCalculated ? "checkmark-circle-outline" : "information-circle-outline"}
+              size={16}
+              color={milesAutoCalculated ? COLORS.greenDark : "#92400E"}
+            />
+            <Text style={[styles.milesMessageText, milesAutoCalculated ? styles.milesSuccessText : styles.milesWarningText]}>
+              {milesMessage}
+            </Text>
+          </View>
+        ) : null}
 
         <TextInput
           style={styles.input}
@@ -742,7 +893,7 @@ function AddressAutocomplete({
   onChangeName: (value: string) => void;
   onChangeCity: (value: string) => void;
   onChangeAddress: (value: string) => void;
-  onSelect: (item: { label: string; city: string; state: string; address: string }) => void;
+  onSelect: (item: { label: string; city: string; state: string; address: string; lat?: number; lng?: number }) => void;
 }) {
   const [focusedField, setFocusedField] = useState<"name" | "city" | "address" | null>(null);
 
@@ -1149,11 +1300,31 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     lineHeight: 19,
   },
+  milesPreviewRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
   previewMeta: {
     color: COLORS.muted,
     fontWeight: "700",
-    marginTop: 12,
     lineHeight: 20,
+  },
+  autoBadge: {
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    flexDirection: "row",
+    gap: 4,
+    alignItems: "center",
+  },
+  autoBadgeText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    fontSize: 11,
   },
 
   card: {
@@ -1337,6 +1508,53 @@ const styles = StyleSheet.create({
   },
   priorityTextActive: {
     color: COLORS.white,
+  },
+
+  milesInputWrap: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "flex-start",
+  },
+  milesInput: {
+    flex: 1,
+  },
+  recalcButton: {
+    backgroundColor: "#EEF2FF",
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  recalcText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+  milesMessageBox: {
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    flexDirection: "row",
+    gap: 7,
+    alignItems: "center",
+  },
+  milesSuccess: {
+    backgroundColor: COLORS.greenSoft,
+  },
+  milesWarning: {
+    backgroundColor: COLORS.orangeSoft,
+  },
+  milesMessageText: {
+    flex: 1,
+    fontWeight: "800",
+  },
+  milesSuccessText: {
+    color: COLORS.greenDark,
+  },
+  milesWarningText: {
+    color: "#92400E",
   },
 
   rateRow: {
