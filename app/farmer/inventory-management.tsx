@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 
 import farmTheme from "../styles/farmTheme";
 import { supabase } from "../data/supabaseClient";
@@ -76,7 +76,57 @@ function productKey(row: any) {
   ].join("|");
 }
 
+function firstParam(value: any) {
+  if (Array.isArray(value)) return clean(value[0]);
+  return clean(value);
+}
+
+function normalizeProductRow(row: any, fallbackFarmerId: string): InventoryItem {
+  const qty = Number(row.quantity ?? row.stock ?? row.inventory ?? row.stock_qty ?? row.inventory_quantity ?? 0);
+  const rowId = clean(row.id);
+
+  return {
+    id: rowId,
+    ids: rowId ? [rowId] : [],
+    farmer_id: clean(row.farmer_id || row.farmerId || fallbackFarmerId),
+    name: clean(row.name || row.product_name || row.title || "Farm Product"),
+    category: clean(row.category || row.product_category || "Produce"),
+    quantity: qty,
+    stock: qty,
+    unit: clean(row.unit || row.sell_by || row.unit_type || "each"),
+    price: Number(row.price || row.unit_price || row.amount || 0),
+    status: getStatus(qty),
+    marketplace_visible: row.marketplace_visible !== false,
+    bundle_eligible: row.bundle_eligible !== false,
+    available: row.available !== false && row.active !== false && row.removed_from_inventory !== true && qty > 0,
+  };
+}
+
+async function queryInventoryTable(tableName: string, activeFarmerId: string): Promise<InventoryItem[]> {
+  try {
+    const { data, error } = await supabase
+      .from(tableName)
+      .select("*")
+      .eq("farmer_id", activeFarmerId);
+
+    if (error || !Array.isArray(data)) {
+      if (error) console.log(`${tableName} inventory query skipped:`, error.message);
+      return [];
+    }
+
+    return data
+      .map((row: any) => normalizeProductRow(row, activeFarmerId))
+      .filter((item) => item.name && item.farmer_id === activeFarmerId);
+  } catch (error) {
+    console.log(`${tableName} inventory query failed:`, error);
+    return [];
+  }
+}
+
 export default function InventoryManagement() {
+  const params = useLocalSearchParams();
+  const routeFarmerId = firstParam(params.farmerId || params.farmer_id || params.id);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -133,6 +183,7 @@ export default function InventoryManagement() {
 
       const farmer = JSON.parse(saved);
       const id =
+        routeFarmerId ||
         farmer.id ||
         farmer.farmer_id ||
         farmer.farmerId ||
@@ -162,41 +213,33 @@ export default function InventoryManagement() {
   }
 
   async function loadInventory(id = farmerId) {
-    const { data, error } = await supabase
-      .from("products")
-      .select("*")
-      .eq("farmer_id", id)
-      .order("created_at", { ascending: false });
+    const activeFarmerId = clean(id || routeFarmerId);
 
-    if (error) {
-      console.log("Load products error:", error.message);
+    if (!activeFarmerId) {
+      console.log("Inventory load skipped: missing farmerId");
       setItems([]);
       return;
     }
 
+    const productTables = [
+      "products",
+      "farmer_products",
+      "farm_products",
+      "farm_inventory",
+      "inventory",
+    ];
+
+    const rowsByTable = await Promise.all(
+      productTables.map((tableName) => queryInventoryTable(tableName, activeFarmerId))
+    );
+
+    const rows = rowsByTable.flat();
     const grouped = new Map<string, InventoryItem>();
 
-    (data || []).forEach((row: any) => {
-      const qty = Number(row.quantity || row.stock || row.inventory || 0);
-      const key = productKey(row);
-      const rowId = clean(row.id);
+    rows.forEach((mapped: InventoryItem) => {
+      if (!mapped.name) return;
 
-      const mapped: InventoryItem = {
-        id: rowId,
-        ids: rowId ? [rowId] : [],
-        farmer_id: clean(row.farmer_id),
-        name: clean(row.name || row.product_name),
-        category: clean(row.category || "Produce"),
-        quantity: qty,
-        stock: qty,
-        unit: clean(row.unit || "each"),
-        price: Number(row.price || 0),
-        status: getStatus(qty),
-        marketplace_visible: row.marketplace_visible !== false,
-        bundle_eligible: Boolean(row.bundle_eligible ?? true),
-        available: row.available !== false && qty > 0,
-      };
-
+      const key = productKey(mapped);
       const existing = grouped.get(key);
 
       if (!existing) {
@@ -204,23 +247,26 @@ export default function InventoryManagement() {
         return;
       }
 
-      const combinedQty = Number(existing.quantity || 0) + qty;
+      const combinedQty = Number(existing.quantity || 0) + Number(mapped.quantity || 0);
 
       grouped.set(key, {
         ...existing,
-        ids: Array.from(new Set([...existing.ids, ...mapped.ids])),
+        ids: Array.from(new Set([...existing.ids, ...mapped.ids].filter(Boolean))),
         quantity: combinedQty,
         stock: combinedQty,
         price: mapped.price || existing.price,
         status: getStatus(combinedQty),
-        marketplace_visible:
-          existing.marketplace_visible || mapped.marketplace_visible,
+        marketplace_visible: existing.marketplace_visible || mapped.marketplace_visible,
         bundle_eligible: existing.bundle_eligible || mapped.bundle_eligible,
         available: existing.available || mapped.available,
       });
     });
 
-    setItems(Array.from(grouped.values()));
+    setItems(
+      Array.from(grouped.values()).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+    );
   }
 
   function resetForm() {
@@ -281,7 +327,7 @@ export default function InventoryManagement() {
       if (error) throw error;
 
       resetForm();
-      await loadInventory();
+      await loadInventory(farmerId);
 
       Alert.alert("Added to Market", "Product was added to inventory and marketplace.");
     } catch (error: any) {
@@ -333,7 +379,7 @@ export default function InventoryManagement() {
 
     if (error) {
       Alert.alert("Update Error", error.message);
-      await loadInventory();
+      await loadInventory(farmerId);
     }
   }
 
