@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
@@ -37,6 +37,7 @@ const COLORS = {
 };
 
 export default function AssignedDriversScreen() {
+  const params = useLocalSearchParams();
   const [loading, setLoading] = useState(true);
   const [savingDriver, setSavingDriver] = useState(false);
 
@@ -97,6 +98,7 @@ export default function AssignedDriversScreen() {
         farmer.farmerId ||
         farmer.farmer_id ||
         farmer.profile_id ||
+        String(params.farmerId || params.farmer_id || "") ||
         "";
 
       if (!id) {
@@ -129,7 +131,7 @@ export default function AssignedDriversScreen() {
       .from("farmer_internal_drivers")
       .select("*")
       .eq("farmer_id", id)
-      .eq("active", true)
+      .eq("is_active", true)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -166,17 +168,36 @@ export default function AssignedDriversScreen() {
     try {
       setSavingDriver(true);
 
-      const { error } = await supabase.from("farmer_internal_drivers").insert({
-        farmer_id: farmerId,
+      if (!farmerId) {
+        Alert.alert("Missing Farmer", "Farmer ID was not found. Please login again.");
+        return;
+      }
+
+      const payload = {
+        farmer_id: String(farmerId),
         driver_name: name.trim(),
         driver_email: email.trim().toLowerCase(),
         driver_phone: phone.trim(),
-        active: true,
+        is_active: true,
+        status: "active",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      });
+      };
 
-      if (error) throw error;
+      const { data, error } = await supabase
+        .from("farmer_internal_drivers")
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) {
+        console.log("Add internal driver error:", error);
+        throw error;
+      }
+
+      if (data) {
+        setDrivers((prev) => [data, ...prev]);
+      }
 
       setName("");
       setEmail("");
@@ -200,13 +221,16 @@ export default function AssignedDriversScreen() {
         style: "destructive",
         onPress: async () => {
           try {
-            await supabase
+            const { error } = await supabase
               .from("farmer_internal_drivers")
               .update({
-                active: false,
+                is_active: false,
+                status: "inactive",
                 updated_at: new Date().toISOString(),
               })
               .eq("id", id);
+
+            if (error) throw error;
 
             await loadScreen();
           } catch (error: any) {
