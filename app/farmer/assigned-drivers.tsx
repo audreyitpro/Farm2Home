@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
@@ -36,15 +36,51 @@ const COLORS = {
   orangeSoft: "#FFF3DE",
 };
 
+type FarmDriver = {
+  id: string;
+  farmer_id?: string;
+  driver_id?: string;
+  driver_name?: string;
+  driver_email?: string;
+  driver_phone?: string;
+  status?: string;
+  invite_status?: string;
+  is_active?: boolean;
+  source?: "internal" | "matched";
+};
+
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
+
+function normalizeStatus(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function getDriverId(driver: FarmDriver) {
+  return clean(driver.driver_id || driver.id);
+}
+
+function getDriverName(driver: FarmDriver) {
+  return clean(driver.driver_name || "Driver");
+}
+
+function getDriverEmail(driver: FarmDriver) {
+  return clean(driver.driver_email || "");
+}
+
+function getDriverPhone(driver: FarmDriver) {
+  return clean(driver.driver_phone || "");
+}
+
 export default function AssignedDriversScreen() {
-  const params = useLocalSearchParams();
   const [loading, setLoading] = useState(true);
   const [savingDriver, setSavingDriver] = useState(false);
 
   const [farmerId, setFarmerId] = useState("");
   const [farmName, setFarmName] = useState("");
 
-  const [drivers, setDrivers] = useState<any[]>([]);
+  const [drivers, setDrivers] = useState<FarmDriver[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
 
   const [name, setName] = useState("");
@@ -56,16 +92,10 @@ export default function AssignedDriversScreen() {
   }, []);
 
   const summary = useMemo(() => {
-    const assigned = jobs.filter(
-      (job) => job.driver_id || job.assigned_driver_id
-    ).length;
-
-    const open = jobs.filter(
-      (job) => !job.driver_id && !job.assigned_driver_id
-    ).length;
-
+    const assigned = jobs.filter((job) => job.driver_id || job.assigned_driver_id).length;
+    const open = jobs.filter((job) => !job.driver_id && !job.assigned_driver_id).length;
     const availableBoard = jobs.filter(
-      (job) => String(job.status || "").toLowerCase() === "available"
+      (job) => normalizeStatus(job.status) === "available"
     ).length;
 
     return {
@@ -93,13 +123,9 @@ export default function AssignedDriversScreen() {
       }
 
       const farmer = JSON.parse(saved);
-      const id =
-        farmer.id ||
-        farmer.farmerId ||
-        farmer.farmer_id ||
-        farmer.profile_id ||
-        String(params.farmerId || params.farmer_id || "") ||
-        "";
+      const id = clean(
+        farmer.id || farmer.farmerId || farmer.farmer_id || farmer.profile_id || ""
+      );
 
       if (!id) {
         router.replace("/farmer/login" as any);
@@ -108,39 +134,72 @@ export default function AssignedDriversScreen() {
 
       setFarmerId(id);
       setFarmName(
-        farmer.farmName ||
-          farmer.farm_name ||
-          farmer.businessName ||
-          farmer.business_name ||
-          "Farm2Home Farm"
+        clean(
+          farmer.farmName ||
+            farmer.farm_name ||
+            farmer.businessName ||
+            farmer.business_name ||
+            "Farm2Home Farm"
+        )
       );
 
       await Promise.all([loadDrivers(id), loadDeliveryJobs(id)]);
     } catch (error: any) {
-      Alert.alert(
-        "Drivers Error",
-        error?.message || "Unable to load assigned drivers."
-      );
+      Alert.alert("Drivers Error", error?.message || "Unable to load assigned drivers.");
     } finally {
       setLoading(false);
     }
   }
 
   async function loadDrivers(id = farmerId) {
-    const { data, error } = await supabase
-      .from("farmer_internal_drivers")
-      .select("*")
-      .eq("farmer_id", id)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
+    try {
+      const [internalResult, matchedResult] = await Promise.all([
+        supabase
+          .from("farmer_internal_drivers")
+          .select("*")
+          .eq("farmer_id", id)
+          .eq("is_active", true)
+          .order("created_at", { ascending: false }),
 
-    if (error) {
-      console.log("Load internal drivers error:", error.message);
+        supabase
+          .from("farmer_drivers")
+          .select("*")
+          .eq("farmer_id", id)
+          .eq("status", "active")
+          .order("created_at", { ascending: false }),
+      ]);
+
+      if (internalResult.error) {
+        console.log("Load internal drivers error:", internalResult.error.message);
+      }
+
+      if (matchedResult.error) {
+        console.log("Load matched drivers error:", matchedResult.error.message);
+      }
+
+      const internalDrivers = (internalResult.data || []).map((driver: any) => ({
+        ...driver,
+        source: "internal" as const,
+      }));
+
+      const matchedDrivers = (matchedResult.data || []).map((driver: any) => ({
+        ...driver,
+        source: "matched" as const,
+      }));
+
+      const deduped = new Map<string, FarmDriver>();
+
+      [...internalDrivers, ...matchedDrivers].forEach((driver) => {
+        const key = clean(driver.driver_id || driver.driver_email || driver.id);
+        if (!key) return;
+        if (!deduped.has(key)) deduped.set(key, driver);
+      });
+
+      setDrivers(Array.from(deduped.values()));
+    } catch (error: any) {
+      console.log("Load drivers error:", error?.message || error);
       setDrivers([]);
-      return;
     }
-
-    setDrivers(Array.isArray(data) ? data : []);
   }
 
   async function loadDeliveryJobs(id = farmerId) {
@@ -160,7 +219,16 @@ export default function AssignedDriversScreen() {
   }
 
   async function addDriver() {
-    if (!name.trim()) {
+    const driverName = name.trim();
+    const driverEmail = email.trim().toLowerCase();
+    const driverPhone = phone.trim();
+
+    if (!farmerId) {
+      Alert.alert("Missing Farmer", "Farmer ID was not found. Please login again.");
+      return;
+    }
+
+    if (!driverName) {
       Alert.alert("Missing Name", "Enter driver name.");
       return;
     }
@@ -168,52 +236,43 @@ export default function AssignedDriversScreen() {
     try {
       setSavingDriver(true);
 
-      if (!farmerId) {
-        Alert.alert("Missing Farmer", "Farmer ID was not found. Please login again.");
-        return;
-      }
+      const now = new Date().toISOString();
 
-      const payload = {
-        farmer_id: String(farmerId),
-        driver_name: name.trim(),
-        driver_email: email.trim().toLowerCase(),
-        driver_phone: phone.trim(),
-        is_active: true,
-        status: "active",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      const { data, error } = await supabase
+      const { error: internalError } = await supabase
         .from("farmer_internal_drivers")
-        .insert([payload])
+        .insert([
+          {
+            farmer_id: farmerId,
+            driver_name: driverName,
+            driver_email: driverEmail,
+            driver_phone: driverPhone,
+            status: "active",
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+          },
+        ])
         .select()
         .single();
 
-      if (error) {
-        console.log("Add internal driver error:", error);
-        throw error;
-      }
-
-      if (data) {
-        setDrivers((prev) => [data, ...prev]);
-      }
+      if (internalError) throw internalError;
 
       setName("");
       setEmail("");
       setPhone("");
 
-      await loadScreen();
+      await Promise.all([loadDrivers(farmerId), loadDeliveryJobs(farmerId)]);
 
       Alert.alert("Driver Added", "Internal farm driver was added.");
     } catch (error: any) {
+      console.log("Driver save error:", error);
       Alert.alert("Driver Error", error?.message || "Unable to add driver.");
     } finally {
       setSavingDriver(false);
     }
   }
 
-  async function removeDriver(id: string) {
+  async function removeDriver(driver: FarmDriver) {
     Alert.alert("Remove Driver", "Remove this driver from your farm team?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -221,56 +280,151 @@ export default function AssignedDriversScreen() {
         style: "destructive",
         onPress: async () => {
           try {
-            const { error } = await supabase
-              .from("farmer_internal_drivers")
-              .update({
-                is_active: false,
-                status: "inactive",
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", id);
+            if (driver.source === "matched") {
+              const { error } = await supabase
+                .from("farmer_drivers")
+                .update({
+                  status: "inactive",
+                  invite_status: "removed",
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", driver.id);
 
-            if (error) throw error;
+              if (error) throw error;
+            } else {
+              const { error } = await supabase
+                .from("farmer_internal_drivers")
+                .update({
+                  status: "inactive",
+                  is_active: false,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", driver.id);
 
-            await loadScreen();
+              if (error) throw error;
+            }
+
+            await loadDrivers(farmerId);
           } catch (error: any) {
-            Alert.alert(
-              "Remove Error",
-              error?.message || "Unable to remove driver."
-            );
+            Alert.alert("Remove Error", error?.message || "Unable to remove driver.");
           }
         },
       },
     ]);
   }
 
-  async function assignJobToDriver(job: any, driver: any) {
+  async function assignJobToDriver(job: any, driver: FarmDriver) {
     try {
-      const driverId = driver.driver_id || driver.id;
+      const driverId = getDriverId(driver);
+      const driverName = getDriverName(driver);
+      const driverEmail = getDriverEmail(driver);
+      const driverPhone = getDriverPhone(driver);
+      const now = new Date().toISOString();
+      const isReassign = Boolean(job.driver_id || job.assigned_driver_id);
 
-      const { error } = await supabase
+      if (!farmerId) {
+        Alert.alert("Missing Farmer", "Farmer ID was not found. Please login again.");
+        return;
+      }
+
+      if (!job?.id) {
+        Alert.alert("Missing Delivery", "Delivery order ID was not found.");
+        return;
+      }
+
+      if (!driverId) {
+        Alert.alert("Missing Driver", "Driver ID was not found.");
+        return;
+      }
+
+      const deliveryUpdate: any = {
+        driver_id: driverId,
+        assigned_driver_id: driverId,
+        driver_name: driverName,
+        assigned_driver_name: driverName,
+        driver_email: driverEmail,
+        driver_phone: driverPhone,
+        status: "assigned",
+        delivery_status: "driver_assigned",
+        assigned_at: job.assigned_at || now,
+        updated_at: now,
+      };
+
+      if (isReassign) deliveryUpdate.reassigned_at = now;
+
+      const { error: deliveryError } = await supabase
         .from("delivery_orders")
-        .update({
-          driver_id: driverId,
-          assigned_driver_id: driverId,
-          driver_name: driver.driver_name,
-          driver_email: driver.driver_email,
-          status: "assigned",
-          assigned_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
+        .update(deliveryUpdate)
         .eq("id", job.id);
 
-      if (error) throw error;
+      if (deliveryError) throw deliveryError;
 
-      await loadScreen();
+      await saveDriverAssignment(job, driver, isReassign, now);
+
+      await Promise.all([loadDeliveryJobs(farmerId), loadDrivers(farmerId)]);
+
       Alert.alert(
-        "Driver Assigned",
-        `${driver.driver_name} was assigned to this farmer market delivery.`
+        isReassign ? "Driver Re-assigned" : "Driver Assigned",
+        `${driverName} was ${isReassign ? "re-assigned" : "assigned"} to this delivery.`
       );
     } catch (error: any) {
+      console.log("Assign driver error:", error);
       Alert.alert("Assign Error", error?.message || "Unable to assign driver.");
     }
+  }
+
+  async function saveDriverAssignment(
+    job: any,
+    driver: FarmDriver,
+    isReassign: boolean,
+    timestamp: string
+  ) {
+    const driverId = getDriverId(driver);
+    const payload: any = {
+      farmer_id: farmerId,
+      delivery_order_id: job.id,
+      order_id: job.order_id || "",
+      driver_id: driverId,
+      driver_name: getDriverName(driver),
+      driver_email: getDriverEmail(driver),
+      driver_phone: getDriverPhone(driver),
+      status: "assigned",
+      pickup_address: job.pickup_address || job.pickup_location || "",
+      dropoff_address: job.dropoff_address || job.delivery_address || job.customer_address || "",
+      customer_name: job.customer_name || job.customerName || "Customer",
+      updated_at: timestamp,
+    };
+
+    if (isReassign) payload.reassigned_at = timestamp;
+
+    const { data: existing, error: existingError } = await supabase
+      .from("driver_delivery_assignments")
+      .select("id")
+      .eq("delivery_order_id", job.id)
+      .limit(1);
+
+    if (existingError) {
+      console.log("Assignment lookup skipped:", existingError.message);
+    }
+
+    if (Array.isArray(existing) && existing[0]?.id) {
+      const { error } = await supabase
+        .from("driver_delivery_assignments")
+        .update(payload)
+        .eq("id", existing[0].id);
+
+      if (error) throw error;
+      return;
+    }
+
+    const { error } = await supabase.from("driver_delivery_assignments").insert([
+      {
+        ...payload,
+        created_at: timestamp,
+      },
+    ]);
+
+    if (error) throw error;
   }
 
   async function postJobToDriverBoard(job: any) {
@@ -286,16 +440,10 @@ export default function AssignedDriversScreen() {
 
       if (error) throw error;
 
-      await loadScreen();
-      Alert.alert(
-        "Posted to Farm2Driver",
-        "This delivery is now available for outside drivers."
-      );
+      await loadDeliveryJobs(farmerId);
+      Alert.alert("Posted to Farm2Driver", "This delivery is now available for outside drivers.");
     } catch (error: any) {
-      Alert.alert(
-        "Post Error",
-        error?.message || "Unable to post to driver board."
-      );
+      Alert.alert("Post Error", error?.message || "Unable to post to driver board.");
     }
   }
 
@@ -322,7 +470,7 @@ export default function AssignedDriversScreen() {
   }
 
   function statusLabel(status: any) {
-    return String(status || "open").replace(/_/g, " ");
+    return clean(status || "open").replace(/_/g, " ");
   }
 
   if (loading) {
@@ -348,9 +496,7 @@ export default function AssignedDriversScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Farmer Market Operations</Text>
             <Text style={styles.title}>Driver Assignments</Text>
-            <Text style={styles.subtitle}>
-              {farmName} delivery workflow
-            </Text>
+            <Text style={styles.subtitle}>{farmName} delivery workflow</Text>
           </View>
         </View>
 
@@ -361,11 +507,11 @@ export default function AssignedDriversScreen() {
 
           <Text style={styles.heroBadge}>Delivery Flow</Text>
           <Text style={styles.heroTitle}>
-            Assign farm orders to internal drivers or post to Farm2Driver.
+            Assign farm orders to internal drivers, matched drivers, or post to Farm2Driver.
           </Text>
           <Text style={styles.heroText}>
-            Use internal drivers first for local customers. If no driver is
-            available, make the job available on the driver board.
+            Add farm drivers, assign open deliveries, or re-assign already assigned deliveries
+            to a different driver.
           </Text>
         </View>
 
@@ -373,8 +519,8 @@ export default function AssignedDriversScreen() {
           <Text style={styles.flowTitle}>How delivery assignment works</Text>
           <FlowStep number="1" text="Customer places a farmer market order" />
           <FlowStep number="2" text="Delivery order appears here for your farm" />
-          <FlowStep number="3" text="Assign an internal driver or post to Farm2Driver" />
-          <FlowStep number="4" text="Track delivery and message the assigned driver" />
+          <FlowStep number="3" text="Assign or re-assign to an internal or matched driver" />
+          <FlowStep number="4" text="Driver receives the assigned delivery in the driver app" />
         </View>
 
         <View style={styles.statsRow}>
@@ -436,36 +582,36 @@ export default function AssignedDriversScreen() {
         <View style={styles.card}>
           <SectionHeader
             title="Active Farm Drivers"
-            subtitle="Drivers available for local customer deliveries."
+            subtitle="Internal drivers and matched Farm2Driver drivers available for deliveries."
           />
 
           {drivers.length === 0 ? (
             <EmptyState
               emoji="🚚"
-              title="No internal drivers yet"
-              text="Add a driver above or post open deliveries to Farm2Driver."
+              title="No active drivers yet"
+              text="Add a driver above or match with drivers through Farm2Driver."
             />
           ) : (
             drivers.map((driver) => (
-              <View key={driver.id} style={styles.driverRow}>
+              <View key={`${driver.source}-${driver.id}`} style={styles.driverRow}>
                 <View style={styles.driverInitialBox}>
                   <Text style={styles.driverInitial}>
-                    {String(driver.driver_name || "D").slice(0, 1).toUpperCase()}
+                    {getDriverName(driver).slice(0, 1).toUpperCase()}
                   </Text>
                 </View>
 
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.driverName}>{driver.driver_name}</Text>
+                  <Text style={styles.driverName}>{getDriverName(driver)}</Text>
                   <Text style={styles.driverMeta}>
-                    {driver.driver_email || "No email"} ·{" "}
-                    {driver.driver_phone || "No phone"}
+                    {getDriverEmail(driver) || "No email"} · {getDriverPhone(driver) || "No phone"}
+                  </Text>
+                  <Text style={styles.driverSource}>
+                    {driver.source === "matched" ? "Farm2Driver Match" : "Internal Driver"}
+                    {driver.invite_status ? ` · ${driver.invite_status}` : ""}
                   </Text>
                 </View>
 
-                <Pressable
-                  style={styles.removeButton}
-                  onPress={() => removeDriver(driver.id)}
-                >
+                <Pressable style={styles.removeButton} onPress={() => removeDriver(driver)}>
                   <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
                 </Pressable>
               </View>
@@ -476,7 +622,7 @@ export default function AssignedDriversScreen() {
         <View style={styles.card}>
           <SectionHeader
             title="Farmer Market Delivery Jobs"
-            subtitle="Assign each delivery to a farm driver or make it available on Farm2Driver."
+            subtitle="Assign or re-assign each delivery to a farm driver."
           />
 
           {jobs.length === 0 ? (
@@ -488,59 +634,32 @@ export default function AssignedDriversScreen() {
           ) : (
             jobs.map((job) => {
               const assignedDriverId = job.driver_id || job.assigned_driver_id;
-              const assignedDriverName =
-                job.driver_name || job.assigned_driver_name || "";
-
+              const assignedDriverName = job.driver_name || job.assigned_driver_name || "";
               const isAssigned = Boolean(assignedDriverId || assignedDriverName);
 
               return (
                 <View key={job.id} style={styles.jobCard}>
                   <View style={styles.jobHeader}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.jobTitle}>
-                        Delivery #{String(job.id).slice(-8)}
-                      </Text>
-                      <Text style={styles.jobMeta}>
-                        Order: {job.order_id || "Not linked"}
-                      </Text>
+                      <Text style={styles.jobTitle}>Delivery #{clean(job.id).slice(-8)}</Text>
+                      <Text style={styles.jobMeta}>Order: {job.order_id || "Not linked"}</Text>
                     </View>
 
-                    <View
-                      style={[
-                        styles.statusPill,
-                        isAssigned && styles.statusPillAssigned,
-                      ]}
-                    >
-                      <Text style={styles.statusPillText}>
-                        {statusLabel(job.status)}
-                      </Text>
+                    <View style={[styles.statusPill, isAssigned && styles.statusPillAssigned]}>
+                      <Text style={styles.statusPillText}>{statusLabel(job.status)}</Text>
                     </View>
                   </View>
 
                   <View style={styles.routeBox}>
-                    <InfoLine
-                      icon="person-outline"
-                      label="Customer"
-                      value={job.customer_name || "Customer"}
-                    />
-                    <InfoLine
-                      icon="location-outline"
-                      label="Pickup"
-                      value={job.pickup_address || "Farm pickup location"}
-                    />
-                    <InfoLine
-                      icon="flag-outline"
-                      label="Dropoff"
-                      value={job.dropoff_address || "Dropoff pending"}
-                    />
-                    <InfoLine
-                      icon="car-outline"
-                      label="Assigned Driver"
-                      value={assignedDriverName || assignedDriverId || "Not assigned"}
-                    />
+                    <InfoLine icon="person-outline" label="Customer" value={job.customer_name || "Customer"} />
+                    <InfoLine icon="location-outline" label="Pickup" value={job.pickup_address || "Farm pickup location"} />
+                    <InfoLine icon="flag-outline" label="Dropoff" value={job.dropoff_address || "Dropoff pending"} />
+                    <InfoLine icon="car-outline" label="Assigned Driver" value={assignedDriverName || assignedDriverId || "Not assigned"} />
                   </View>
 
-                  <Text style={styles.assignTitle}>Assign Internal Driver</Text>
+                  <Text style={styles.assignTitle}>
+                    {isAssigned ? "Re-assign Driver" : "Assign Internal or Matched Driver"}
+                  </Text>
 
                   {drivers.length === 0 ? (
                     <Text style={styles.helperText}>
@@ -548,46 +667,49 @@ export default function AssignedDriversScreen() {
                     </Text>
                   ) : (
                     <View style={styles.assignmentGrid}>
-                      {drivers.map((driver) => (
-                        <Pressable
-                          key={`${job.id}-${driver.id}`}
-                          style={styles.assignButton}
-                          onPress={() => assignJobToDriver(job, driver)}
-                        >
-                          <Ionicons
-                            name="checkmark-circle-outline"
-                            size={16}
-                            color={COLORS.white}
-                          />
-                          <Text style={styles.assignButtonText}>
-                            {driver.driver_name}
-                          </Text>
-                        </Pressable>
-                      ))}
+                      {drivers.map((driver) => {
+                        const currentDriverId = getDriverId(driver);
+                        const sameDriver = currentDriverId === clean(assignedDriverId);
+
+                        return (
+                          <Pressable
+                            key={`${job.id}-${driver.source}-${driver.id}`}
+                            style={[
+                              isAssigned ? styles.reassignButton : styles.assignButton,
+                              sameDriver && styles.currentDriverButton,
+                            ]}
+                            onPress={() => assignJobToDriver(job, driver)}
+                          >
+                            <Ionicons
+                              name={isAssigned ? "swap-horizontal-outline" : "checkmark-circle-outline"}
+                              size={16}
+                              color={COLORS.white}
+                            />
+                            <Text style={styles.assignButtonText}>
+                              {sameDriver
+                                ? `Current: ${getDriverName(driver)}`
+                                : isAssigned
+                                  ? `Re-assign to ${getDriverName(driver)}`
+                                  : getDriverName(driver)}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
                     </View>
                   )}
 
                   <View style={styles.jobActions}>
-                    <Pressable
-                      style={styles.boardButton}
-                      onPress={() => postJobToDriverBoard(job)}
-                    >
+                    <Pressable style={styles.boardButton} onPress={() => postJobToDriverBoard(job)}>
                       <Ionicons name="trail-sign-outline" size={16} color={COLORS.primary} />
                       <Text style={styles.boardButtonText}>Post to Farm2Driver</Text>
                     </Pressable>
 
-                    <Pressable
-                      style={styles.outlineButton}
-                      onPress={() => openTracking(job)}
-                    >
+                    <Pressable style={styles.outlineButton} onPress={() => openTracking(job)}>
                       <Ionicons name="navigate-outline" size={16} color={COLORS.primary} />
                       <Text style={styles.outlineButtonText}>Tracking</Text>
                     </Pressable>
 
-                    <Pressable
-                      style={styles.outlineButton}
-                      onPress={() => openDriverChat(job)}
-                    >
+                    <Pressable style={styles.outlineButton} onPress={() => openDriverChat(job)}>
                       <Ionicons name="chatbox-outline" size={16} color={COLORS.primary} />
                       <Text style={styles.outlineButtonText}>Chat</Text>
                     </Pressable>
@@ -598,10 +720,7 @@ export default function AssignedDriversScreen() {
           )}
         </View>
 
-        <Pressable
-          style={styles.darkButton}
-          onPress={() => router.push("/farmer/delivery-orders" as any)}
-        >
+        <Pressable style={styles.darkButton} onPress={() => router.push("/farmer/delivery-orders" as any)}>
           <Ionicons name="cube-outline" size={18} color={COLORS.white} />
           <Text style={styles.darkButtonText}>View All Delivery Orders</Text>
         </Pressable>
@@ -610,13 +729,7 @@ export default function AssignedDriversScreen() {
   );
 }
 
-function SectionHeader({
-  title,
-  subtitle,
-}: {
-  title: string;
-  subtitle: string;
-}) {
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -634,15 +747,7 @@ function FlowStep({ number, text }: { number: string; text: string }) {
   );
 }
 
-function StatCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string;
-  icon: keyof typeof Ionicons.glyphMap;
-}) {
+function StatCard({ label, value, icon }: { label: string; value: string; icon: keyof typeof Ionicons.glyphMap }) {
   return (
     <View style={styles.statCard}>
       <View style={styles.statIcon}>
@@ -654,15 +759,7 @@ function StatCard({
   );
 }
 
-function InfoLine({
-  icon,
-  label,
-  value,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
+function InfoLine({ icon, label, value }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }) {
   return (
     <View style={styles.infoLine}>
       <Ionicons name={icon} size={17} color={COLORS.primary} />
@@ -674,15 +771,7 @@ function InfoLine({
   );
 }
 
-function EmptyState({
-  emoji,
-  title,
-  text,
-}: {
-  emoji: string;
-  title: string;
-  text: string;
-}) {
+function EmptyState({ emoji, title, text }: { emoji: string; title: string; text: string }) {
   return (
     <View style={styles.emptyState}>
       <Text style={styles.emptyEmoji}>{emoji}</Text>
@@ -844,11 +933,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   sectionHeader: { marginBottom: 12 },
-  sectionTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 20,
-  },
+  sectionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 20 },
   sectionSub: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -902,12 +987,8 @@ const styles = StyleSheet.create({
   },
   driverInitial: { color: COLORS.white, fontWeight: "900", fontSize: 18 },
   driverName: { color: COLORS.text, fontWeight: "900" },
-  driverMeta: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-    marginTop: 3,
-  },
+  driverMeta: { color: COLORS.muted, fontWeight: "700", fontSize: 12, marginTop: 3 },
+  driverSource: { color: COLORS.primary, fontWeight: "900", fontSize: 12, marginTop: 3 },
   removeButton: {
     width: 40,
     height: 40,
@@ -932,21 +1013,14 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   jobTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18 },
-  jobMeta: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-    marginTop: 3,
-  },
+  jobMeta: { color: COLORS.muted, fontWeight: "700", fontSize: 12, marginTop: 3 },
   statusPill: {
     backgroundColor: COLORS.dark,
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  statusPillAssigned: {
-    backgroundColor: COLORS.primary,
-  },
+  statusPillAssigned: { backgroundColor: COLORS.primary },
   statusPillText: {
     color: COLORS.white,
     fontWeight: "900",
@@ -968,29 +1042,11 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   infoLabel: { color: COLORS.muted, fontWeight: "900", fontSize: 11 },
-  infoValue: {
-    color: COLORS.text,
-    fontWeight: "800",
-    marginTop: 2,
-    lineHeight: 18,
-  },
+  infoValue: { color: COLORS.text, fontWeight: "800", marginTop: 2, lineHeight: 18 },
 
-  assignTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  helperText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 20,
-  },
-  assignmentGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
+  assignTitle: { color: COLORS.text, fontWeight: "900", marginTop: 12, marginBottom: 8 },
+  helperText: { color: COLORS.muted, fontWeight: "700", lineHeight: 20 },
+  assignmentGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   assignButton: {
     backgroundColor: COLORS.primary,
     borderRadius: 999,
@@ -1000,18 +1056,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 6,
   },
-  assignButtonText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: 12,
-  },
-
-  jobActions: {
+  reassignButton: {
+    backgroundColor: COLORS.orange,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: "center",
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 12,
+    gap: 6,
   },
+  currentDriverButton: { backgroundColor: COLORS.primaryDark },
+  assignButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 12 },
+
+  jobActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   boardButton: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1023,11 +1080,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  boardButtonText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  boardButtonText: { color: COLORS.primary, fontWeight: "900", fontSize: 12 },
   outlineButton: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1039,11 +1092,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  outlineButtonText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  outlineButtonText: { color: COLORS.primary, fontWeight: "900", fontSize: 12 },
 
   darkButton: {
     backgroundColor: COLORS.dark,
@@ -1065,12 +1114,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   emptyEmoji: { fontSize: 38 },
-  emptyTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 17,
-    marginTop: 8,
-  },
+  emptyTitle: { color: COLORS.text, fontWeight: "900", fontSize: 17, marginTop: 8 },
   emptyText: {
     color: COLORS.muted,
     fontWeight: "700",
