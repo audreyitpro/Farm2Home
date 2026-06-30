@@ -1,60 +1,57 @@
 // app/farmer/post-load.tsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { supabase } from "../services/supabaseClient";
 
-const COLORS = {
-  bg: "#F5F7FB",
-  card: "#FFFFFF",
-  text: "#101828",
-  muted: "#667085",
-  border: "#E5E7EB",
-  navy: "#07111F",
-  navy2: "#111827",
-  green: "#16A34A",
-  greenDark: "#14532D",
-  greenSoft: "#DCFCE7",
-  blue: "#2563EB",
-  blueSoft: "#DBEAFE",
-  orange: "#F59E0B",
-  orangeSoft: "#FEF3C7",
-  red: "#EF4444",
-  redSoft: "#FEE2E2",
-  purple: "#635BFF",
-  purpleSoft: "#EEF2FF",
-  white: "#FFFFFF",
-};
-
 type LoadType = "Livestock" | "Refrigerated Fresh Food" | "Other";
-type Priority = "standard" | "rush" | "scheduled";
+type PriorityLevel = "standard" | "rush" | "scheduled";
 
 const MIN_RATE_PER_MILE = 1.5;
 const MAX_RATE_PER_MILE = 3.5;
+
+const COLORS = {
+  bg: "#F6F8F2",
+  card: "#FFFFFF",
+  text: "#101828",
+  muted: "#667085",
+  border: "#D0D5DD",
+  primary: "#635BFF",
+  primaryDark: "#4638D8",
+  green: "#2E7D32",
+  greenDark: "#14532D",
+  greenSoft: "#DCFCE7",
+  orange: "#F59E0B",
+  orangeSoft: "#FEF3C7",
+  red: "#DC2626",
+  redSoft: "#FEE2E2",
+  surface: "#F8FAFC",
+  navy: "#020617",
+  white: "#FFFFFF",
+};
 
 const EQUIPMENT_OPTIONS = [
   {
     label: "Refrigerated Truck",
     type: "Refrigerated Fresh Food" as LoadType,
     icon: "snow-outline",
-    description: "Produce, meat, seafood, dairy, frozen, or cooled items.",
+    description: "Fresh produce, meat, seafood, dairy, frozen or cooled items.",
   },
   {
     label: "Livestock Trailer",
@@ -66,26 +63,59 @@ const EQUIPMENT_OPTIONS = [
     label: "Dry Van",
     type: "Other" as LoadType,
     icon: "cube-outline",
-    description: "Packaged goods, farm supplies, hay, equipment, or dry freight.",
-  },
-  {
-    label: "Box Truck",
-    type: "Other" as LoadType,
-    icon: "bus-outline",
-    description: "Local farm deliveries, palletized orders, and store drop-offs.",
+    description: "Non-refrigerated packaged goods, supplies, and dry freight.",
   },
 ];
 
-const COMMODITY_OPTIONS = [
-  "Fresh Produce",
-  "Meat",
-  "Seafood",
-  "Dairy",
-  "Eggs",
-  "Livestock",
-  "Hay & Feed",
-  "Farm Supplies",
-  "Mixed Farm Goods",
+const ADDRESS_SUGGESTIONS = [
+  {
+    label: "Farm2Home",
+    city: "Sterling Heights",
+    state: "MI",
+    address: "3876 Summit Dr, Sterling Heights, MI 48314",
+  },
+  {
+    label: "Eastern Market",
+    city: "Detroit",
+    state: "MI",
+    address: "2934 Russell St, Detroit, MI 48207",
+  },
+  {
+    label: "Detroit Delivery Zone",
+    city: "Detroit",
+    state: "MI",
+    address: "19376 Packard St, Detroit, MI 48234",
+  },
+  {
+    label: "Royal Oak Pickup",
+    city: "Royal Oak",
+    state: "MI",
+    address: "200 S Main St, Royal Oak, MI 48067",
+  },
+  {
+    label: "Ann Arbor Delivery",
+    city: "Ann Arbor",
+    state: "MI",
+    address: "500 S State St, Ann Arbor, MI 48109",
+  },
+];
+
+const TIME_OPTIONS = [
+  "06:00 AM",
+  "07:00 AM",
+  "08:00 AM",
+  "09:00 AM",
+  "10:00 AM",
+  "11:00 AM",
+  "12:00 PM",
+  "01:00 PM",
+  "02:00 PM",
+  "03:00 PM",
+  "04:00 PM",
+  "05:00 PM",
+  "06:00 PM",
+  "07:00 PM",
+  "08:00 PM",
 ];
 
 function clean(value: any) {
@@ -93,129 +123,160 @@ function clean(value: any) {
 }
 
 function money(value: any) {
-  const amount = Number(value || 0);
-  return `$${amount.toFixed(2)}`;
+  return `$${Number(value || 0).toFixed(2)}`;
 }
 
-function getParamString(value: any) {
+function formatDate(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function firstParam(value: any) {
   if (Array.isArray(value)) return clean(value[0]);
   return clean(value);
 }
 
-function makeTempRouteDistance(pickup: string, dropoff: string) {
-  const seed = `${pickup}-${dropoff}`.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  return Math.max(8, Math.round((seed % 165) + 18));
+function daysInMonth(year: number, month: number) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function monthName(date: Date) {
+  return date.toLocaleString("default", { month: "long", year: "numeric" });
+}
+
+function parseCity(address: string) {
+  const parts = address.split(",").map((part) => part.trim());
+  return parts.length >= 2 ? parts[1] : "";
+}
+
+function parseState(address: string) {
+  const parts = address.split(",").map((part) => part.trim());
+  if (parts.length >= 3) return parts[2].split(" ")[0] || "";
+  return "";
 }
 
 export default function FarmerPostLoadScreen() {
   const params = useLocalSearchParams();
-  const farmerIdParam = getParamString(params.farmerId || params.farmer_id);
-
-  const [loading, setLoading] = useState(true);
-  const [posting, setPosting] = useState(false);
+  const farmerIdParam = firstParam(params.farmerId || params.farmer_id || params.id);
 
   const [farmerId, setFarmerId] = useState(farmerIdParam);
-  const [farmerName, setFarmerName] = useState("Farm2Home Farm");
-  const [farmerEmail, setFarmerEmail] = useState("");
+  const [farmerName, setFarmerName] = useState("Farm2Home");
 
   const [loadTitle, setLoadTitle] = useState("Fresh Produce Delivery");
   const [loadType, setLoadType] = useState<LoadType>("Refrigerated Fresh Food");
   const [requiredEquipment, setRequiredEquipment] = useState("Refrigerated Truck");
-  const [commodity, setCommodity] = useState("Fresh Produce");
-  const [priority, setPriority] = useState<Priority>("standard");
 
-  const [pickupLocation, setPickupLocation] = useState("");
-  const [pickupAddress, setPickupAddress] = useState("");
-  const [dropoffLocation, setDropoffLocation] = useState("");
+  const [pickupName, setPickupName] = useState("Farm2Home");
+  const [pickupCity, setPickupCity] = useState("Sterling Heights");
+  const [pickupAddress, setPickupAddress] = useState("3876 Summit Dr, Sterling Heights, MI 48314");
+
+  const [dropoffName, setDropoffName] = useState("");
+  const [dropoffCity, setDropoffCity] = useState("");
   const [dropoffAddress, setDropoffAddress] = useState("");
 
   const [pickupDate, setPickupDate] = useState("");
   const [pickupTime, setPickupTime] = useState("");
   const [dropoffDate, setDropoffDate] = useState("");
   const [dropoffTime, setDropoffTime] = useState("");
+  const [priorityLevel, setPriorityLevel] = useState<PriorityLevel>("standard");
 
   const [weight, setWeight] = useState("");
-  const [pieces, setPieces] = useState("");
-  const [pallets, setPallets] = useState("");
   const [miles, setMiles] = useState("");
-  const [ratePerMile, setRatePerMile] = useState("1.75");
-
-  const [temperatureMin, setTemperatureMin] = useState("34");
-  const [temperatureMax, setTemperatureMax] = useState("40");
-  const [requiresLiftgate, setRequiresLiftgate] = useState(false);
-  const [requiresPalletJack, setRequiresPalletJack] = useState(false);
-  const [proofOfDeliveryRequired, setProofOfDeliveryRequired] = useState(true);
-  const [insuranceRequired, setInsuranceRequired] = useState(true);
+  const [ratePerMile, setRatePerMile] = useState("1.50");
 
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [description, setDescription] = useState("");
 
-  useEffect(() => {
-    initialize();
-  }, []);
+  const [posting, setPosting] = useState(false);
+
+  const [calendarTarget, setCalendarTarget] = useState<"pickup" | "dropoff" | null>(null);
+  const [timeTarget, setTimeTarget] = useState<"pickup" | "dropoff" | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
 
   const milesNumber = Number(miles || 0);
   const rateNumber = Number(ratePerMile || 0);
   const payoutAmount = milesNumber * rateNumber;
-  const isRefrigerated = loadType === "Refrigerated Fresh Food" || requiredEquipment === "Refrigerated Truck";
 
   const selectedEquipment = useMemo(() => {
     return EQUIPMENT_OPTIONS.find((item) => item.label === requiredEquipment) || EQUIPMENT_OPTIONS[0];
   }, [requiredEquipment]);
 
-  const completion = useMemo(() => {
-    const required = [
-      farmerName,
-      loadTitle,
-      pickupLocation,
-      pickupAddress,
-      dropoffLocation,
-      dropoffAddress,
-      pickupDate,
-      pickupTime,
-      contactName,
-      contactPhone,
-      milesNumber > 0 ? "ok" : "",
-      rateNumber >= MIN_RATE_PER_MILE && rateNumber <= MAX_RATE_PER_MILE ? "ok" : "",
-    ];
+  const readyToPost = useMemo(() => {
+    return Boolean(
+      farmerName.trim() &&
+        loadTitle.trim() &&
+        pickupName.trim() &&
+        pickupCity.trim() &&
+        pickupAddress.trim() &&
+        dropoffName.trim() &&
+        dropoffCity.trim() &&
+        dropoffAddress.trim() &&
+        pickupDate.trim() &&
+        pickupTime.trim() &&
+        contactName.trim() &&
+        contactPhone.trim() &&
+        milesNumber > 0 &&
+        rateNumber >= MIN_RATE_PER_MILE &&
+        rateNumber <= MAX_RATE_PER_MILE
+    );
+  }, [
+    farmerName,
+    loadTitle,
+    pickupName,
+    pickupCity,
+    pickupAddress,
+    dropoffName,
+    dropoffCity,
+    dropoffAddress,
+    pickupDate,
+    pickupTime,
+    contactName,
+    contactPhone,
+    milesNumber,
+    rateNumber,
+  ]);
 
-    const complete = required.filter((item) => clean(item)).length;
-    return Math.round((complete / required.length) * 100);
-  }, [farmerName, loadTitle, pickupLocation, pickupAddress, dropoffLocation, dropoffAddress, pickupDate, pickupTime, contactName, contactPhone, milesNumber, rateNumber]);
+  React.useEffect(() => {
+    hydrateFarmer();
+  }, []);
 
-  const readyToPost = completion === 100;
-
-  async function initialize() {
+  async function hydrateFarmer() {
     try {
-      setLoading(true);
-
-      const saved =
+      const raw =
         (await AsyncStorage.getItem("currentFarmer")) ||
         (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
         (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
         (await AsyncStorage.getItem("currentUser"));
 
-      if (saved) {
-        const farmer = JSON.parse(saved);
-        const id = clean(farmerIdParam || farmer.id || farmer.farmerId || farmer.farmer_id || farmer.profile_id);
-        const name = clean(farmer.farmName || farmer.farm_name || farmer.businessName || farmer.business_name || farmer.name || "Farm2Home Farm");
-        const email = clean(farmer.email || farmer.farmer_email || "");
-        const phone = clean(farmer.phone || farmer.phone_number || farmer.business_phone || "");
-        const farmAddress = clean(farmer.farm_address || farmer.address || farmer.location || farmer.city || "");
+      if (!raw) return;
 
-        setFarmerId(id);
-        setFarmerName(name);
-        setFarmerEmail(email);
-        setContactName(clean(farmer.full_name || farmer.owner_name || farmer.contact_name || name));
-        setContactPhone(phone);
-        setPickupLocation(name);
-        setPickupAddress(farmAddress);
+      const farmer = JSON.parse(raw);
+      const activeFarmerId = clean(farmerIdParam || farmer.id || farmer.farmer_id || farmer.farmerId);
+      const activeFarmName = clean(
+        farmer.farm_name ||
+          farmer.farmName ||
+          farmer.business_name ||
+          farmer.businessName ||
+          farmer.name
+      );
+
+      if (activeFarmerId) setFarmerId(activeFarmerId);
+      if (activeFarmName) {
+        setFarmerName(activeFarmName);
+        setPickupName(activeFarmName);
       }
-    } catch (error) {
-      console.log("Post load initialize skipped:", error);
-    } finally {
-      setLoading(false);
+
+      const city = clean(farmer.city || farmer.farm_city);
+      const state = clean(farmer.state || farmer.farm_state);
+      const address = clean(farmer.address || farmer.farm_address || farmer.pickup_address);
+
+      if (city) setPickupCity(state ? `${city}, ${state}` : city);
+      if (address) setPickupAddress(address);
+    } catch {
+      return;
     }
   }
 
@@ -225,72 +286,94 @@ export default function FarmerPostLoadScreen() {
 
     if (selected) {
       setLoadType(selected.type);
-      if (selected.type === "Livestock") setCommodity("Livestock");
-      if (selected.type === "Refrigerated Fresh Food" && commodity === "Livestock") setCommodity("Fresh Produce");
     }
   }
 
-  function estimateMiles() {
-    if (!pickupAddress.trim() || !dropoffAddress.trim()) {
-      Alert.alert("Route Needed", "Enter pickup and dropoff addresses first.");
-      return;
+  function applyAddress(
+    target: "pickup" | "dropoff",
+    selected: { label: string; city: string; state: string; address: string }
+  ) {
+    if (target === "pickup") {
+      setPickupName(selected.label);
+      setPickupCity(`${selected.city}, ${selected.state}`);
+      setPickupAddress(selected.address);
+    } else {
+      setDropoffName(selected.label);
+      setDropoffCity(`${selected.city}, ${selected.state}`);
+      setDropoffAddress(selected.address);
     }
-
-    const estimated = makeTempRouteDistance(pickupAddress, dropoffAddress);
-    setMiles(String(estimated));
   }
 
-  function setRatePreset(value: string) {
-    setRatePerMile(value);
+  function openCalendar(target: "pickup" | "dropoff") {
+    setCalendarTarget(target);
+    setCalendarMonth(new Date());
+  }
+
+  function openTime(target: "pickup" | "dropoff") {
+    setTimeTarget(target);
+  }
+
+  function selectDate(date: string) {
+    if (calendarTarget === "pickup") setPickupDate(date);
+    if (calendarTarget === "dropoff") setDropoffDate(date);
+    setCalendarTarget(null);
+  }
+
+  function selectTime(time: string) {
+    if (timeTarget === "pickup") setPickupTime(time);
+    if (timeTarget === "dropoff") setDropoffTime(time);
+    setTimeTarget(null);
   }
 
   async function postLoad() {
     if (!readyToPost) {
-      Alert.alert("Missing Load Details", "Complete farm, route, schedule, contact, miles, and valid rate before posting.");
+      Alert.alert(
+        "Missing Load Details",
+        "Complete farm, route, schedule, contact, miles, and valid rate before posting."
+      );
       return;
     }
 
     try {
       setPosting(true);
+
       const now = new Date().toISOString();
-      const temperatureRequired = isRefrigerated ? `${temperatureMin || "34"}-${temperatureMax || "40"}°F` : "Ambient";
 
       const insertPayload = {
         farmer_id: farmerId || null,
         farmer_name: farmerName.trim(),
-        farmer_email: farmerEmail || null,
+
         title: loadTitle.trim(),
-        commodity,
-        load_type: loadType,
-        equipment_type: requiredEquipment,
-        pickup_location: pickupLocation.trim(),
-        pickup_address: pickupAddress.trim(),
-        dropoff_location: dropoffLocation.trim(),
-        dropoff_address: dropoffAddress.trim(),
+        commodity: loadType,
+
+        pickup_city: parseCity(pickupAddress) || pickupCity,
+        pickup_state: parseState(pickupAddress),
+        delivery_city: parseCity(dropoffAddress) || dropoffCity,
+        delivery_state: parseState(dropoffAddress),
+
+        pickup_location: pickupAddress.trim(),
+        dropoff_location: dropoffAddress.trim(),
+
         pickup_date: pickupDate.trim(),
         pickup_time: pickupTime.trim(),
         dropoff_date: dropoffDate.trim() || null,
         dropoff_time: dropoffTime.trim() || null,
+
+        equipment_type: requiredEquipment,
         weight_lbs: Number(weight || 0) || null,
-        pieces: Number(pieces || 0) || null,
-        pallets: Number(pallets || 0) || null,
-        distance_miles: Number(milesNumber.toFixed(1)),
-        rate_per_mile: Number(rateNumber.toFixed(2)),
+        temperature_controlled: loadType === "Refrigerated Fresh Food",
+        temperature_required:
+          loadType === "Refrigerated Fresh Food" ? "Refrigerated / Cool" : "Ambient",
+
         rate: Number(payoutAmount.toFixed(2)),
-        payout_amount: Number(payoutAmount.toFixed(2)),
-        temperature_required: temperatureRequired,
-        priority,
-        requires_liftgate: requiresLiftgate,
-        requires_pallet_jack: requiresPalletJack,
-        proof_of_delivery_required: proofOfDeliveryRequired,
-        insurance_required: insuranceRequired,
-        contact_name: contactName.trim(),
-        contact_phone: contactPhone.trim(),
-        notes: description.trim(),
-        description: description.trim(),
+        distance_miles: Number(milesNumber.toFixed(1)),
+        priority_level: priorityLevel,
+
+        notes:
+          description.trim() ||
+          `Pickup: ${pickupName.trim()} | Dropoff: ${dropoffName.trim()} | Contact: ${contactName.trim()} | Phone: ${contactPhone.trim()} | Rate per mile: $${rateNumber.toFixed(2)}`,
+
         status: "available",
-        source: "farmer_post_load",
-        posted_by_role: "farmer",
         created_at: now,
         updated_at: now,
       };
@@ -301,18 +384,25 @@ export default function FarmerPostLoadScreen() {
         .select("id")
         .single();
 
-      if (error) throw error;
+      if (error) {
+        Alert.alert("Post Error", error.message);
+        return;
+      }
 
-      Alert.alert("Load Posted", "Your farm load is now available on the live freight board.", [
-        {
-          text: "View Live Board",
-          onPress: () =>
-            router.replace({
-              pathname: "/freight/board" as any,
-              params: { createdLoadId: data?.id },
-            }),
-        },
-      ]);
+      Alert.alert(
+        "Load Posted",
+        "Your farm load is now available on the live freight board.",
+        [
+          {
+            text: "View Live Board",
+            onPress: () =>
+              router.replace({
+                pathname: "/freight/board" as any,
+                params: { createdLoadId: data?.id },
+              }),
+          },
+        ]
+      );
     } catch (error: any) {
       Alert.alert("Post Error", error?.message || "Unable to post freight load.");
     } finally {
@@ -320,216 +410,579 @@ export default function FarmerPostLoadScreen() {
     }
   }
 
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.green} />
-        <Text style={styles.centerText}>Loading load builder...</Text>
-      </View>
-    );
-  }
-
   return (
-    <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView style={styles.page} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.hero}>
-          <View style={styles.topRow}>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.push("/farmer/dashboard" as any)}>
-              <Ionicons name="arrow-back-outline" size={22} color={COLORS.white} />
-            </TouchableOpacity>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.headerRow}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.push("/farmer/dashboard" as any)}
+        >
+          <Ionicons name="arrow-back-outline" size={22} color={COLORS.text} />
+        </TouchableOpacity>
 
-            <TouchableOpacity style={styles.boardButtonTop} onPress={() => router.replace("/freight/board" as any)}>
-              <Ionicons name="trail-sign-outline" size={16} color={COLORS.navy} />
-              <Text style={styles.boardButtonTopText}>Board</Text>
-            </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.eyebrow}>Farm2Home Logistics</Text>
+          <Text style={styles.title}>Post Farm Load</Text>
+          <Text style={styles.subtitle}>
+            Create a live freight load with address lookup, route details, calendar scheduling, and driver payout.
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.hero}>
+        <View style={styles.heroIcon}>
+          <Ionicons name={selectedEquipment.icon as any} size={30} color={COLORS.white} />
+        </View>
+        <Text style={styles.heroBadge}>Load Board Posting</Text>
+        <Text style={styles.heroTitle}>Move farm goods with the right driver.</Text>
+        <Text style={styles.heroText}>
+          Build the load, set pickup and dropoff, choose dates and times, then post it to the live board.
+        </Text>
+      </View>
+
+      <View style={styles.previewCard}>
+        <View style={styles.previewTop}>
+          <View>
+            <Text style={styles.previewLabel}>Carrier Payout</Text>
+            <Text style={styles.previewAmount}>{money(payoutAmount)}</Text>
           </View>
 
-          <View style={styles.heroMainRow}>
-            <View style={styles.heroIcon}>
-              <Ionicons name={selectedEquipment.icon as any} size={30} color={COLORS.white} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.eyebrow}>Farm2Home Logistics</Text>
-              <Text style={styles.title}>Post Farm Load</Text>
-              <Text style={styles.subtitle}>Create a driver-ready load with route, payout, equipment, map preview, and delivery requirements.</Text>
-            </View>
+          <View style={[styles.statusPill, readyToPost ? styles.readyPill : styles.incompletePill]}>
+            <Text style={[styles.statusText, readyToPost ? styles.readyText : styles.incompleteText]}>
+              {readyToPost ? "Ready" : "Incomplete"}
+            </Text>
           </View>
         </View>
 
-        <View style={styles.progressCard}>
-          <View style={styles.progressHeader}>
-            <View>
-              <Text style={styles.progressTitle}>Load Setup Progress</Text>
-              <Text style={styles.progressSub}>{readyToPost ? "Ready to post" : "Complete all required fields"}</Text>
-            </View>
-            <Text style={styles.progressPercent}>{completion}%</Text>
-          </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${completion}%` }]} />
-          </View>
-        </View>
-
-        <View style={styles.mapCard}>
-          <View style={styles.mapHeaderRow}>
-            <View>
-              <Text style={styles.mapTitle}>Route Map Preview</Text>
-              <Text style={styles.mapSub}>Pickup to delivery route summary</Text>
-            </View>
-            <TouchableOpacity style={styles.estimateButton} onPress={estimateMiles}>
-              <Ionicons name="navigate-outline" size={16} color={COLORS.greenDark} />
-              <Text style={styles.estimateText}>Estimate Miles</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.fakeMap}>
-            <View style={styles.mapPinStart}>
-              <Ionicons name="home-outline" size={18} color={COLORS.white} />
+        <View style={styles.routePreview}>
+          <View style={styles.routeTimeline}>
+            <View style={styles.pinStart}>
+              <Ionicons name="storefront-outline" size={18} color={COLORS.greenDark} />
             </View>
             <View style={styles.routeLine} />
-            <View style={styles.routeDot} />
-            <View style={styles.mapPinEnd}>
-              <Ionicons name="flag-outline" size={18} color={COLORS.white} />
+            <View style={styles.pinEnd}>
+              <Ionicons name="flag-outline" size={18} color="#92400E" />
             </View>
           </View>
 
-          <View style={styles.routeSummaryRow}>
-            <RoutePoint label="Pickup" value={pickupAddress || pickupLocation || "Enter pickup address"} color={COLORS.green} />
-            <RoutePoint label="Dropoff" value={dropoffAddress || dropoffLocation || "Enter dropoff address"} color={COLORS.purple} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.previewRouteLabel}>Pickup</Text>
+            <Text style={styles.previewRouteText}>{pickupAddress || "Pickup address"}</Text>
+            <Text style={styles.previewRouteLabel}>Dropoff</Text>
+            <Text style={styles.previewRouteText}>{dropoffAddress || "Dropoff address"}</Text>
           </View>
         </View>
 
-        <View style={styles.previewGrid}>
-          <MetricCard label="Payout" value={money(payoutAmount)} icon="cash-outline" />
-          <MetricCard label="Miles" value={milesNumber ? milesNumber.toFixed(1) : "0"} icon="speedometer-outline" />
-          <MetricCard label="Rate/Mile" value={money(rateNumber)} icon="pricetag-outline" />
-          <MetricCard label="Equipment" value={requiredEquipment} icon={selectedEquipment.icon as any} small />
-        </View>
+        <Text style={styles.previewMeta}>
+          {milesNumber.toFixed(1)} miles × ${rateNumber.toFixed(2)} / mile · {requiredEquipment}
+        </Text>
+      </View>
 
-        <View style={styles.card}>
-          <SectionTitle step="Step 1" title="Farm Load Details" subtitle="Tell drivers what they are hauling and what equipment is required." />
+      <View style={styles.card}>
+        <SectionTitle step="Step 1" title="Farm Load Details" subtitle="Tell drivers what they are hauling." />
 
-          <TextInput style={styles.input} value={farmerName} onChangeText={setFarmerName} placeholder="Farm / Business Name" placeholderTextColor="#94A3B8" />
-          <TextInput style={styles.input} value={loadTitle} onChangeText={setLoadTitle} placeholder="Load Title" placeholderTextColor="#94A3B8" />
+        <TextInput
+          style={styles.input}
+          value={farmerName}
+          onChangeText={setFarmerName}
+          placeholder="Farm / Business Name"
+          placeholderTextColor="#98A2B3"
+        />
 
-          <Text style={styles.label}>Commodity</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-            {COMMODITY_OPTIONS.map((item) => (
-              <Chip key={item} label={item} active={commodity === item} onPress={() => setCommodity(item)} />
-            ))}
-          </ScrollView>
+        <TextInput
+          style={styles.input}
+          value={loadTitle}
+          onChangeText={setLoadTitle}
+          placeholder="Load Title"
+          placeholderTextColor="#98A2B3"
+        />
 
-          <Text style={styles.label}>Required Equipment</Text>
-          {EQUIPMENT_OPTIONS.map((item) => {
-            const active = requiredEquipment === item.label;
-            return (
-              <TouchableOpacity key={item.label} style={[styles.equipmentCard, active && styles.equipmentCardActive]} onPress={() => selectEquipment(item.label)} activeOpacity={0.9}>
-                <View style={[styles.equipmentIcon, active && styles.equipmentIconActive]}>
-                  <Ionicons name={item.icon as any} size={22} color={active ? COLORS.white : COLORS.greenDark} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.equipmentTitle, active && styles.equipmentTitleActive]}>{item.label}</Text>
-                  <Text style={[styles.equipmentDescription, active && styles.equipmentDescriptionActive]}>{item.description}</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <Text style={styles.label}>Required Equipment</Text>
 
-        <View style={styles.card}>
-          <SectionTitle step="Step 2" title="Pickup & Dropoff" subtitle="Add location names and full addresses for navigation." />
+        {EQUIPMENT_OPTIONS.map((item) => {
+          const active = requiredEquipment === item.label;
 
-          <TextInput style={styles.input} value={pickupLocation} onChangeText={setPickupLocation} placeholder="Pickup Location Name" placeholderTextColor="#94A3B8" />
-          <TextInput style={[styles.input, styles.textAreaSmall]} value={pickupAddress} onChangeText={setPickupAddress} placeholder="Pickup Full Address" placeholderTextColor="#94A3B8" multiline />
-          <TextInput style={styles.input} value={dropoffLocation} onChangeText={setDropoffLocation} placeholder="Dropoff Location Name" placeholderTextColor="#94A3B8" />
-          <TextInput style={[styles.input, styles.textAreaSmall]} value={dropoffAddress} onChangeText={setDropoffAddress} placeholder="Dropoff Full Address" placeholderTextColor="#94A3B8" multiline />
-        </View>
-
-        <View style={styles.card}>
-          <SectionTitle step="Step 3" title="Schedule & Priority" subtitle="Set pickup timing and service priority." />
-
-          <View style={styles.twoCol}>
-            <TextInput style={[styles.input, styles.flexInput]} value={pickupDate} onChangeText={setPickupDate} placeholder="Pickup Date" placeholderTextColor="#94A3B8" />
-            <TextInput style={[styles.input, styles.flexInput]} value={pickupTime} onChangeText={setPickupTime} placeholder="Pickup Time" placeholderTextColor="#94A3B8" />
-          </View>
-
-          <View style={styles.twoCol}>
-            <TextInput style={[styles.input, styles.flexInput]} value={dropoffDate} onChangeText={setDropoffDate} placeholder="Dropoff Date" placeholderTextColor="#94A3B8" />
-            <TextInput style={[styles.input, styles.flexInput]} value={dropoffTime} onChangeText={setDropoffTime} placeholder="Dropoff Time" placeholderTextColor="#94A3B8" />
-          </View>
-
-          <Text style={styles.label}>Priority</Text>
-          <View style={styles.segmentRow}>
-            <Segment label="Standard" active={priority === "standard"} onPress={() => setPriority("standard")} />
-            <Segment label="Rush" active={priority === "rush"} onPress={() => setPriority("rush")} />
-            <Segment label="Scheduled" active={priority === "scheduled"} onPress={() => setPriority("scheduled")} />
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <SectionTitle step="Step 4" title="Load Size & Requirements" subtitle="Give drivers the essentials before they accept." />
-
-          <View style={styles.twoCol}>
-            <TextInput style={[styles.input, styles.flexInput]} value={weight} onChangeText={setWeight} placeholder="Weight lbs" placeholderTextColor="#94A3B8" keyboardType="numeric" />
-            <TextInput style={[styles.input, styles.flexInput]} value={pallets} onChangeText={setPallets} placeholder="Pallets" placeholderTextColor="#94A3B8" keyboardType="numeric" />
-          </View>
-          <TextInput style={styles.input} value={pieces} onChangeText={setPieces} placeholder="Pieces / Cases / Boxes" placeholderTextColor="#94A3B8" keyboardType="numeric" />
-
-          {isRefrigerated ? (
-            <View style={styles.tempBox}>
-              <Text style={styles.tempTitle}>Temperature Range</Text>
-              <View style={styles.twoColNoMargin}>
-                <TextInput style={[styles.input, styles.flexInput]} value={temperatureMin} onChangeText={setTemperatureMin} placeholder="Min °F" placeholderTextColor="#94A3B8" keyboardType="numeric" />
-                <TextInput style={[styles.input, styles.flexInput]} value={temperatureMax} onChangeText={setTemperatureMax} placeholder="Max °F" placeholderTextColor="#94A3B8" keyboardType="numeric" />
+          return (
+            <TouchableOpacity
+              key={item.label}
+              style={[styles.equipmentCard, active && styles.equipmentCardActive]}
+              onPress={() => selectEquipment(item.label)}
+              activeOpacity={0.9}
+            >
+              <View style={[styles.equipmentIcon, active && styles.equipmentIconActive]}>
+                <Ionicons
+                  name={item.icon as any}
+                  size={22}
+                  color={active ? COLORS.white : COLORS.green}
+                />
               </View>
-            </View>
-          ) : null}
 
-          <ToggleRow label="Liftgate Required" value={requiresLiftgate} onValueChange={setRequiresLiftgate} />
-          <ToggleRow label="Pallet Jack Required" value={requiresPalletJack} onValueChange={setRequiresPalletJack} />
-          <ToggleRow label="Proof of Delivery Required" value={proofOfDeliveryRequired} onValueChange={setProofOfDeliveryRequired} />
-          <ToggleRow label="Insurance Required" value={insuranceRequired} onValueChange={setInsuranceRequired} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.equipmentTitle, active && styles.equipmentTitleActive]}>
+                  {item.label}
+                </Text>
+                <Text style={[styles.equipmentDescription, active && styles.equipmentDescriptionActive]}>
+                  {item.description}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={description}
+          onChangeText={setDescription}
+          placeholder="Load Description / Special Instructions"
+          placeholderTextColor="#98A2B3"
+          multiline
+        />
+      </View>
+
+      <View style={styles.card}>
+        <SectionTitle
+          step="Step 2"
+          title="Pickup & Dropoff"
+          subtitle="Start typing a location or address, then select from suggestions."
+        />
+
+        <AddressAutocomplete
+          title="Pickup"
+          locationName={pickupName}
+          city={pickupCity}
+          address={pickupAddress}
+          onChangeName={setPickupName}
+          onChangeCity={setPickupCity}
+          onChangeAddress={setPickupAddress}
+          onSelect={(item) => applyAddress("pickup", item)}
+        />
+
+        <AddressAutocomplete
+          title="Dropoff"
+          locationName={dropoffName}
+          city={dropoffCity}
+          address={dropoffAddress}
+          onChangeName={setDropoffName}
+          onChangeCity={setDropoffCity}
+          onChangeAddress={setDropoffAddress}
+          onSelect={(item) => applyAddress("dropoff", item)}
+        />
+
+        <TextInput
+          style={styles.input}
+          value={weight}
+          onChangeText={setWeight}
+          placeholder="Weight in lbs"
+          placeholderTextColor="#98A2B3"
+          keyboardType="numeric"
+        />
+      </View>
+
+      <View style={styles.card}>
+        <SectionTitle
+          step="Step 3"
+          title="Schedule & Priority"
+          subtitle="Use calendar and time selectors for pickup and dropoff."
+        />
+
+        <View style={styles.twoColumn}>
+          <DateTimeButton
+            label="Pickup Date"
+            value={pickupDate}
+            icon="calendar-outline"
+            onPress={() => openCalendar("pickup")}
+          />
+          <DateTimeButton
+            label="Pickup Time"
+            value={pickupTime}
+            icon="time-outline"
+            onPress={() => openTime("pickup")}
+          />
         </View>
 
-        <View style={styles.card}>
-          <SectionTitle step="Step 5" title="Rate & Payout" subtitle={`Allowed range: ${money(MIN_RATE_PER_MILE)} to ${money(MAX_RATE_PER_MILE)} per mile.`} />
-
-          <View style={styles.twoCol}>
-            <TextInput style={[styles.input, styles.flexInput]} value={miles} onChangeText={setMiles} placeholder="Total Miles" placeholderTextColor="#94A3B8" keyboardType="numeric" />
-            <TextInput style={[styles.input, styles.flexInput]} value={ratePerMile} onChangeText={setRatePerMile} placeholder="Rate / Mile" placeholderTextColor="#94A3B8" keyboardType="numeric" />
-          </View>
-
-          <View style={styles.rateRow}>
-            <TouchableOpacity style={styles.rateButton} onPress={() => setRatePreset("1.50")}><Text style={styles.rateButtonText}>Min $1.50</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.rateButton} onPress={() => setRatePreset("2.25")}><Text style={styles.rateButtonText}>Good $2.25</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.rateButton} onPress={() => setRatePreset("3.50")}><Text style={styles.rateButtonText}>Max $3.50</Text></TouchableOpacity>
-          </View>
-
-          <View style={styles.payoutBox}>
-            <Text style={styles.payoutText}>{milesNumber.toFixed(1)} miles × {money(rateNumber)} / mile</Text>
-            <Text style={styles.totalPayout}>Carrier Payout: {money(payoutAmount)}</Text>
-          </View>
+        <View style={styles.twoColumn}>
+          <DateTimeButton
+            label="Dropoff Date"
+            value={dropoffDate}
+            icon="calendar-outline"
+            onPress={() => openCalendar("dropoff")}
+          />
+          <DateTimeButton
+            label="Dropoff Time"
+            value={dropoffTime}
+            icon="time-outline"
+            onPress={() => openTime("dropoff")}
+          />
         </View>
 
-        <View style={styles.card}>
-          <SectionTitle step="Step 6" title="Contact & Notes" subtitle="Add contact and instructions drivers should know." />
-          <TextInput style={styles.input} value={contactName} onChangeText={setContactName} placeholder="Contact Name" placeholderTextColor="#94A3B8" />
-          <TextInput style={styles.input} value={contactPhone} onChangeText={setContactPhone} placeholder="Contact Phone" placeholderTextColor="#94A3B8" keyboardType="phone-pad" />
-          <TextInput style={[styles.input, styles.textArea]} value={description} onChangeText={setDescription} placeholder="Load description, dock notes, handling instructions, delivery notes..." placeholderTextColor="#94A3B8" multiline />
+        <Text style={styles.label}>Priority</Text>
+
+        <View style={styles.priorityRow}>
+          <PriorityButton label="Standard" value="standard" active={priorityLevel === "standard"} onPress={setPriorityLevel} />
+          <PriorityButton label="Rush" value="rush" active={priorityLevel === "rush"} onPress={setPriorityLevel} />
+          <PriorityButton label="Scheduled" value="scheduled" active={priorityLevel === "scheduled"} onPress={setPriorityLevel} />
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <SectionTitle
+          step="Step 4"
+          title="Rate & Payout"
+          subtitle="Set a fair payout so drivers can accept the load."
+        />
+
+        <TextInput
+          style={styles.input}
+          value={miles}
+          onChangeText={setMiles}
+          placeholder="Total Miles"
+          placeholderTextColor="#98A2B3"
+          keyboardType="numeric"
+        />
+
+        <TextInput
+          style={styles.input}
+          value={ratePerMile}
+          onChangeText={setRatePerMile}
+          placeholder="Rate Per Mile"
+          placeholderTextColor="#98A2B3"
+          keyboardType="numeric"
+        />
+
+        <View style={styles.rateRow}>
+          <TouchableOpacity style={styles.rateButton} onPress={() => setRatePerMile("1.50")}>
+            <Text style={styles.rateButtonText}>Min $1.50/mi</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.rateButton} onPress={() => setRatePerMile("3.50")}>
+            <Text style={styles.rateButtonText}>Max $3.50/mi</Text>
+          </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={[styles.postButton, (!readyToPost || posting) && styles.disabledButton]} onPress={postLoad} disabled={!readyToPost || posting}>
-          {posting ? <ActivityIndicator color={COLORS.white} /> : <><Ionicons name="trail-sign-outline" size={20} color={COLORS.white} /><Text style={styles.postButtonText}>Post Load to Live Board</Text></>}
-        </TouchableOpacity>
+        <View style={styles.payoutBox}>
+          <Text style={styles.payoutText}>
+            {milesNumber.toFixed(1)} miles × ${rateNumber.toFixed(2)} / mile
+          </Text>
+          <Text style={styles.totalPayout}>Carrier Payout: {money(payoutAmount)}</Text>
+        </View>
+      </View>
 
-        <TouchableOpacity style={styles.boardLink} onPress={() => router.replace("/freight/board" as any)}>
-          <Text style={styles.linkText}>Open Live Load Board</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      <View style={styles.card}>
+        <SectionTitle step="Step 5" title="Contact" subtitle="Driver contact information for this load." />
+
+        <TextInput
+          style={styles.input}
+          value={contactName}
+          onChangeText={setContactName}
+          placeholder="Contact Name"
+          placeholderTextColor="#98A2B3"
+        />
+
+        <TextInput
+          style={styles.input}
+          value={contactPhone}
+          onChangeText={setContactPhone}
+          placeholder="Contact Phone"
+          placeholderTextColor="#98A2B3"
+          keyboardType="phone-pad"
+        />
+      </View>
+
+      <TouchableOpacity
+        style={[styles.postButton, (!readyToPost || posting) && styles.disabledButton]}
+        onPress={postLoad}
+        disabled={!readyToPost || posting}
+      >
+        {posting ? (
+          <ActivityIndicator color={COLORS.white} />
+        ) : (
+          <>
+            <Ionicons name="trail-sign-outline" size={20} color={COLORS.white} />
+            <Text style={styles.postButtonText}>Post Load to Live Board</Text>
+          </>
+        )}
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.boardLink} onPress={() => router.replace("/freight/board" as any)}>
+        <Text style={styles.linkText}>Open Live Load Board</Text>
+      </TouchableOpacity>
+
+      <CalendarModal
+        visible={Boolean(calendarTarget)}
+        calendarMonth={calendarMonth}
+        onClose={() => setCalendarTarget(null)}
+        onPrev={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+        onNext={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+        onSelect={selectDate}
+      />
+
+      <TimeModal
+        visible={Boolean(timeTarget)}
+        onClose={() => setTimeTarget(null)}
+        onSelect={selectTime}
+      />
+    </ScrollView>
   );
 }
 
-function SectionTitle({ step, title, subtitle }: { step: string; title: string; subtitle: string }) {
+function AddressAutocomplete({
+  title,
+  locationName,
+  city,
+  address,
+  onChangeName,
+  onChangeCity,
+  onChangeAddress,
+  onSelect,
+}: {
+  title: string;
+  locationName: string;
+  city: string;
+  address: string;
+  onChangeName: (value: string) => void;
+  onChangeCity: (value: string) => void;
+  onChangeAddress: (value: string) => void;
+  onSelect: (item: { label: string; city: string; state: string; address: string }) => void;
+}) {
+  const [focusedField, setFocusedField] = useState<"name" | "city" | "address" | null>(null);
+
+  const searchText = focusedField === "name" ? locationName : focusedField === "city" ? city : address;
+
+  const suggestions = useMemo(() => {
+    const q = clean(searchText).toLowerCase();
+    if (!q || q.length < 2) return [];
+
+    return ADDRESS_SUGGESTIONS.filter((item) => {
+      const full = `${item.label} ${item.city} ${item.state} ${item.address}`.toLowerCase();
+      return full.includes(q);
+    }).slice(0, 6);
+  }, [searchText]);
+
+  return (
+    <View style={styles.addressBox}>
+      <Text style={styles.addressTitle}>{title}</Text>
+
+      <TextInput
+        style={styles.input}
+        value={locationName}
+        onChangeText={onChangeName}
+        onFocus={() => setFocusedField("name")}
+        placeholder={`${title} Location Name`}
+        placeholderTextColor="#98A2B3"
+      />
+
+      <TextInput
+        style={styles.input}
+        value={city}
+        onChangeText={onChangeCity}
+        onFocus={() => setFocusedField("city")}
+        placeholder={`${title} City`}
+        placeholderTextColor="#98A2B3"
+      />
+
+      <TextInput
+        style={styles.input}
+        value={address}
+        onChangeText={onChangeAddress}
+        onFocus={() => setFocusedField("address")}
+        placeholder={`${title} Full Address`}
+        placeholderTextColor="#98A2B3"
+        multiline
+      />
+
+      {suggestions.length ? (
+        <View style={styles.suggestionBox}>
+          {suggestions.map((item) => (
+            <TouchableOpacity
+              key={`${title}-${item.address}`}
+              style={styles.suggestionRow}
+              onPress={() => {
+                onSelect(item);
+                setFocusedField(null);
+              }}
+            >
+              <View style={styles.suggestionIcon}>
+                <Ionicons name="location-outline" size={16} color={COLORS.primary} />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.suggestionTitle}>{item.label}</Text>
+                <Text style={styles.suggestionText}>{item.address}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function DateTimeButton({
+  label,
+  value,
+  icon,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.dateTimeButton} onPress={onPress}>
+      <Ionicons name={icon} size={18} color={COLORS.primary} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.dateTimeLabel}>{label}</Text>
+        <Text style={[styles.dateTimeValue, !value && styles.placeholderText]}>
+          {value || `Select ${label}`}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function PriorityButton({
+  label,
+  value,
+  active,
+  onPress,
+}: {
+  label: string;
+  value: PriorityLevel;
+  active: boolean;
+  onPress: (value: PriorityLevel) => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.priorityButton, active && styles.priorityButtonActive]}
+      onPress={() => onPress(value)}
+    >
+      <Text style={[styles.priorityText, active && styles.priorityTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function CalendarModal({
+  visible,
+  calendarMonth,
+  onClose,
+  onPrev,
+  onNext,
+  onSelect,
+}: {
+  visible: boolean;
+  calendarMonth: Date;
+  onClose: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onSelect: (date: string) => void;
+}) {
+  const year = calendarMonth.getFullYear();
+  const month = calendarMonth.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const totalDays = daysInMonth(year, month);
+
+  const days: Array<number | null> = [
+    ...Array(firstDay).fill(null),
+    ...Array.from({ length: totalDays }, (_, index) => index + 1),
+  ];
+
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={styles.modalBackdrop}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity style={styles.modalArrow} onPress={onPrev}>
+              <Ionicons name="chevron-back-outline" size={22} color={COLORS.text} />
+            </TouchableOpacity>
+
+            <Text style={styles.modalTitle}>{monthName(calendarMonth)}</Text>
+
+            <TouchableOpacity style={styles.modalArrow} onPress={onNext}>
+              <Ionicons name="chevron-forward-outline" size={22} color={COLORS.text} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.weekRow}>
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+              <Text key={day} style={styles.weekDay}>{day}</Text>
+            ))}
+          </View>
+
+          <View style={styles.calendarGrid}>
+            {days.map((day, index) => {
+              if (!day) return <View key={`blank-${index}`} style={styles.calendarDayBlank} />;
+
+              const date = new Date(year, month, day);
+              const dateText = formatDate(date);
+              const isPast = date < new Date(new Date().setHours(0, 0, 0, 0));
+
+              return (
+                <TouchableOpacity
+                  key={dateText}
+                  style={[styles.calendarDay, isPast && styles.calendarDayDisabled]}
+                  disabled={isPast}
+                  onPress={() => onSelect(dateText)}
+                >
+                  <Text style={[styles.calendarDayText, isPast && styles.calendarDayTextDisabled]}>
+                    {day}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TouchableOpacity style={styles.modalClose} onPress={onClose}>
+            <Text style={styles.modalCloseText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function TimeModal({
+  visible,
+  onClose,
+  onSelect,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (time: string) => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={styles.modalBackdrop}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Select Time</Text>
+
+          <View style={styles.timeGrid}>
+            {TIME_OPTIONS.map((time) => (
+              <TouchableOpacity key={time} style={styles.timeOption} onPress={() => onSelect(time)}>
+                <Ionicons name="time-outline" size={16} color={COLORS.primary} />
+                <Text style={styles.timeOptionText}>{time}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TouchableOpacity style={styles.modalClose} onPress={onClose}>
+            <Text style={styles.modalCloseText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function SectionTitle({
+  step,
+  title,
+  subtitle,
+}: {
+  step: string;
+  title: string;
+  subtitle: string;
+}) {
   return (
     <View style={styles.sectionHeader}>
       <Text style={styles.stepText}>{step}</Text>
@@ -539,148 +992,520 @@ function SectionTitle({ step, title, subtitle }: { step: string; title: string; 
   );
 }
 
-function RoutePoint({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <View style={styles.routePoint}>
-      <View style={[styles.routePointDot, { backgroundColor: color }]} />
-      <View style={{ flex: 1 }}>
-        <Text style={styles.routePointLabel}>{label}</Text>
-        <Text style={styles.routePointText} numberOfLines={2}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-function MetricCard({ label, value, icon, small }: { label: string; value: string; icon: keyof typeof Ionicons.glyphMap; small?: boolean }) {
-  return (
-    <View style={styles.metricCard}>
-      <Ionicons name={icon} size={18} color={COLORS.purple} />
-      <Text style={[styles.metricValue, small && styles.metricSmall]} numberOfLines={1}>{value}</Text>
-      <Text style={styles.metricLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <TouchableOpacity style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function Segment({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <TouchableOpacity style={[styles.segment, active && styles.segmentActive]} onPress={onPress}>
-      <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function ToggleRow({ label, value, onValueChange }: { label: string; value: boolean; onValueChange: (value: boolean) => void }) {
-  return (
-    <View style={styles.toggleRow}>
-      <Text style={styles.toggleLabel}>{label}</Text>
-      <Switch value={value} onValueChange={onValueChange} />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: COLORS.bg },
-  content: { paddingBottom: 100 },
-  center: { flex: 1, backgroundColor: COLORS.bg, alignItems: "center", justifyContent: "center" },
-  centerText: { marginTop: 10, color: COLORS.muted, fontWeight: "800" },
+  container: { flex: 1, backgroundColor: COLORS.bg },
+  content: { padding: 18, paddingBottom: 90 },
 
-  hero: { backgroundColor: COLORS.navy, paddingTop: 56, paddingHorizontal: 18, paddingBottom: 28, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 },
-  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
-  backButton: { width: 44, height: 44, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center" },
-  boardButtonTop: { backgroundColor: COLORS.white, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 6 },
-  boardButtonTopText: { color: COLORS.navy, fontWeight: "900" },
-  heroMainRow: { flexDirection: "row", gap: 14, alignItems: "center" },
-  heroIcon: { width: 62, height: 62, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.16)", justifyContent: "center", alignItems: "center" },
-  eyebrow: { color: "#A5B4FC", fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.7, fontSize: 12 },
-  title: { color: COLORS.white, fontSize: 31, fontWeight: "900", marginTop: 4, lineHeight: 36 },
-  subtitle: { color: "#E0E7FF", lineHeight: 21, marginTop: 6, fontWeight: "700" },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 16,
+  },
+  backButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  eyebrow: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    fontSize: 12,
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: "900",
+    color: COLORS.text,
+    marginTop: 2,
+  },
+  subtitle: {
+    color: COLORS.muted,
+    lineHeight: 22,
+    marginTop: 5,
+    fontWeight: "700",
+  },
 
-  progressCard: { backgroundColor: COLORS.card, marginHorizontal: 18, marginTop: -18, borderRadius: 22, padding: 16, borderWidth: 1, borderColor: COLORS.border },
-  progressHeader: { flexDirection: "row", justifyContent: "space-between", gap: 12, marginBottom: 10 },
-  progressTitle: { color: COLORS.text, fontWeight: "900", fontSize: 18 },
-  progressSub: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
-  progressPercent: { color: COLORS.purple, fontWeight: "900", fontSize: 24 },
-  progressTrack: { height: 10, backgroundColor: COLORS.purpleSoft, borderRadius: 999, overflow: "hidden" },
-  progressFill: { height: "100%", backgroundColor: COLORS.purple, borderRadius: 999 },
+  hero: {
+    backgroundColor: COLORS.navy,
+    borderRadius: 30,
+    padding: 20,
+    marginBottom: 14,
+  },
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  heroBadge: {
+    color: "#C7D2FE",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    fontSize: 12,
+  },
+  heroTitle: {
+    color: COLORS.white,
+    fontSize: 26,
+    fontWeight: "900",
+    marginTop: 7,
+    lineHeight: 31,
+  },
+  heroText: {
+    color: "#E0E7FF",
+    marginTop: 8,
+    lineHeight: 22,
+    fontWeight: "700",
+  },
 
-  mapCard: { backgroundColor: COLORS.card, margin: 18, marginBottom: 12, borderRadius: 24, padding: 16, borderWidth: 1, borderColor: COLORS.border },
-  mapHeaderRow: { flexDirection: "row", justifyContent: "space-between", gap: 12, marginBottom: 12 },
-  mapTitle: { color: COLORS.text, fontWeight: "900", fontSize: 20 },
-  mapSub: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
-  estimateButton: { backgroundColor: COLORS.greenSoft, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start" },
-  estimateText: { color: COLORS.greenDark, fontWeight: "900", fontSize: 12 },
-  fakeMap: { height: 170, borderRadius: 22, backgroundColor: "#EAF2FF", overflow: "hidden", justifyContent: "center", paddingHorizontal: 36, marginBottom: 14 },
-  mapPinStart: { position: "absolute", left: 32, top: 46, width: 42, height: 42, borderRadius: 16, backgroundColor: COLORS.green, alignItems: "center", justifyContent: "center", zIndex: 3 },
-  mapPinEnd: { position: "absolute", right: 32, bottom: 42, width: 42, height: 42, borderRadius: 16, backgroundColor: COLORS.purple, alignItems: "center", justifyContent: "center", zIndex: 3 },
-  routeLine: { height: 4, backgroundColor: COLORS.purple, borderRadius: 999, transform: [{ rotate: "-10deg" }] },
-  routeDot: { position: "absolute", left: "50%", top: 72, width: 18, height: 18, borderRadius: 999, backgroundColor: COLORS.orange, borderWidth: 3, borderColor: COLORS.white },
-  routeSummaryRow: { gap: 10 },
-  routePoint: { flexDirection: "row", gap: 10, alignItems: "flex-start", backgroundColor: COLORS.bg, borderRadius: 16, padding: 12 },
-  routePointDot: { width: 12, height: 12, borderRadius: 999, marginTop: 4 },
-  routePointLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
-  routePointText: { color: COLORS.text, fontWeight: "800", lineHeight: 19, marginTop: 2 },
+  previewCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  previewTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 12,
+  },
+  previewLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+  },
+  previewAmount: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    fontSize: 30,
+    marginTop: 2,
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignSelf: "flex-start",
+  },
+  readyPill: { backgroundColor: COLORS.greenSoft },
+  incompletePill: { backgroundColor: COLORS.orangeSoft },
+  statusText: { fontWeight: "900" },
+  readyText: { color: COLORS.greenDark },
+  incompleteText: { color: "#92400E" },
+  routePreview: {
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 18,
+    padding: 12,
+    flexDirection: "row",
+    gap: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  routeTimeline: { width: 34, alignItems: "center", paddingVertical: 3 },
+  pinStart: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routeLine: {
+    width: 3,
+    flex: 1,
+    backgroundColor: COLORS.green,
+    marginVertical: 4,
+    borderRadius: 999,
+  },
+  pinEnd: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    backgroundColor: COLORS.orangeSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewRouteLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  previewRouteText: {
+    color: COLORS.text,
+    fontWeight: "800",
+    marginTop: 2,
+    marginBottom: 8,
+    lineHeight: 19,
+  },
+  previewMeta: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 12,
+    lineHeight: 20,
+  },
 
-  previewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginHorizontal: 18, marginBottom: 12 },
-  metricCard: { flexGrow: 1, width: "47%", backgroundColor: COLORS.card, borderRadius: 20, padding: 14, borderWidth: 1, borderColor: COLORS.border },
-  metricValue: { color: COLORS.text, fontWeight: "900", fontSize: 22, marginTop: 7 },
-  metricSmall: { fontSize: 15 },
-  metricLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 3, fontSize: 12 },
+  card: {
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+  },
+  sectionHeader: {
+    marginBottom: 12,
+  },
+  stepText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    marginBottom: 4,
+  },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  sectionSub: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 4,
+  },
 
-  card: { backgroundColor: COLORS.card, marginHorizontal: 18, marginBottom: 14, borderRadius: 24, padding: 16, borderWidth: 1, borderColor: COLORS.border },
-  sectionHeader: { marginBottom: 12 },
-  stepText: { color: COLORS.purple, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 4, fontSize: 12 },
-  sectionTitle: { color: COLORS.text, fontSize: 22, fontWeight: "900" },
-  sectionSub: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 4 },
-  label: { fontWeight: "900", marginBottom: 10, color: COLORS.text, fontSize: 15 },
-  input: { backgroundColor: "#F9FAFB", borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 16, padding: 14, marginBottom: 12, color: COLORS.text, fontWeight: "800" },
-  textArea: { minHeight: 105, textAlignVertical: "top" },
-  textAreaSmall: { minHeight: 76, textAlignVertical: "top" },
-  twoCol: { flexDirection: "row", gap: 10 },
-  twoColNoMargin: { flexDirection: "row", gap: 10 },
-  flexInput: { flex: 1 },
-  chipRow: { gap: 8, paddingBottom: 12 },
-  chip: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 9 },
-  chipActive: { backgroundColor: COLORS.purple, borderColor: COLORS.purple },
-  chipText: { color: COLORS.purple, fontWeight: "900" },
-  chipTextActive: { color: COLORS.white },
+  label: {
+    fontWeight: "900",
+    marginBottom: 10,
+    color: COLORS.text,
+    fontSize: 16,
+  },
+  input: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 12,
+    color: COLORS.text,
+    fontWeight: "800",
+  },
+  textArea: { minHeight: 100, textAlignVertical: "top" },
 
-  equipmentCard: { backgroundColor: "#F9FAFB", borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 18, padding: 14, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 10 },
-  equipmentCardActive: { backgroundColor: COLORS.greenDark, borderColor: COLORS.greenDark },
-  equipmentIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: COLORS.greenSoft, alignItems: "center", justifyContent: "center" },
-  equipmentIconActive: { backgroundColor: "rgba(255,255,255,0.18)" },
-  equipmentTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  equipmentCard: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
+  },
+  equipmentCardActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  equipmentIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  equipmentIconActive: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  equipmentTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+  },
   equipmentTitleActive: { color: COLORS.white },
-  equipmentDescription: { color: COLORS.muted, fontWeight: "700", lineHeight: 19, marginTop: 3 },
-  equipmentDescriptionActive: { color: "#DCFCE7" },
+  equipmentDescription: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 19,
+    marginTop: 3,
+  },
+  equipmentDescriptionActive: { color: "#E0E7FF" },
 
-  segmentRow: { flexDirection: "row", backgroundColor: COLORS.purpleSoft, borderRadius: 16, padding: 5, gap: 4 },
-  segment: { flex: 1, borderRadius: 13, paddingVertical: 11, alignItems: "center" },
-  segmentActive: { backgroundColor: COLORS.purple },
-  segmentText: { color: COLORS.purple, fontWeight: "900", fontSize: 12 },
-  segmentTextActive: { color: COLORS.white },
-  tempBox: { backgroundColor: COLORS.blueSoft, borderRadius: 18, padding: 12, marginBottom: 12 },
-  tempTitle: { color: COLORS.blue, fontWeight: "900", marginBottom: 10 },
-  toggleRow: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, padding: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 9 },
-  toggleLabel: { color: COLORS.text, fontWeight: "900" },
+  addressBox: {
+    backgroundColor: "#FBFCFE",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 12,
+    marginBottom: 14,
+  },
+  addressTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 17,
+    marginBottom: 10,
+  },
+  suggestionBox: {
+    backgroundColor: COLORS.white,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: "hidden",
+    marginBottom: 8,
+  },
+  suggestionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EEF2F6",
+  },
+  suggestionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 13,
+    backgroundColor: "#EEF2FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  suggestionTitle: { color: COLORS.text, fontWeight: "900" },
+  suggestionText: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
 
-  rateRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
-  rateButton: { flex: 1, backgroundColor: COLORS.greenSoft, borderRadius: 14, padding: 12, alignItems: "center" },
-  rateButtonText: { color: COLORS.greenDark, fontWeight: "900", textAlign: "center" },
-  payoutBox: { backgroundColor: COLORS.greenSoft, borderRadius: 18, padding: 15 },
-  payoutText: { color: COLORS.greenDark, fontWeight: "800", marginBottom: 6 },
-  totalPayout: { fontSize: 25, fontWeight: "900", color: COLORS.greenDark },
+  twoColumn: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 12,
+  },
+  dateTimeButton: {
+    flex: 1,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  dateTimeLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  dateTimeValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  placeholderText: {
+    color: "#98A2B3",
+  },
+  priorityRow: {
+    flexDirection: "row",
+    backgroundColor: "#EEF2FF",
+    borderRadius: 18,
+    padding: 5,
+    gap: 5,
+  },
+  priorityButton: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  priorityButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  priorityText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+  priorityTextActive: {
+    color: COLORS.white,
+  },
 
-  postButton: { backgroundColor: COLORS.purple, borderRadius: 18, padding: 18, alignItems: "center", justifyContent: "center", marginHorizontal: 18, marginTop: 2, flexDirection: "row", gap: 9 },
-  postButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 16 },
-  disabledButton: { opacity: 0.55 },
-  boardLink: { paddingVertical: 18, alignItems: "center" },
-  linkText: { color: COLORS.purple, fontWeight: "900", textAlign: "center" },
+  rateRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 12,
+  },
+  rateButton: {
+    flex: 1,
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 14,
+    padding: 13,
+    alignItems: "center",
+  },
+  rateButtonText: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  payoutBox: {
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 18,
+    padding: 15,
+  },
+  payoutText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  totalPayout: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: COLORS.greenDark,
+  },
+
+  postButton: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 18,
+    padding: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+    flexDirection: "row",
+    gap: 9,
+  },
+  postButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  disabledButton: { opacity: 0.65 },
+  boardLink: {
+    paddingVertical: 18,
+    alignItems: "center",
+  },
+  linkText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(2,6,23,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 520,
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    padding: 16,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  modalArrow: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: COLORS.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 20,
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  weekRow: {
+    flexDirection: "row",
+    marginBottom: 8,
+  },
+  weekDay: {
+    flex: 1,
+    textAlign: "center",
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  calendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  calendarDay: {
+    width: `${100 / 7}%`,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  calendarDayBlank: {
+    width: `${100 / 7}%`,
+    paddingVertical: 10,
+  },
+  calendarDayDisabled: {
+    opacity: 0.35,
+  },
+  calendarDayText: {
+    width: 34,
+    height: 34,
+    borderRadius: 13,
+    backgroundColor: "#EEF2FF",
+    textAlign: "center",
+    textAlignVertical: "center",
+    color: COLORS.primary,
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+  calendarDayTextDisabled: {
+    color: COLORS.muted,
+    backgroundColor: "#F2F4F7",
+  },
+  modalClose: {
+    backgroundColor: COLORS.navy,
+    borderRadius: 16,
+    padding: 14,
+    alignItems: "center",
+    marginTop: 14,
+  },
+  modalCloseText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
+  timeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+  },
+  timeOption: {
+    width: "31.5%",
+    minWidth: 95,
+    flexGrow: 1,
+    backgroundColor: "#EEF2FF",
+    borderRadius: 15,
+    padding: 12,
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 6,
+  },
+  timeOptionText: {
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
 });
