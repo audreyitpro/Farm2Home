@@ -218,11 +218,20 @@ function isProductAvailable(product: Product) {
 
 function isBundleAvailable(bundle: FarmBundle) {
   if (!clean(bundle.bundle_name || bundle.name)) return false;
+
+  // Support both old and new farm_bundles schemas.
+  // Old schema uses available/monthly_enabled/bimonthly_enabled.
+  // New schema may also use is_active/marketplace_visible/monthly_price/bimonthly_price.
   if (bundle.available === false) return false;
   if (bundle.is_active === false) return false;
   if (bundle.marketplace_visible === false) return false;
-  if (!bundle.monthly_enabled && !bundle.bimonthly_enabled) return false;
-  return true;
+
+  const hasMonthly = bundle.monthly_enabled !== false && Number(bundle.monthly_price || bundle.price || 0) > 0;
+  const hasBiMonthly =
+    bundle.bimonthly_enabled === true &&
+    Number(bundle.bimonthly_price || bundle.price || bundle.monthly_price || 0) > 0;
+
+  return hasMonthly || hasBiMonthly;
 }
 
 function getFarmerStripeAccountId(farmer: Farmer, product?: Product | FarmBundle) {
@@ -272,32 +281,54 @@ function normalizeProduct(product: any, farmer: Farmer): Product {
 
 function normalizeBundle(row: any, farmer: Farmer): FarmBundle {
   const farmerId = clean(row.farmer_id || row.farmerId || farmer.id || farmer.farmerId);
+  const title = clean(row.bundle_name || row.name || row.title || "Farm Bundle");
+  const type = clean(row.bundle_type || row.category || row.type || "Farm Bundle");
+  const basePrice = Number(row.price || row.monthly_price || row.amount || 0);
+  const monthlyPrice = Number(row.monthly_price || row.price || row.amount || 0);
+  const bimonthlyPrice = Number(row.bimonthly_price || row.bi_monthly_price || row.price || row.monthly_price || row.amount || 0);
+
   return {
     ...row,
-    id: clean(row.id || `${farmerId}_${row.bundle_name || row.name || "bundle"}`),
+    id: clean(row.id || `${farmerId}_${title}`),
     farmer_id: farmerId,
-    bundle_name: clean(row.bundle_name || row.name || "Farm Bundle"),
-    name: clean(row.name || row.bundle_name || "Farm Bundle"),
-    bundle_type: clean(row.bundle_type || row.category || "Farm Bundle"),
-    category: clean(row.category || row.bundle_type || "Farm Bundle"),
+    bundle_name: title,
+    name: clean(row.name || row.bundle_name || title),
+    bundle_type: type,
+    category: clean(row.category || row.bundle_type || type),
     description: clean(row.description || ""),
-    price: Number(row.price || row.monthly_price || 0),
-    monthly_price: Number(row.monthly_price || row.price || 0),
-    bimonthly_price: Number(row.bimonthly_price || 0),
-    monthly_enabled: row.monthly_enabled !== false,
-    bimonthly_enabled: row.bimonthly_enabled === true,
-    delivery_enabled: row.delivery_enabled !== false,
+    price: basePrice,
+    monthly_price: monthlyPrice,
+    bimonthly_price: bimonthlyPrice,
+
+    // Defaults allow older saved bundles to appear without requiring newer columns.
+    monthly_enabled: row.monthly_enabled === undefined || row.monthly_enabled === null ? true : row.monthly_enabled !== false,
+    bimonthly_enabled:
+      row.bimonthly_enabled === undefined || row.bimonthly_enabled === null
+        ? false
+        : row.bimonthly_enabled === true,
+
+    delivery_enabled: row.delivery_enabled === undefined || row.delivery_enabled === null ? true : row.delivery_enabled !== false,
     shipping_enabled: row.shipping_enabled === true,
-    available: row.available !== false,
-    is_active: row.is_active !== false,
-    marketplace_visible: row.marketplace_visible !== false,
+    available: row.available === undefined || row.available === null ? true : row.available !== false,
+    is_active: row.is_active === undefined || row.is_active === null ? true : row.is_active !== false,
+    marketplace_visible:
+      row.marketplace_visible === undefined || row.marketplace_visible === null
+        ? true
+        : row.marketplace_visible !== false,
     image_url: clean(row.image_url || row.image || ""),
-    items: Array.isArray(row.items) ? row.items.map(clean).filter(Boolean) : [],
-    farmer_stripe_account_id: clean(row.farmer_stripe_account_id || row.stripe_account_id || getFarmerStripeAccountId(farmer)),
-    stripe_account_id: clean(row.stripe_account_id || row.farmer_stripe_account_id || getFarmerStripeAccountId(farmer)),
+    items: Array.isArray(row.items)
+      ? row.items.map(clean).filter(Boolean)
+      : typeof row.items === "string"
+        ? row.items.split("\n").map(clean).filter(Boolean)
+        : [],
+    farmer_stripe_account_id: clean(
+      row.farmer_stripe_account_id || row.stripe_account_id || getFarmerStripeAccountId(farmer)
+    ),
+    stripe_account_id: clean(
+      row.stripe_account_id || row.farmer_stripe_account_id || getFarmerStripeAccountId(farmer)
+    ),
   };
 }
-
 function normalizeFarmer(farmer: Farmer, products: Product[] = [], bundles: FarmBundle[] = []) {
   const farmName = getFarmerName(farmer);
   const stripeAccountId = getFarmerStripeAccountId(farmer);
@@ -486,6 +517,44 @@ export default function FarmerShopScreen() {
     return all;
   }
 
+  async function readLocalBundles(activeFarmerId: string) {
+    const keys = [
+      `farm_bundles_${activeFarmerId}`,
+      `farmer_bundles_${activeFarmerId}`,
+      "farm_bundles",
+      "farmer_bundles",
+      "currentFarmer",
+      "currentUser",
+    ];
+
+    const all: FarmBundle[] = [];
+
+    for (const key of keys) {
+      const raw = await AsyncStorage.getItem(key);
+      if (!raw) continue;
+
+      try {
+        const parsed = JSON.parse(raw);
+        const list = Array.isArray(parsed)
+          ? parsed
+          : parsed?.bundles || parsed?.farm_bundles || parsed?.farmBundles || [];
+
+        if (Array.isArray(list)) {
+          all.push(
+            ...list.filter((item: any) => {
+              const itemFarmerId = normalizeId(item.farmer_id || item.farmerId || activeFarmerId);
+              return itemFarmerId === activeFarmerId || !item.farmer_id;
+            })
+          );
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return all;
+  }
+
   async function queryProductTable(tableName: string, activeFarmerId: string) {
     try {
       const { data, error } = await supabase
@@ -502,18 +571,52 @@ export default function FarmerShopScreen() {
   }
 
   async function loadBundles(activeFarmerId: string, farmerBase: Farmer) {
+    const allBundles: FarmBundle[] = [];
+
+    // 1) Load anything stored locally first.
+    const localBundles = await readLocalBundles(activeFarmerId);
+    allBundles.push(...localBundles);
+
+    // 2) Primary Farm2Home bundle table.
     try {
       const { data, error } = await supabase
         .from("farm_bundles")
         .select("*")
         .eq("farmer_id", activeFarmerId);
 
-      if (error || !Array.isArray(data)) return [];
-      return data.map((row) => normalizeBundle(row, farmerBase)).filter(isBundleAvailable);
+      if (!error && Array.isArray(data)) {
+        allBundles.push(...data);
+      } else if (error) {
+        console.log("farm_bundles farmer_id query error:", error.message);
+      }
     } catch (error) {
-      console.log("farmer shop bundles skipped:", error);
-      return [];
+      console.log("farm_bundles farmer_id query skipped:", error);
     }
+
+    // 3) Fallback for older rows/tables that may have farmerId instead of farmer_id.
+    try {
+      const { data, error } = await supabase
+        .from("farm_bundles")
+        .select("*")
+        .eq("farmerId", activeFarmerId);
+
+      if (!error && Array.isArray(data)) {
+        allBundles.push(...data);
+      }
+    } catch {
+      // Some Supabase tables do not have farmerId. Ignore fallback errors.
+    }
+
+    const uniqueBundles = Array.from(
+      new Map(
+        allBundles.filter(Boolean).map((item: any) => {
+          const key = clean(item.id || `${activeFarmerId}_${item.bundle_name || item.name || Math.random()}`);
+          return [key, item];
+        })
+      ).values()
+    ) as FarmBundle[];
+
+    return uniqueBundles.map((row) => normalizeBundle(row, farmerBase)).filter(isBundleAvailable);
   }
 
   async function loadFarmerAllSources(activeFarmerId: string) {
@@ -557,14 +660,14 @@ export default function FarmerShopScreen() {
       ).values()
     ) as Product[];
 
-    if (!farmerBase && uniqueProducts.length === 0) return null;
-
     const base = farmerBase || {
       id: activeFarmerId,
       farmName: farmerNameParam || "Local Farm",
     };
 
     const bundles = await loadBundles(activeFarmerId, base);
+
+    if (!farmerBase && uniqueProducts.length === 0 && bundles.length === 0) return null;
 
     return normalizeFarmer(base, uniqueProducts, bundles);
   }
@@ -671,7 +774,7 @@ export default function FarmerShopScreen() {
 
       const customerId = getCustomerId(activeCustomer);
       const stripeCustomerId = getStripeCustomerId(activeCustomer);
-      const selectedPrice = billingInterval === "monthly" ? Number(bundle.monthly_price || bundle.price || 0) : Number(bundle.bimonthly_price || 0);
+      const selectedPrice = billingInterval === "monthly" ? Number(bundle.monthly_price || bundle.price || 0) : Number(bundle.bimonthly_price || bundle.price || bundle.monthly_price || 0);
 
       if (!customerId || !stripeCustomerId) {
         Alert.alert("Membership Required", "Please complete customer registration before subscribing.");
@@ -815,7 +918,7 @@ export default function FarmerShopScreen() {
               ) : (
                 <>
                   <Text style={styles.subscriptionLabelLight}>Bi-Monthly</Text>
-                  <Text style={styles.subscriptionPriceLight}>{money(bundle.bimonthly_price)}</Text>
+                  <Text style={styles.subscriptionPriceLight}>{money(bundle.bimonthly_price || bundle.price || bundle.monthly_price)}</Text>
                 </>
               )}
             </Pressable>
