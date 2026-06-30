@@ -82,21 +82,42 @@ type DeliveryOrder = {
 type FreightLoad = {
   id: string;
   farmer_id?: string;
-  product_name?: string;
+  carrier_id?: string;
   title?: string;
-  load_type?: string;
   commodity?: string;
+  pickup_city?: string;
+  pickup_state?: string;
+  delivery_city?: string;
+  delivery_state?: string;
   pickup_location?: string;
   dropoff_location?: string;
   pickup_date?: string;
   pickup_time?: string;
+  dropoff_date?: string;
+  dropoff_time?: string;
   equipment_type?: string;
-  miles?: number;
-  distance_miles?: number;
-  total_due?: number;
+  weight_lbs?: number;
+  temperature_required?: string;
+  temperature_controlled?: boolean;
+  priority_level?: string;
   rate?: number;
+  distance_miles?: number;
   status?: string;
+  driver_id?: string;
+  assigned_driver_id?: string;
+  assigned_carrier_id?: string;
+  ai_dispatch_score?: number;
+  ai_dispatch_reason?: string;
+  ai_dispatch_eta_minutes?: number;
+  accepted_at?: string;
+  arrived_pickup_at?: string;
+  picked_up_at?: string;
+  arrived_dropoff_at?: string;
+  delivered_at?: string;
+  farmer_name?: string;
+  notes?: string;
   created_at?: string;
+  updated_at?: string;
 };
 
 type Driver = {
@@ -207,6 +228,22 @@ function deliveryDropoff(order: DeliveryOrder) {
   return clean(order.dropoff_address || order.delivery_address || "Customer delivery address");
 }
 
+function freightPickup(load: FreightLoad) {
+  return (
+    clean(load.pickup_location) ||
+    [load.pickup_city, load.pickup_state].map(clean).filter(Boolean).join(", ") ||
+    "Pickup location"
+  );
+}
+
+function freightDropoff(load: FreightLoad) {
+  return (
+    clean(load.dropoff_location) ||
+    [load.delivery_city, load.delivery_state].map(clean).filter(Boolean).join(", ") ||
+    "Dropoff location"
+  );
+}
+
 async function safeSelectRecent(table: string, limit = 300) {
   try {
     let result = await supabase
@@ -270,7 +307,7 @@ export default function FarmerDeliveryOperationsScreen() {
 
     const revenue =
       deliveries.reduce((sum, d) => sum + Number(d.delivery_fee || d.total || 0), 0) +
-      freightLoads.reduce((sum, f) => sum + Number(f.total_due || f.rate || 0), 0);
+      freightLoads.reduce((sum, f) => sum + Number(f.rate || 0), 0);
 
     return {
       deliveries: deliveries.length,
@@ -409,70 +446,84 @@ export default function FarmerDeliveryOperationsScreen() {
     try {
       setRefreshing(true);
 
-      const deliveryTables = ["delivery_orders", "farm_orders", "customer_orders"];
-      const freightTables = ["freight_loads", "loads", "posted_loads"];
-
       const loadedDeliveries: DeliveryOrder[] = [];
       const loadedFreight: FreightLoad[] = [];
 
-      for (const table of deliveryTables) {
-        const rows = await safeSelectRecent(table, 300);
-        const filtered = rows.filter((row: any) => rowMatchesFarmer(row, id, email));
+      const deliveryRows = await safeSelectRecent("delivery_orders", 300);
+      const filteredDeliveries = deliveryRows.filter((row: any) => rowMatchesFarmer(row, id, email));
 
-        loadedDeliveries.push(
-          ...filtered.map((row: any) => ({
-            id: clean(row.id || row.order_id || `${table}_${loadedDeliveries.length}`),
-            order_id: clean(row.order_id || row.id),
-            farmer_id: clean(row.farmer_id),
-            customer_id: clean(row.customer_id),
-            driver_id: clean(row.driver_id),
-            assigned_driver_id: clean(row.assigned_driver_id),
-            driver_name: clean(row.driver_name || row.driverName),
-            assigned_driver_name: clean(row.assigned_driver_name),
-            driver_email: clean(row.driver_email),
-            driver_phone: clean(row.driver_phone),
-            customer_name: clean(row.customer_name || row.customerName),
-            customer_phone: clean(row.customer_phone || row.phone),
-            pickup_address: clean(row.pickup_address || row.pickupAddress || row.origin),
-            dropoff_address: clean(row.dropoff_address || row.dropoffAddress || row.destination),
-            delivery_address: clean(row.delivery_address),
-            miles: Number(row.miles || row.distance_miles || 0),
-            delivery_fee: Number(row.delivery_fee || row.deliveryFee || row.fee || row.total || 0),
-            total: Number(row.total || 0),
-            status: clean(row.status || row.delivery_status || row.order_status || "available"),
-            delivery_status: clean(row.delivery_status || row.status || "available"),
-            source: table,
-            created_at: clean(row.created_at),
-          }))
-        );
-      }
+      loadedDeliveries.push(
+        ...filteredDeliveries.map((row: any) => ({
+          id: clean(row.id || row.order_id || `delivery_${loadedDeliveries.length}`),
+          order_id: clean(row.order_id || row.id),
+          farmer_id: clean(row.farmer_id),
+          customer_id: clean(row.customer_id),
+          driver_id: clean(row.driver_id),
+          assigned_driver_id: clean(row.assigned_driver_id),
+          driver_name: clean(row.driver_name || row.driverName),
+          assigned_driver_name: clean(row.assigned_driver_name),
+          driver_email: clean(row.driver_email),
+          driver_phone: clean(row.driver_phone),
+          customer_name: clean(row.customer_name || row.customerName),
+          customer_phone: clean(row.customer_phone || row.phone),
+          pickup_address: clean(row.pickup_address || row.pickupAddress || row.origin),
+          dropoff_address: clean(row.dropoff_address || row.dropoffAddress || row.destination),
+          delivery_address: clean(row.delivery_address),
+          miles: Number(row.miles || row.distance_miles || 0),
+          delivery_fee: Number(row.delivery_fee || row.deliveryFee || row.fee || row.total || 0),
+          total: Number(row.total || 0),
+          status: clean(row.status || row.delivery_status || row.order_status || "available"),
+          delivery_status: clean(row.delivery_status || row.status || "available"),
+          source: "delivery_orders",
+          created_at: clean(row.created_at),
+        }))
+      );
 
-      for (const table of freightTables) {
-        const rows = await safeSelectRecent(table, 300);
-        const filtered = rows.filter((row: any) => rowMatchesFarmer(row, id, email));
+      const freightRows = await safeSelectRecent("freight_loads", 300);
+      const filteredFreight = freightRows.filter((row: any) => rowMatchesFarmer(row, id, email));
 
-        loadedFreight.push(
-          ...filtered.map((row: any) => ({
-            id: clean(row.id || row.load_id || `${table}_${loadedFreight.length}`),
-            farmer_id: clean(row.farmer_id),
-            product_name: clean(row.product_name || row.title || row.commodity || "Farm Freight"),
-            title: clean(row.title || row.product_name || row.commodity || "Farm Freight"),
-            load_type: clean(row.load_type || row.type || row.equipment_type || "Farm Freight"),
-            commodity: clean(row.commodity || row.load_type || "Farm Goods"),
-            pickup_location: clean(row.pickup_location || row.origin || row.pickup_address),
-            dropoff_location: clean(row.dropoff_location || row.destination || row.dropoff_address),
-            pickup_date: clean(row.pickup_date),
-            pickup_time: clean(row.pickup_time),
-            equipment_type: clean(row.equipment_type || row.load_type || "Equipment"),
-            miles: Number(row.miles || row.distance_miles || 0),
-            distance_miles: Number(row.distance_miles || row.miles || 0),
-            total_due: Number(row.total_due || row.payout || row.price || row.amount || row.rate || 0),
-            rate: Number(row.rate || row.total_due || row.payout || 0),
-            status: clean(row.status || "available"),
-            created_at: clean(row.created_at),
-          }))
-        );
-      }
+      loadedFreight.push(
+        ...filteredFreight.map((row: any) => ({
+          id: clean(row.id),
+          farmer_id: clean(row.farmer_id),
+          carrier_id: clean(row.carrier_id),
+          title: clean(row.title || row.commodity || "Farm Freight Load"),
+          commodity: clean(row.commodity || "Farm Goods"),
+          pickup_city: clean(row.pickup_city),
+          pickup_state: clean(row.pickup_state),
+          delivery_city: clean(row.delivery_city),
+          delivery_state: clean(row.delivery_state),
+          pickup_location: clean(row.pickup_location),
+          dropoff_location: clean(row.dropoff_location),
+          pickup_date: clean(row.pickup_date),
+          pickup_time: clean(row.pickup_time),
+          dropoff_date: clean(row.dropoff_date),
+          dropoff_time: clean(row.dropoff_time),
+          equipment_type: clean(row.equipment_type || "Equipment"),
+          weight_lbs: Number(row.weight_lbs || 0),
+          temperature_required: clean(row.temperature_required),
+          temperature_controlled: Boolean(row.temperature_controlled),
+          priority_level: clean(row.priority_level || "normal"),
+          rate: Number(row.rate || 0),
+          distance_miles: Number(row.distance_miles || 0),
+          status: clean(row.status || "available"),
+          driver_id: clean(row.driver_id),
+          assigned_driver_id: clean(row.assigned_driver_id),
+          assigned_carrier_id: clean(row.assigned_carrier_id),
+          ai_dispatch_score: Number(row.ai_dispatch_score || 0),
+          ai_dispatch_reason: clean(row.ai_dispatch_reason),
+          ai_dispatch_eta_minutes: Number(row.ai_dispatch_eta_minutes || 0),
+          accepted_at: clean(row.accepted_at),
+          arrived_pickup_at: clean(row.arrived_pickup_at),
+          picked_up_at: clean(row.picked_up_at),
+          arrived_dropoff_at: clean(row.arrived_dropoff_at),
+          delivered_at: clean(row.delivered_at),
+          farmer_name: clean(row.farmer_name),
+          notes: clean(row.notes),
+          created_at: clean(row.created_at),
+          updated_at: clean(row.updated_at),
+        }))
+      );
 
       setDeliveries(
         Array.from(new Map(loadedDeliveries.map((item) => [item.id, item])).values())
@@ -822,9 +873,9 @@ export default function FarmerDeliveryOperationsScreen() {
         <View style={styles.cardTopRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.cardEyebrow}>Freight Load</Text>
-            <Text style={styles.cardTitle}>{load.title || load.product_name || "Farm Freight Load"}</Text>
+            <Text style={styles.cardTitle}>{load.title || "Farm Freight Load"}</Text>
             <Text style={styles.cardSub}>
-              {load.equipment_type || load.load_type || "Equipment"} · {load.commodity || "Farm Goods"}
+              {load.equipment_type || "Equipment"} · {load.commodity || "Farm Goods"}
             </Text>
           </View>
 
@@ -843,16 +894,26 @@ export default function FarmerDeliveryOperationsScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <RouteText label="Pickup" value={load.pickup_location || "Pickup location"} />
-            <RouteText label="Dropoff" value={load.dropoff_location || "Dropoff location"} />
+            <RouteText label="Pickup" value={freightPickup(load)} />
+            <RouteText label="Dropoff" value={freightDropoff(load)} />
           </View>
         </View>
 
         <View style={styles.metaGrid}>
-          <MiniMetric label="Miles" value={Number(load.distance_miles || load.miles || 0).toFixed(1)} />
-          <MiniMetric label="Payout" value={money(load.rate || load.total_due)} />
+          <MiniMetric label="Miles" value={Number(load.distance_miles || 0).toFixed(1)} />
+          <MiniMetric label="Payout" value={money(load.rate)} />
           <MiniMetric label="Pickup" value={`${load.pickup_date || "Date"} ${load.pickup_time || ""}`} />
+          <MiniMetric label="Priority" value={load.priority_level || "normal"} />
         </View>
+
+        {load.ai_dispatch_reason ? (
+          <View style={styles.aiBox}>
+            <Ionicons name="sparkles-outline" size={16} color={COLORS.primaryDark} />
+            <Text style={styles.aiText}>
+              AI Score {Number(load.ai_dispatch_score || 0).toFixed(0)} · {load.ai_dispatch_reason}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.buttonRow}>
           <SmallAction icon="trail-sign-outline" label="Open Board" onPress={openBoard} />
@@ -1513,6 +1574,17 @@ const styles = StyleSheet.create({
   miniMetric: { flexGrow: 1, flexBasis: "30%", backgroundColor: COLORS.surface, borderRadius: 16, padding: 10 },
   miniMetricValue: { color: COLORS.text, fontWeight: "900", fontSize: 14 },
   miniMetricLabel: { color: COLORS.muted, fontWeight: "800", fontSize: 11, marginTop: 3 },
+
+  aiBox: {
+    marginTop: 12,
+    backgroundColor: COLORS.greenSoft,
+    borderRadius: 16,
+    padding: 11,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  aiText: { flex: 1, color: COLORS.primaryDark, fontWeight: "800", lineHeight: 18 },
 
   assignmentBox: {
     backgroundColor: COLORS.surface,
