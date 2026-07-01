@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Platform,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -20,6 +21,8 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../data/supabaseClient";
+
+const STORAGE_BUCKET = "freight-documents";
 
 const FREIGHT_ROUTES = {
   dashboard: "/freight/dashboard",
@@ -45,6 +48,7 @@ type RequiredDoc = {
   title: string;
   description: string;
   required: boolean;
+  section: "required" | "optional";
 };
 
 type FreightDocument = {
@@ -63,91 +67,143 @@ type FreightDocument = {
 
 const REQUIRED_DOCS: RequiredDoc[] = [
   {
-    key: "business_registration",
-    title: "Business Registration / LLC Documents",
-    description: "Articles, LLC documents, DBA, or business formation record.",
+    key: "commercial_driver_license",
+    title: "Commercial Driver License / CDL",
+    description: "Driver license or CDL used for freight work.",
     required: true,
+    section: "required",
   },
   {
-    key: "w9_tax_form",
-    title: "W-9 Tax Form",
-    description: "Tax document for payout and contractor records.",
+    key: "dot_certificate",
+    title: "DOT Certificate",
+    description: "DOT certificate, operating authority, or carrier registration.",
     required: true,
+    section: "required",
   },
   {
-    key: "commercial_auto_insurance",
-    title: "Commercial Auto Insurance",
-    description: "Current active commercial auto insurance.",
+    key: "mc_authority_letter",
+    title: "MC Authority Letter",
+    description: "Motor carrier authority letter or approval record.",
     required: true,
+    section: "required",
   },
   {
-    key: "cargo_insurance",
-    title: "Cargo Insurance",
-    description: "Coverage for transported produce, freight, or farm goods.",
+    key: "certificate_of_insurance",
+    title: "Certificate of Insurance / COI",
+    description: "Current commercial insurance certificate.",
     required: true,
+    section: "required",
   },
   {
-    key: "dot_authority",
-    title: "MDOT / DOT Authority Document",
-    description: "Carrier authority or registration if required for your operation.",
-    required: false,
-  },
-  {
-    key: "mc_authority",
-    title: "MC Authority Document",
-    description: "Motor carrier authority if applicable.",
-    required: false,
+    key: "w9_form",
+    title: "W-9 Form",
+    description: "Tax document required for payment and contractor records.",
+    required: true,
+    section: "required",
   },
   {
     key: "vehicle_registration",
     title: "Vehicle Registration",
-    description: "Registration for the vehicle used for freight work.",
+    description: "Registration for vehicles used for freight deliveries.",
     required: true,
+    section: "required",
   },
   {
-    key: "driver_license",
-    title: "Driver License / Carrier Credential",
-    description: "Driver license or carrier credential for the operator.",
+    key: "cargo_insurance_certificate",
+    title: "Cargo Insurance Certificate",
+    description: "Cargo coverage for transported farm goods and freight.",
     required: true,
+    section: "required",
+  },
+  {
+    key: "business_license",
+    title: "Business License",
+    description: "Business license, LLC documentation, or registration.",
+    required: true,
+    section: "required",
+  },
+  {
+    key: "hipaa_certificate",
+    title: "HIPAA Certificate",
+    description: "Optional certificate for medical or specialized logistics.",
+    required: false,
+    section: "optional",
+  },
+  {
+    key: "bloodborne_pathogens_certificate",
+    title: "Bloodborne Pathogens Certificate",
+    description: "Optional certificate for medical courier work.",
+    required: false,
+    section: "optional",
+  },
+  {
+    key: "tsa_twic_certificate",
+    title: "TSA / TWIC / Airport Credential",
+    description: "Optional credential for airport, secure, or restricted deliveries.",
+    required: false,
+    section: "optional",
   },
   {
     key: "refrigerated_vehicle_proof",
     title: "Refrigerated Vehicle Proof",
-    description: "Proof of refrigeration capability for cold-chain loads.",
+    description: "Optional proof for refrigerated or cold-chain loads.",
     required: false,
-  },
-  {
-    key: "livestock_transport_permit",
-    title: "Livestock Transport Permit",
-    description: "Permit or documentation for livestock transport if applicable.",
-    required: false,
-  },
-  {
-    key: "twic_tsa_medical",
-    title: "TWIC / TSA / Medical Logistics Credential",
-    description: "Specialty credential if handling restricted, TSA, or medical logistics loads.",
-    required: false,
+    section: "optional",
   },
 ];
 
 const COLORS = {
-  bg: "#F4F5F7",
+  bg: "#F5F6FA",
   card: "#FFFFFF",
-  surface: "#F9FAFB",
-  black: "#050505",
-  red: "#D71920",
-  redDark: "#9F1117",
-  text: "#111827",
-  muted: "#6B7280",
-  border: "#E5E7EB",
-  green: "#16A34A",
-  amber: "#D97706",
+  surface: "#F8FAFC",
+  navy: "#020617",
+  navy2: "#0F172A",
+  text: "#0F172A",
+  muted: "#64748B",
+  border: "#E2E8F0",
+  primary: "#635BFF",
+  primaryDark: "#4F46E5",
+  primarySoft: "#EEF2FF",
+  green: "#10B981",
+  greenSoft: "#ECFDF5",
+  amber: "#F59E0B",
+  amberSoft: "#FFFBEB",
+  red: "#EF4444",
+  redSoft: "#FEF2F2",
   blue: "#2563EB",
-  slate: "#64748B",
+  white: "#FFFFFF",
 };
 
+function clean(value: any) {
+  return String(value ?? "").trim();
+}
+
 function normalize(value: any) {
-  return String(value || "").trim().toLowerCase();
+  return clean(value).toLowerCase();
+}
+
+function fileExt(name = "") {
+  const ext = name.split(".").pop();
+  return ext && ext !== name ? ext.toLowerCase() : "pdf";
+}
+
+function safeFileName(name = "") {
+  return clean(name || "document.pdf")
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 120);
+}
+
+function freightIdFromProfile(profile: any) {
+  return clean(profile?.id || profile?.freight_id || profile?.freightId || profile?.auth_user_id || profile?.profile_id);
+}
+
+function carrierName(profile: any) {
+  return (
+    clean(profile?.companyName || profile?.businessName || profile?.company_name || profile?.business_name) ||
+    clean(profile?.contactName || profile?.contact_name || profile?.name) ||
+    "Farm2Home Freight Carrier"
+  );
 }
 
 function goTo(route: FreightRoute) {
@@ -167,7 +223,16 @@ function statusColor(status?: string) {
   if (value.includes("rejected") || value.includes("failed")) return COLORS.red;
   if (value.includes("review") || value.includes("pending")) return COLORS.amber;
   if (value.includes("submitted") || value.includes("uploaded")) return COLORS.blue;
-  return COLORS.slate;
+  return COLORS.muted;
+}
+
+function statusSoftColor(status?: string) {
+  const value = normalize(status);
+  if (value.includes("approved")) return COLORS.greenSoft;
+  if (value.includes("rejected") || value.includes("failed")) return COLORS.redSoft;
+  if (value.includes("review") || value.includes("pending")) return COLORS.amberSoft;
+  if (value.includes("submitted") || value.includes("uploaded")) return COLORS.primarySoft;
+  return COLORS.surface;
 }
 
 export default function FreightDocumentsScreen() {
@@ -186,19 +251,23 @@ export default function FreightDocumentsScreen() {
     }, [])
   );
 
+  const requiredDocs = useMemo(() => REQUIRED_DOCS.filter((doc) => doc.section === "required"), []);
+  const optionalDocs = useMemo(() => REQUIRED_DOCS.filter((doc) => doc.section === "optional"), []);
+
   const uploadedRequiredCount = useMemo(() => {
-    return REQUIRED_DOCS.filter((doc) => doc.required && getDocumentForType(doc.key)).length;
-  }, [documents]);
+    return requiredDocs.filter((doc) => getDocumentForType(doc.key)).length;
+  }, [documents, requiredDocs]);
 
-  const requiredCount = useMemo(() => REQUIRED_DOCS.filter((doc) => doc.required).length, []);
-
+  const requiredCount = requiredDocs.length;
   const allRequiredUploaded = uploadedRequiredCount >= requiredCount;
+  const progressPercent = requiredCount ? Math.round((uploadedRequiredCount / requiredCount) * 100) : 0;
 
   async function getStoredCarrier() {
     const raw =
       (await AsyncStorage.getItem("currentFreightCarrier")) ||
       (await AsyncStorage.getItem("currentFreight")) ||
       (await AsyncStorage.getItem("currentFreightUser")) ||
+      (await AsyncStorage.getItem("farm2homeCurrentFreight")) ||
       (await AsyncStorage.getItem("currentUser"));
 
     if (!raw) return null;
@@ -211,44 +280,83 @@ export default function FreightDocumentsScreen() {
   }
 
   async function persistCarrier(nextCarrier: any) {
+    const id = freightIdFromProfile(nextCarrier);
+
     const normalizedCarrier = {
       ...nextCarrier,
-      id: nextCarrier.id || nextCarrier.freightId,
-      freightId: nextCarrier.freightId || nextCarrier.id,
+      id,
+      freight_id: clean(nextCarrier.freight_id || id),
+      freightId: clean(nextCarrier.freightId || nextCarrier.freight_id || id),
       role: "freight",
       email: normalize(nextCarrier.email),
-      companyName:
-        nextCarrier.companyName ||
-        nextCarrier.businessName ||
-        nextCarrier.company_name ||
-        nextCarrier.business_name ||
-        "Freight Connect Carrier",
+      companyName: carrierName(nextCarrier),
       businessName:
-        nextCarrier.businessName ||
-        nextCarrier.companyName ||
-        nextCarrier.business_name ||
-        nextCarrier.company_name ||
-        "Freight Connect Carrier",
+        clean(nextCarrier.businessName || nextCarrier.business_name || nextCarrier.companyName || nextCarrier.company_name) ||
+        carrierName(nextCarrier),
     };
 
-    await AsyncStorage.setItem("currentFreight", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("currentFreightCarrier", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("currentFreightUser", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(normalizedCarrier));
-    await AsyncStorage.setItem("userRole", "freight");
-    await AsyncStorage.setItem("currentUserRole", "freight");
+    await AsyncStorage.multiSet([
+      ["currentFreight", JSON.stringify(normalizedCarrier)],
+      ["currentFreightCarrier", JSON.stringify(normalizedCarrier)],
+      ["currentFreightUser", JSON.stringify(normalizedCarrier)],
+      ["farm2homeCurrentFreight", JSON.stringify(normalizedCarrier)],
+      ["currentUser", JSON.stringify(normalizedCarrier)],
+      ["userRole", "freight"],
+      ["currentUserRole", "freight"],
+    ]);
 
     setCarrier(normalizedCarrier);
     return normalizedCarrier;
   }
 
   function getDocumentForType(docKey: string) {
-    return documents.find(
-      (doc) =>
-        doc.document_type === docKey ||
-        normalize(doc.title) === normalize(docKey) ||
-        normalize(doc.file_name).includes(normalize(docKey))
-    );
+    const key = normalize(docKey);
+
+    return documents.find((doc) => {
+      const docType = normalize(doc.document_type);
+      const docTitle = normalize(doc.title);
+      const file = normalize(doc.file_name);
+
+      return docType === key || docTitle === key || file.includes(key);
+    });
+  }
+
+  async function findFreightProfile(stored: any) {
+    const { data: authData } = await supabase.auth.getUser();
+    const authUser = authData?.user;
+
+    const authId = clean(authUser?.id);
+    const storedId = freightIdFromProfile(stored);
+    const email = normalize(stored?.email || authUser?.email);
+
+    const filters = [
+      authId ? `id.eq.${authId}` : "",
+      authId ? `auth_user_id.eq.${authId}` : "",
+      authId ? `profile_id.eq.${authId}` : "",
+      authId ? `freight_id.eq.${authId}` : "",
+      storedId ? `id.eq.${storedId}` : "",
+      storedId ? `freight_id.eq.${storedId}` : "",
+      storedId ? `auth_user_id.eq.${storedId}` : "",
+      storedId ? `profile_id.eq.${storedId}` : "",
+      email ? `email.eq.${email}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
+
+    if (!filters) return null;
+
+    const { data, error } = await supabase
+      .from("freight_users")
+      .select("*")
+      .or(filters)
+      .limit(1);
+
+    if (error) {
+      console.log("Freight profile lookup error:", error.message);
+      return null;
+    }
+
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
 
   async function loadDocuments() {
@@ -256,25 +364,9 @@ export default function FreightDocumentsScreen() {
       setLoading(true);
 
       const stored = await getStoredCarrier();
-      const { data: authData } = await supabase.auth.getUser();
-      const email = normalize(stored?.email || authData?.user?.email || "");
+      const dbCarrier = await findFreightProfile(stored);
 
-      if (!email) {
-        router.replace(FREIGHT_ROUTES.login as any);
-        return;
-      }
-
-      const { data: dbCarrier, error } = await supabase
-        .from("freight_users")
-        .select("*")
-        .eq("email", email)
-        .maybeSingle();
-
-      if (error) {
-        console.log("Freight documents profile error:", error.message);
-      }
-
-      if (!dbCarrier) {
+      if (!dbCarrier && !stored) {
         Alert.alert(
           "Freight Profile Missing",
           "No freight profile was found. Please complete freight registration first."
@@ -283,33 +375,27 @@ export default function FreightDocumentsScreen() {
         return;
       }
 
-      const mergedCarrier = {
+      const mergedCarrier = await persistCarrier({
         ...(stored || {}),
         ...(dbCarrier || {}),
-        id: dbCarrier.id,
-        freightId: dbCarrier.id,
-        role: "freight",
-        email: normalize(dbCarrier.email || email),
-        companyName:
-          dbCarrier.company_name ||
-          dbCarrier.business_name ||
-          stored?.companyName ||
-          stored?.businessName ||
-          "Freight Connect Carrier",
-        businessName:
-          dbCarrier.business_name ||
-          dbCarrier.company_name ||
-          stored?.businessName ||
-          stored?.companyName ||
-          "Freight Connect Carrier",
-      };
+        id: dbCarrier?.id || freightIdFromProfile(stored),
+        freight_id: dbCarrier?.freight_id || dbCarrier?.id || freightIdFromProfile(stored),
+        freightId: dbCarrier?.freight_id || dbCarrier?.id || freightIdFromProfile(stored),
+        email: normalize(dbCarrier?.email || stored?.email),
+      });
 
-      await persistCarrier(mergedCarrier);
+      const activeFreightId = freightIdFromProfile(mergedCarrier);
+
+      if (!activeFreightId) {
+        Alert.alert("Freight ID Missing", "Please log out and log back into your freight account.");
+        setDocuments([]);
+        return;
+      }
 
       const { data: docData, error: docError } = await supabase
         .from("freight_documents")
         .select("*")
-        .eq("freight_id", dbCarrier.id)
+        .eq("freight_id", activeFreightId)
         .order("created_at", { ascending: false });
 
       if (docError) {
@@ -332,9 +418,117 @@ export default function FreightDocumentsScreen() {
     await loadDocuments();
   }
 
+  async function getUploadBody(file: DocumentPicker.DocumentPickerAsset): Promise<Blob | ArrayBuffer> {
+    const webFile = (file as any).file;
+
+    if (webFile) {
+      return webFile;
+    }
+
+    const response = await fetch(file.uri);
+    if (!response.ok) {
+      throw new Error("Unable to read selected file.");
+    }
+
+    return await response.blob();
+  }
+
+  async function uploadToStorage(file: DocumentPicker.DocumentPickerAsset, doc: RequiredDoc, freightId: string) {
+    const ext = fileExt(file.name);
+    const name = safeFileName(file.name || `${doc.key}.${ext}`);
+    const path = `${freightId}/${doc.key}/${Date.now()}_${name}`;
+    const body = await getUploadBody(file);
+    const contentType = file.mimeType || "application/octet-stream";
+
+    const { error: uploadError } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(path, body, {
+        contentType,
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(
+        `${uploadError.message}. Make sure the Supabase Storage bucket "${STORAGE_BUCKET}" exists and allows authenticated uploads.`
+      );
+    }
+
+    const { data: publicData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+
+    return {
+      storagePath: path,
+      fileUrl: publicData?.publicUrl || "",
+    };
+  }
+
+  async function saveDocumentRecord(doc: RequiredDoc, file: DocumentPicker.DocumentPickerAsset, fileUrl: string, storagePath: string) {
+    const freightId = freightIdFromProfile(carrier);
+    const now = new Date().toISOString();
+    const existing = getDocumentForType(doc.key);
+
+    const payload = {
+      freight_id: freightId,
+      document_type: doc.key,
+      title: doc.title,
+      file_name: file.name || doc.title,
+      file_url: fileUrl,
+      storage_path: storagePath,
+      status: "uploaded",
+      review_status: "pending_review",
+      updated_at: now,
+    };
+
+    if (existing?.id) {
+      const { error } = await supabase
+        .from("freight_documents")
+        .update(payload)
+        .eq("id", existing.id)
+        .select("id")
+        .maybeSingle();
+
+      if (error) throw error;
+      return;
+    }
+
+    const { error } = await supabase
+      .from("freight_documents")
+      .insert({
+        ...payload,
+        created_at: now,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+  }
+
+  async function safeUpdateFreightUser() {
+    const id = freightIdFromProfile(carrier);
+    if (!id) return;
+
+    const now = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("freight_users")
+      .update({
+        documents_uploaded: true,
+        compliance_documents_uploaded: true,
+        compliance_status: "documents_submitted",
+        updated_at: now,
+      })
+      .eq("id", id);
+
+    if (error) {
+      console.log("Freight user document status update skipped:", error.message);
+    }
+  }
+
   async function uploadDocument(doc: RequiredDoc) {
-    if (!carrier?.id) {
-      Alert.alert("Profile Missing", "Please log in again.");
+    const freightId = freightIdFromProfile(carrier);
+
+    if (!freightId) {
+      Alert.alert("Profile Missing", "Please save or log into your freight account before uploading documents.");
       return;
     }
 
@@ -350,53 +544,13 @@ export default function FreightDocumentsScreen() {
       if (result.canceled || !result.assets?.[0]) return;
 
       const file = result.assets[0];
-      const now = new Date().toISOString();
 
-      const payload = {
-        freight_id: carrier.id,
-        document_type: doc.key,
-        title: doc.title,
-        file_name: file.name || doc.title,
-        file_url: file.uri,
-        storage_path: file.uri,
-        mime_type: file.mimeType || null,
-        size_bytes: file.size || null,
-        status: "submitted",
-        review_status: "pending_review",
-        required: doc.required,
-        created_at: now,
-        updated_at: now,
-      };
+      const { storagePath, fileUrl } = await uploadToStorage(file, doc, freightId);
 
-      const existing = getDocumentForType(doc.key);
+      await saveDocumentRecord(doc, file, fileUrl, storagePath);
+      await safeUpdateFreightUser();
 
-      if (existing?.id) {
-        const { error } = await supabase
-          .from("freight_documents")
-          .update({
-            ...payload,
-            created_at: existing.created_at || now,
-            updated_at: now,
-          })
-          .eq("id", existing.id);
-
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("freight_documents").insert(payload);
-        if (error) throw error;
-      }
-
-      await supabase
-        .from("freight_users")
-        .update({
-          documents_uploaded: true,
-          compliance_documents_uploaded: true,
-          compliance_status: "documents_submitted",
-          updated_at: now,
-        })
-        .eq("id", carrier.id);
-
-      Alert.alert("Document Uploaded", `${doc.title} was submitted for review.`);
+      Alert.alert("Document Uploaded", `${doc.title} was uploaded and saved.`);
       await loadDocuments();
     } catch (error: any) {
       console.log("Upload freight document error:", error);
@@ -407,7 +561,9 @@ export default function FreightDocumentsScreen() {
   }
 
   async function submitForReview() {
-    if (!carrier?.id) {
+    const freightId = freightIdFromProfile(carrier);
+
+    if (!freightId) {
       Alert.alert("Profile Missing", "Please log in again.");
       return;
     }
@@ -425,7 +581,7 @@ export default function FreightDocumentsScreen() {
 
       const now = new Date().toISOString();
 
-      const { error } = await supabase
+      const { error: userError } = await supabase
         .from("freight_users")
         .update({
           documents_uploaded: true,
@@ -434,18 +590,22 @@ export default function FreightDocumentsScreen() {
           compliance_status: "documents_submitted",
           updated_at: now,
         })
-        .eq("id", carrier.id);
+        .eq("id", freightId);
 
-      if (error) throw error;
+      if (userError) {
+        console.log("Freight user review status update skipped:", userError.message);
+      }
 
-      await supabase
+      const { error: docError } = await supabase
         .from("freight_documents")
         .update({
           status: "submitted",
           review_status: "pending_review",
           updated_at: now,
         })
-        .eq("freight_id", carrier.id);
+        .eq("freight_id", freightId);
+
+      if (docError) throw docError;
 
       Alert.alert(
         "Submitted for Review",
@@ -470,7 +630,17 @@ export default function FreightDocumentsScreen() {
       return;
     }
 
-    const url = doc.file_url || doc.storage_path || "";
+    let url = doc.file_url || "";
+
+    if (!url && doc.storage_path) {
+      const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(doc.storage_path);
+      url = data?.publicUrl || "";
+    }
+
+    if (!url) {
+      Alert.alert("Open Document", "The document was saved, but the public file URL was not found.");
+      return;
+    }
 
     try {
       const supported = await Linking.canOpenURL(url);
@@ -486,11 +656,73 @@ export default function FreightDocumentsScreen() {
     }
   }
 
+  function renderDocCard(doc: RequiredDoc) {
+    const uploadedDoc = getDocumentForType(doc.key);
+    const status = uploadedDoc?.review_status || uploadedDoc?.status || "not_uploaded";
+    const uploading = uploadingKey === doc.key;
+    const uploaded = Boolean(uploadedDoc);
+
+    return (
+      <View key={doc.key} style={styles.docCard}>
+        <View style={styles.docHeader}>
+          <View style={[styles.docIcon, uploaded && styles.docIconUploaded]}>
+            <Ionicons
+              name={uploaded ? "checkmark-circle-outline" : "document-attach-outline"}
+              size={24}
+              color={uploaded ? COLORS.green : COLORS.primary}
+            />
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <View style={styles.docTitleRow}>
+              <Text style={styles.docTitle}>{doc.title}</Text>
+              {doc.required ? <Text style={styles.requiredMark}>*</Text> : null}
+            </View>
+            <Text style={styles.docDescription}>{doc.description}</Text>
+          </View>
+
+          <View style={[styles.statusBadge, { backgroundColor: statusSoftColor(status) }]}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor(status) }]} />
+            <Text style={[styles.statusText, { color: statusColor(status) }]}>
+              {uploaded ? status.replace(/_/g, " ") : "not uploaded"}
+            </Text>
+          </View>
+        </View>
+
+        {uploadedDoc ? (
+          <TouchableOpacity style={styles.fileBox} onPress={() => openDocument(uploadedDoc)}>
+            <Ionicons name="document-text-outline" size={22} color={COLORS.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fileName}>{uploadedDoc.file_name || uploadedDoc.title}</Text>
+              <Text style={styles.fileMeta}>Uploaded: {formatDate(uploadedDoc.updated_at || uploadedDoc.created_at)}</Text>
+            </View>
+            <Ionicons name="open-outline" size={19} color={COLORS.muted} />
+          </TouchableOpacity>
+        ) : null}
+
+        <TouchableOpacity
+          style={[styles.uploadButton, uploading && styles.disabledButton]}
+          onPress={() => uploadDocument(doc)}
+          disabled={uploading}
+        >
+          {uploading ? (
+            <ActivityIndicator color={COLORS.white} />
+          ) : (
+            <>
+              <Ionicons name="cloud-upload-outline" size={18} color={COLORS.white} />
+              <Text style={styles.uploadText}>{uploadedDoc ? "Replace" : "Upload"}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
-        <ActivityIndicator size="large" color={COLORS.red} />
+        <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.centerText}>Loading freight documents...</Text>
       </SafeAreaView>
     );
@@ -498,142 +730,143 @@ export default function FreightDocumentsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.hero}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.eyebrow}>Farm2Home Freight Connect</Text>
-            <Text style={styles.title}>Freight Documents</Text>
-            <Text style={styles.subtitle}>
-              Upload required carrier, insurance, authority, vehicle, and compliance documents.
-            </Text>
-          </View>
-
-          <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.compliance)}>
-            <Ionicons name="document-attach-outline" size={34} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.carrierCard}>
-          <View style={styles.avatar}>
-            <Ionicons name="business-outline" size={28} color="#FFFFFF" />
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text style={styles.carrierName}>{carrier?.companyName || "Freight Connect Carrier"}</Text>
-            <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
-            <Text style={styles.carrierMeta}>
-              Required uploaded: {uploadedRequiredCount}/{requiredCount}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.quickGrid}>
-          <QuickLink icon="shield-checkmark-outline" label="Compliance" route={FREIGHT_ROUTES.compliance} />
-          <QuickLink icon="document-text-outline" label="Legal" route={FREIGHT_ROUTES.legal} />
-          <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
-          <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
-        </View>
-
-        <View style={styles.notice}>
-          <Text style={styles.noticeTitle}>Document Review</Text>
-          <Text style={styles.noticeText}>
-            Upload documents for Farm2Home review. Required documents must be submitted before
-            compliance is complete.
-          </Text>
-        </View>
-
-        {REQUIRED_DOCS.map((doc) => {
-          const uploadedDoc = getDocumentForType(doc.key);
-          const status = uploadedDoc?.review_status || uploadedDoc?.status || "not_uploaded";
-          const uploading = uploadingKey === doc.key;
-
-          return (
-            <View key={doc.key} style={styles.card}>
-              <View style={styles.docTop}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.docTitle}>{doc.title}</Text>
-                  <Text style={styles.docDescription}>{doc.description}</Text>
-                </View>
-
-                <View style={[styles.statusBadge, { backgroundColor: statusColor(status) }]}>
-                  <Text style={styles.statusText}>
-                    {uploadedDoc ? status.replace(/_/g, " ") : "not uploaded"}
-                  </Text>
-                </View>
+        <View style={styles.layout}>
+          <View style={styles.sidebar}>
+            <View style={styles.progressCard}>
+              <Text style={styles.progressLabel}>Setup Progress</Text>
+              <Text style={styles.progressValue}>{uploadedRequiredCount}/{requiredCount}</Text>
+              <Text style={styles.progressText}>
+                Required documents uploaded and saved.
+              </Text>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
               </View>
+            </View>
 
-              <View style={styles.requiredRow}>
-                <Ionicons
-                  name={doc.required ? "alert-circle-outline" : "information-circle-outline"}
-                  size={17}
-                  color={doc.required ? COLORS.red : COLORS.blue}
-                />
-                <Text style={styles.requiredText}>
-                  {doc.required ? "Required" : "Optional / If Applicable"}
+            <StepItem done label="Account" icon="checkmark-outline" />
+            <StepItem done label="Company" icon="business-outline" />
+            <StepItem done label="Authority" icon="shield-checkmark-outline" />
+            <StepItem active label="Documents" icon="document-attach-outline" />
+            <StepItem label="Security" icon="key-outline" />
+            <StepItem label="Stripe" icon="card-outline" />
+            <StepItem label="Review" icon="checkmark-done-outline" />
+
+            <TouchableOpacity style={styles.homeButton} onPress={() => router.replace("/" as any)}>
+              <Ionicons name="home-outline" size={17} color={COLORS.primary} />
+              <Text style={styles.homeButtonText}>Back to Home</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.main}>
+            <View style={styles.hero}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eyebrow}>Farm2Home Freight Registration</Text>
+                <Text style={styles.title}>Required Documents</Text>
+                <Text style={styles.subtitle}>
+                  Upload carrier compliance documents before dashboard approval.
                 </Text>
               </View>
 
-              {uploadedDoc && (
-                <TouchableOpacity style={styles.fileBox} onPress={() => openDocument(uploadedDoc)}>
-                  <Ionicons name="document-text-outline" size={22} color={COLORS.red} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.fileName}>{uploadedDoc.file_name || uploadedDoc.title}</Text>
-                    <Text style={styles.fileMeta}>Uploaded: {formatDate(uploadedDoc.created_at)}</Text>
-                  </View>
-                  <Ionicons name="open-outline" size={19} color={COLORS.muted} />
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={[styles.uploadButton, uploading && styles.disabledButton]}
-                onPress={() => uploadDocument(doc)}
-                disabled={uploading}
-              >
-                {uploading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.uploadText}>
-                      {uploadedDoc ? "Replace Document" : "Upload Document"}
-                    </Text>
-                  </>
-                )}
+              <TouchableOpacity style={styles.heroIcon} onPress={() => goTo(FREIGHT_ROUTES.compliance)}>
+                <Ionicons name="document-attach-outline" size={32} color={COLORS.white} />
               </TouchableOpacity>
             </View>
-          );
-        })}
 
-        <TouchableOpacity
-          style={[
-            styles.reviewButton,
-            (!allRequiredUploaded || submitting) && styles.disabledButton,
-          ]}
-          onPress={submitForReview}
-          disabled={!allRequiredUploaded || submitting}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons name="send-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.reviewText}>Submit Documents for Review</Text>
-            </>
-          )}
-        </TouchableOpacity>
+            <View style={styles.infoNotice}>
+              <Ionicons name="information-circle-outline" size={18} color={COLORS.primary} />
+              <Text style={styles.noticeText}>
+                Files are uploaded to Supabase Storage bucket "{STORAGE_BUCKET}" and saved to the freight_documents table.
+              </Text>
+            </View>
 
-        <TouchableOpacity style={styles.backButton} onPress={() => goTo(FREIGHT_ROUTES.compliance)}>
-          <Ionicons name="shield-checkmark-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.backText}>Back to Compliance</Text>
-        </TouchableOpacity>
+            <View style={styles.carrierCard}>
+              <View style={styles.avatar}>
+                <Ionicons name="business-outline" size={25} color={COLORS.white} />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.carrierName}>{carrierName(carrier)}</Text>
+                <Text style={styles.carrierEmail}>{carrier?.email || "Carrier workspace"}</Text>
+                <Text style={styles.carrierMeta}>
+                  Required uploaded: {uploadedRequiredCount}/{requiredCount}
+                </Text>
+              </View>
+
+              <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
+                <Ionicons name="refresh-outline" size={16} color={COLORS.primary} />
+                <Text style={styles.refreshText}>Refresh</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Required Carrier Documents</Text>
+              <Text style={styles.sectionSub}>These are checked during login and dashboard approval.</Text>
+            </View>
+
+            {requiredDocs.map(renderDocCard)}
+
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Optional Medical / Specialized Carrier Documents</Text>
+              <Text style={styles.sectionSub}>Upload these if your carrier handles medical, airport, refrigerated, or specialized freight.</Text>
+            </View>
+
+            {optionalDocs.map(renderDocCard)}
+
+            <TouchableOpacity
+              style={[
+                styles.reviewButton,
+                (!allRequiredUploaded || submitting) && styles.disabledButton,
+              ]}
+              onPress={submitForReview}
+              disabled={!allRequiredUploaded || submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <>
+                  <Ionicons name="send-outline" size={18} color={COLORS.white} />
+                  <Text style={styles.reviewText}>Submit Documents for Review</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.quickGrid}>
+              <QuickLink icon="shield-checkmark-outline" label="Compliance" route={FREIGHT_ROUTES.compliance} />
+              <QuickLink icon="business-outline" label="Connect Bank" route={FREIGHT_ROUTES.connectBank} />
+              <QuickLink icon="headset-outline" label="Support" route={FREIGHT_ROUTES.support} />
+            </View>
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function StepItem({
+  label,
+  icon,
+  active,
+  done,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  active?: boolean;
+  done?: boolean;
+}) {
+  return (
+    <View style={[styles.stepItem, active && styles.stepItemActive]}>
+      <View style={[styles.stepIcon, done && styles.stepIconDone, active && styles.stepIconActive]}>
+        <Ionicons name={done ? "checkmark-outline" : icon} size={17} color={done || active ? COLORS.white : "#94A3B8"} />
+      </View>
+      <Text style={[styles.stepText, active && styles.stepTextActive]}>{label}</Text>
+    </View>
   );
 }
 
@@ -648,7 +881,7 @@ function QuickLink({
 }) {
   return (
     <TouchableOpacity style={styles.quickLink} onPress={() => goTo(route)}>
-      <Ionicons name={icon} size={22} color={COLORS.red} />
+      <Ionicons name={icon} size={22} color={COLORS.primary} />
       <Text style={styles.quickText}>{label}</Text>
     </TouchableOpacity>
   );
@@ -656,7 +889,7 @@ function QuickLink({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  content: { paddingBottom: 90 },
+  content: { flexGrow: 1 },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -665,40 +898,117 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   centerText: { color: COLORS.muted, marginTop: 12, fontWeight: "800" },
-  hero: {
-    backgroundColor: COLORS.black,
-    paddingTop: 30,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
+  layout: {
+    flex: 1,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+  },
+  sidebar: {
+    width: Platform.OS === "web" ? 330 : "100%",
+    backgroundColor: COLORS.navy,
+    padding: 20,
+    gap: 11,
+  },
+  progressCard: {
+    backgroundColor: COLORS.navy2,
+    borderRadius: 24,
+    padding: 18,
+    marginBottom: 10,
+  },
+  progressLabel: { color: "#CBD5E1", fontWeight: "900" },
+  progressValue: { color: COLORS.white, fontWeight: "900", fontSize: 34, marginTop: 6 },
+  progressText: { color: "#CBD5E1", fontWeight: "700", lineHeight: 20, marginTop: 6 },
+  progressTrack: {
+    backgroundColor: "#1E293B",
+    height: 8,
+    borderRadius: 999,
+    overflow: "hidden",
+    marginTop: 13,
+  },
+  progressFill: { backgroundColor: COLORS.primary, height: "100%" },
+  stepItem: {
     flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 16,
+    padding: 12,
+  },
+  stepItemActive: { backgroundColor: "#312E81" },
+  stepIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 13,
+    backgroundColor: "#1E293B",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepIconDone: { backgroundColor: COLORS.green },
+  stepIconActive: { backgroundColor: COLORS.primary },
+  stepText: { color: "#CBD5E1", fontWeight: "900" },
+  stepTextActive: { color: COLORS.white },
+  homeButton: {
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  homeButtonText: { color: COLORS.primary, fontWeight: "900" },
+
+  main: {
+    flex: 1,
+    padding: 20,
+    maxWidth: Platform.OS === "web" ? 920 : undefined,
+    alignSelf: "center",
+    width: "100%",
+  },
+  hero: {
+    backgroundColor: COLORS.white,
+    borderRadius: 26,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 14,
-    alignItems: "flex-start",
   },
   heroIcon: {
     width: 58,
     height: 58,
-    borderRadius: 24,
-    backgroundColor: COLORS.red,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
   },
   eyebrow: {
-    color: "#FCA5A5",
+    color: COLORS.primary,
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 6,
     textTransform: "uppercase",
     letterSpacing: 1,
     fontSize: 12,
   },
-  title: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", marginBottom: 10 },
-  subtitle: { color: "#D1D5DB", lineHeight: 22, fontWeight: "700" },
+  title: { color: COLORS.text, fontSize: 29, fontWeight: "900" },
+  subtitle: { color: COLORS.muted, lineHeight: 21, fontWeight: "700", marginTop: 6 },
+  infoNotice: {
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: "#C7D2FE",
+    borderRadius: 16,
+    padding: 12,
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+  },
+  noticeText: { flex: 1, color: COLORS.primaryDark, fontWeight: "800", lineHeight: 19 },
   carrierCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
     padding: 16,
-    marginHorizontal: 18,
-    marginTop: 16,
-    marginBottom: 14,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
@@ -706,74 +1016,70 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   avatar: {
-    width: 58,
-    height: 58,
+    width: 54,
+    height: 54,
     borderRadius: 20,
-    backgroundColor: COLORS.red,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  carrierName: { color: COLORS.text, fontSize: 19, fontWeight: "900" },
+  carrierName: { color: COLORS.text, fontSize: 18, fontWeight: "900" },
   carrierEmail: { color: COLORS.muted, fontWeight: "700", marginTop: 4 },
-  carrierMeta: { color: COLORS.red, fontWeight: "900", marginTop: 5 },
-  quickGrid: {
+  carrierMeta: { color: COLORS.primary, fontWeight: "900", marginTop: 5 },
+  refreshButton: {
+    backgroundColor: COLORS.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingHorizontal: 18,
-    marginBottom: 14,
-  },
-  quickLink: {
-    width: "48%",
-    backgroundColor: COLORS.card,
-    borderRadius: 18,
-    padding: 15,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    gap: 5,
     alignItems: "center",
-    gap: 8,
   },
-  quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
-  notice: {
-    backgroundColor: COLORS.black,
-    marginHorizontal: 18,
-    marginBottom: 16,
-    borderRadius: 22,
-    padding: 18,
-  },
-  noticeTitle: { color: "#FFFFFF", fontSize: 21, fontWeight: "900", marginBottom: 7 },
-  noticeText: { color: "#D1D5DB", fontWeight: "700", lineHeight: 22 },
-  card: {
+  refreshText: { color: COLORS.primary, fontWeight: "900", fontSize: 12 },
+  sectionHeader: { marginTop: 8, marginBottom: 12 },
+  sectionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 20 },
+  sectionSub: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
+  docCard: {
     backgroundColor: COLORS.card,
-    padding: 18,
+    padding: 14,
     borderRadius: 22,
-    marginHorizontal: 18,
-    marginBottom: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  docTop: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
-  docTitle: { fontSize: 17, fontWeight: "900", color: COLORS.text },
-  docDescription: { color: COLORS.muted, fontWeight: "700", lineHeight: 20, marginTop: 5 },
+  docHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  docIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  docIconUploaded: { backgroundColor: COLORS.greenSoft },
+  docTitleRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  docTitle: { fontSize: 16, fontWeight: "900", color: COLORS.text },
+  requiredMark: { color: COLORS.red, fontWeight: "900" },
+  docDescription: { color: COLORS.muted, fontWeight: "700", lineHeight: 19, marginTop: 4 },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,
-    maxWidth: 135,
+    maxWidth: 155,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
   },
+  statusDot: { width: 7, height: 7, borderRadius: 999 },
   statusText: {
-    color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 11,
     textTransform: "capitalize",
   },
-  requiredRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    marginTop: 12,
-  },
-  requiredText: { color: COLORS.text, fontWeight: "900", fontSize: 12 },
   fileBox: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -789,39 +1095,48 @@ const styles = StyleSheet.create({
   fileName: { color: COLORS.text, fontWeight: "900" },
   fileMeta: { color: COLORS.muted, fontWeight: "700", marginTop: 3 },
   uploadButton: {
-    backgroundColor: COLORS.red,
-    padding: 14,
+    alignSelf: "flex-end",
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 12,
     flexDirection: "row",
     gap: 8,
+    minWidth: 112,
   },
-  uploadText: { color: "#FFFFFF", fontWeight: "900" },
+  uploadText: { color: COLORS.white, fontWeight: "900" },
   reviewButton: {
     backgroundColor: COLORS.green,
     padding: 17,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    marginHorizontal: 18,
     marginTop: 8,
     flexDirection: "row",
     gap: 8,
   },
   disabledButton: { opacity: 0.6 },
-  reviewText: { color: "#FFFFFF", fontWeight: "900", fontSize: 15 },
-  backButton: {
-    backgroundColor: COLORS.black,
-    padding: 15,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginHorizontal: 18,
-    marginTop: 14,
+  reviewText: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
+  quickGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 14,
+    marginBottom: 80,
+  },
+  quickLink: {
+    flex: 1,
+    minWidth: 170,
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
     gap: 8,
   },
-  backText: { color: "#FFFFFF", fontWeight: "900" },
+  quickText: { color: COLORS.text, fontWeight: "900", textAlign: "center" },
 });
