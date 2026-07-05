@@ -725,12 +725,26 @@ export default function FreightRegister() {
   }
 
   async function upsertProfileForFreight(authId: string, emailValue: string, accountValue: string, connectValue: string) {
+    /*
+      IMPORTANT FIX:
+      Do NOT PATCH or INSERT into public.profiles from this registration page.
+
+      The 409 Conflict shown in the browser console was caused by this page trying to
+      update profiles with values that can conflict with an existing unique email,
+      username, account_id, or auth_user_id. Freight registration should save freight
+      onboarding data in freight_users, freight_subscriptions, and admin_verifications.
+
+      We only read profiles to reuse the existing id when it exists. If no profile row
+      is found, we safely use the Auth id as the profile_id reference without touching
+      the profiles table.
+    */
     const existingByEmail = await findProfileByEmail(emailValue);
     const existingByAuth = existingByEmail ? null : await findProfileByAuthId(authId);
     const existing = existingByEmail || existingByAuth;
 
-    const payload = {
-      auth_user_id: authId,
+    return {
+      id: clean(existing?.id || authId),
+      auth_user_id: clean(existing?.auth_user_id || authId),
       role: "freight",
       full_name: contactName.trim(),
       email: normalize(emailValue),
@@ -739,16 +753,6 @@ export default function FreightRegister() {
       freight_account: connectValue || null,
       stripe_account_id: connectValue || null,
     };
-
-    if (existing?.id) {
-      const { data, error } = await supabase.from("profiles").update(payload).eq("id", existing.id).select("*").maybeSingle();
-      if (error) throw error;
-      return data || { ...existing, ...payload };
-    }
-
-    const { data, error } = await supabase.from("profiles").insert({ id: authId, ...payload, created_at: new Date().toISOString() }).select("*").maybeSingle();
-    if (error) throw error;
-    return data;
   }
 
   async function upsertFreightSubscriptionRow(values: {
@@ -1312,7 +1316,68 @@ export default function FreightRegister() {
       return;
     }
 
-    await saveFreightSession(saved);
+    /*
+      FINAL SUBMIT FIX:
+      Only update freight tables here. Do not update public.profiles.
+      This prevents the 409 Conflict on /profiles?id=eq... while still opening
+      the freight dashboard after all requirements are saved.
+    */
+    const now = new Date().toISOString();
+
+    const { error: freightUserError } = await supabase
+      .from("freight_users")
+      .update({
+        documents_complete: true,
+        account_active: true,
+        approved: true,
+        freight_membership_paid: true,
+        membership_status: "active",
+        verification_status: "SUBMITTED",
+        compliance_status: "SUBMITTED",
+        admin_review_status: "submitted",
+        application_submitted: true,
+        submitted_at: now,
+        updated_at: now,
+      })
+      .eq("id", saved.id);
+
+    if (freightUserError) {
+      Alert.alert("Submit Error", freightUserError.message);
+      return;
+    }
+
+    const { error: subscriptionError } = await supabase
+      .from("freight_subscriptions")
+      .update({
+        subscription_status: saved.subscription_status || "active",
+        stripe_customer_id: saved.stripe_customer_id || null,
+        stripe_subscription_id: saved.subscription_id || null,
+        stripe_account_id: saved.freight_account || null,
+        freight_account: saved.freight_account || null,
+        updated_at: now,
+      })
+      .or(`freight_id.eq.${saved.id},freight_email.eq.${normalize(saved.email || email)}`);
+
+    if (subscriptionError) {
+      console.log("freight_subscriptions final update skipped:", subscriptionError.message);
+    }
+
+    const dashboardRow = {
+      ...saved,
+      documents_complete: true,
+      account_active: true,
+      approved: true,
+      freight_membership_paid: true,
+      membership_status: "active",
+      verification_status: "SUBMITTED",
+      compliance_status: "SUBMITTED",
+      admin_review_status: "submitted",
+      application_submitted: true,
+      submitted_at: now,
+      updated_at: now,
+    };
+
+    await saveFreightSession(dashboardRow);
     router.replace("/freight/dashboard" as any);
   }
 
@@ -1497,7 +1562,7 @@ export default function FreightRegister() {
             ))}
           </View>
 
-          <ActionButton title="Save Profile" subtitle="Save registration fields to profiles, freight_users, and freight_subscriptions." icon="save-outline" loading={saving} onPress={() => saveFreightProfile(false)} />
+          <ActionButton title="Save Profile" subtitle="Save registration fields to freight_users, freight_subscriptions, and admin_verifications." icon="save-outline" loading={saving} onPress={() => saveFreightProfile(false)} />
           <ActionButton title="Find / Retrieve Missing Stripe Info" subtitle="Search existing freight_subscriptions and backend Stripe sync." icon="sync-outline" loading={syncingStripe} onPress={() => retrieveMissingStripeInfo(false)} secondary />
           <ActionButton title="Start Freight Membership" subtitle="Open Stripe Checkout for freight subscription." icon="card-outline" loading={stripeLoading} onPress={handleStripeCheckout} />
           <ActionButton title="Connect Stripe Payouts" subtitle="Open Stripe Connect onboarding for freight_account / stripe_account_id." icon="wallet-outline" loading={connectLoading} onPress={handleConnectBank} secondary />
