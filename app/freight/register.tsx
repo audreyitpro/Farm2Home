@@ -947,13 +947,38 @@ export default function FreightRegister() {
       updated_at: now,
     };
 
-    const { data: savedFreightUser, error } = await supabase
-      .from("freight_users")
-      .upsert(existing?.id ? freightPayload : { ...freightPayload, created_at: now }, { onConflict: "id" })
-      .select("*")
-      .maybeSingle();
+    /*
+      IMPORTANT FIX:
+      Do NOT use Supabase upsert here. The deployed error showed:
+      POST /rest/v1/freight_users?on_conflict=... 400 Bad Request.
 
-    if (error) throw error;
+      Some Supabase projects fail this when the onConflict column is not configured
+      exactly as PostgREST expects, or when RLS/policies block upsert behavior.
+      This page now uses a clear update-if-existing, insert-if-new flow.
+    */
+    let savedFreightUser: any = null;
+
+    if (existing?.id) {
+      const { data, error } = await supabase
+        .from("freight_users")
+        .update(freightPayload)
+        .eq("id", existing.id)
+        .select("*")
+        .maybeSingle();
+
+      if (error) throw error;
+      savedFreightUser = data;
+    } else {
+      const { data, error } = await supabase
+        .from("freight_users")
+        .insert({ ...freightPayload, created_at: now })
+        .select("*")
+        .maybeSingle();
+
+      if (error) throw error;
+      savedFreightUser = data;
+    }
+
     if (!savedFreightUser?.id) throw new Error("Freight registration did not save.");
 
     await upsertFreightSubscriptionRow({
