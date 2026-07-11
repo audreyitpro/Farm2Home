@@ -424,7 +424,21 @@ export default function FreightRegister() {
     setSelectedEquipment((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]));
   }
 
-  function goNext() {
+  async function goNext() {
+    /*
+      Save the Authority step before moving forward so selected equipment
+      is persisted immediately in freight_users.equipment_type.
+    */
+    if (step === 2) {
+      if (selectedEquipment.length === 0) {
+        Alert.alert("Equipment Required", "Select at least one equipment type before continuing.");
+        return;
+      }
+
+      const saved = await saveFreightProfile(false, false);
+      if (!saved?.id) return;
+    }
+
     setStep((prev) => Math.min(prev + 1, STEPS.length - 1));
   }
 
@@ -447,43 +461,140 @@ export default function FreightRegister() {
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
-      const localValue = clean(asset.uri || asset.name);
+      const carrierId = clean(savedCarrierId || freightId);
 
-      const carrierId = savedCarrierId || freightId;
       if (!carrierId) {
-        setDocumentValue(key, localValue);
-        Alert.alert("Document Selected", "Save the profile to attach this document to the freight account.");
+        Alert.alert(
+          "Save Profile First",
+          "Save the freight profile before uploading documents so the file can be attached to the correct freight account."
+        );
         return;
       }
 
       const safeName = clean(asset.name || `${key}.pdf`).replace(/[^a-zA-Z0-9._-]/g, "_");
       const path = `${carrierId}/${key}/${Date.now()}_${safeName}`;
 
-      if (Platform.OS === "web") {
-        const response = await fetch(asset.uri);
-        const blob = await response.blob();
-        const { error } = await supabase.storage.from(DOCUMENT_BUCKET).upload(path, blob, {
-          cacheControl: "3600",
-          upsert: true,
-          contentType: asset.mimeType || undefined,
-        });
-        if (error) throw error;
-      } else {
-        const response = await fetch(asset.uri);
-        const blob = await response.blob();
-        const { error } = await supabase.storage.from(DOCUMENT_BUCKET).upload(path, blob, {
-          cacheControl: "3600",
-          upsert: true,
-          contentType: asset.mimeType || undefined,
-        });
-        if (error) throw error;
+      const response = await fetch(asset.uri);
+      if (!response.ok) {
+        throw new Error("Unable to read the selected document.");
       }
 
-      const { data } = supabase.storage.from(DOCUMENT_BUCKET).getPublicUrl(path);
-      setDocumentValue(key, data.publicUrl || path);
+      const blob = await response.blob();
+
+      const { error: uploadError } = await supabase.storage
+        .from(DOCUMENT_BUCKET)
+        .upload(path, blob, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: asset.mimeType || "application/octet-stream",
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from(DOCUMENT_BUCKET)
+        .getPublicUrl(path);
+
+      const savedUrl = clean(publicUrlData?.publicUrl || path);
+
+      /*
+        IMPORTANT FIX:
+        Uploading to Storage is only half of the process. The previous version
+        updated React state but did not immediately persist the uploaded URL to
+        freight_users. This caused the document to appear in the UI until reload,
+        then disappear.
+
+        Save the document URL directly into the matching freight_users column.
+      */
+      const nextDocuments: DocumentState = {
+        ...documents,
+        [key]: savedUrl,
+      };
+
+      const documentsAreComplete = hasRequiredDocuments(nextDocuments);
+      const now = new Date().toISOString();
+
+      const { data: updatedCarrier, error: saveError } = await supabase
+        .from("freight_users")
+        .update({
+          [key]: savedUrl,
+          documents_complete: documentsAreComplete,
+          compliance_status: documentsAreComplete ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
+          admin_review_status: documentsAreComplete ? "pending_payment" : "pending_documents",
+          updated_at: now,
+        })
+        .eq("id", carrierId)
+        .select("*")
+        .maybeSingle();
+
+      if (saveError) throw saveError;
+
+      /*
+        Keep a normalized document record too. Failure here should not undo the
+        freight_users save because freight_users is the source used by this form.
+      */
+      const existingRecord = await supabase
+        .from("freight_documents")
+        .select("id")
+        .eq("freight_id", carrierId)
+        .eq("document_type", key)
+        .limit(1)
+        .maybeSingle();
+
+      const documentPayload = {
+        freight_id: carrierId,
+        document_type: key,
+        title:
+          [...REQUIRED_DOCUMENTS, ...OPTIONAL_DOCUMENTS].find((doc) => doc.key === key)?.label ||
+          key,
+        file_name: safeName,
+        file_url: savedUrl,
+        storage_path: path,
+        status: "uploaded",
+        review_status: "pending_review",
+        updated_at: now,
+      };
+
+      if (!existingRecord.error && existingRecord.data?.id) {
+        const { error: recordUpdateError } = await supabase
+          .from("freight_documents")
+          .update(documentPayload)
+          .eq("id", existingRecord.data.id);
+
+        if (recordUpdateError) {
+          console.log("freight_documents update skipped:", recordUpdateError.message);
+        }
+      } else {
+        const { error: recordInsertError } = await supabase
+          .from("freight_documents")
+          .insert({
+            ...documentPayload,
+            created_at: now,
+          });
+
+        if (recordInsertError) {
+          console.log("freight_documents insert skipped:", recordInsertError.message);
+        }
+      }
+
+      setDocuments(nextDocuments);
+
+      if (updatedCarrier) {
+        hydrateForm(updatedCarrier);
+        await saveFreightSession(updatedCarrier);
+      }
+
+      Alert.alert(
+        "Document Saved",
+        `${safeName} was uploaded and permanently saved to the freight account.`
+      );
     } catch (error: any) {
       console.log("document upload error:", error);
-      Alert.alert("Upload Error", error?.message || "Unable to upload document. Check Supabase storage bucket permissions.");
+      Alert.alert(
+        "Upload Error",
+        error?.message ||
+          "Unable to upload and save the document. Check the freight-documents bucket, RLS policies, and freight_users update policy."
+      );
     }
   }
 
@@ -873,7 +984,21 @@ export default function FreightRegister() {
     const existing = await findFreightUserByIdOrEmail(authId, emailValue);
     const subRow = await getBestFreightSubscription(authId, emailValue);
 
-    const finalAccountId = clean(existing?.account_id || passedAccountId || accountId || (await generateFreightAccountId()));
+    const existingAccountId = clean(existing?.account_id);
+    const requestedAccountId = clean(passedAccountId || accountId);
+
+    const validExistingFreightAccountId = /^Freight_\d+$/i.test(existingAccountId)
+      ? existingAccountId
+      : "";
+
+    const validRequestedFreightAccountId = /^Freight_\d+$/i.test(requestedAccountId)
+      ? requestedAccountId
+      : "";
+
+    const finalAccountId =
+      validExistingFreightAccountId ||
+      validRequestedFreightAccountId ||
+      (await generateFreightAccountId());
     const finalCustomerId = pickStripeCustomerId(stripeCustomerId, existing?.stripe_customer_id, subRow?.stripe_customer_id);
     const finalSubscriptionId = pickStripeSubscriptionId(subscriptionId, existing?.subscription_id, subRow?.stripe_subscription_id);
     const finalConnectAccount = pickStripeConnectAccountId(freightAccount, existing?.freight_account, subRow?.freight_account, subRow?.stripe_account_id);
@@ -1047,7 +1172,7 @@ export default function FreightRegister() {
     return data.user.id;
   }
 
-  async function saveFreightProfile(fullValidation = false) {
+  async function saveFreightProfile(fullValidation = false, showSuccessAlert = true) {
     if (saving) return null;
     if (!validateForm({ full: fullValidation })) return null;
 
@@ -1055,7 +1180,7 @@ export default function FreightRegister() {
       setSaving(true);
       const authId = savedCarrierId || freightId || (await getOrCreateAuthUser());
       const saved = await saveFreightUserRow(authId, accountId || undefined);
-      Alert.alert("Saved", "Freight registration was saved.");
+      if (showSuccessAlert) Alert.alert("Saved", "Freight registration was saved.");
       return saved;
     } catch (error: any) {
       Alert.alert("Save Error", error?.message || "Unable to save freight registration.");
@@ -1323,87 +1448,84 @@ export default function FreightRegister() {
   }
 
   async function handleSubmitAndDashboard() {
-    const saved = await saveFreightProfile(true);
-    if (!saved?.id) return;
+    try {
+      setSaving(true);
 
-    if (!hasCompleteDashboardAccess(saved)) {
-      const missing = [
-        !saved.id ? "Freight Profile" : "",
-        !saved.account_id ? "Static Account ID" : "",
-        !hasRequiredDocuments(saved) ? "Required Documents" : "",
-        !isStripeCustomerId(saved.stripe_customer_id) ? "Stripe Customer ID" : "",
-        !isStripeSubscriptionId(saved.subscription_id) ? "Subscription ID" : "",
-        !isStripeConnectAccountId(saved.freight_account) ? "Stripe Connect Account" : "",
-      ].filter(Boolean);
+      /*
+        saveFreightProfile(true) already persists the complete freight_users row,
+        freight_subscriptions row, equipment types, documents, Stripe IDs, and
+        the normalized freight session.
 
-      Alert.alert("Setup Incomplete", `Missing: ${missing.join(", ")}.`);
-      setStep(5);
-      return;
-    }
+        The previous submit handler performed a second PATCH against freight_users
+        with optional columns such as application_submitted and submitted_at.
+        In the deployed database, at least one of those columns is unavailable,
+        which caused the final 400 Bad Request and prevented dashboard navigation.
+      */
+      const saved = await saveFreightProfile(true);
+      if (!saved?.id) return;
 
-    /*
-      FINAL SUBMIT FIX:
-      Only update freight tables here. Do not update public.profiles.
-      This prevents the 409 Conflict on /profiles?id=eq... while still opening
-      the freight dashboard after all requirements are saved.
-    */
-    const now = new Date().toISOString();
+      if (!hasCompleteDashboardAccess(saved)) {
+        const missing = [
+          !saved.id ? "Freight Profile" : "",
+          !/^Freight_\d+$/i.test(clean(saved.account_id)) ? "Valid Freight Account ID" : "",
+          !hasRequiredDocuments(saved) ? "Required Documents" : "",
+          !isStripeCustomerId(saved.stripe_customer_id) ? "Stripe Customer ID" : "",
+          !isStripeSubscriptionId(saved.subscription_id) ? "Subscription ID" : "",
+          !isStripeConnectAccountId(saved.freight_account) ? "Stripe Connect Account" : "",
+        ].filter(Boolean);
 
-    const { error: freightUserError } = await supabase
-      .from("freight_users")
-      .update({
+        Alert.alert("Setup Incomplete", `Missing: ${missing.join(", ")}.`);
+        setStep(5);
+        return;
+      }
+
+      const dashboardRow = {
+        ...saved,
+        role: "freight",
+        accountId: saved.account_id,
+        account_id: saved.account_id,
+        freightId: saved.freight_id || saved.id,
+        freight_id: saved.freight_id || saved.id,
+        stripeCustomerId: saved.stripe_customer_id,
+        stripe_customer_id: saved.stripe_customer_id,
+        stripeSubscriptionId: saved.subscription_id,
+        stripe_subscription_id: saved.subscription_id,
+        subscriptionId: saved.subscription_id,
+        subscription_id: saved.subscription_id,
+        freightAccount: saved.freight_account,
+        freight_account: saved.freight_account,
+        stripeAccountId: saved.freight_account,
+        stripe_account_id: saved.freight_account,
         documents_complete: true,
         account_active: true,
-        approved: true,
         freight_membership_paid: true,
         membership_status: "active",
-        verification_status: "SUBMITTED",
-        compliance_status: "SUBMITTED",
-        admin_review_status: "submitted",
-        application_submitted: true,
-        submitted_at: now,
-        updated_at: now,
-      })
-      .eq("id", saved.id);
-
-    if (freightUserError) {
-      Alert.alert("Submit Error", freightUserError.message);
-      return;
-    }
-
-    const { error: subscriptionError } = await supabase
-      .from("freight_subscriptions")
-      .update({
         subscription_status: saved.subscription_status || "active",
-        stripe_customer_id: saved.stripe_customer_id || null,
-        stripe_subscription_id: saved.subscription_id || null,
-        stripe_account_id: saved.freight_account || null,
-        freight_account: saved.freight_account || null,
-        updated_at: now,
-      })
-      .or(`freight_id.eq.${saved.id},freight_email.eq.${normalize(saved.email || email)}`);
+        equipment_type: clean(saved.equipment_type || selectedEquipment.join(",")),
+      };
 
-    if (subscriptionError) {
-      console.log("freight_subscriptions final update skipped:", subscriptionError.message);
+      await saveFreightSession(dashboardRow);
+
+      /*
+        Use replace after the local session is fully written. No additional
+        freight_users PATCH is needed here.
+      */
+      router.replace({
+        pathname: "/freight/dashboard",
+        params: {
+          freightId: dashboardRow.freight_id,
+          accountId: dashboardRow.account_id,
+        },
+      } as any);
+    } catch (error: any) {
+      console.log("Submit freight dashboard error:", error);
+      Alert.alert(
+        "Dashboard Login Error",
+        error?.message || "Your freight information is saved, but the dashboard could not be opened."
+      );
+    } finally {
+      setSaving(false);
     }
-
-    const dashboardRow = {
-      ...saved,
-      documents_complete: true,
-      account_active: true,
-      approved: true,
-      freight_membership_paid: true,
-      membership_status: "active",
-      verification_status: "SUBMITTED",
-      compliance_status: "SUBMITTED",
-      admin_review_status: "submitted",
-      application_submitted: true,
-      submitted_at: now,
-      updated_at: now,
-    };
-
-    await saveFreightSession(dashboardRow);
-    router.replace("/freight/dashboard" as any);
   }
 
   async function forceRefreshFreightRegister() {
