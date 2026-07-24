@@ -64,30 +64,47 @@ function clean(value: any) {
   return String(value ?? "").trim();
 }
 
-function normalizeState(value: any) {
-  const raw = clean(value);
-  if (!raw) return "";
-  const upper = raw.toUpperCase();
-  if (STATE_NAMES[upper]) return upper;
-  return STATE_ABBREVIATIONS[raw.toLowerCase()] || upper.slice(0, 2);
+function normalizeBoolean(value: any): boolean | null {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
+
+  const normalized = clean(value).toLowerCase();
+
+  if (["true", "1", "yes", "y", "active", "enabled"].includes(normalized)) {
+    return true;
+  }
+
+  if (["false", "0", "no", "n", "inactive", "disabled"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
 }
 
-function isFarmerActive(row: any) {
-  const explicitFlags = [
-    row?.is_active,
-    row?.account_active,
-    row?.approved,
-    row?.marketplace_active,
-    row?.store_active,
-    row?.subscription_active,
-  ];
+function normalizeState(value: any) {
+  const raw = clean(value)
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ");
 
-  // Any explicit true means the farmer is active.
-  if (explicitFlags.some((value) => value === true)) return true;
+  if (!raw) return "";
 
-  // Any explicit false is respected when no active flag is true.
-  if (explicitFlags.some((value) => value === false)) return false;
+  const upper = raw.toUpperCase();
 
+  if (STATE_NAMES[upper]) return upper;
+
+  const fullNameMatch = STATE_ABBREVIATIONS[raw.toLowerCase()];
+  if (fullNameMatch) return fullNameMatch;
+
+  const stateAtEnd = upper.match(
+    /(?:,|\s)(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)(?:\s+\d{5}(?:-\d{4})?)?$/
+  );
+
+  if (stateAtEnd?.[1]) return stateAtEnd[1];
+
+  return "";
+}
+
+function hasPositiveStatus(row: any) {
   const statuses = [
     row?.status,
     row?.account_status,
@@ -95,29 +112,129 @@ function isFarmerActive(row: any) {
     row?.subscription_status,
     row?.verification_status,
     row?.admin_review_status,
+    row?.store_status,
+    row?.marketplace_status,
+    row?.approval_status,
   ]
     .map((value) => clean(value).toLowerCase())
     .filter(Boolean);
 
-  if (
-    statuses.some((status) =>
-      ["inactive", "disabled", "suspended", "rejected", "cancelled", "canceled"].includes(status)
-    )
-  ) {
-    return false;
-  }
+  return statuses.some((status) =>
+    [
+      "active",
+      "approved",
+      "verified",
+      "complete",
+      "completed",
+      "submitted",
+      "live",
+      "published",
+      "enabled",
+      "paid",
+      "current",
+    ].includes(status)
+  );
+}
+
+function hasNegativeStatus(row: any) {
+  const statuses = [
+    row?.status,
+    row?.account_status,
+    row?.membership_status,
+    row?.subscription_status,
+    row?.verification_status,
+    row?.admin_review_status,
+    row?.store_status,
+    row?.marketplace_status,
+    row?.approval_status,
+  ]
+    .map((value) => clean(value).toLowerCase())
+    .filter(Boolean);
 
   return statuses.some((status) =>
-    ["active", "approved", "verified", "complete", "completed", "submitted", "live", "published"].includes(status)
+    [
+      "inactive",
+      "disabled",
+      "suspended",
+      "rejected",
+      "cancelled",
+      "canceled",
+      "deleted",
+      "closed",
+      "expired",
+    ].includes(status)
   );
+}
+
+function isFarmerActive(row: any) {
+  const activeFlagValues = [
+    row?.is_active,
+    row?.account_active,
+    row?.approved,
+    row?.is_approved,
+    row?.marketplace_active,
+    row?.store_active,
+    row?.subscription_active,
+    row?.membership_active,
+    row?.is_live,
+    row?.published,
+  ].map(normalizeBoolean);
+
+  if (activeFlagValues.some((value) => value === true)) return true;
+
+  if (hasPositiveStatus(row)) return true;
+  if (hasNegativeStatus(row)) return false;
+
+  const hasFarmerIdentity = Boolean(
+    clean(
+      row?.id ||
+        row?.farmer_id ||
+        row?.farm_name ||
+        row?.business_name ||
+        row?.company_name ||
+        row?.email
+    )
+  );
+
+  return hasFarmerIdentity;
 }
 
 function getFarmerState(row: any) {
-  return normalizeState(
-    row?.state || row?.farm_state || row?.business_state || row?.store_state || row?.address_state
-  );
-}
+  const directValues = [
+    row?.state,
+    row?.farm_state,
+    row?.business_state,
+    row?.store_state,
+    row?.address_state,
+    row?.location_state,
+    row?.state_code,
+    row?.farm_state_code,
+    row?.shipping_state,
+    row?.pickup_state,
+  ];
 
+  for (const value of directValues) {
+    const normalized = normalizeState(value);
+    if (normalized) return normalized;
+  }
+
+  const addressValues = [
+    row?.address,
+    row?.farm_address,
+    row?.business_address,
+    row?.store_address,
+    row?.pickup_address,
+    row?.full_address,
+    row?.location,
+  ];
+
+  for (const value of addressValues) {
+    const normalized = normalizeState(value);
+    if (normalized) return normalized;
+  }
+
+  return "";
+}
 
 export default function HomeScreen() {
   const [farmersByState, setFarmersByState] = useState<FarmerStateSummary[]>([]);
@@ -126,7 +243,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const activeStateTotal = farmersByState.length;
-  const topStates = useMemo(() => farmersByState.slice(0, 12), [farmersByState]);
+  const topStates = useMemo(() => farmersByState, [farmersByState]);
 
   const loadActiveFarmersByState = useCallback(async () => {
     try {
@@ -134,8 +251,7 @@ export default function HomeScreen() {
 
       const { data, error } = await supabase
         .from("farmers")
-        .select("*")
-        .order("created_at", { ascending: false });
+        .select("*");
 
       if (error) {
         console.log("Active farmers by state error:", error.message);
@@ -145,17 +261,29 @@ export default function HomeScreen() {
       }
 
       const rows = Array.isArray(data) ? data : [];
+
       const activeFarmers = rows.filter((farmer: any) => {
         const state = getFarmerState(farmer);
         return Boolean(state && isFarmerActive(farmer));
       });
 
-      const grouped = activeFarmers.reduce<Record<string, number>>((acc, farmer: any) => {
-        const state = getFarmerState(farmer);
-        if (!state) return acc;
-        acc[state] = (acc[state] || 0) + 1;
-        return acc;
-      }, {});
+      const grouped = activeFarmers.reduce<Record<string, number>>(
+        (acc, farmer: any) => {
+          const state = getFarmerState(farmer);
+
+          if (!state) return acc;
+
+          acc[state] = (acc[state] || 0) + 1;
+          return acc;
+        },
+        {}
+      );
+
+      console.log("Farmer state counter:", {
+        totalFarmerRows: rows.length,
+        activeFarmersWithState: activeFarmers.length,
+        grouped,
+      });
 
       const summaries = Object.entries(grouped)
         .map(([state, farmerCount]) => ({ state, farmerCount }))
