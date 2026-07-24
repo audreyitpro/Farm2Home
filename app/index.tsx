@@ -17,6 +17,7 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "./data/supabaseClient";
+import { getApprovedFarmers } from "./data/farmerStore";
 
 const ui = {
   bg: "#F7FBF4",
@@ -241,60 +242,160 @@ export default function HomeScreen() {
   const [activeFarmerTotal, setActiveFarmerTotal] = useState(0);
   const [loadingFarmerStates, setLoadingFarmerStates] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [farmerCounterError, setFarmerCounterError] = useState("");
 
-  const activeStateTotal = farmersByState.length;
+  const activeStateTotal = useMemo(
+    () => farmersByState.filter((item) => item.farmerCount > 0).length,
+    [farmersByState]
+  );
+
+  /*
+    Show every U.S. state, including states with zero active farmers.
+    Example: MI: 1 active, CA: 0 active.
+  */
   const topStates = useMemo(() => farmersByState, [farmersByState]);
 
   const loadActiveFarmersByState = useCallback(async () => {
     try {
       setLoadingFarmerStates(true);
+      setFarmerCounterError("");
 
-      const { data, error } = await supabase
-        .from("farmers")
-        .select("*");
+      /*
+        Use the same approved-farmer source used by the marketplace, then merge it
+        with live Supabase farmer rows. This avoids showing zero when public RLS
+        prevents the homepage from reading every farmer directly.
+      */
+      let approvedStoreRows: any[] = [];
 
-      if (error) {
-        console.log("Active farmers by state error:", error.message);
-        setFarmersByState([]);
-        setActiveFarmerTotal(0);
-        return;
+      try {
+        const approved = await Promise.resolve(getApprovedFarmers());
+        approvedStoreRows = Array.isArray(approved) ? approved : [];
+      } catch (storeError) {
+        console.log("Approved farmer store lookup skipped:", storeError);
       }
 
-      const rows = Array.isArray(data) ? data : [];
+      const [farmerResult, subscriptionResult] = await Promise.all([
+        supabase.from("farmers").select("*"),
+        supabase.from("farmer_subscriptions").select("*"),
+      ]);
+
+      if (farmerResult.error) {
+        console.log("Active farmers query error:", farmerResult.error.message);
+      }
+
+      if (subscriptionResult.error) {
+        console.log("Farmer subscriptions query skipped:", subscriptionResult.error.message);
+      }
+
+      const databaseFarmers = Array.isArray(farmerResult.data)
+        ? farmerResult.data
+        : [];
+
+      const subscriptions = Array.isArray(subscriptionResult.data)
+        ? subscriptionResult.data
+        : [];
+
+      const subscriptionByFarmerId = new Map<string, any>();
+      const subscriptionByEmail = new Map<string, any>();
+
+      subscriptions.forEach((subscription: any) => {
+        const farmerId = clean(
+          subscription?.farmer_id ||
+            subscription?.user_id ||
+            subscription?.profile_id
+        );
+        const email = clean(
+          subscription?.farmer_email || subscription?.email
+        ).toLowerCase();
+
+        if (farmerId) subscriptionByFarmerId.set(farmerId, subscription);
+        if (email) subscriptionByEmail.set(email, subscription);
+      });
+
+      const mergedByKey = new Map<string, any>();
+
+      [...approvedStoreRows, ...databaseFarmers].forEach((farmer: any, index) => {
+        const id = clean(farmer?.id || farmer?.farmer_id || farmer?.user_id);
+        const email = clean(farmer?.email || farmer?.farmer_email).toLowerCase();
+        const key = id || email || `farmer-${index}`;
+        const existing = mergedByKey.get(key) || {};
+        mergedByKey.set(key, { ...existing, ...farmer });
+      });
+
+      const rows = Array.from(mergedByKey.values());
 
       const activeFarmers = rows.filter((farmer: any) => {
         const state = getFarmerState(farmer);
-        return Boolean(state && isFarmerActive(farmer));
+        if (!state) return false;
+
+        const id = clean(farmer?.id || farmer?.farmer_id || farmer?.user_id);
+        const email = clean(farmer?.email || farmer?.farmer_email).toLowerCase();
+        const subscription =
+          subscriptionByFarmerId.get(id) || subscriptionByEmail.get(email);
+
+        const subscriptionActive = subscription
+          ? isFarmerActive({
+              ...subscription,
+              is_active:
+                subscription?.is_active ?? subscription?.subscription_active,
+              account_active:
+                subscription?.account_active ??
+                clean(subscription?.subscription_status).toLowerCase() === "active",
+            })
+          : false;
+
+        return isFarmerActive(farmer) || subscriptionActive;
       });
 
       const grouped = activeFarmers.reduce<Record<string, number>>(
         (acc, farmer: any) => {
           const state = getFarmerState(farmer);
-
           if (!state) return acc;
-
           acc[state] = (acc[state] || 0) + 1;
           return acc;
         },
         {}
       );
 
-      console.log("Farmer state counter:", {
-        totalFarmerRows: rows.length,
+      /*
+        Build cards for every state, even when the active count is zero.
+        States with active farmers appear first, followed by zero-count states.
+      */
+      const summaries: FarmerStateSummary[] = Object.keys(STATE_NAMES)
+        .map((state) => ({
+          state,
+          farmerCount: grouped[state] || 0,
+        }))
+        .sort(
+          (a, b) =>
+            b.farmerCount - a.farmerCount ||
+            STATE_NAMES[a.state].localeCompare(STATE_NAMES[b.state])
+        );
+
+      console.log("Homepage farmer counter:", {
+        approvedStoreRows: approvedStoreRows.length,
+        databaseFarmers: databaseFarmers.length,
+        subscriptions: subscriptions.length,
+        mergedFarmers: rows.length,
         activeFarmersWithState: activeFarmers.length,
         grouped,
       });
 
-      const summaries = Object.entries(grouped)
-        .map(([state, farmerCount]) => ({ state, farmerCount }))
-        .sort((a, b) => b.farmerCount - a.farmerCount || a.state.localeCompare(b.state));
-
       setFarmersByState(summaries);
       setActiveFarmerTotal(activeFarmers.length);
-    } catch (error) {
+
+      if (!rows.length && farmerResult.error) {
+        setFarmerCounterError(
+          `Unable to read farmers: ${farmerResult.error.message}`
+        );
+      }
+    } catch (error: any) {
       console.log("Active farmer state load failed:", error);
       setFarmersByState([]);
       setActiveFarmerTotal(0);
+      setFarmerCounterError(
+        error?.message || "Unable to load active farmer counts."
+      );
     } finally {
       setLoadingFarmerStates(false);
       setRefreshing(false);
@@ -524,17 +625,42 @@ export default function HomeScreen() {
                       <View style={styles.stateIcon}>
                         <Ionicons name="location-outline" size={18} color={ui.greenDark} />
                       </View>
-                      <View style={styles.liveBadge}>
-                        <View style={styles.liveDot} />
-                        <Text style={styles.liveBadgeText}>Active</Text>
+                      <View
+                        style={[
+                          styles.liveBadge,
+                          item.farmerCount === 0 && styles.zeroBadge,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.liveDot,
+                            item.farmerCount === 0 && styles.zeroDot,
+                          ]}
+                        />
+                        <Text
+                          style={[
+                            styles.liveBadgeText,
+                            item.farmerCount === 0 && styles.zeroBadgeText,
+                          ]}
+                        >
+                          {item.farmerCount > 0 ? "Active" : "0 Active"}
+                        </Text>
                       </View>
                     </View>
 
-                    <Text style={styles.stateAbbreviation}>{item.state}</Text>
-                    <Text style={styles.stateFullName}>{STATE_NAMES[item.state] || item.state}</Text>
-                    <Text style={styles.stateFarmerCount}>{item.farmerCount}</Text>
+                    <Text style={styles.stateAbbreviation}>
+                      {item.state}: {item.farmerCount} active
+                    </Text>
+                    <Text style={styles.stateFullName}>
+                      {STATE_NAMES[item.state] || item.state}
+                    </Text>
+                    <Text style={styles.stateFarmerCount}>
+                      {item.farmerCount}
+                    </Text>
                     <Text style={styles.stateFarmerLabel}>
-                      {item.farmerCount === 1 ? "Farmer" : "Farmers"}
+                      {item.farmerCount === 1
+                        ? "Active Farmer"
+                        : "Active Farmers"}
                     </Text>
 
                     <View style={styles.stateCardFooter}>
@@ -552,7 +678,8 @@ export default function HomeScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.noFarmerStatesTitle}>No active farmer states yet</Text>
                   <Text style={styles.noFarmerStatesText}>
-                    Active farmers will appear here once their account and store are active.
+                    {farmerCounterError ||
+                      "Active farmers will appear here once their account and store are active."}
                   </Text>
                 </View>
                 <TouchableOpacity style={styles.refreshStatesButton} onPress={loadActiveFarmersByState}>
@@ -1017,6 +1144,15 @@ const styles = StyleSheet.create({
     color: ui.greenDark,
     fontWeight: "900",
     fontSize: 9,
+  },
+  zeroBadge: {
+    backgroundColor: "#F1F5F9",
+  },
+  zeroDot: {
+    backgroundColor: "#94A3B8",
+  },
+  zeroBadgeText: {
+    color: "#64748B",
   },
   stateAbbreviation: {
     color: ui.greenDark,
