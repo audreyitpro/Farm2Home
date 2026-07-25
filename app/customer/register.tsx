@@ -591,90 +591,156 @@ export default function CustomerRegister() {
     return fallbackCustomerAccountId();
   }
 
-  async function findCustomerByIdOrEmail(id?: string, targetEmail?: string) {
+  async function findCustomerByIdOrEmail(
+    id?: string,
+    targetEmail?: string
+  ) {
     const cleanId = clean(id);
     const cleanEmail = normalize(targetEmail);
 
     if (cleanId) {
-      const { data, error } = await supabase
+      const byId = await supabase
         .from("customers")
         .select("*")
-        .or(`id.eq.${cleanId},customer_id.eq.${cleanId},auth_user_id.eq.${cleanId},profile_id.eq.${cleanId}`)
-        .limit(1);
+        .eq("id", cleanId)
+        .limit(1)
+        .maybeSingle();
 
-      if (!error && Array.isArray(data) && data[0]) return data[0];
-      if (error) console.log("Customer id lookup error:", error.message);
+      if (!byId.error && byId.data) return byId.data;
+      if (byId.error) {
+        console.log("Customer lookup by id error:", byId.error.message);
+      }
+
+      const byCustomerId = await supabase
+        .from("customers")
+        .select("*")
+        .eq("customer_id", cleanId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!byCustomerId.error && byCustomerId.data) {
+        return byCustomerId.data;
+      }
+
+      const byAuthUserId = await supabase
+        .from("customers")
+        .select("*")
+        .eq("auth_user_id", cleanId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!byAuthUserId.error && byAuthUserId.data) {
+        return byAuthUserId.data;
+      }
     }
 
     if (cleanEmail) {
-      const { data, error } = await supabase
+      const byEmail = await supabase
         .from("customers")
         .select("*")
         .eq("email", cleanEmail)
-        .limit(1);
+        .limit(1)
+        .maybeSingle();
 
-      if (!error && Array.isArray(data) && data[0]) return data[0];
-      if (error) console.log("Customer email lookup error:", error.message);
+      if (!byEmail.error && byEmail.data) return byEmail.data;
+      if (byEmail.error) {
+        console.log("Customer lookup by email error:", byEmail.error.message);
+      }
     }
 
     return null;
   }
 
-  async function findExistingCustomer(cleanEmail: string, cleanUsername: string) {
-    const filters = [
-      cleanEmail ? `email.eq.${cleanEmail}` : "",
-      cleanUsername ? `username.eq.${cleanUsername}` : "",
-    ]
-      .filter(Boolean)
-      .join(",");
+  async function findExistingCustomer(
+    cleanEmail: string,
+    cleanUsername: string
+  ) {
+    if (cleanEmail) {
+      const byEmail = await supabase
+        .from("customers")
+        .select("*")
+        .eq("email", cleanEmail)
+        .limit(1)
+        .maybeSingle();
 
-    if (!filters) return null;
-
-    const { data, error } = await supabase
-      .from("customers")
-      .select("*")
-      .or(filters)
-      .limit(1);
-
-    if (error) {
-      console.log("Customer duplicate check error:", error.message);
-      return null;
+      if (!byEmail.error && byEmail.data) return byEmail.data;
     }
 
-    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+    if (cleanUsername) {
+      const byUsername = await supabase
+        .from("customers")
+        .select("*")
+        .eq("username", cleanUsername)
+        .limit(1)
+        .maybeSingle();
+
+      if (!byUsername.error && byUsername.data) {
+        return byUsername.data;
+      }
+    }
+
+    return null;
   }
 
-  async function getBestCustomerSubscription(id?: string, targetEmail?: string) {
+  async function getBestCustomerSubscription(
+    id?: string,
+    targetEmail?: string
+  ) {
     const cleanId = clean(id);
     const cleanEmail = normalize(targetEmail);
-
-    const filters = [
-      cleanId ? `customer_id.eq.${cleanId}` : "",
-      cleanEmail ? `customer_email.eq.${cleanEmail}` : "",
-    ]
-      .filter(Boolean)
-      .join(",");
-
-    if (!filters) return null;
+    const candidates: any[] = [];
 
     try {
-      const { data, error } = await supabase
-        .from("customer_subscriptions")
-        .select("*")
-        .or(filters)
-        .order("updated_at", { ascending: false })
-        .limit(10);
+      if (cleanId) {
+        const byId = await supabase
+          .from("customer_subscriptions")
+          .select("*")
+          .eq("customer_id", cleanId)
+          .order("updated_at", { ascending: false })
+          .limit(10);
 
-      if (error) {
-        console.log("customer_subscriptions lookup skipped:", error.message);
-        return null;
+        if (!byId.error && Array.isArray(byId.data)) {
+          candidates.push(...byId.data);
+        }
+
+        if (byId.error) {
+          console.log(
+            "customer_subscriptions lookup by id skipped:",
+            byId.error.message
+          );
+        }
       }
 
-      if (!Array.isArray(data) || data.length === 0) return null;
+      if (cleanEmail) {
+        const byEmail = await supabase
+          .from("customer_subscriptions")
+          .select("*")
+          .eq("customer_email", cleanEmail)
+          .order("updated_at", { ascending: false })
+          .limit(10);
 
-      const fixed = data.map((row) => ({
+        if (!byEmail.error && Array.isArray(byEmail.data)) {
+          const existingIds = new Set(candidates.map((row) => row.id));
+          candidates.push(
+            ...byEmail.data.filter((row) => !existingIds.has(row.id))
+          );
+        }
+
+        if (byEmail.error) {
+          console.log(
+            "customer_subscriptions lookup by email skipped:",
+            byEmail.error.message
+          );
+        }
+      }
+
+      if (!candidates.length) return null;
+
+      const fixed = candidates.map((row) => ({
         ...row,
-        stripe_customer_id: removeBadAcctFromCustomerId(row?.stripe_customer_id),
+        stripe_customer_id: removeBadAcctFromCustomerId(
+          row?.stripe_customer_id
+        ),
       }));
 
       const complete = fixed.find(
@@ -749,73 +815,215 @@ export default function CustomerRegister() {
     };
   }
 
-  async function upsertProfile(payload: any) {
-    const now = new Date().toISOString();
+  async function saveProfileSafely(payload: any) {
+    /*
+      Customer registration must not blindly insert/upsert profiles.
+      Existing profile rows can have unique email, username, account_id, or
+      auth_user_id constraints that produce 409 Conflict.
+    */
+    const profileId = clean(payload.profile_id || payload.id);
+    const authUserId = clean(payload.auth_user_id || payload.id);
+    const emailValue = normalize(payload.email);
 
-    const profilePayload = {
-      id: payload.id,
-      auth_user_id: payload.auth_user_id || payload.id,
+    let existing: any = null;
+
+    if (profileId) {
+      const byId = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", profileId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!byId.error && byId.data) existing = byId.data;
+    }
+
+    if (!existing && authUserId) {
+      const byAuthId = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("auth_user_id", authUserId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!byAuthId.error && byAuthId.data) existing = byAuthId.data;
+    }
+
+    if (!existing && emailValue) {
+      const byEmail = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", emailValue)
+        .limit(1)
+        .maybeSingle();
+
+      if (!byEmail.error && byEmail.data) existing = byEmail.data;
+    }
+
+    /*
+      Do not create a second profile from this screen when one already exists.
+      Also do not overwrite account_id when it could conflict with another role.
+    */
+    if (existing?.id) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    const insertPayload = {
+      id: profileId || authUserId,
+      auth_user_id: authUserId || profileId,
       role: "customer",
-      full_name: payload.full_name || payload.name,
-      email: normalize(payload.email),
+      full_name: clean(payload.full_name || payload.name),
+      email: emailValue,
       phone: clean(payload.phone),
-      account_id: payload.account_id || null,
-      created_at: payload.created_at || now,
+      created_at: now,
+      updated_at: now,
     };
 
     const { data, error } = await supabase
       .from("profiles")
-      .upsert(profilePayload, { onConflict: "id" })
+      .insert(insertPayload)
       .select("*")
       .maybeSingle();
 
-    if (error) throw error;
-    return data || profilePayload;
+    if (error) {
+      /*
+        If another process created the profile between lookup and insert,
+        re-read it instead of treating the conflict as registration failure.
+      */
+      const errorStatus = Number((error as any)?.status ?? 0);
+
+      if (error.code === "23505" || errorStatus === 409) {
+        const retry = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("email", emailValue)
+          .limit(1)
+          .maybeSingle();
+
+        if (!retry.error && retry.data) return retry.data;
+      }
+
+      throw error;
+    }
+
+    return data || insertPayload;
   }
 
   async function saveCustomerRow(customerPayload: any) {
+    const existing = await findCustomerByIdOrEmail(
+      customerPayload.id,
+      customerPayload.email
+    );
+
+    if (existing?.id) {
+      const updatePayload = {
+        ...customerPayload,
+        id: undefined,
+        customer_id: existing.customer_id || customerPayload.customer_id,
+        auth_user_id: existing.auth_user_id || customerPayload.auth_user_id,
+        profile_id: existing.profile_id || customerPayload.profile_id,
+        created_at: undefined,
+      };
+
+      Object.keys(updatePayload).forEach((key) => {
+        if (updatePayload[key] === undefined) delete updatePayload[key];
+      });
+
+      const { data, error } = await supabase
+        .from("customers")
+        .update(updatePayload)
+        .eq("id", existing.id)
+        .select("*")
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data?.id) throw new Error("Customer record did not update.");
+      return data;
+    }
+
     const { data, error } = await supabase
       .from("customers")
-      .upsert(customerPayload, { onConflict: "id" })
+      .insert(customerPayload)
       .select("*")
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      const errorStatus = Number((error as any)?.status ?? 0);
+
+      if (error.code === "23505" || errorStatus === 409) {
+        const retry = await findCustomerByIdOrEmail(
+          customerPayload.id,
+          customerPayload.email
+        );
+        if (retry?.id) return retry;
+      }
+
+      throw error;
+    }
+
     if (!data?.id) throw new Error("Customer record did not save.");
     return data;
   }
 
-  async function cleanBadCustomerSubscriptionAcct(customerEmail?: string, id?: string) {
-    const filters = [
-      id ? `customer_id.eq.${id}` : "",
-      customerEmail ? `customer_email.eq.${normalize(customerEmail)}` : "",
-    ]
-      .filter(Boolean)
-      .join(",");
-
-    if (!filters) return;
+  async function cleanBadCustomerSubscriptionAcct(
+    customerEmail?: string,
+    id?: string
+  ) {
+    const normalizedEmail = normalize(customerEmail);
 
     try {
-      const { error } = await supabase
-        .from("customer_subscriptions")
-        .update({
-          stripe_customer_id: null,
-          stripe_subscription_id: null,
-          subscription_status: "pending_payment",
-          updated_at: new Date().toISOString(),
-        })
-        .or(filters)
-        .like("stripe_customer_id", "acct_%");
+      if (id) {
+        const { error } = await supabase
+          .from("customer_subscriptions")
+          .update({
+            stripe_customer_id: null,
+            stripe_subscription_id: null,
+            subscription_status: "pending_payment",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("customer_id", id)
+          .like("stripe_customer_id", "acct_%");
 
-      if (error) console.log("clean bad customer_subscriptions skipped:", error.message);
+        if (error) {
+          console.log(
+            "clean bad customer subscription by id skipped:",
+            error.message
+          );
+        }
+      }
+
+      if (normalizedEmail) {
+        const { error } = await supabase
+          .from("customer_subscriptions")
+          .update({
+            stripe_customer_id: null,
+            stripe_subscription_id: null,
+            subscription_status: "pending_payment",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("customer_email", normalizedEmail)
+          .like("stripe_customer_id", "acct_%");
+
+        if (error) {
+          console.log(
+            "clean bad customer subscription by email skipped:",
+            error.message
+          );
+        }
+      }
     } catch (error) {
       console.log("clean bad customer_subscriptions exception:", error);
     }
   }
 
   async function upsertCustomerSubscriptionRow(customer: any) {
-    const id = clean(customer?.id || customer?.customer_id || customer?.customerId);
-    const customerEmail = normalize(customer?.email || customer?.customer_email);
+    const id = clean(
+      customer?.id || customer?.customer_id || customer?.customerId
+    );
+    const customerEmail = normalize(
+      customer?.email || customer?.customer_email
+    );
     const stripeCustomer = pickStripeCustomerId(
       customer?.stripe_customer_id,
       customer?.stripe_id,
@@ -833,8 +1041,10 @@ export default function CustomerRegister() {
     await cleanBadCustomerSubscriptionAcct(customerEmail, id);
 
     const now = new Date().toISOString();
-
-    const status = clean(customer?.subscription_status || (stripeSub ? "active" : "pending_payment"));
+    const status = clean(
+      customer?.subscription_status ||
+        (stripeSub ? "active" : "pending_payment")
+    );
 
     const payload = {
       customer_id: id,
@@ -849,32 +1059,62 @@ export default function CustomerRegister() {
     };
 
     try {
-      const { data: existing, error: lookupError } = await supabase
-        .from("customer_subscriptions")
-        .select("id")
-        .or(`customer_id.eq.${id},customer_email.eq.${customerEmail}`)
-        .limit(1);
+      let existingId = "";
 
-      if (lookupError) {
-        console.log("customer_subscriptions lookup skipped:", lookupError.message);
-        return;
+      if (id) {
+        const byId = await supabase
+          .from("customer_subscriptions")
+          .select("id")
+          .eq("customer_id", id)
+          .limit(1)
+          .maybeSingle();
+
+        if (!byId.error && byId.data?.id) {
+          existingId = byId.data.id;
+        }
       }
 
-      if (Array.isArray(existing) && existing[0]?.id) {
+      if (!existingId && customerEmail) {
+        const byEmail = await supabase
+          .from("customer_subscriptions")
+          .select("id")
+          .eq("customer_email", customerEmail)
+          .limit(1)
+          .maybeSingle();
+
+        if (!byEmail.error && byEmail.data?.id) {
+          existingId = byEmail.data.id;
+        }
+      }
+
+      if (existingId) {
         const { error } = await supabase
           .from("customer_subscriptions")
           .update(payload)
-          .eq("id", existing[0].id);
+          .eq("id", existingId);
 
-        if (error) console.log("customer_subscriptions update skipped:", error.message);
+        if (error) {
+          console.log(
+            "customer_subscriptions update skipped:",
+            error.message
+          );
+        }
         return;
       }
 
       const { error } = await supabase
         .from("customer_subscriptions")
-        .insert({ ...payload, created_at: now });
+        .insert({
+          ...payload,
+          created_at: now,
+        });
 
-      if (error) console.log("customer_subscriptions insert skipped:", error.message);
+      if (error) {
+        console.log(
+          "customer_subscriptions insert skipped:",
+          error.message
+        );
+      }
     } catch (error) {
       console.log("customer_subscriptions skipped:", error);
     }
@@ -1181,63 +1421,7 @@ export default function CustomerRegister() {
 
     await supabase.from("customers").update(completePayload).eq("id", customerIdValue);
 
-    try {
-      await supabase
-        .from("profiles")
-        .update({
-          role: "customer",
-          full_name: customerRow.full_name || customerRow.name || "",
-          email: customerRow.email,
-          phone: customerRow.phone || "",
-          account_id: customerRow.account_id || null,
-        })
-        .eq("id", customerIdValue);
-    } catch (profileError) {
-      console.log("profile complete update skipped:", profileError);
-    }
 
-    try {
-      await supabase.from("admin_verifications").upsert(
-        {
-          id: customerIdValue,
-          customer_id: customerIdValue,
-          profile_id: customerIdValue,
-          account_id: customerRow?.account_id || null,
-          account_type: "CUSTOMER",
-          role: "customer",
-          type: "CUSTOMER",
-          full_name: customerRow?.full_name || customerRow?.name || "",
-          name: customerRow?.name || customerRow?.full_name || "",
-          email: customerRow?.email || "",
-          phone: customerRow?.phone || "",
-          username: customerRow?.username || "",
-          status: "COMPLETE",
-          compliance_status: "COMPLETE",
-          admin_review_status: "complete",
-          review_decision: "complete",
-          approved: true,
-          rejected: false,
-          reviewed: true,
-          needs_more_info: false,
-          account_active: true,
-          application_complete: true,
-          application_submitted: true,
-          submitted_at: now,
-          membership_status: completePayload.membership_status,
-          subscription_status: completePayload.subscription_status,
-          customer_membership_paid: true,
-          stripe_customer_id: stripeCustomer || null,
-          stripe_id: stripeCustomer || null,
-          stripe_subscription_id: stripeSub || null,
-          subscription_id: stripeSub || null,
-          updated_at: now,
-          created_at: customerRow?.created_at || now,
-        },
-        { onConflict: "id" }
-      );
-    } catch (adminError) {
-      console.log("admin_verifications customer skipped:", adminError);
-    }
 
     const finalCustomer = buildCustomerSession({
       ...customerRow,
@@ -1285,7 +1469,14 @@ export default function CustomerRegister() {
     const existingCustomer = await findExistingCustomer(cleanEmail, cleanUsername);
 
     let finalCustomerId = clean(customerId || existingCustomer?.id);
-    let finalAccountId = clean(accountId || existingCustomer?.account_id);
+    const existingAccountId = clean(existingCustomer?.account_id);
+    const requestedAccountId = clean(accountId);
+
+    let finalAccountId = /^Customer_\d+$/i.test(existingAccountId)
+      ? existingAccountId
+      : /^Customer_\d+$/i.test(requestedAccountId)
+      ? requestedAccountId
+      : "";
 
     if (!finalCustomerId) {
       const { data: currentUserData } = await supabase.auth.getUser();
@@ -1408,8 +1599,11 @@ export default function CustomerRegister() {
       updated_at: now,
     };
 
-    await upsertProfile(customerPayload);
-    const customerRow = await saveCustomerRow(customerPayload);
+    const savedProfile = await saveProfileSafely(customerPayload);
+    const customerRow = await saveCustomerRow({
+      ...customerPayload,
+      profile_id: clean(savedProfile?.id || customerPayload.profile_id),
+    });
     await upsertCustomerSubscriptionRow(customerRow);
 
     const finalSession = buildCustomerSession(customerRow);
