@@ -130,36 +130,28 @@ export default function HomeScreen() {
     [farmersByState]
   );
 
-  const allStates = useMemo(() => farmersByState, [farmersByState]);
+  const activeStateCards = useMemo(
+    () => farmersByState.filter((item) => item.farmerCount > 0),
+    [farmersByState]
+  );
 
   const loadActiveFarmersByState = useCallback(async () => {
     try {
       setLoadingFarmerStates(true);
 
       /*
-        Source of truth:
-        public.farmers
-
-        Active farmer rule:
-        account_active = true
-
-        The query reads only the fields needed for the homepage counter.
+        Homepage counter source of truth:
+        - State: farmers.state
+        - Active farmer: farmers.farmer_activation_paid = true
       */
       const { data, error } = await supabase
         .from("farmers")
-        .select("id,state,account_active")
-        .eq("account_active", true);
+        .select("id,state,farmer_activation_paid")
+        .eq("farmer_activation_paid", true);
 
       if (error) {
         console.log("Active farmers by state error:", error.message);
-
-        // Still show all 50 states with zero counts when the query fails.
-        setFarmersByState(
-          Object.keys(STATE_NAMES).map((state) => ({
-            state,
-            farmerCount: 0,
-          }))
-        );
+        setFarmersByState([]);
         setActiveFarmerTotal(0);
         return;
       }
@@ -181,14 +173,14 @@ export default function HomeScreen() {
       );
 
       /*
-        Always build all 50 state cards.
-        States with active farmers are listed first.
-        States with zero active farmers follow alphabetically.
+        Compact display:
+        Show only states that currently have at least one active farmer.
+        Highest counts appear first.
       */
-      const summaries: FarmerStateSummary[] = Object.keys(STATE_NAMES)
-        .map((state) => ({
+      const summaries: FarmerStateSummary[] = Object.entries(grouped)
+        .map(([state, farmerCount]) => ({
           state,
-          farmerCount: grouped[state] || 0,
+          farmerCount,
         }))
         .sort(
           (a, b) =>
@@ -199,20 +191,13 @@ export default function HomeScreen() {
       setFarmersByState(summaries);
       setActiveFarmerTotal(activeFarmers.length);
 
-      console.log("Homepage farmer counts by state:", {
+      console.log("Homepage active farmer counter:", {
         activeFarmerTotal: activeFarmers.length,
         grouped,
-        stateCardTotal: summaries.length,
       });
     } catch (error) {
       console.log("Active farmer state load failed:", error);
-
-      setFarmersByState(
-        Object.keys(STATE_NAMES).map((state) => ({
-          state,
-          farmerCount: 0,
-        }))
-      );
+      setFarmersByState([]);
       setActiveFarmerTotal(0);
     } finally {
       setLoadingFarmerStates(false);
@@ -426,60 +411,37 @@ export default function HomeScreen() {
                 <ActivityIndicator size="small" color={ui.green} />
                 <Text style={styles.farmerLoadingText}>Loading active farmer states...</Text>
               </View>
-            ) : allStates.length ? (
+            ) : activeStateCards.length ? (
               <View style={styles.farmerStateCards}>
-                {allStates.map((item) => (
+                {activeStateCards.map((item) => (
                   <TouchableOpacity
                     key={item.state}
                     style={styles.farmerStateCard}
                     onPress={() => openMarketplaceForState(item.state)}
                     activeOpacity={0.88}
                   >
-                    <View style={styles.stateCardTop}>
-                      <View style={styles.stateIcon}>
-                        <Ionicons name="location-outline" size={18} color={ui.greenDark} />
-                      </View>
-                      <View
-                        style={[
-                          styles.liveBadge,
-                          item.farmerCount === 0 && styles.zeroBadge,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.liveDot,
-                            item.farmerCount === 0 && styles.zeroDot,
-                          ]}
-                        />
-                        <Text
-                          style={[
-                            styles.liveBadgeText,
-                            item.farmerCount === 0 && styles.zeroBadgeText,
-                          ]}
-                        >
-                          {item.farmerCount > 0 ? "Active" : "0 Active"}
-                        </Text>
-                      </View>
+                    <View style={styles.stateIcon}>
+                      <Ionicons
+                        name="location-outline"
+                        size={16}
+                        color={ui.greenDark}
+                      />
                     </View>
 
-                    <Text style={styles.stateAbbreviation}>
-                      {item.state}: {item.farmerCount} active
-                    </Text>
-
-                    <Text style={styles.stateFullName}>
-                      {STATE_NAMES[item.state] || item.state}
-                    </Text>
-
-                    <Text style={styles.stateFarmerLabel}>
-                      {item.farmerCount === 1
-                        ? "1 Active Farmer"
-                        : `${item.farmerCount} Active Farmers`}
-                    </Text>
-
-                    <View style={styles.stateCardFooter}>
-                      <Text style={styles.viewFarmsText}>View farms</Text>
-                      <Ionicons name="chevron-forward-outline" size={15} color={ui.greenDark} />
+                    <View style={styles.compactStateText}>
+                      <Text style={styles.stateAbbreviation}>
+                        {item.state}: {item.farmerCount} active
+                      </Text>
+                      <Text style={styles.stateFullName} numberOfLines={1}>
+                        {STATE_NAMES[item.state] || item.state}
+                      </Text>
                     </View>
+
+                    <Ionicons
+                      name="chevron-forward-outline"
+                      size={16}
+                      color={ui.greenDark}
+                    />
                   </TouchableOpacity>
                 ))}
               </View>
@@ -491,7 +453,7 @@ export default function HomeScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.noFarmerStatesTitle}>No active farmer states yet</Text>
                   <Text style={styles.noFarmerStatesText}>
-                    Active farmers will appear here once their account and store are active.
+                    Farmers will appear here when farmer_activation_paid is true and a valid state is saved.
                   </Text>
                 </View>
                 <TouchableOpacity style={styles.refreshStatesButton} onPress={loadActiveFarmersByState}>
@@ -916,22 +878,20 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   farmerStateCard: {
-    width: 160,
-    minHeight: 150,
+    width: 220,
+    minHeight: 72,
     flexGrow: 1,
-    flexBasis: 150,
-    maxWidth: 190,
+    flexBasis: 200,
+    maxWidth: 270,
     backgroundColor: "#F0FDF4",
-    borderRadius: 22,
-    padding: 14,
+    borderRadius: 18,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
     borderWidth: 1,
     borderColor: "#BBF7D0",
-  },
-  stateCardTop: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
+    gap: 10,
   },
   stateIcon: {
     width: 36,
@@ -941,39 +901,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  liveBadge: {
-    backgroundColor: ui.white,
-    borderRadius: 999,
-    paddingHorizontal: 7,
-    paddingVertical: 5,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 999,
-    backgroundColor: "#22C55E",
-  },
-  liveBadgeText: {
-    color: ui.greenDark,
-    fontWeight: "900",
-    fontSize: 9,
-  },
-  zeroBadge: {
-    backgroundColor: "#F1F5F9",
-  },
-  zeroDot: {
-    backgroundColor: "#94A3B8",
-  },
-  zeroBadgeText: {
-    color: "#64748B",
+  compactStateText: {
+    flex: 1,
+    minWidth: 0,
   },
   stateAbbreviation: {
     color: ui.greenDark,
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: "900",
   },
   stateFullName: {
@@ -981,34 +916,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "800",
     marginTop: 2,
-    minHeight: 30,
-  },
-  stateFarmerCount: {
-    color: ui.greenDark,
-    fontSize: 31,
-    fontWeight: "900",
-    marginTop: 8,
-  },
-  stateFarmerLabel: {
-    color: ui.muted,
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: "800",
-    marginTop: 8,
-  },
-  stateCardFooter: {
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#BBF7D0",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  viewFarmsText: {
-    color: ui.greenDark,
-    fontSize: 11,
-    fontWeight: "900",
   },
   noFarmerStatesCard: {
     backgroundColor: ui.surface,
