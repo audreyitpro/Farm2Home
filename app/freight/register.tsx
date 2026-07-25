@@ -421,7 +421,39 @@ export default function FreightRegister() {
   }
 
   function toggleEquipment(key: string) {
-    setSelectedEquipment((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]));
+    setSelectedEquipment((prev) =>
+      prev.includes(key)
+        ? prev.filter((item) => item !== key)
+        : [...prev, key]
+    );
+  }
+
+  async function saveEquipmentSelectionLocally(
+    carrierId: string,
+    equipment: string[]
+  ) {
+    await AsyncStorage.setItem(
+      `freightEquipment:${carrierId}`,
+      JSON.stringify(equipment)
+    );
+  }
+
+  async function loadEquipmentSelectionLocally(carrierId: string) {
+    if (!carrierId) return;
+
+    const raw = await AsyncStorage.getItem(`freightEquipment:${carrierId}`);
+    if (!raw) return;
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSelectedEquipment(
+          parsed.map((item) => normalize(item)).filter(Boolean)
+        );
+      }
+    } catch {
+      // Ignore malformed legacy local values.
+    }
   }
 
   async function goNext() {
@@ -518,65 +550,16 @@ export default function FreightRegister() {
         carrierId,
         {
           [key]: savedUrl,
-          documents_complete: documentsAreComplete,
-          compliance_status: documentsAreComplete
-            ? "PENDING_PAYMENT"
-            : "PENDING_DOCUMENTS",
-          admin_review_status: documentsAreComplete
-            ? "pending_payment"
-            : "pending_documents",
           updated_at: now,
         },
         false
       );
 
       /*
-        Keep a normalized document record too. Failure here should not undo the
-        freight_users save because freight_users is the source used by this form.
+        The deployed project does not contain public.freight_documents.
+        The document URL is stored directly in the matching freight_users column,
+        so no second table write is required.
       */
-      const existingRecord = await supabase
-        .from("freight_documents")
-        .select("id")
-        .eq("freight_id", carrierId)
-        .eq("document_type", key)
-        .limit(1)
-        .maybeSingle();
-
-      const documentPayload = {
-        freight_id: carrierId,
-        document_type: key,
-        title:
-          [...REQUIRED_DOCUMENTS, ...OPTIONAL_DOCUMENTS].find((doc) => doc.key === key)?.label ||
-          key,
-        file_name: safeName,
-        file_url: savedUrl,
-        storage_path: path,
-        status: "uploaded",
-        review_status: "pending_review",
-        updated_at: now,
-      };
-
-      if (!existingRecord.error && existingRecord.data?.id) {
-        const { error: recordUpdateError } = await supabase
-          .from("freight_documents")
-          .update(documentPayload)
-          .eq("id", existingRecord.data.id);
-
-        if (recordUpdateError) {
-          console.log("freight_documents update skipped:", recordUpdateError.message);
-        }
-      } else {
-        const { error: recordInsertError } = await supabase
-          .from("freight_documents")
-          .insert({
-            ...documentPayload,
-            created_at: now,
-          });
-
-        if (recordInsertError) {
-          console.log("freight_documents insert skipped:", recordInsertError.message);
-        }
-      }
 
       setDocuments(nextDocuments);
 
@@ -673,6 +656,8 @@ export default function FreightRegister() {
           .map((item) => normalize(item))
           .filter(Boolean)
       );
+    } else if (rowFreightId) {
+      void loadEquipmentSelectionLocally(rowFreightId);
     }
   }
 
@@ -1106,102 +1091,16 @@ export default function FreightRegister() {
     if (error) throw error;
   }
 
-  async function saveAdminVerificationIfTableExists(carrierId: string, savedFreightUser: any) {
-    const now = new Date().toISOString();
-    const paid = Boolean(savedFreightUser.subscription_id);
-    const docsOk = hasRequiredDocuments(savedFreightUser);
-    const complete = paid && docsOk && isStripeConnectAccountId(savedFreightUser.freight_account);
-
-    const payload = {
-      id: carrierId,
-      account_id: savedFreightUser.account_id,
-      carrier_id: carrierId,
-      freight_id: carrierId,
-      profile_id: savedFreightUser.profile_id,
-      account_type: "FREIGHT_CARRIER",
-      role: "freight",
-      type: "FREIGHT_CARRIER",
-      company_name: companyName.trim(),
-      business_name: companyName.trim(),
-      contact_name: contactName.trim(),
-      owner_name: contactName.trim(),
-      email: normalize(email),
-      phone: phone.trim(),
-      username: normalize(username),
-      business_address: businessAddress.trim(),
-      city: city.trim(),
-      state: stateValue.trim().toUpperCase(),
-      zip_code: zipCode.trim(),
-      mdot_number: mdotNumber.trim(),
-      dot_number: mdotNumber.trim(),
-      mc_number: mcNumber.trim(),
-      insurance_provider: insuranceProvider.trim(),
-      insurance_policy_number: insurancePolicyNumber.trim(),
-      authority_active: authorityActive,
-      insurance_active: insuranceActive,
-      licensed_livestock: licensedLivestock,
-      licensed_refrigerated_food: licensedRefrigeratedFood,
-      cdl_document: documents.cdl_document || null,
-      dot_document: documents.dot_document || null,
-      mc_authority_document: documents.mc_authority_document || null,
-      insurance_document: documents.insurance_document || null,
-      w9_document: documents.w9_document || null,
-      vehicle_registration_document: documents.vehicle_registration_document || null,
-      cargo_insurance_document: documents.cargo_insurance_document || null,
-      business_license_document: documents.business_license_document || null,
-      hipaa_certificate: documents.hipaa_certificate || null,
-      bloodborne_certificate: documents.bloodborne_certificate || null,
-      tsa_certificate: documents.tsa_certificate || null,
-      food_handling_certificate: documents.food_handling_certificate || null,
-      documents_complete: docsOk,
-      status: complete ? "SUBMITTED" : docsOk ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
-      compliance_status: complete ? "SUBMITTED" : docsOk ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
-      admin_review_status: complete ? "submitted" : docsOk ? "pending_payment" : "pending_documents",
-      approved: complete,
-      rejected: false,
-      reviewed: false,
-      needs_more_info: false,
-      account_active: complete,
-      membership_status: paid ? "active" : "pending_payment",
-      subscription_status: subscriptionStatus || (paid ? "active" : "pending_payment"),
-      freight_membership_paid: paid,
-      application_submitted: complete,
-      submitted_at: complete ? now : null,
-      stripe_customer_id: savedFreightUser.stripe_customer_id || null,
-      freight_account: savedFreightUser.freight_account || null,
-      stripe_account_id: savedFreightUser.freight_account || null,
-      stripe_subscription_id: savedFreightUser.subscription_id || null,
-      subscription_id: savedFreightUser.subscription_id || null,
-      updated_at: now,
-      created_at: now,
-    };
-
-    const existingVerification = await supabase
-      .from("admin_verifications")
-      .select("id")
-      .eq("id", carrierId)
-      .limit(1)
-      .maybeSingle();
-
-    if (!existingVerification.error && existingVerification.data?.id) {
-      const { error } = await supabase
-        .from("admin_verifications")
-        .update(payload)
-        .eq("id", carrierId);
-
-      if (error) {
-        console.log("admin_verifications update skipped:", error.message);
-      }
-      return;
-    }
-
-    const { error } = await supabase
-      .from("admin_verifications")
-      .insert(payload);
-
-    if (error) {
-      console.log("admin_verifications insert skipped:", error.message);
-    }
+  async function saveAdminVerificationIfTableExists(
+    _carrierId: string,
+    _savedFreightUser: any
+  ) {
+    /*
+      Admin review is not a dashboard gate, and the deployed admin_verifications
+      table does not contain the authority/document fields used by older code.
+      Do not write to that table from freight registration.
+    */
+    return;
   }
 
   async function saveFreightUserRow(authId: string, passedAccountId?: string) {
@@ -1281,8 +1180,6 @@ export default function FreightRegister() {
       insurance_active: insuranceActive,
       licensed_livestock: licensedLivestock,
       licensed_refrigerated_food: licensedRefrigeratedFood,
-      equipment_type: selectedEquipment.join(","),
-      equipment_types: selectedEquipment.join(","),
       cdl_document: documents.cdl_document || null,
       dot_document: documents.dot_document || null,
       mc_authority_document: documents.mc_authority_document || null,
@@ -1294,8 +1191,6 @@ export default function FreightRegister() {
       hipaa_certificate: documents.hipaa_certificate || null,
       bloodborne_certificate: documents.bloodborne_certificate || null,
       tsa_certificate: documents.tsa_certificate || null,
-      food_handling_certificate: documents.food_handling_certificate || null,
-      documents_complete: docsOk,
       updated_at: now,
     };
 
@@ -1341,6 +1236,10 @@ export default function FreightRegister() {
     });
 
     await saveAdminVerificationIfTableExists(authId, savedFreightUser);
+    await saveEquipmentSelectionLocally(
+      savedFreightUser.id,
+      selectedEquipment
+    );
 
     const finalRow = {
       ...savedFreightUser,
@@ -1676,84 +1575,106 @@ export default function FreightRegister() {
     if (saving) return;
 
     try {
+      setSaving(true);
 
-      /*
-        saveFreightProfile(true) already persists the complete freight_users row,
-        freight_subscriptions row, equipment types, documents, Stripe IDs, and
-        the normalized freight session.
+      const currentFreightId = clean(savedCarrierId || freightId);
+      const currentAccountId = clean(accountId);
+      const currentCustomerId = pickStripeCustomerId(stripeCustomerId);
+      const currentSubscriptionId =
+        pickStripeSubscriptionId(subscriptionId);
+      const currentConnectId =
+        pickStripeConnectAccountId(freightAccount);
 
-        The previous submit handler performed a second PATCH against freight_users
-        with optional columns such as application_submitted and submitted_at.
-        In the deployed database, at least one of those columns is unavailable,
-        which caused the final 400 Bad Request and prevented dashboard navigation.
-      */
-      const saved = await saveFreightProfile(true);
-      if (!saved?.id) return;
+      const missing = [
+        !currentFreightId ? "Freight Profile" : "",
+        !/^Freight_\d+$/i.test(currentAccountId)
+          ? "Valid Freight Account ID"
+          : "",
+        !documentsComplete ? "Required Documents" : "",
+        !currentCustomerId ? "Stripe Customer ID" : "",
+        !currentSubscriptionId ? "Subscription ID" : "",
+        !currentConnectId ? "Stripe Connect Account" : "",
+      ].filter(Boolean);
 
-      if (!hasCompleteDashboardAccess(saved)) {
-        const missing = [
-          !saved.id ? "Freight Profile" : "",
-          !/^Freight_\d+$/i.test(clean(saved.account_id)) ? "Valid Freight Account ID" : "",
-          !hasRequiredDocuments(saved) ? "Required Documents" : "",
-          !isStripeCustomerId(saved.stripe_customer_id) ? "Stripe Customer ID" : "",
-          !isStripeSubscriptionId(saved.subscription_id) ? "Subscription ID" : "",
-          !isStripeConnectAccountId(saved.freight_account) ? "Stripe Connect Account" : "",
-        ].filter(Boolean);
-
-        Alert.alert("Setup Incomplete", `Missing: ${missing.join(", ")}.`);
+      if (missing.length) {
+        Alert.alert(
+          "Setup Incomplete",
+          `Missing: ${missing.join(", ")}.`
+        );
         setStep(5);
         return;
       }
 
-      const finalFreightAccountId = /^Freight_\d+$/i.test(
-        clean(saved.account_id)
-      )
-        ? clean(saved.account_id)
-        : clean(accountId) || (await generateFreightAccountId());
-
+      /*
+        All six requirements are already present in state. Do not call
+        saveFreightProfile() again here because that repeats a broad PATCH and
+        can fail on optional schema fields. Save the verified session and route.
+      */
       const dashboardRow = {
-        ...saved,
-        account_id: finalFreightAccountId,
-        accountId: finalFreightAccountId,
+        id: currentFreightId,
+        freight_id: currentFreightId,
+        freightId: currentFreightId,
+        profile_id: profileId || currentFreightId,
         role: "freight",
-        freightId: saved.freight_id || saved.id,
-        freight_id: saved.freight_id || saved.id,
-        stripeCustomerId: saved.stripe_customer_id,
-        stripe_customer_id: saved.stripe_customer_id,
-        stripeSubscriptionId: saved.subscription_id,
-        stripe_subscription_id: saved.subscription_id,
-        subscriptionId: saved.subscription_id,
-        subscription_id: saved.subscription_id,
-        freightAccount: saved.freight_account,
-        freight_account: saved.freight_account,
-        stripeAccountId: saved.freight_account,
-        stripe_account_id: saved.freight_account,
-        documents_complete: true,
+        company_name: companyName.trim(),
+        companyName: companyName.trim(),
+        business_name: companyName.trim(),
+        businessName: companyName.trim(),
+        contact_name: contactName.trim(),
+        full_name: contactName.trim(),
+        fullName: contactName.trim(),
+        email: normalize(email),
+        phone: phone.trim(),
+        username: normalize(username),
+        account_id: currentAccountId,
+        accountId: currentAccountId,
+        stripe_customer_id: currentCustomerId,
+        stripeCustomerId: currentCustomerId,
+        subscription_id: currentSubscriptionId,
+        stripe_subscription_id: currentSubscriptionId,
+        subscriptionId: currentSubscriptionId,
+        stripeSubscriptionId: currentSubscriptionId,
+        freight_account: currentConnectId,
+        stripe_account_id: currentConnectId,
+        freightAccount: currentConnectId,
+        stripeAccountId: currentConnectId,
+        subscription_status: subscriptionStatus || "active",
+        membership_status: "active",
         account_active: true,
         freight_membership_paid: true,
-        membership_status: "active",
-        subscription_status: saved.subscription_status || "active",
-        equipment_type: clean(saved.equipment_type || selectedEquipment.join(",")),
+        selected_equipment: selectedEquipment,
+        cdl_document: documents.cdl_document,
+        dot_document: documents.dot_document,
+        mc_authority_document: documents.mc_authority_document,
+        insurance_document: documents.insurance_document,
+        w9_document: documents.w9_document,
+        vehicle_registration_document:
+          documents.vehicle_registration_document,
+        cargo_insurance_document:
+          documents.cargo_insurance_document,
+        business_license_document:
+          documents.business_license_document,
+        updated_at: new Date().toISOString(),
       };
 
+      await saveEquipmentSelectionLocally(
+        currentFreightId,
+        selectedEquipment
+      );
       await saveFreightSession(dashboardRow);
 
-      /*
-        Use replace after the local session is fully written. No additional
-        freight_users PATCH is needed here.
-      */
       router.replace({
         pathname: "/freight/dashboard",
         params: {
-          freightId: dashboardRow.freight_id,
-          accountId: dashboardRow.account_id,
+          freightId: currentFreightId,
+          accountId: currentAccountId,
         },
       } as any);
     } catch (error: any) {
-      console.log("Submit freight dashboard error:", error);
+      console.log("Freight dashboard route error:", error);
       Alert.alert(
-        "Dashboard Login Error",
-        error?.message || "Your freight information is saved, but the dashboard could not be opened."
+        "Dashboard Error",
+        error?.message || "Unable to open the freight dashboard."
       );
     } finally {
       setSaving(false);
