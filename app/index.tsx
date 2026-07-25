@@ -140,9 +140,53 @@ export default function HomeScreen() {
       setLoadingFarmerStates(true);
 
       /*
-        Homepage counter source of truth:
-        - State: farmers.state
-        - Active farmer: farmers.farmer_activation_paid = true
+        Public homepage source of truth:
+        public.get_active_farmer_counts_by_state()
+
+        This RPC is used because the homepage is normally viewed before login.
+        A direct public.farmers query can return an empty array when Row Level
+        Security blocks anonymous reads, even though farmer rows exist.
+      */
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        "get_active_farmer_counts_by_state"
+      );
+
+      if (!rpcError && Array.isArray(rpcData)) {
+        const summaries: FarmerStateSummary[] = rpcData
+          .map((row: any) => ({
+            state: normalizeState(row?.state),
+            farmerCount: Number(row?.farmer_count || 0),
+          }))
+          .filter(
+            (item: FarmerStateSummary) =>
+              Boolean(item.state) &&
+              Boolean(STATE_NAMES[item.state]) &&
+              item.farmerCount > 0
+          )
+          .sort(
+            (a: FarmerStateSummary, b: FarmerStateSummary) =>
+              b.farmerCount - a.farmerCount ||
+              STATE_NAMES[a.state].localeCompare(STATE_NAMES[b.state])
+          );
+
+        setFarmersByState(summaries);
+        setActiveFarmerTotal(
+          summaries.reduce((total, item) => total + item.farmerCount, 0)
+        );
+
+        console.log("Homepage active farmer counts from RPC:", summaries);
+        return;
+      }
+
+      console.log(
+        "Active farmer RPC unavailable; trying direct farmers query:",
+        rpcError?.message
+      );
+
+      /*
+        Development fallback:
+        This works only when the current user or anonymous role has SELECT access
+        to public.farmers.
       */
       const { data, error } = await supabase
         .from("farmers")
@@ -150,10 +194,7 @@ export default function HomeScreen() {
         .eq("farmer_activation_paid", true);
 
       if (error) {
-        console.log("Active farmers by state error:", error.message);
-        setFarmersByState([]);
-        setActiveFarmerTotal(0);
-        return;
+        throw error;
       }
 
       const activeFarmers = Array.isArray(data) ? data : [];
@@ -172,16 +213,12 @@ export default function HomeScreen() {
         {}
       );
 
-      /*
-        Compact display:
-        Show only states that currently have at least one active farmer.
-        Highest counts appear first.
-      */
       const summaries: FarmerStateSummary[] = Object.entries(grouped)
         .map(([state, farmerCount]) => ({
           state,
           farmerCount,
         }))
+        .filter((item) => item.farmerCount > 0)
         .sort(
           (a, b) =>
             b.farmerCount - a.farmerCount ||
@@ -189,13 +226,12 @@ export default function HomeScreen() {
         );
 
       setFarmersByState(summaries);
-      setActiveFarmerTotal(activeFarmers.length);
+      setActiveFarmerTotal(
+        summaries.reduce((total, item) => total + item.farmerCount, 0)
+      );
 
-      console.log("Homepage active farmer counter:", {
-        activeFarmerTotal: activeFarmers.length,
-        grouped,
-      });
-    } catch (error) {
+      console.log("Homepage active farmer counts from table:", summaries);
+    } catch (error: any) {
       console.log("Active farmer state load failed:", error);
       setFarmersByState([]);
       setActiveFarmerTotal(0);
@@ -453,7 +489,7 @@ export default function HomeScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.noFarmerStatesTitle}>No active farmer states yet</Text>
                   <Text style={styles.noFarmerStatesText}>
-                    Farmers will appear here when farmer_activation_paid is true and a valid state is saved.
+                    No public counts were returned. Confirm farmer_activation_paid is true, state is populated, and the public counter RPC is installed.
                   </Text>
                 </View>
                 <TouchableOpacity style={styles.refreshStatesButton} onPress={loadActiveFarmersByState}>
