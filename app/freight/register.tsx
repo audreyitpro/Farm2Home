@@ -514,20 +514,21 @@ export default function FreightRegister() {
       const documentsAreComplete = hasRequiredDocuments(nextDocuments);
       const now = new Date().toISOString();
 
-      const { data: updatedCarrier, error: saveError } = await supabase
-        .from("freight_users")
-        .update({
+      const updatedCarrier = await saveFreightUserAdaptively(
+        carrierId,
+        {
           [key]: savedUrl,
           documents_complete: documentsAreComplete,
-          compliance_status: documentsAreComplete ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
-          admin_review_status: documentsAreComplete ? "pending_payment" : "pending_documents",
+          compliance_status: documentsAreComplete
+            ? "PENDING_PAYMENT"
+            : "PENDING_DOCUMENTS",
+          admin_review_status: documentsAreComplete
+            ? "pending_payment"
+            : "pending_documents",
           updated_at: now,
-        })
-        .eq("id", carrierId)
-        .select("*")
-        .maybeSingle();
-
-      if (saveError) throw saveError;
+        },
+        false
+      );
 
       /*
         Keep a normalized document record too. Failure here should not undo the
@@ -611,7 +612,15 @@ export default function FreightRegister() {
       setSavedCarrierId(rowFreightId);
     }
     if (rowProfileId) setProfileId(rowProfileId);
-    if (rowAccountId) setAccountId(rowAccountId);
+
+    if (/^Freight_\d+$/i.test(rowAccountId)) {
+      setAccountId(rowAccountId);
+    } else if (rowAccountId) {
+      console.log(
+        "Ignoring non-freight account id in freight registration:",
+        rowAccountId
+      );
+    }
     if (rowCustomerId) setStripeCustomerId(rowCustomerId);
     if (rowSubId) setSubscriptionId(rowSubId);
     if (rowConnectId) setFreightAccount(rowConnectId);
@@ -653,8 +662,18 @@ export default function FreightRegister() {
     });
     setDocuments((prev) => ({ ...prev, ...nextDocs }));
 
-    const equipmentText = clean(row?.equipment_type || "");
-    if (equipmentText) setSelectedEquipment(equipmentText.split(",").map((item) => normalize(item)).filter(Boolean));
+    const equipmentText = clean(
+      row?.equipment_type || row?.equipment_types || ""
+    );
+
+    if (equipmentText) {
+      setSelectedEquipment(
+        equipmentText
+          .split(",")
+          .map((item) => normalize(item))
+          .filter(Boolean)
+      );
+    }
   }
 
   function validateForm({ full = true }: { full?: boolean } = {}) {
@@ -766,23 +785,118 @@ export default function FreightRegister() {
     return makeFallbackAccountId();
   }
 
-  async function findFreightUserByIdOrEmail(targetId?: string, targetEmail?: string) {
+  async function findFreightUserByIdOrEmail(
+    targetId?: string,
+    targetEmail?: string
+  ) {
     const id = clean(targetId);
     const emailValue = normalize(targetEmail);
 
+    /*
+      Do not use .or("id.eq...,freight_id.eq...").
+      A missing freight_id column or malformed PostgREST OR expression causes
+      repeated 400 responses. Search each confirmed field independently.
+    */
     if (id) {
-      const { data, error } = await supabase.from("freight_users").select("*").or(`id.eq.${id},freight_id.eq.${id}`).maybeSingle();
+      const { data, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("id", id)
+        .limit(1)
+        .maybeSingle();
+
       if (!error && data) return data;
       if (error) console.log("freight lookup by id:", error.message);
     }
 
     if (emailValue) {
-      const { data, error } = await supabase.from("freight_users").select("*").eq("email", emailValue).maybeSingle();
+      const { data, error } = await supabase
+        .from("freight_users")
+        .select("*")
+        .eq("email", emailValue)
+        .limit(1)
+        .maybeSingle();
+
       if (!error && data) return data;
       if (error) console.log("freight lookup by email:", error.message);
     }
 
     return null;
+  }
+
+  function getMissingColumnName(error: any) {
+    const message = clean(error?.message || error?.details || "");
+
+    const patterns = [
+      /Could not find the '([^']+)' column/i,
+      /column ["']?([a-zA-Z0-9_]+)["']? does not exist/i,
+      /column freight_users\.([a-zA-Z0-9_]+) does not exist/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match?.[1]) return match[1];
+    }
+
+    return "";
+  }
+
+  async function saveFreightUserAdaptively(
+    freightUserId: string,
+    payload: Record<string, any>,
+    createIfMissing = false
+  ) {
+    let workingPayload = { ...payload };
+    const skippedColumns: string[] = [];
+
+    /*
+      Retry after removing only the unsupported field named by Supabase.
+      This avoids dozens of separate PATCH requests while preventing one optional
+      column from blocking the complete freight registration.
+    */
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const request = createIfMissing
+        ? supabase
+            .from("freight_users")
+            .insert(workingPayload)
+            .select("*")
+            .maybeSingle()
+        : supabase
+            .from("freight_users")
+            .update(workingPayload)
+            .eq("id", freightUserId)
+            .select("*")
+            .maybeSingle();
+
+      const { data, error } = await request;
+
+      if (!error) {
+        if (skippedColumns.length) {
+          console.log(
+            "Unsupported freight_users fields skipped:",
+            skippedColumns
+          );
+        }
+
+        return data;
+      }
+
+      const missingColumn = getMissingColumnName(error);
+
+      if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+        skippedColumns.push(missingColumn);
+        const nextPayload = { ...workingPayload };
+        delete nextPayload[missingColumn];
+        workingPayload = nextPayload;
+        continue;
+      }
+
+      throw error;
+    }
+
+    throw new Error(
+      "Unable to save freight registration after removing unsupported fields."
+    );
   }
 
   async function findProfileByEmail(targetEmail: string) {
@@ -801,38 +915,88 @@ export default function FreightRegister() {
   async function findProfileByAuthId(authId: string) {
     if (!isUuid(authId)) return null;
 
-    const { data, error } = await supabase.from("profiles").select("*").or(`id.eq.${authId},auth_user_id.eq.${authId}`).maybeSingle();
-    if (error) {
-      console.log("profile lookup auth error:", error.message);
-      return null;
+    const byId = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", authId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!byId.error && byId.data) return byId.data;
+
+    const byAuthUserId = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("auth_user_id", authId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!byAuthUserId.error && byAuthUserId.data) return byAuthUserId.data;
+
+    if (byId.error) console.log("profile lookup id error:", byId.error.message);
+    if (byAuthUserId.error) {
+      console.log(
+        "profile lookup auth_user_id error:",
+        byAuthUserId.error.message
+      );
     }
 
-    return data || null;
+    return null;
   }
 
-  async function getBestFreightSubscription(targetId?: string, targetEmail?: string) {
+  async function getBestFreightSubscription(
+    targetId?: string,
+    targetEmail?: string
+  ) {
     const id = clean(targetId);
     const emailValue = normalize(targetEmail);
-    const filters = [id ? `freight_id.eq.${id}` : "", emailValue ? `freight_email.eq.${emailValue}` : ""].filter(Boolean).join(",");
+    const candidates: any[] = [];
 
-    if (!filters) return null;
+    if (id) {
+      const { data, error } = await supabase
+        .from("freight_subscriptions")
+        .select("*")
+        .eq("freight_id", id)
+        .order("updated_at", { ascending: false })
+        .limit(10);
 
-    const { data, error } = await supabase.from("freight_subscriptions").select("*").or(filters).order("updated_at", { ascending: false }).limit(10);
-    if (error) {
-      console.log("subscription lookup error:", error.message);
-      return null;
+      if (!error && Array.isArray(data)) candidates.push(...data);
+      if (error) {
+        console.log("subscription lookup by freight_id:", error.message);
+      }
     }
 
-    if (!Array.isArray(data) || data.length === 0) return null;
+    if (emailValue) {
+      const { data, error } = await supabase
+        .from("freight_subscriptions")
+        .select("*")
+        .eq("freight_email", emailValue)
+        .order("updated_at", { ascending: false })
+        .limit(10);
 
-    const completeRow = data.find(
+      if (!error && Array.isArray(data)) {
+        const existingIds = new Set(candidates.map((row) => row.id));
+        candidates.push(...data.filter((row) => !existingIds.has(row.id)));
+      }
+
+      if (error) {
+        console.log("subscription lookup by email:", error.message);
+      }
+    }
+
+    if (!candidates.length) return null;
+
+    const completeRow = candidates.find(
       (row) =>
         pickStripeCustomerId(row?.stripe_customer_id) &&
         pickStripeSubscriptionId(row?.stripe_subscription_id) &&
-        pickStripeConnectAccountId(row?.freight_account, row?.stripe_account_id)
+        pickStripeConnectAccountId(
+          row?.freight_account,
+          row?.stripe_account_id
+        )
     );
 
-    return completeRow || data[0];
+    return completeRow || candidates[0];
   }
 
   async function upsertProfileForFreight(authId: string, emailValue: string, accountValue: string, connectValue: string) {
@@ -886,21 +1050,59 @@ export default function FreightRegister() {
       username: normalize(username),
       stripe_customer_id: customer || null,
       stripe_subscription_id: sub || null,
-      subscription_status: values.subscriptionStatusValue || (sub ? "active" : "pending_payment"),
+      subscription_status:
+        values.subscriptionStatusValue ||
+        (sub ? "active" : "pending_payment"),
       stripe_account_id: connect || null,
       freight_account: connect || null,
       updated_at: now,
     };
 
-    const { data: existing } = await supabase.from("freight_subscriptions").select("id").or(`freight_id.eq.${values.freightId},freight_email.eq.${normalize(values.emailValue)}`).limit(1);
+    let existingId = "";
 
-    if (Array.isArray(existing) && existing[0]?.id) {
-      const { error } = await supabase.from("freight_subscriptions").update(payload).eq("id", existing[0].id);
+    if (values.freightId) {
+      const byFreightId = await supabase
+        .from("freight_subscriptions")
+        .select("id")
+        .eq("freight_id", values.freightId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!byFreightId.error && byFreightId.data?.id) {
+        existingId = byFreightId.data.id;
+      }
+    }
+
+    if (!existingId && normalize(values.emailValue)) {
+      const byEmail = await supabase
+        .from("freight_subscriptions")
+        .select("id")
+        .eq("freight_email", normalize(values.emailValue))
+        .limit(1)
+        .maybeSingle();
+
+      if (!byEmail.error && byEmail.data?.id) {
+        existingId = byEmail.data.id;
+      }
+    }
+
+    if (existingId) {
+      const { error } = await supabase
+        .from("freight_subscriptions")
+        .update(payload)
+        .eq("id", existingId);
+
       if (error) throw error;
       return;
     }
 
-    const { error } = await supabase.from("freight_subscriptions").insert({ ...payload, created_at: now });
+    const { error } = await supabase
+      .from("freight_subscriptions")
+      .insert({
+        ...payload,
+        created_at: now,
+      });
+
     if (error) throw error;
   }
 
@@ -974,8 +1176,32 @@ export default function FreightRegister() {
       created_at: now,
     };
 
-    const { error } = await supabase.from("admin_verifications").upsert(payload, { onConflict: "id" });
-    if (error) console.log("admin_verifications skipped:", error.message);
+    const existingVerification = await supabase
+      .from("admin_verifications")
+      .select("id")
+      .eq("id", carrierId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!existingVerification.error && existingVerification.data?.id) {
+      const { error } = await supabase
+        .from("admin_verifications")
+        .update(payload)
+        .eq("id", carrierId);
+
+      if (error) {
+        console.log("admin_verifications update skipped:", error.message);
+      }
+      return;
+    }
+
+    const { error } = await supabase
+      .from("admin_verifications")
+      .insert(payload);
+
+    if (error) {
+      console.log("admin_verifications insert skipped:", error.message);
+    }
   }
 
   async function saveFreightUserRow(authId: string, passedAccountId?: string) {
@@ -1056,6 +1282,7 @@ export default function FreightRegister() {
       licensed_livestock: licensedLivestock,
       licensed_refrigerated_food: licensedRefrigeratedFood,
       equipment_type: selectedEquipment.join(","),
+      equipment_types: selectedEquipment.join(","),
       cdl_document: documents.cdl_document || null,
       dot_document: documents.dot_document || null,
       mc_authority_document: documents.mc_authority_document || null,
@@ -1072,39 +1299,37 @@ export default function FreightRegister() {
       updated_at: now,
     };
 
-    /*
-      IMPORTANT FIX:
-      Do NOT use Supabase upsert here. The deployed error showed:
-      POST /rest/v1/freight_users?on_conflict=... 400 Bad Request.
-
-      Some Supabase projects fail this when the onConflict column is not configured
-      exactly as PostgREST expects, or when RLS/policies block upsert behavior.
-      This page now uses a clear update-if-existing, insert-if-new flow.
-    */
     let savedFreightUser: any = null;
 
     if (existing?.id) {
-      const { data, error } = await supabase
-        .from("freight_users")
-        .update(freightPayload)
-        .eq("id", existing.id)
-        .select("*")
-        .maybeSingle();
-
-      if (error) throw error;
-      savedFreightUser = data;
+      savedFreightUser = await saveFreightUserAdaptively(
+        existing.id,
+        freightPayload,
+        false
+      );
     } else {
-      const { data, error } = await supabase
-        .from("freight_users")
-        .insert({ ...freightPayload, created_at: now })
-        .select("*")
-        .maybeSingle();
-
-      if (error) throw error;
-      savedFreightUser = data;
+      /*
+        Create the row with the required identity fields first. The adaptive
+        insert removes only optional fields that do not exist in the deployed
+        freight_users schema.
+      */
+      savedFreightUser = await saveFreightUserAdaptively(
+        authId,
+        {
+          ...freightPayload,
+          created_at: now,
+        },
+        true
+      );
     }
 
-    if (!savedFreightUser?.id) throw new Error("Freight registration did not save.");
+    if (!savedFreightUser?.id) {
+      const reread = await findFreightUserByIdOrEmail(authId, emailValue);
+      if (!reread?.id) {
+        throw new Error("Freight registration did not save.");
+      }
+      savedFreightUser = reread;
+    }
 
     await upsertFreightSubscriptionRow({
       freightId: authId,
@@ -1448,8 +1673,9 @@ export default function FreightRegister() {
   }
 
   async function handleSubmitAndDashboard() {
+    if (saving) return;
+
     try {
-      setSaving(true);
 
       /*
         saveFreightProfile(true) already persists the complete freight_users row,
@@ -1479,11 +1705,17 @@ export default function FreightRegister() {
         return;
       }
 
+      const finalFreightAccountId = /^Freight_\d+$/i.test(
+        clean(saved.account_id)
+      )
+        ? clean(saved.account_id)
+        : clean(accountId) || (await generateFreightAccountId());
+
       const dashboardRow = {
         ...saved,
+        account_id: finalFreightAccountId,
+        accountId: finalFreightAccountId,
         role: "freight",
-        accountId: saved.account_id,
-        account_id: saved.account_id,
         freightId: saved.freight_id || saved.id,
         freight_id: saved.freight_id || saved.id,
         stripeCustomerId: saved.stripe_customer_id,
