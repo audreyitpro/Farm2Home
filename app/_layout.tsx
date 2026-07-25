@@ -3,6 +3,7 @@
 import React, { useEffect } from "react";
 import { Stack, router, usePathname } from "expo-router";
 import * as Notifications from "expo-notifications";
+import type { NotificationResponse, Subscription } from "expo-notifications";
 import { StatusBar } from "expo-status-bar";
 
 import { AuthProvider } from "./providers/AuthProvider";
@@ -12,6 +13,18 @@ import {
   startAutonomousScheduler,
   stopAutonomousScheduler,
 } from "./services/autonomousScheduler";
+
+type RouterPush = (href: unknown) => void;
+
+type NotificationResponseListener = (
+  listener: (response: NotificationResponse) => void
+) => Subscription;
+
+const navigate =
+  router.push as unknown as RouterPush;
+
+const addNotificationResponseListener =
+  Notifications.addNotificationResponseReceivedListener as unknown as NotificationResponseListener;
 
 function AppStack() {
   return (
@@ -141,10 +154,10 @@ export default function RootLayout() {
       }
     }
 
-    setupNotifications();
-    startAutonomousScheduler();
+    void setupNotifications();
+    void startAutonomousScheduler();
 
-    const listener = Notifications.addNotificationResponseReceivedListener((response) => {
+    const listener = addNotificationResponseListener((response) => {
       const data = response.notification.request.content.data || {};
 
       const type = String(data.type || "");
@@ -156,7 +169,7 @@ export default function RootLayout() {
         type === "ORDER_IN_TRANSIT" ||
         type === "ORDER_DELIVERED"
       ) {
-        router.push({
+        navigate({
           pathname: "/customer/order-tracking",
           params: { orderId, loadId },
         });
@@ -164,17 +177,17 @@ export default function RootLayout() {
       }
 
       if (type === "NEW_CHAT_MESSAGE") {
-        router.push("/chat/chat-center");
+        navigate("/chat/chat-center");
         return;
       }
 
       if (type === "NEW_FREIGHT_LOAD") {
-        router.push("/freight/board");
+        navigate("/freight/board");
         return;
       }
 
       if (type === "LOAD_STATUS_UPDATE") {
-        router.push({
+        navigate({
           pathname: "/freight/tracking",
           params: { loadId },
         });
@@ -182,7 +195,7 @@ export default function RootLayout() {
       }
 
       if (type === "AI_DISPATCH_COMPLETE") {
-        router.push("/ai/dispatch-intelligence-center");
+        navigate("/ai/dispatch-intelligence-center");
         return;
       }
 
