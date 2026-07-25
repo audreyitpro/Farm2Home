@@ -228,8 +228,6 @@ export default function FreightProofOfPickupScreen() {
 
     if (!authId && !authEmail) return;
 
-    let query = supabase.from("freight_users").select("*").limit(1);
-
     if (authId) {
       const { data, error } = await supabase
         .from("freight_users")
@@ -258,7 +256,6 @@ export default function FreightProofOfPickupScreen() {
       }
     }
 
-    query.abortSignal?.();
   }
 
   async function saveFreightUserSession(user: FreightUser) {
@@ -386,7 +383,7 @@ export default function FreightProofOfPickupScreen() {
   async function tryInsertBooking(id: string, user: FreightUser, currentLoad: LoadDetails) {
     const now = new Date().toISOString();
 
-    const payloads = [
+    const payloads: Record<string, unknown>[] = [
       {
         load_id: id,
         freight_id: getFreightId(user),

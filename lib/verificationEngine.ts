@@ -1,4 +1,4 @@
-export type VerificationStatus =
+﻿export type VerificationStatus =
   | "verified"
   | "partially_verified"
   | "needs_manual_review"
@@ -23,7 +23,7 @@ function containsAny(value: string, keywords: string[]) {
   return keywords.some((word) => clean.includes(word.toLowerCase()));
 }
 
-function hasExpirationfreight marketplacee(value: string) {
+function hasExpiration(value: string) {
   return /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12][0-9]|3[01])[\/\-](20\d{2})\b/.test(
     value
   );
@@ -101,9 +101,9 @@ export function verifyFoodSafety(value: string): VerificationResult {
     findings.push("License or registration number detected.");
   }
 
-  if (hasExpirationfreight marketplacee(value)) {
+  if (hasExpiration(value)) {
     score += 25;
-    findings.push("Expiration freight marketplacee detected.");
+    findings.push("Expiration date detected.");
   }
 
   return buildResult("Food Safety Registration", score, findings);
@@ -155,9 +155,9 @@ export function verifyInsurance(value: string): VerificationResult {
     findings.push("Policy or coverage number detected.");
   }
 
-  if (hasExpirationfreight marketplacee(value)) {
+  if (hasExpiration(value)) {
     score += 20;
-    findings.push("Expiration freight marketplacee detected.");
+    findings.push("Expiration date detected.");
   }
 
   return buildResult("Liability Insurance", score, findings);
@@ -207,7 +207,7 @@ function buildResult(
   };
 }
 
-export function runFullVerification(freight marketplacea: {
+export function runFullVerification(freightMarketplace: {
   businessRegistration: string;
   salesTaxForm: string;
   foodSafetyRegistration: string;
@@ -215,11 +215,11 @@ export function runFullVerification(freight marketplacea: {
   liabilityInsurance: string;
 }) {
   const results = [
-    verifyBusinessRegistration(freight marketplacea.businessRegistration),
-    verifySalesTax(freight marketplacea.salesTaxForm),
-    verifyFoodSafety(freight marketplacea.foodSafetyRegistration),
-    verifyW9(freight marketplacea.w9Form),
-    verifyInsurance(freight marketplacea.liabilityInsurance),
+    verifyBusinessRegistration(freightMarketplace.businessRegistration),
+    verifySalesTax(freightMarketplace.salesTaxForm),
+    verifyFoodSafety(freightMarketplace.foodSafetyRegistration),
+    verifyW9(freightMarketplace.w9Form),
+    verifyInsurance(freightMarketplace.liabilityInsurance),
   ];
 
   const averageScore = Math.round(
