@@ -1,4 +1,4 @@
-package com.audreyitpro.farm2home
+package com.asodevelopments.farm2home
 
 import android.app.Application
 import android.content.res.Configuration

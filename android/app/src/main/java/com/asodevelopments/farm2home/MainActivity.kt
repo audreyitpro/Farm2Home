@@ -1,4 +1,4 @@
-package com.audreyitpro.farm2home
+package com.asodevelopments.farm2home
 
 import android.os.Build
 import android.os.Bundle
