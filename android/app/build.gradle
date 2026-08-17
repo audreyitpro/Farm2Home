@@ -60,7 +60,7 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     // Keep existing native namespace.
-    namespace 'com.audreyitpro.farm2home'
+    namespace 'com.asodevelopments.farm2home'
 
     defaultConfig {
 
