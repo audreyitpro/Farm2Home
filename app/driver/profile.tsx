@@ -92,6 +92,8 @@ type DriverProfile = {
   stripe_connect_status?: string | null;
   subscription_status?: string | null;
   membership_status?: string | null;
+  cancel_at_period_end?: boolean | null;
+  current_period_end?: string | null;
   driver_membership_paid?: boolean | null;
 
   payouts_enabled?: boolean | null;
@@ -299,6 +301,7 @@ export default function DriverProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const [driver, setDriver] = useState<DriverProfile | null>(null);
 
@@ -746,6 +749,163 @@ export default function DriverProfileScreen() {
     return "https://farm2home-production-e4bd.up.railway.app";
   }
 
+  async function cancelSubscription() {
+    if (!driver?.id || cancelLoading) return;
+
+    const subscriptionId = pickSubscription(
+      driver.stripe_subscription_id,
+      driver.subscription_id
+    );
+
+    if (!isStripeSubscriptionId(subscriptionId)) {
+      Alert.alert(
+        "No Subscription",
+        "No active driver subscription was found. Retrieve Stripe membership first."
+      );
+      return;
+    }
+
+    if (driver.cancel_at_period_end) {
+      Alert.alert(
+        "Cancellation Already Scheduled",
+        driver.current_period_end
+          ? `Your driver membership is already scheduled to end on ${new Date(
+              driver.current_period_end
+            ).toLocaleDateString()}.`
+          : "Your driver membership is already scheduled for cancellation."
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Cancel Driver Subscription",
+      "Your Farm2Home Direct driver membership will stay active until the end of the current billing period and will not renew. Your Stripe payout connection is not disconnected by this action.",
+      [
+        { text: "Keep Subscription", style: "cancel" },
+        {
+          text: "Cancel Subscription",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setCancelLoading(true);
+
+              const response = await fetch(
+                `${getBackendUrl()}/payments/cancel-subscription`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    role: "driver",
+                    userId: driver.id,
+                    driverId: driver.id,
+                    driver_id: driver.id,
+                    subscriptionId,
+                    subscription_id: subscriptionId,
+                    stripeSubscriptionId: subscriptionId,
+                    stripe_subscription_id: subscriptionId,
+                    cancelAtPeriodEnd: true,
+                    cancel_at_period_end: true,
+                  }),
+                }
+              );
+
+              const data = await parseApiResponse(response);
+
+              if (!response.ok || data.error) {
+                throw new Error(
+                  data.error ||
+                    data.message ||
+                    "Unable to cancel the driver subscription."
+                );
+              }
+
+              const periodEnd =
+                clean(
+                  data.currentPeriodEnd ||
+                    data.current_period_end ||
+                    driver.current_period_end
+                ) || null;
+
+              const now = new Date().toISOString();
+
+              const payload: Record<string, any> = {
+                cancel_at_period_end: true,
+                current_period_end: periodEnd,
+                updated_at: now,
+              };
+
+              // Keep the membership active until Stripe reaches the period end.
+              if (!driver.subscription_status) {
+                payload.subscription_status = "active";
+              }
+
+              if (!driver.membership_status) {
+                payload.membership_status = "active";
+              }
+
+              const updated = await safeUpdateById(
+                "drivers",
+                driver.id,
+                payload
+              );
+
+              // Keep the dedicated driver subscription row in sync when it exists.
+              try {
+                await supabase
+                  .from("driver_subscriptions")
+                  .update({
+                    cancel_at_period_end: true,
+                    current_period_end: periodEnd,
+                    updated_at: now,
+                  })
+                  .eq("stripe_subscription_id", subscriptionId);
+              } catch (error: any) {
+                console.log(
+                  "driver_subscriptions cancellation sync skipped:",
+                  error?.message || error
+                );
+              }
+
+              const finalDriver: DriverProfile = {
+                ...driver,
+                ...payload,
+                ...(updated || {}),
+              };
+
+              hydrate(finalDriver);
+              await saveDriverSession(finalDriver);
+
+              Alert.alert(
+                "Cancellation Scheduled",
+                periodEnd
+                  ? `Your subscription will remain active until ${new Date(
+                      periodEnd
+                    ).toLocaleDateString()}. It will not renew after that date.`
+                  : "Your subscription will remain active through the current billing period and will not renew."
+              );
+            } catch (error: any) {
+              console.log("cancelSubscription error:", error);
+              Alert.alert(
+                "Cancel Subscription Error",
+                error?.message || "Unable to cancel the driver subscription."
+              );
+            } finally {
+              setCancelLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  function openPrivacyPolicy() {
+    router.push("/privacy" as any);
+  }
+
+  function openDeleteAccount() {
+    router.push("/delete-account" as any);
+  }
+
   async function logout() {
     Alert.alert("Log Out", "Do you want to log out of the driver account?", [
       { text: "Cancel", style: "cancel" },
@@ -872,6 +1032,11 @@ export default function DriverProfileScreen() {
           <IdCard label="Account ID" value={accountId || "Missing"} good={isDriverAccountId(accountId)} />
           <IdCard label="Stripe Customer ID" value={stripeCustomerId || "Missing"} good={isStripeCustomerId(stripeCustomerId)} />
           <IdCard label="Subscription ID" value={stripeSubscriptionId || "Missing"} good={isStripeSubscriptionId(stripeSubscriptionId)} />
+          <IdCard
+            label={driver?.cancel_at_period_end ? "Access Until" : "Current Period End"}
+            value={driver?.current_period_end ? new Date(driver.current_period_end).toLocaleDateString() : "Not listed"}
+            good={Boolean(driver?.current_period_end)}
+          />
           <IdCard label="Stripe Account ID" value={stripeAccountId || "Connect payouts to capture acct_..."} good={isStripeConnectAccountId(stripeAccountId)} />
 
           <StatusPanel
@@ -883,7 +1048,9 @@ export default function DriverProfileScreen() {
               },
               {
                 label: "Subscription",
-                value: titleCaseStatus(driver?.subscription_status ?? "pending"),
+                value: driver?.cancel_at_period_end
+                  ? "Cancellation Scheduled"
+                  : titleCaseStatus(driver?.subscription_status ?? "pending"),
                 good: isStripeSubscriptionId(stripeSubscriptionId),
               },
               {
@@ -916,6 +1083,28 @@ export default function DriverProfileScreen() {
             loading={connectLoading}
             onPress={connectStripePayouts}
           />
+
+          <DangerButton
+            title={
+              driver?.cancel_at_period_end
+                ? "Subscription Cancellation Scheduled"
+                : "Cancel Subscription"
+            }
+            icon="close-circle-outline"
+            loading={cancelLoading}
+            disabled={Boolean(driver?.cancel_at_period_end)}
+            onPress={cancelSubscription}
+          />
+
+          <Text style={styles.cancelNote}>
+            {driver?.cancel_at_period_end
+              ? driver?.current_period_end
+                ? `Your membership will remain active through ${new Date(
+                    driver.current_period_end
+                  ).toLocaleDateString()}. Your Stripe payout account remains connected.`
+                : "Your membership will remain active through the current billing period. Your Stripe payout account remains connected."
+              : "Canceling stops automatic renewal at the end of your current billing period. It does not disconnect your Stripe payout account."}
+          </Text>
 
           <PrimaryButton
             title="Open Driver Dashboard"
@@ -968,7 +1157,33 @@ export default function DriverProfileScreen() {
         />
 
         <PrimaryButton title="Save Settings" icon="save-outline" loading={saving} onPress={saveProfile} />
+
+        <PrimaryButton
+          title="Privacy Policy"
+          icon="shield-checkmark-outline"
+          loading={false}
+          onPress={openPrivacyPolicy}
+          secondary
+        />
+
+        <DangerButton
+          title={
+            driver?.cancel_at_period_end
+              ? "Subscription Cancellation Scheduled"
+              : "Cancel Subscription"
+          }
+          icon="close-circle-outline"
+          loading={cancelLoading}
+          disabled={Boolean(driver?.cancel_at_period_end)}
+          onPress={cancelSubscription}
+        />
+
         <PrimaryButton title="Back to Driver Home" icon="home-outline" loading={false} onPress={() => router.replace("/driver/mobile-driver-app" as any)} secondary />
+
+        <TouchableOpacity style={styles.deleteButton} onPress={openDeleteAccount} activeOpacity={0.9}>
+          <Ionicons name="trash-outline" size={18} color={COLORS.danger} />
+          <Text style={styles.deleteText}>Delete Account</Text>
+        </TouchableOpacity>
 
         <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.9}>
           <Ionicons name="log-out-outline" size={18} color={COLORS.danger} />
@@ -1257,6 +1472,41 @@ function PrimaryButton({
   );
 }
 
+
+function DangerButton({
+  title,
+  icon,
+  loading,
+  onPress,
+  disabled,
+}: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  loading: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  const isDisabled = Boolean(loading || disabled);
+
+  return (
+    <TouchableOpacity
+      style={[styles.dangerButton, isDisabled && styles.disabledButton]}
+      onPress={onPress}
+      disabled={isDisabled}
+      activeOpacity={0.9}
+    >
+      {loading ? (
+        <ActivityIndicator color={COLORS.danger} />
+      ) : (
+        <>
+          <Ionicons name={icon} size={18} color={COLORS.danger} />
+          <Text style={styles.dangerButtonText}>{title}</Text>
+        </>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   content: { flexGrow: 1 },
@@ -1515,6 +1765,33 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   secondaryButtonText: { color: COLORS.primary, fontWeight: "900", fontSize: 15 },
+  dangerButton: {
+    backgroundColor: COLORS.dangerSoft,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 16,
+    padding: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  dangerButtonText: { color: COLORS.danger, fontWeight: "900", fontSize: 15 },
+  cancelNote: { color: COLORS.muted, fontSize: 12, lineHeight: 18, marginTop: 8 },
+  deleteButton: {
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 16,
+    padding: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  deleteText: { color: COLORS.danger, fontWeight: "900", fontSize: 15 },
   logoutButton: {
     backgroundColor: COLORS.dangerSoft,
     borderWidth: 1,

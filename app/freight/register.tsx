@@ -72,6 +72,7 @@ const STEPS = [
   { key: "documents", title: "Documents", icon: "document-text-outline" },
   { key: "security", title: "Security", icon: "key-outline" },
   { key: "stripe", title: "Stripe", icon: "card-outline" },
+  { key: "legal", title: "Legal", icon: "shield-checkmark-outline" },
   { key: "review", title: "Review", icon: "checkmark-done-outline" },
 ] as const;
 
@@ -309,6 +310,258 @@ async function saveFreightSession(carrier: any) {
   ]);
 }
 
+
+const LEGAL_AGREEMENT_TYPE = "platform_agreement";
+const LEGAL_AGREEMENT_VERSION = "1.0";
+
+const PLATFORM_AGREEMENT_TEXT = `
+FARM2HOME DIRECT PLATFORM AGREEMENT
+VERSION 1.0
+
+Effective Date: September 9, 2026
+
+1. PURPOSE OF FARM2HOME DIRECT
+
+Farm2Home Direct is a technology marketplace and platform designed to connect customers with independent farmers, producers, freight carriers, drivers, and other marketplace participants.
+
+Farm2Home Direct provides technology that may allow users to discover products, communicate, place orders, coordinate pickup or delivery, arrange transportation, process payments, manage subscriptions, receive payouts, and use related marketplace services.
+
+Farm2Home Direct does not itself grow, manufacture, produce, harvest, inspect, package, prepare, transport, deliver, store, broker, dispatch, or independently verify products or transportation services offered by independent users unless Farm2Home Direct expressly states otherwise for a particular service.
+
+2. INDEPENDENT FREIGHT CARRIERS
+
+Freight carriers using Farm2Home Direct operate as independent businesses or transportation providers.
+
+They are not employees, agents, representatives, partners, joint venturers, or subsidiaries of Farm2Home Direct merely because they use the platform.
+
+Each freight carrier is responsible for its own business operations, employees, contractors, drivers, vehicles, equipment, registrations, operating authority, insurance, taxes, safety obligations, cargo handling, and regulatory compliance.
+
+3. CARRIER AUTHORITY AND LICENSING
+
+Freight carriers are responsible for maintaining all licenses, permits, registrations, operating authority, and governmental approvals required for the transportation services they perform.
+
+Where applicable, carriers are responsible for maintaining:
+
+• USDOT registration.
+• Motor carrier authority.
+• State transportation registrations.
+• Commercial driver's licenses.
+• Vehicle registrations.
+• Business licenses.
+• Specialized permits or endorsements.
+• Any other authority required by applicable federal, state, or local law.
+
+Farm2Home Direct does not independently guarantee that a carrier's authority, registration, or license remains active or legally sufficient.
+
+4. INSURANCE
+
+Freight carriers are responsible for maintaining legally sufficient insurance appropriate to the transportation services they provide.
+
+This may include, where applicable:
+
+• Commercial automobile liability insurance.
+• Cargo insurance.
+• General liability insurance.
+• Workers' compensation or occupational accident coverage.
+• Other insurance required by law, contract, customer, shipper, or marketplace requirements.
+
+Carriers are responsible for keeping insurance documents current and accurate.
+
+Farm2Home Direct does not provide insurance coverage for an independent carrier's operations unless expressly stated in a separate written agreement.
+
+5. CARRIER DOCUMENTS
+
+Freight carriers may be required to provide documents such as:
+
+• Commercial Driver License / CDL.
+• DOT Certificate.
+• MC Authority Letter.
+• Certificate of Insurance.
+• W-9 Form.
+• Vehicle Registration.
+• Cargo Insurance Certificate.
+• Business License.
+• HIPAA Certificate when applicable.
+• Bloodborne Pathogens Certificate when applicable.
+• TSA Certificate when applicable.
+• Food Handling or Reefer Permit when applicable.
+• Other documents required by applicable law or platform eligibility rules.
+
+Carriers are responsible for ensuring submitted documents are authentic, accurate, current, and applicable to their operations.
+
+The ability to upload documents or receive a platform status does not constitute legal, regulatory, insurance, safety, or compliance approval by Farm2Home Direct.
+
+6. VEHICLE AND EQUIPMENT RESPONSIBILITY
+
+Freight carriers are responsible for providing safe, properly maintained, properly registered, and legally compliant vehicles and equipment.
+
+Carriers are responsible for selecting equipment appropriate for the cargo they accept, including dry van, reefer, box truck, flatbed, livestock, produce, or other specialized equipment.
+
+Where refrigeration, food handling, livestock transport, medical handling, hazardous materials, secure transport, or other specialized requirements apply, the carrier is responsible for complying with all applicable rules.
+
+7. CARGO RESPONSIBILITY
+
+Once a carrier accepts or takes custody of cargo, the carrier is responsible for the proper handling, security, transportation, and delivery of that cargo subject to applicable law and contractual obligations.
+
+Carriers are responsible for following pickup instructions, delivery instructions, temperature requirements, handling requirements, chain-of-custody requirements, documentation requirements, and reasonable safety procedures applicable to each shipment.
+
+8. DRIVER RESPONSIBILITY
+
+Freight carriers are responsible for the conduct and qualifications of drivers they employ, contract with, dispatch, or otherwise use to perform transportation services.
+
+Carriers are responsible for ensuring their drivers maintain appropriate licensing, insurance, safety qualifications, and any required endorsements or certifications.
+
+Farm2Home Direct does not employ, supervise, or control independent carrier drivers merely because those drivers use Farm2Home Direct technology.
+
+9. PLATFORM ROLE
+
+Farm2Home Direct facilitates connections between marketplace participants.
+
+Depending on the features being used, Farm2Home Direct may provide technology for:
+
+• Load discovery.
+• Shipment coordination.
+• Carrier and driver communication.
+• Customer and farmer communication.
+• Pickup and delivery coordination.
+• Location and tracking.
+• Document management.
+• Payment processing.
+• Subscription management.
+• Stripe Connect payment or payout functionality.
+• Notifications.
+• Marketplace support.
+• Related transportation marketplace services.
+
+The availability of these features does not make Farm2Home Direct the carrier, motor carrier, freight broker, driver, shipper, employer, or direct transportation provider unless Farm2Home Direct expressly agrees in writing to perform a regulated role for a specific transaction.
+
+10. NO GUARANTEE OF LOADS OR REVENUE
+
+Farm2Home Direct does not guarantee any particular number of loads, delivery opportunities, customers, shipments, assignments, earnings, revenue, profits, or business results.
+
+Results depend on factors outside Farm2Home Direct's control, including marketplace demand, carrier availability, service area, pricing, equipment, qualifications, performance, customer needs, expenses, and market conditions.
+
+11. PAYMENTS, PAYOUTS, SUBSCRIPTIONS, AND FEES
+
+Farm2Home Direct may charge membership, processing, transaction, platform, service, or other disclosed fees.
+
+Freight carriers agree to applicable fees and payment terms presented before purchase, subscription, transaction, or payout.
+
+Farm2Home Direct may use third-party payment providers, including Stripe, to process payments, subscriptions, connected accounts, and payouts.
+
+Use of third-party payment services may also be subject to the third party's terms, verification requirements, and policies.
+
+12. THIRD-PARTY SERVICES
+
+Farm2Home Direct may use third-party services for authentication, payments, payouts, mapping, GPS, notifications, communications, hosting, storage, document processing, and other platform functionality.
+
+Farm2Home Direct is not responsible for outages, interruptions, delays, or failures caused solely by independent third-party service providers to the fullest extent permitted by applicable law.
+
+13. USER CONTENT AND REPRESENTATIONS
+
+Carriers are responsible for business information, authority information, insurance information, driver information, vehicle information, uploaded documents, messages, rates, availability, and other content submitted through Farm2Home Direct.
+
+Carriers agree not to knowingly submit false, misleading, fraudulent, unlawful, expired, or unauthorized information.
+
+14. COMPLIANCE WITH LAW
+
+Freight carriers are responsible for determining and complying with all federal, state, and local laws and regulations applicable to their operations.
+
+Depending on the services performed, this may include transportation safety requirements, hours-of-service rules, vehicle inspection requirements, cargo securement rules, food transportation requirements, medical or specimen transport requirements, privacy requirements, licensing, insurance, tax requirements, and other regulatory obligations.
+
+Nothing provided by Farm2Home Direct should be treated as individualized legal, tax, safety, insurance, or regulatory advice.
+
+15. SAFETY
+
+Carriers and drivers must operate safely and lawfully.
+
+Drivers must not use Farm2Home Direct in a manner that distracts from safe vehicle operation.
+
+Carriers must not accept or perform a shipment when doing so would violate law, operating authority, insurance restrictions, safety requirements, or equipment limitations.
+
+16. CUSTOMER AND SHIPPER INSTRUCTIONS
+
+Carriers are responsible for reviewing shipment details before accepting a load or delivery.
+
+Carriers must promptly communicate material exceptions, delays, accidents, cargo issues, rejected deliveries, temperature excursions, damaged goods, or other significant delivery problems through appropriate channels.
+
+17. DISPUTES AND CLAIMS
+
+Farm2Home Direct may provide communication, recordkeeping, support, or dispute-management tools.
+
+Independent carriers, customers, shippers, farmers, and other users remain responsible for claims and disputes arising from their own products, services, transportation activities, cargo, representations, or conduct.
+
+18. INDEMNIFICATION
+
+To the extent permitted by applicable law and the Farm2Home Direct Terms of Service, freight carriers agree to be responsible for claims, losses, damages, liabilities, penalties, costs, or expenses arising from their transportation services, business operations, legal violations, false representations, cargo handling, driver conduct, or breach of applicable platform obligations.
+
+Any indemnification obligations are subject to applicable law and the controlling Terms of Service.
+
+19. LIMITATION OF PLATFORM RESPONSIBILITY
+
+To the fullest extent permitted by applicable law, Farm2Home Direct is not responsible for the independent acts, omissions, representations, transportation services, cargo handling, delivery performance, business practices, or conduct of freight carriers, drivers, farmers, customers, or other independent users.
+
+Nothing in this agreement is intended to exclude, waive, or limit any responsibility or liability that cannot lawfully be excluded or limited.
+
+20. ACCOUNT RESPONSIBILITY
+
+Freight carriers are responsible for maintaining the security of their Farm2Home Direct account and login credentials.
+
+Carriers must keep their business, authority, insurance, vehicle, equipment, driver, tax, payout, and other required account information reasonably accurate and current.
+
+Carriers must not knowingly allow unauthorized individuals to use their account.
+
+21. PRIVACY
+
+Use of Farm2Home Direct is also governed by the Farm2Home Direct Privacy Policy.
+
+The Privacy Policy describes how Farm2Home Direct collects, uses, stores, processes, shares, and protects information.
+
+22. TERMS OF SERVICE
+
+Use of Farm2Home Direct is also governed by the Farm2Home Direct Terms of Service.
+
+If additional terms apply to a particular subscription, payment, payout, shipment, delivery, transportation, or marketplace feature, those additional terms may also apply.
+
+23. ELECTRONIC ACCEPTANCE
+
+By selecting the required acknowledgment boxes and pressing "I Agree & Continue," the freight carrier confirms that:
+
+• The carrier has been given an opportunity to read this Platform Agreement.
+• The carrier understands that Farm2Home Direct operates primarily as a technology marketplace connecting independent participants.
+• The carrier understands that the carrier remains responsible for its authority, insurance, drivers, vehicles, cargo, transportation services, and regulatory compliance.
+• The carrier agrees to comply with this Platform Agreement.
+• The carrier agrees to the Farm2Home Direct Terms of Service.
+• The carrier acknowledges the Farm2Home Direct Privacy Policy.
+• The carrier's acceptance may be recorded electronically with the agreement version and acceptance date.
+
+24. AGREEMENT VERSION
+
+This is Farm2Home Direct Platform Agreement Version 1.0.
+
+Acceptance of Version 1.0 applies to this version only.
+
+If Farm2Home Direct materially updates this agreement, the platform may require the freight carrier to review and accept a new agreement version before continuing to use applicable services.
+
+25. ACKNOWLEDGMENT
+
+BY SELECTING "I AGREE & CONTINUE," YOU ACKNOWLEDGE THAT YOU HAVE READ AND UNDERSTAND THIS FARM2HOME DIRECT PLATFORM AGREEMENT, VERSION 1.0, AND AGREE TO BE BOUND BY ITS TERMS.
+`.trim();
+
+const FREIGHT_LEGAL_ACKNOWLEDGMENTS = [
+  "I acknowledge that I have read and understand the Farm2Home Direct Platform Agreement.",
+  "I understand that I am an independent freight carrier and remain responsible for authority, licensing, insurance, drivers, vehicles, cargo, safety, and regulatory compliance.",
+  "I understand that Farm2Home Direct operates as a technology platform connecting independent customers, farmers, freight carriers, and drivers.",
+  "I agree to the Farm2Home Direct Terms of Service and acknowledge the Privacy Policy.",
+];
+
+function formatLegalDate(value: any) {
+  const raw = clean(value);
+  if (!raw) return "";
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleString();
+}
+
 export default function FreightRegister() {
   const params = useLocalSearchParams();
 
@@ -317,6 +570,13 @@ export default function FreightRegister() {
   const [stripeLoading, setStripeLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [legalLoading, setLegalLoading] = useState(false);
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const [legalAcceptedAt, setLegalAcceptedAt] = useState("");
+  const [legalAgreementVersion, setLegalAgreementVersion] =
+    useState(LEGAL_AGREEMENT_VERSION);
+  const [legalAcknowledgments, setLegalAcknowledgments] =
+    useState<Record<number, boolean>>({});
 
   const [savedCarrierId, setSavedCarrierId] = useState("");
   const [profileId, setProfileId] = useState("");
@@ -371,6 +631,10 @@ export default function FreightRegister() {
   );
 
   const documentsComplete = useMemo(() => hasRequiredDocuments(documents), [documents]);
+  const legalAcknowledgmentsComplete = FREIGHT_LEGAL_ACKNOWLEDGMENTS.every(
+    (_, index) => legalAcknowledgments[index]
+  );
+
 
   const setupStatus = useMemo(() => {
     return [
@@ -380,8 +644,23 @@ export default function FreightRegister() {
       { label: "Stripe Customer", complete: isStripeCustomerId(stripeCustomerId), value: maskId(stripeCustomerId) },
       { label: "Subscription", complete: isStripeSubscriptionId(subscriptionId), value: maskId(subscriptionId) },
       { label: "Stripe Connect", complete: isStripeConnectAccountId(freightAccount), value: maskId(freightAccount) },
+      {
+        label: "Legal Agreement",
+        complete: legalAccepted,
+        value: legalAccepted ? `Accepted v${legalAgreementVersion}` : "Required",
+      },
     ];
-  }, [savedCarrierId, freightId, accountId, documentsComplete, stripeCustomerId, subscriptionId, freightAccount]);
+  }, [
+    savedCarrierId,
+    freightId,
+    accountId,
+    documentsComplete,
+    stripeCustomerId,
+    subscriptionId,
+    freightAccount,
+    legalAccepted,
+    legalAgreementVersion,
+  ]);
 
   const setupScore = useMemo(() => setupStatus.filter((item) => item.complete).length, [setupStatus]);
 
@@ -393,9 +672,19 @@ export default function FreightRegister() {
           documentsComplete &&
           isStripeCustomerId(stripeCustomerId) &&
           isStripeSubscriptionId(subscriptionId) &&
-          isStripeConnectAccountId(freightAccount)
+          isStripeConnectAccountId(freightAccount) &&
+          legalAccepted
       ),
-    [savedCarrierId, freightId, accountId, documentsComplete, stripeCustomerId, subscriptionId, freightAccount]
+    [
+      savedCarrierId,
+      freightId,
+      accountId,
+      documentsComplete,
+      stripeCustomerId,
+      subscriptionId,
+      freightAccount,
+      legalAccepted,
+    ]
   );
 
   useEffect(() => {
@@ -456,7 +745,184 @@ export default function FreightRegister() {
     }
   }
 
+  async function loadLegalAcceptance(userId?: string) {
+    const id = clean(userId);
+    if (!id) return null;
+
+    const { data, error } = await supabase
+      .from("legal_agreement_acceptances")
+      .select(
+        "id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at"
+      )
+      .eq("user_id", id)
+      .eq("role", "freight")
+      .eq("agreement_type", LEGAL_AGREEMENT_TYPE)
+      .eq("agreement_version", LEGAL_AGREEMENT_VERSION)
+      .eq("accepted", true)
+      .maybeSingle();
+
+    if (error) {
+      console.log("Freight legal agreement lookup:", error.message);
+      return null;
+    }
+
+    if (data) {
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(
+        clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION
+      );
+
+      const restored: Record<number, boolean> = {};
+      FREIGHT_LEGAL_ACKNOWLEDGMENTS.forEach((_, index) => {
+        restored[index] = true;
+      });
+      setLegalAcknowledgments(restored);
+
+      await AsyncStorage.multiSet([
+        ["farm2homeLegalAgreementAccepted", "true"],
+        ["farm2homeLegalAgreementVersion", clean(data.agreement_version)],
+        ["farm2homeLegalAgreementAcceptedAt", clean(data.accepted_at)],
+        ["farm2homeLegalAgreementRole", "freight"],
+      ]);
+    }
+
+    return data;
+  }
+
+  async function acceptLegalAgreement() {
+    if (legalLoading) return;
+
+    if (!legalAcknowledgmentsComplete) {
+      Alert.alert(
+        "Acknowledgment Required",
+        "You must select every Legal & Agreements acknowledgment before continuing."
+      );
+      return;
+    }
+
+    try {
+      setLegalLoading(true);
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) throw userError;
+
+      if (!user?.id) {
+        throw new Error(
+          "You must save your freight account and be signed in before accepting the agreement."
+        );
+      }
+
+      const existing = await loadLegalAcceptance(user.id);
+      if (existing) {
+        setStep(7);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("legal_agreement_acceptances")
+        .insert({
+          user_id: user.id,
+          role: "freight",
+          agreement_type: LEGAL_AGREEMENT_TYPE,
+          agreement_version: LEGAL_AGREEMENT_VERSION,
+          agreement_text: PLATFORM_AGREEMENT_TEXT,
+          agreement_hash: `farm2home-platform-v${LEGAL_AGREEMENT_VERSION}`,
+          accepted: true,
+        })
+        .select(
+          "id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at"
+        )
+        .single();
+
+      if (error) {
+        if (String(error.code) === "23505") {
+          const duplicate = await loadLegalAcceptance(user.id);
+          if (duplicate) {
+            setStep(7);
+            return;
+          }
+        }
+        throw error;
+      }
+
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(
+        clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION
+      );
+
+      await AsyncStorage.multiSet([
+        ["farm2homeLegalAgreementAccepted", "true"],
+        ["farm2homeLegalAgreementVersion", clean(data.agreement_version)],
+        ["farm2homeLegalAgreementAcceptedAt", clean(data.accepted_at)],
+        ["farm2homeLegalAgreementRole", "freight"],
+      ]);
+
+      Alert.alert(
+        "Agreement Accepted",
+        `Farm2Home Direct Platform Agreement Version ${LEGAL_AGREEMENT_VERSION} was accepted on ${formatLegalDate(
+          data.accepted_at
+        )}.`
+      );
+
+      setStep(7);
+    } catch (error: any) {
+      console.log("Freight legal agreement acceptance error:", error);
+      Alert.alert(
+        "Agreement Error",
+        error?.message ||
+          "Unable to save your Farm2Home Direct Legal & Agreements acknowledgment."
+      );
+    } finally {
+      setLegalLoading(false);
+    }
+  }
+
+  async function requireLegalAgreement(userId?: string, showAlert = true) {
+    const id = clean(userId);
+
+    if (!id) {
+      setStep(6);
+      if (showAlert) {
+        Alert.alert(
+          "Legal Agreement Required",
+          "Save your freight account and accept Legal & Agreements before continuing."
+        );
+      }
+      return false;
+    }
+
+    if (legalAccepted) return true;
+
+    const acceptance = await loadLegalAcceptance(id);
+    if (acceptance) return true;
+
+    setStep(6);
+
+    if (showAlert) {
+      Alert.alert(
+        "Legal Agreement Required",
+        "You must review and accept the Farm2Home Direct Platform Agreement before proceeding."
+      );
+    }
+
+    return false;
+  }
+
   async function goNext() {
+    if (step === 6 && !legalAccepted) {
+      Alert.alert(
+        "Legal Agreement Required",
+        "Read the agreement, select every acknowledgment, and press I Agree & Continue."
+      );
+      return;
+    }
+
     /*
       Save the Authority step before moving forward so selected equipment
       is persisted immediately in freight_users.equipment_type.
@@ -478,7 +944,15 @@ export default function FreightRegister() {
     setStep((prev) => Math.max(prev - 1, 0));
   }
 
-  function goDashboard() {
+  async function goDashboard() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const id = clean(user?.id || savedCarrierId || freightId);
+    const legalOk = await requireLegalAgreement(id, true);
+    if (!legalOk) return;
+
     router.replace("/freight/dashboard" as any);
   }
 
@@ -1129,7 +1603,15 @@ export default function FreightRegister() {
     const finalConnectAccount = pickStripeConnectAccountId(freightAccount, existing?.freight_account, subRow?.freight_account, subRow?.stripe_account_id);
     const finalStatus = subscriptionStatus || subRow?.subscription_status || (finalSubscriptionId ? "active" : "pending_payment");
     const docsOk = hasRequiredDocuments(documents);
-    const complete = Boolean(authId && finalAccountId && finalCustomerId && finalSubscriptionId && finalConnectAccount && docsOk);
+    const complete = Boolean(
+      authId &&
+        finalAccountId &&
+        finalCustomerId &&
+        finalSubscriptionId &&
+        finalConnectAccount &&
+        docsOk &&
+        legalAccepted
+    );
 
     const profile = await upsertProfileForFreight(authId, emailValue, finalAccountId, finalConnectAccount);
     if (!profile?.id) throw new Error("Profile could not be created.");
@@ -1157,6 +1639,9 @@ export default function FreightRegister() {
       approved: complete,
       freight_membership_paid: Boolean(finalSubscriptionId),
       membership_status: finalSubscriptionId ? "active" : "pending_payment",
+      legal_agreement_accepted: legalAccepted,
+      legal_agreement_version: legalAgreementVersion,
+      legal_agreement_accepted_at: legalAcceptedAt || null,
       verification_status: complete ? "SUBMITTED" : docsOk ? "REGISTERED" : "PENDING_DOCUMENTS",
       compliance_status: complete ? "SUBMITTED" : docsOk ? "PENDING_PAYMENT" : "PENDING_DOCUMENTS",
       admin_review_status: complete ? "submitted" : docsOk ? "pending_payment" : "pending_documents",
@@ -1407,7 +1892,9 @@ export default function FreightRegister() {
 
       const saved = await saveFreightUserRow(targetId, dbCarrier?.account_id || accountId || undefined);
 
-      if (routeWhenReady && hasCompleteDashboardAccess(saved)) goDashboard();
+      if (routeWhenReady && hasCompleteDashboardAccess(saved)) {
+        await goDashboard();
+      }
       else Alert.alert("Stripe Info Retrieved", "Missing Stripe fields were synced and saved.");
 
       return saved;
@@ -1445,6 +1932,10 @@ export default function FreightRegister() {
       const { data: authData } = await supabase.auth.getUser();
       const authId = clean(authData?.user?.id || "");
       const authEmail = normalize(authData?.user?.email || "");
+
+      if (authId) {
+        await loadLegalAcceptance(authId);
+      }
 
       const lookupId = returnedId || authId || localCarrier?.id || localCarrier?.freight_id || localCarrier?.freightId || savedCarrierId || freightId;
       const lookupEmail = normalize(returnedEmail || authEmail || localCarrier?.email || email);
@@ -1492,6 +1983,15 @@ export default function FreightRegister() {
   }
 
   async function handleStripeCheckout() {
+    if (!legalAccepted) {
+      setStep(6);
+      Alert.alert(
+        "Legal Agreement Required",
+        "You must accept the Farm2Home Direct Platform Agreement before starting Freight Membership."
+      );
+      return;
+    }
+
     const saved = await saveFreightProfile(false);
     if (!saved?.id) return;
 
@@ -1528,6 +2028,15 @@ export default function FreightRegister() {
   }
 
   async function handleConnectBank() {
+    if (!legalAccepted) {
+      setStep(6);
+      Alert.alert(
+        "Legal Agreement Required",
+        "You must accept the Farm2Home Direct Platform Agreement before connecting Stripe payouts."
+      );
+      return;
+    }
+
     const saved = await saveFreightProfile(false);
     if (!saved?.id) return;
 
@@ -1871,6 +2380,189 @@ export default function FreightRegister() {
       );
     }
 
+    if (step === 6) {
+      return (
+        <View>
+          <SectionTitle
+            title="Legal & Agreements"
+            subtitle="Required before Freight Membership, Stripe payouts, and Freight Dashboard access."
+          />
+
+          {legalAccepted ? (
+            <View style={styles.legalAcceptedBox}>
+              <Ionicons
+                name="checkmark-circle"
+                size={30}
+                color={COLORS.accent}
+              />
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.legalAcceptedTitle}>
+                  Agreement Accepted
+                </Text>
+
+                <Text style={styles.legalAcceptedText}>
+                  Farm2Home Direct Platform Agreement Version{" "}
+                  {legalAgreementVersion}
+                </Text>
+
+                <Text style={styles.legalAcceptedText}>
+                  Accepted: {formatLegalDate(legalAcceptedAt)}
+                </Text>
+
+                <Text style={styles.legalPermanentText}>
+                  Your original acceptance date and agreement version are
+                  permanently recorded and cannot be changed from the app.
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <>
+              <View style={styles.legalRequiredBox}>
+                <Ionicons
+                  name="alert-circle-outline"
+                  size={22}
+                  color={COLORS.warning}
+                />
+
+                <Text style={styles.legalRequiredText}>
+                  Read the agreement and select every acknowledgment before
+                  continuing.
+                </Text>
+              </View>
+
+              <View style={styles.legalDocument}>
+                <Text style={styles.legalDocumentTitle}>
+                  Farm2Home Direct Platform Agreement
+                </Text>
+
+                <Text style={styles.legalVersion}>
+                  Version {LEGAL_AGREEMENT_VERSION}
+                </Text>
+
+                <View style={styles.legalDivider} />
+
+                <Text style={styles.legalText}>
+                  {PLATFORM_AGREEMENT_TEXT}
+                </Text>
+              </View>
+
+              {FREIGHT_LEGAL_ACKNOWLEDGMENTS.map((item, index) => {
+                const checked = Boolean(legalAcknowledgments[index]);
+
+                return (
+                  <TouchableOpacity
+                    key={`${index}-${item}`}
+                    style={[
+                      styles.legalCheckRow,
+                      checked && styles.legalCheckRowSelected,
+                    ]}
+                    onPress={() =>
+                      setLegalAcknowledgments((prev) => ({
+                        ...prev,
+                        [index]: !prev[index],
+                      }))
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <View
+                      style={[
+                        styles.legalCheckbox,
+                        checked && styles.legalCheckboxSelected,
+                      ]}
+                    >
+                      {checked ? (
+                        <Ionicons
+                          name="checkmark"
+                          size={18}
+                          color={COLORS.white}
+                        />
+                      ) : null}
+                    </View>
+
+                    <Text style={styles.legalCheckText}>
+                      {item}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              <View style={styles.legalLinksRow}>
+                <TouchableOpacity
+                  onPress={() => router.push("/terms" as any)}
+                >
+                  <Text style={styles.legalLink}>
+                    Terms of Service
+                  </Text>
+                </TouchableOpacity>
+
+                <Text style={styles.legalLinkDivider}>•</Text>
+
+                <TouchableOpacity
+                  onPress={() => router.push("/privacy" as any)}
+                >
+                  <Text style={styles.legalLink}>
+                    Privacy Policy
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.legalAgreeButton,
+                  (!legalAcknowledgmentsComplete || legalLoading) &&
+                    styles.legalAgreeButtonDisabled,
+                ]}
+                disabled={!legalAcknowledgmentsComplete || legalLoading}
+                onPress={acceptLegalAgreement}
+                activeOpacity={0.9}
+              >
+                {legalLoading ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={21}
+                      color={COLORS.white}
+                    />
+
+                    <Text style={styles.legalAgreeButtonText}>
+                      I Agree & Continue
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <Text style={styles.legalNotice}>
+                Your official acceptance date is generated by the database.
+                The original acceptance record is not editable from your
+                Freight profile.
+              </Text>
+            </>
+          )}
+
+          {legalAccepted ? (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => setStep(7)}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.primaryButtonText}>
+                Continue to Review
+              </Text>
+
+              <Ionicons
+                name="arrow-forward-outline"
+                size={19}
+                color={COLORS.white}
+              />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      );
+    }
+
     return (
       <View>
         <SectionTitle title="Review & Submit" subtitle="Confirm saved fields and open Freight Dashboard." />
@@ -1935,7 +2627,18 @@ export default function FreightRegister() {
                 const active = index === step;
                 const complete = index < step;
                 return (
-                  <TouchableOpacity key={item.key} style={[styles.stepRow, active && styles.stepRowActive]} onPress={() => setStep(index)} activeOpacity={0.9}>
+                  <TouchableOpacity key={item.key} style={[styles.stepRow, active && styles.stepRowActive]} onPress={() => {
+                      if (index >= 7 && !legalAccepted) {
+                        setStep(6);
+                        Alert.alert(
+                          "Legal Agreement Required",
+                          "You must accept Legal & Agreements before proceeding to Review."
+                        );
+                        return;
+                      }
+
+                      setStep(index);
+                    }} activeOpacity={0.9}>
                     <View style={[styles.stepIcon, active && styles.stepIconActive, complete && styles.stepIconComplete]}>
                       <Ionicons name={(complete ? "checkmark-outline" : item.icon) as any} size={18} color={active || complete ? COLORS.white : "#94A3B8"} />
                     </View>
@@ -2174,4 +2877,189 @@ const styles = StyleSheet.create({
   primaryButton: { minHeight: 52, borderRadius: 16, backgroundColor: COLORS.primary, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   primaryButtonText: { color: COLORS.white, fontSize: 14, fontWeight: "900" },
   disabledButton: { opacity: 0.55 },
+
+
+
+  legalAcceptedBox: {
+    backgroundColor: "#ECFDF3",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+
+  legalAcceptedTitle: {
+    color: "#047857",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+
+  legalAcceptedText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+
+  legalPermanentText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 6,
+  },
+
+  legalRequiredBox: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 14,
+  },
+
+  legalRequiredText: {
+    flex: 1,
+    color: "#92400E",
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+
+  legalDocument: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+  },
+
+  legalDocumentTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+
+  legalVersion: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  legalDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 14,
+  },
+
+  legalText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 21,
+  },
+
+  legalCheckRow: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 11,
+    marginBottom: 10,
+  },
+
+  legalCheckRowSelected: {
+    backgroundColor: "#ECFDF3",
+    borderColor: "#86EFAC",
+  },
+
+  legalCheckbox: {
+    width: 25,
+    height: 25,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: "#98A2B3",
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+
+  legalCheckboxSelected: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+
+  legalCheckText: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 20,
+  },
+
+  legalLinksRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 2,
+    marginBottom: 12,
+    flexWrap: "wrap",
+  },
+
+  legalLink: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textDecorationLine: "underline",
+  },
+
+  legalLinkDivider: {
+    color: COLORS.muted,
+    fontWeight: "900",
+  },
+
+  legalAgreeButton: {
+    minHeight: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.accent,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 5,
+  },
+
+  legalAgreeButtonDisabled: {
+    opacity: 0.45,
+  },
+
+  legalAgreeButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+
+  legalNotice: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
+    marginTop: 9,
+    marginBottom: 14,
+  },
+
 });

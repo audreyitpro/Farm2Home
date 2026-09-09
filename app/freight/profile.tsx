@@ -382,7 +382,30 @@ export default function FreightProfileScreen() {
       stripe_charges_enabled: boolValue(row?.stripe_charges_enabled, row?.charges_enabled, localCurrent?.stripe_charges_enabled),
       onboardingComplete: boolValue(row?.stripe_onboarding_complete, localCurrent?.onboardingComplete),
       stripe_onboarding_complete: boolValue(row?.stripe_onboarding_complete, localCurrent?.stripe_onboarding_complete, localCurrent?.onboardingComplete),
-      current_period_end: row?.current_period_end || sub?.current_period_end || localCurrent?.current_period_end || null,
+      cancelAtPeriodEnd: boolValue(
+        row?.cancel_at_period_end,
+        sub?.cancel_at_period_end,
+        localCurrent?.cancelAtPeriodEnd,
+        localCurrent?.cancel_at_period_end
+      ),
+      cancel_at_period_end: boolValue(
+        row?.cancel_at_period_end,
+        sub?.cancel_at_period_end,
+        localCurrent?.cancel_at_period_end,
+        localCurrent?.cancelAtPeriodEnd
+      ),
+      currentPeriodEnd:
+        row?.current_period_end ||
+        sub?.current_period_end ||
+        localCurrent?.currentPeriodEnd ||
+        localCurrent?.current_period_end ||
+        null,
+      current_period_end:
+        row?.current_period_end ||
+        sub?.current_period_end ||
+        localCurrent?.current_period_end ||
+        localCurrent?.currentPeriodEnd ||
+        null,
       updatedAt: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -424,6 +447,11 @@ export default function FreightProfileScreen() {
       stripe_charges_enabled: Boolean(nextCarrier.stripe_charges_enabled || nextCarrier.chargesEnabled || nextCarrier.charges_enabled),
       stripe_onboarding_complete: Boolean(nextCarrier.onboardingComplete || nextCarrier.stripe_onboarding_complete),
       account_active: nextCarrier.accountActive !== false && nextCarrier.account_active !== false,
+      cancel_at_period_end: Boolean(
+        nextCarrier.cancelAtPeriodEnd || nextCarrier.cancel_at_period_end
+      ),
+      current_period_end:
+        nextCarrier.currentPeriodEnd || nextCarrier.current_period_end || null,
       updated_at: now,
     };
 
@@ -445,6 +473,8 @@ export default function FreightProfileScreen() {
         subscription_status: updatePayload.subscription_status,
         stripe_account_id: updatePayload.stripe_account_id,
         freight_account: updatePayload.freight_account,
+        cancel_at_period_end: updatePayload.cancel_at_period_end,
+        current_period_end: updatePayload.current_period_end,
         updated_at: now,
       })
       .eq("freight_id", realId);
@@ -712,61 +742,153 @@ export default function FreightProfileScreen() {
   }
 
   async function cancelSubscription() {
+    if (cancelLoading) return;
+
     if (!stripeSubscriptionId) {
-      Alert.alert("No Subscription", "No active freight subscription ID was found.");
+      Alert.alert(
+        "No Subscription",
+        "No active freight subscription ID was found. Open Freight Membership to review the billing account."
+      );
       return;
     }
 
-    Alert.alert("Cancel Subscription", "Are you sure you want to cancel your freight membership?", [
-      { text: "No", style: "cancel" },
-      {
-        text: "Yes, Cancel",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            setCancelLoading(true);
+    const alreadyScheduled = boolValue(
+      carrier?.cancelAtPeriodEnd,
+      carrier?.cancel_at_period_end
+    );
 
-            const response = await fetch(`${API_BASE_URL}/payments/cancel-subscription`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                subscriptionId: stripeSubscriptionId,
-                subscription_id: stripeSubscriptionId,
-                carrierId: carrier?.id || carrier?.freightId,
-                freightId: carrier?.id || carrier?.freightId,
-                role: "freight",
-              }),
-            });
+    if (alreadyScheduled) {
+      const periodEnd = clean(
+        carrier?.currentPeriodEnd || carrier?.current_period_end
+      );
 
-            const data = await parseApiResponse(response);
+      Alert.alert(
+        "Cancellation Already Scheduled",
+        periodEnd
+          ? `Your freight membership is already scheduled to end on ${new Date(
+              periodEnd
+            ).toLocaleDateString()}.`
+          : "Your freight membership is already scheduled for cancellation at the end of the current billing period."
+      );
+      return;
+    }
 
-            if (!response.ok || data.error) {
-              Alert.alert("Stripe Error", data.error || "Unable to cancel.");
-              return;
+    Alert.alert(
+      "Cancel Freight Subscription",
+      "Your Farm2Home Direct freight membership will remain active through the current paid billing period and will not renew after that date.",
+      [
+        { text: "Keep Subscription", style: "cancel" },
+        {
+          text: "Cancel Subscription",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setCancelLoading(true);
+
+              const freightId = clean(
+                carrier?.id || carrier?.freightId || carrier?.freight_id
+              );
+
+              const response = await fetch(
+                `${API_BASE_URL}/payments/cancel-subscription`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    role: "freight",
+                    userId: freightId,
+                    carrierId: freightId,
+                    freightId,
+                    freight_id: freightId,
+                    subscriptionId: stripeSubscriptionId,
+                    subscription_id: stripeSubscriptionId,
+                    stripeSubscriptionId,
+                    stripe_subscription_id: stripeSubscriptionId,
+                    cancelAtPeriodEnd: true,
+                    cancel_at_period_end: true,
+                  }),
+                }
+              );
+
+              const data = await parseApiResponse(response);
+
+              if (!response.ok || data.error) {
+                throw new Error(
+                  data.error ||
+                    data.message ||
+                    "Unable to cancel the freight subscription."
+                );
+              }
+
+              const periodEnd =
+                clean(
+                  data.currentPeriodEnd ||
+                    data.current_period_end ||
+                    carrier?.currentPeriodEnd ||
+                    carrier?.current_period_end
+                ) || null;
+
+              const updatedCarrier = {
+                ...carrier,
+
+                // Keep the paid membership active until Stripe reaches
+                // the end of the current billing period.
+                cancelAtPeriodEnd: true,
+                cancel_at_period_end: true,
+                currentPeriodEnd: periodEnd,
+                current_period_end: periodEnd,
+
+                // Do NOT set membership/subscription to canceled here.
+                // Stripe/webhook should set canceled only after the
+                // subscription actually ends.
+                membershipStatus:
+                  carrier?.membershipStatus ||
+                  carrier?.membership_status ||
+                  membershipStatus,
+                membership_status:
+                  carrier?.membership_status ||
+                  carrier?.membershipStatus ||
+                  membershipStatus,
+                subscriptionStatus:
+                  carrier?.subscriptionStatus ||
+                  carrier?.subscription_status ||
+                  membershipStatus,
+                subscription_status:
+                  carrier?.subscription_status ||
+                  carrier?.subscriptionStatus ||
+                  membershipStatus,
+
+                // The carrier still has access during the paid period.
+                accountActive: true,
+                account_active: true,
+
+                updatedAt: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              };
+
+              await persistCarrier(updatedCarrier, true);
+
+              Alert.alert(
+                "Cancellation Scheduled",
+                periodEnd
+                  ? `Your freight membership will remain active until ${new Date(
+                      periodEnd
+                    ).toLocaleDateString()}. It will not renew after that date.`
+                  : "Your freight membership will remain active through the current billing period and will not renew."
+              );
+            } catch (error: any) {
+              console.log("Freight cancellation error:", error);
+              Alert.alert(
+                "Cancel Error",
+                error?.message || "Unable to cancel the freight subscription."
+              );
+            } finally {
+              setCancelLoading(false);
             }
-
-            const updatedCarrier = {
-              ...carrier,
-              membershipStatus: "canceled",
-              membership_status: "canceled",
-              subscriptionStatus: "canceled",
-              subscription_status: "canceled",
-              accountActive: false,
-              account_active: false,
-              updatedAt: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
-
-            await persistCarrier(updatedCarrier, true);
-            Alert.alert("Canceled", "Freight subscription was canceled.");
-          } catch (error: any) {
-            Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
-          } finally {
-            setCancelLoading(false);
-          }
+          },
         },
-      },
-    ]);
+      ]
+    );
   }
 
   async function logout() {
@@ -788,6 +910,7 @@ export default function FreightProfileScreen() {
   function membershipColor() {
     const status = normalize(membershipStatus);
 
+    if (boolValue(carrier?.cancelAtPeriodEnd, carrier?.cancel_at_period_end)) return COLORS.amber;
     if (status.includes("cancel") || status.includes("unpaid") || status.includes("incomplete")) return COLORS.red;
     if (status.includes("pending") || status.includes("past_due")) return COLORS.amber;
     if (status.includes("active") || status.includes("trial")) return COLORS.green;
@@ -915,7 +1038,11 @@ export default function FreightProfileScreen() {
                   <Text style={styles.accountId}>Account ID: {carrier?.accountId || carrier?.account_id || "Not assigned"}</Text>
                 </View>
                 <View style={[styles.statusMini, { backgroundColor: membershipColor() }]}>
-                  <Text style={styles.statusMiniText}>{membershipStatus}</Text>
+                  <Text style={styles.statusMiniText}>
+                    {boolValue(carrier?.cancelAtPeriodEnd, carrier?.cancel_at_period_end)
+                      ? "Cancellation Scheduled"
+                      : membershipStatus}
+                  </Text>
                 </View>
               </View>
 
@@ -1032,9 +1159,66 @@ export default function FreightProfileScreen() {
                     <Text style={styles.secondaryButtonText}>Open Connect Bank</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={[styles.cancelButton, cancelLoading && styles.disabledButton]} onPress={cancelSubscription} disabled={cancelLoading}>
-                    {cancelLoading ? <ActivityIndicator color={COLORS.white} /> : <><Ionicons name="close-circle-outline" size={18} color={COLORS.white} /><Text style={styles.darkButtonText}>Cancel Freight Subscription</Text></>}
+                  <TouchableOpacity
+                    style={[
+                      styles.cancelButton,
+                      (cancelLoading ||
+                        boolValue(
+                          carrier?.cancelAtPeriodEnd,
+                          carrier?.cancel_at_period_end
+                        )) &&
+                        styles.disabledButton,
+                    ]}
+                    onPress={cancelSubscription}
+                    disabled={
+                      cancelLoading ||
+                      boolValue(
+                        carrier?.cancelAtPeriodEnd,
+                        carrier?.cancel_at_period_end
+                      )
+                    }
+                  >
+                    {cancelLoading ? (
+                      <ActivityIndicator color={COLORS.white} />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name={
+                            boolValue(
+                              carrier?.cancelAtPeriodEnd,
+                              carrier?.cancel_at_period_end
+                            )
+                              ? "time-outline"
+                              : "close-circle-outline"
+                          }
+                          size={18}
+                          color={COLORS.white}
+                        />
+                        <Text style={styles.darkButtonText}>
+                          {boolValue(
+                            carrier?.cancelAtPeriodEnd,
+                            carrier?.cancel_at_period_end
+                          )
+                            ? "Cancellation Scheduled"
+                            : "Cancel Freight Subscription"}
+                        </Text>
+                      </>
+                    )}
                   </TouchableOpacity>
+
+                  <Text style={styles.cancelNote}>
+                    {boolValue(
+                      carrier?.cancelAtPeriodEnd,
+                      carrier?.cancel_at_period_end
+                    )
+                      ? carrier?.currentPeriodEnd || carrier?.current_period_end
+                        ? `Your freight membership remains active until ${new Date(
+                            carrier?.currentPeriodEnd ||
+                              carrier?.current_period_end
+                          ).toLocaleDateString()} and will not renew.`
+                        : "Your freight membership remains active through the current paid billing period and will not renew."
+                      : "Canceling stops automatic renewal at the end of your current paid billing period. Your freight access remains active until then."}
+                  </Text>
                 </View>
               </View>
 
@@ -1320,6 +1504,14 @@ const styles = StyleSheet.create({
   darkButtonInline: { backgroundColor: COLORS.navy, padding: 16, borderRadius: 14, alignItems: "center", justifyContent: "center", marginTop: 10, flexDirection: "row", gap: 8 },
   darkButtonText: { color: COLORS.white, fontWeight: "900", textAlign: "center" },
   cancelButton: { backgroundColor: COLORS.red, padding: 16, borderRadius: 14, alignItems: "center", justifyContent: "center", marginTop: 10, flexDirection: "row", gap: 8 },
+  cancelNote: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 9,
+  },
+
   bottomActions: { flexDirection: Platform.OS === "web" ? "row" : "column", gap: 10, marginBottom: 40 },
   disabledButton: { opacity: 0.65 },
   emptyTitle: { fontSize: 22, fontWeight: "900", color: COLORS.text, marginBottom: 16 },

@@ -1,4 +1,4 @@
-// app/customer/profile.tsx
+
 
 import React, { useCallback, useState } from "react";
 import {
@@ -131,6 +131,10 @@ type CustomerRecord = {
   membershipStatus?: string;
   current_period_end?: string;
   currentPeriodEnd?: string;
+  cancel_at_period_end?: boolean;
+  cancelAtPeriodEnd?: boolean;
+  canceled_at?: string;
+  canceledAt?: string;
   account_active?: boolean;
   accountActive?: boolean;
   role?: string;
@@ -511,6 +515,10 @@ export default function CustomerProfile() {
         ),
         current_period_end: clean(subscription?.current_period_end || dbCustomer?.current_period_end || current?.current_period_end),
         currentPeriodEnd: clean(subscription?.current_period_end || dbCustomer?.current_period_end || current?.currentPeriodEnd),
+        cancel_at_period_end: Boolean(subscription?.cancel_at_period_end ?? dbCustomer?.cancel_at_period_end ?? current?.cancel_at_period_end ?? current?.cancelAtPeriodEnd ?? false),
+        cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end ?? dbCustomer?.cancel_at_period_end ?? current?.cancel_at_period_end ?? current?.cancelAtPeriodEnd ?? false),
+        canceled_at: clean(subscription?.canceled_at || dbCustomer?.canceled_at || current?.canceled_at || current?.canceledAt),
+        canceledAt: clean(subscription?.canceled_at || dbCustomer?.canceled_at || current?.canceled_at || current?.canceledAt),
         account_active: Boolean(dbCustomer?.account_active ?? current?.account_active ?? current?.accountActive ?? false),
         accountActive: Boolean(dbCustomer?.account_active ?? current?.account_active ?? current?.accountActive ?? false),
         updated_at: nowIso(),
@@ -856,13 +864,25 @@ export default function CustomerProfile() {
       return;
     }
 
+    if (customer?.cancel_at_period_end || customer?.cancelAtPeriodEnd) {
+      Alert.alert(
+        "Cancellation Already Scheduled",
+        customer.current_period_end || customer.currentPeriodEnd
+          ? `Your Farm2Home Direct membership is already scheduled to end on ${new Date(
+              customer.current_period_end || customer.currentPeriodEnd || ""
+            ).toLocaleDateString()}.`
+          : "Your Farm2Home Direct membership is already scheduled not to renew."
+      );
+      return;
+    }
+
     Alert.alert(
       "Cancel Subscription",
-      "Are you sure you want to cancel your Farm2Home customer membership?",
+      "Are you sure you want to cancel your Farm2Home Direct customer membership? You will keep access through the end of your current paid billing period, and Stripe will stop the next renewal.",
       [
-        { text: "No", style: "cancel" },
+        { text: "Keep Membership", style: "cancel" },
         {
-          text: "Yes, Cancel",
+          text: "Cancel Subscription",
           style: "destructive",
           onPress: async () => {
             try {
@@ -877,7 +897,12 @@ export default function CustomerProfile() {
                   subscriptionId,
                   stripeSubscriptionId: subscriptionId,
                   customerId: getCustomerId(customer),
+                  stripeCustomerId: getStripeCustomer(customer),
+                  profileId: getProfileId(customer),
+                  email: normalize(email || customer?.email),
                   role: "customer",
+                  cancelAtPeriodEnd: true,
+                  cancel_at_period_end: true,
                 }),
               });
 
@@ -887,14 +912,35 @@ export default function CustomerProfile() {
                 throw new Error(data.error || "Unable to cancel subscription.");
               }
 
+              const periodEnd = clean(
+                data.currentPeriodEnd ||
+                  data.current_period_end ||
+                  customer?.current_period_end ||
+                  customer?.currentPeriodEnd
+              );
+
+              const stripeStatus = clean(
+                data.subscriptionStatus ||
+                  data.subscription_status ||
+                  customer?.subscription_status ||
+                  customer?.subscriptionStatus ||
+                  "active"
+              );
+
+              // IMPORTANT: cancellation is scheduled at period end.
+              // The customer keeps paid access until Stripe actually ends the subscription.
               const updatedCustomer: CustomerRecord = {
                 ...(customer || {}),
-                membership_status: "canceled",
-                membershipStatus: "canceled",
-                subscription_status: "canceled",
-                subscriptionStatus: "canceled",
-                account_active: false,
-                accountActive: false,
+                membership_status: stripeStatus,
+                membershipStatus: stripeStatus,
+                subscription_status: stripeStatus,
+                subscriptionStatus: stripeStatus,
+                cancel_at_period_end: true,
+                cancelAtPeriodEnd: true,
+                current_period_end: periodEnd,
+                currentPeriodEnd: periodEnd,
+                account_active: true,
+                accountActive: true,
                 updated_at: nowIso(),
                 updatedAt: nowIso(),
               };
@@ -903,19 +949,45 @@ export default function CustomerProfile() {
                 await supabase
                   .from("customers")
                   .update({
-                    membership_status: "canceled",
-                    subscription_status: "canceled",
-                    account_active: false,
+                    membership_status: stripeStatus,
+                    subscription_status: stripeStatus,
+                    cancel_at_period_end: true,
+                    current_period_end: periodEnd || null,
+                    account_active: true,
                     updated_at: nowIso(),
                   })
                   .eq("id", getCustomerId(customer));
-              } catch {
-                // Local state still updates.
+              } catch (error: any) {
+                console.log("customers cancellation sync skipped:", error?.message || error);
+              }
+
+              try {
+                const subscriptionUpdate: any = {
+                  cancel_at_period_end: true,
+                  subscription_status: stripeStatus,
+                  updated_at: nowIso(),
+                };
+
+                if (periodEnd) subscriptionUpdate.current_period_end = periodEnd;
+
+                await supabase
+                  .from("customer_subscriptions")
+                  .update(subscriptionUpdate)
+                  .eq("stripe_subscription_id", subscriptionId);
+              } catch (error: any) {
+                console.log("customer_subscriptions cancellation sync skipped:", error?.message || error);
               }
 
               await persistCustomer(updatedCustomer);
 
-              Alert.alert("Canceled", "Customer subscription canceled successfully.");
+              Alert.alert(
+                "Cancellation Scheduled",
+                periodEnd
+                  ? `Your Farm2Home Direct membership will remain active through ${new Date(
+                      periodEnd
+                    ).toLocaleDateString()}. Stripe will not renew it after that date.`
+                  : "Your Farm2Home Direct membership will remain active through the current paid period and will not renew."
+              );
             } catch (error: any) {
               Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
             } finally {
@@ -1036,6 +1108,10 @@ export default function CustomerProfile() {
             <InfoLine label="Subscription" value={getStripeSubscription(customer) || "Not synced"} />
             <InfoLine label="Customer ID" value={getCustomerId(customer) || "Not created"} />
             <InfoLine label="Current Period End" value={clean(customer.current_period_end || customer.currentPeriodEnd) || "Not listed"} />
+            <InfoLine
+              label="Renewal"
+              value={customer.cancel_at_period_end || customer.cancelAtPeriodEnd ? "Cancellation scheduled" : "Automatic renewal active"}
+            />
 
             <TouchableOpacity
               style={[styles.primaryButton, syncing && styles.disabledButton]}
@@ -1069,21 +1145,6 @@ export default function CustomerProfile() {
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.cancelButton, cancelLoading && styles.disabledButton]}
-              onPress={cancelSubscription}
-              disabled={cancelLoading}
-              activeOpacity={0.9}
-            >
-              {cancelLoading ? (
-                <ActivityIndicator color={COLORS.white} />
-              ) : (
-                <>
-                  <Ionicons name="close-circle-outline" size={19} color={COLORS.white} />
-                  <Text style={styles.buttonText}>Cancel Subscription</Text>
-                </>
-              )}
-            </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
@@ -1128,6 +1189,52 @@ export default function CustomerProfile() {
               placeholderTextColor="#ADB5BD"
               keyboardType="phone-pad"
             />
+
+            <View style={styles.profileMembershipBox}>
+              <View style={styles.profileMembershipHeader}>
+                <View>
+                  <Text style={styles.profileMembershipTitle}>Membership</Text>
+                  <Text style={styles.profileMembershipStatus}>
+                    {customer.cancel_at_period_end || customer.cancelAtPeriodEnd
+                      ? "Cancellation scheduled"
+                      : active
+                        ? "Active subscription"
+                        : `Status: ${status}`}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={customer.cancel_at_period_end || customer.cancelAtPeriodEnd ? "time-outline" : "card-outline"}
+                  size={24}
+                  color={customer.cancel_at_period_end || customer.cancelAtPeriodEnd ? COLORS.amber : COLORS.greenDark}
+                />
+              </View>
+
+              {(customer.cancel_at_period_end || customer.cancelAtPeriodEnd) && (
+                <Text style={styles.cancellationNotice}>
+                  Your subscription will not renew. You keep access through {clean(customer.current_period_end || customer.currentPeriodEnd) ? new Date(clean(customer.current_period_end || customer.currentPeriodEnd)).toLocaleDateString() : "the end of your current billing period"}.
+                </Text>
+              )}
+
+              <TouchableOpacity
+                style={[styles.cancelButton, cancelLoading && styles.disabledButton]}
+                onPress={cancelSubscription}
+                disabled={cancelLoading || Boolean(customer.cancel_at_period_end || customer.cancelAtPeriodEnd)}
+                activeOpacity={0.9}
+              >
+                {cancelLoading ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <>
+                    <Ionicons name="close-circle-outline" size={19} color={COLORS.white} />
+                    <Text style={styles.buttonText}>
+                      {customer.cancel_at_period_end || customer.cancelAtPeriodEnd
+                        ? "Cancellation Scheduled"
+                        : "Cancel Subscription"}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.card}>
@@ -1258,6 +1365,24 @@ export default function CustomerProfile() {
             <RouteRow title="Notifications" subtitle="Order, farmer, and driver alerts" path="/customer/notifications" icon="notifications-outline" />
             <RouteRow title="Favorites" subtitle="Saved farms and products" path="/customer/favorites" icon="heart-outline" />
             <RouteRow title="Support" subtitle="Get help with orders or payment" path="/customer/support" icon="help-buoy-outline" />
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Privacy & Account</Text>
+
+            <RouteRow
+              title="Privacy Policy"
+              subtitle="Review how Farm2Home Direct collects, uses, and protects your information"
+              path="/privacy"
+              icon="shield-checkmark-outline"
+            />
+
+            <RouteRow
+              title="Delete Account"
+              subtitle="Request deletion of your Farm2Home Direct account and associated personal data"
+              path="/delete-account"
+              icon="trash-outline"
+            />
           </View>
 
           <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.9}>
@@ -1564,6 +1689,42 @@ const styles = StyleSheet.create({
     marginTop: 10,
     flexDirection: "row",
     gap: 8,
+  },
+  profileMembershipBox: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+  },
+  profileMembershipHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  profileMembershipTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  profileMembershipStatus: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 12,
+    marginTop: 3,
+    textTransform: "capitalize",
+  },
+  cancellationNotice: {
+    marginTop: 10,
+    color: "#B7791F",
+    backgroundColor: COLORS.amberSoft,
+    borderRadius: 12,
+    padding: 11,
+    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 18,
   },
   cancelButton: {
     backgroundColor: COLORS.danger,

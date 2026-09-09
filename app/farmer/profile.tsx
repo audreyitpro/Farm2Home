@@ -1,4 +1,4 @@
-// app/farmer/profile.tsx
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -16,6 +16,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
+import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 
 const COLORS = {
@@ -34,9 +35,62 @@ const COLORS = {
   orangeSoft: "#FFF3DE",
 };
 
+function clean(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function normalize(value: unknown) {
+  return clean(value).toLowerCase();
+}
+
+function isStripeSubscriptionId(value: unknown) {
+  return clean(value).startsWith("sub_");
+}
+
+function getStripeSubscriptionId(farmer: any) {
+  return clean(
+    farmer?.stripe_subscription_id ||
+      farmer?.stripeSubscriptionId ||
+      farmer?.subscription_id ||
+      farmer?.subscriptionId
+  );
+}
+
+function getMembershipStatus(farmer: any) {
+  return clean(
+    farmer?.membership_status ||
+      farmer?.membershipStatus ||
+      farmer?.subscription_status ||
+      farmer?.subscriptionStatus ||
+      "not_started"
+  );
+}
+
+function getCurrentPeriodEnd(farmer: any) {
+  return clean(farmer?.current_period_end || farmer?.currentPeriodEnd);
+}
+
+function cancellationScheduled(farmer: any) {
+  return Boolean(farmer?.cancel_at_period_end || farmer?.cancelAtPeriodEnd);
+}
+
+async function parseApiResponse(response: Response) {
+  const text = await response.text();
+
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {
+      success: false,
+      error: text || "Invalid backend response.",
+    };
+  }
+}
+
 export default function FarmerProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const [farmer, setFarmer] = useState<any>(null);
   const [farmerId, setFarmerId] = useState("");
@@ -125,6 +179,75 @@ export default function FarmerProfileScreen() {
           farmerId: farmerRow.id,
           farmer_id: farmerRow.farmer_id || farmerRow.id,
         };
+      }
+
+      // Pull the latest Stripe membership/cancellation state when available.
+      try {
+        const subscriptionFilters = [
+          `farmer_id.eq.${id}`,
+          latestFarmer?.email
+            ? `farmer_email.eq.${String(latestFarmer.email).toLowerCase()}`
+            : "",
+          latestFarmer?.email
+            ? `email.eq.${String(latestFarmer.email).toLowerCase()}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(",");
+
+        if (subscriptionFilters) {
+          const { data: subscriptionRows } = await supabase
+            .from("farmer_subscriptions")
+            .select("*")
+            .or(subscriptionFilters)
+            .order("updated_at", { ascending: false })
+            .limit(1);
+
+          const subscriptionRow = Array.isArray(subscriptionRows)
+            ? subscriptionRows[0]
+            : null;
+
+          if (subscriptionRow) {
+            latestFarmer = {
+              ...latestFarmer,
+              stripe_customer_id:
+                subscriptionRow.stripe_customer_id ||
+                latestFarmer.stripe_customer_id,
+              stripe_subscription_id:
+                subscriptionRow.stripe_subscription_id ||
+                subscriptionRow.subscription_id ||
+                latestFarmer.stripe_subscription_id ||
+                latestFarmer.subscription_id,
+              subscription_id:
+                subscriptionRow.subscription_id ||
+                subscriptionRow.stripe_subscription_id ||
+                latestFarmer.subscription_id ||
+                latestFarmer.stripe_subscription_id,
+              subscription_status:
+                subscriptionRow.subscription_status ||
+                subscriptionRow.status ||
+                latestFarmer.subscription_status,
+              membership_status:
+                subscriptionRow.membership_status ||
+                subscriptionRow.subscription_status ||
+                subscriptionRow.status ||
+                latestFarmer.membership_status,
+              cancel_at_period_end:
+                subscriptionRow.cancel_at_period_end ??
+                latestFarmer.cancel_at_period_end ??
+                false,
+              current_period_end:
+                subscriptionRow.current_period_end ||
+                latestFarmer.current_period_end ||
+                null,
+            };
+          }
+        }
+      } catch (error: any) {
+        console.log(
+          "farmer_subscriptions load skipped:",
+          error?.message || error
+        );
       }
 
       setFarmer(latestFarmer);
@@ -319,6 +442,186 @@ export default function FarmerProfileScreen() {
     ]);
   }
 
+  async function cancelSubscription() {
+    if (!farmerId || cancelLoading) return;
+
+    const subscriptionId = getStripeSubscriptionId(farmer);
+
+    if (!isStripeSubscriptionId(subscriptionId)) {
+      Alert.alert(
+        "No Subscription",
+        "No active farmer subscription was found. Please make sure the farmer membership is connected to Stripe."
+      );
+      return;
+    }
+
+    if (cancellationScheduled(farmer)) {
+      const periodEnd = getCurrentPeriodEnd(farmer);
+
+      Alert.alert(
+        "Cancellation Already Scheduled",
+        periodEnd
+          ? `Your farmer membership is already scheduled to end on ${new Date(
+              periodEnd
+            ).toLocaleDateString()}.`
+          : "Your farmer membership is already scheduled for cancellation."
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Cancel Farmer Subscription",
+      "Your Farm2Home Direct farmer membership will stay active until the end of the current billing period and will not renew.",
+      [
+        {
+          text: "Keep Subscription",
+          style: "cancel",
+        },
+        {
+          text: "Cancel Subscription",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setCancelLoading(true);
+
+              const response = await fetch(
+                `${API_BASE_URL}/payments/cancel-subscription`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    role: "farmer",
+                    userId: farmerId,
+                    farmerId,
+                    farmer_id: farmerId,
+                    subscriptionId,
+                    subscription_id: subscriptionId,
+                    stripeSubscriptionId: subscriptionId,
+                    stripe_subscription_id: subscriptionId,
+                    cancelAtPeriodEnd: true,
+                    cancel_at_period_end: true,
+                  }),
+                }
+              );
+
+              const data = await parseApiResponse(response);
+
+              if (!response.ok || data.error) {
+                throw new Error(
+                  data.error ||
+                    data.message ||
+                    "Unable to cancel the farmer subscription."
+                );
+              }
+
+              const periodEnd =
+                clean(
+                  data.currentPeriodEnd ||
+                    data.current_period_end ||
+                    getCurrentPeriodEnd(farmer)
+                ) || null;
+
+              const now = new Date().toISOString();
+
+              const updatedFarmer = {
+                ...farmer,
+                cancel_at_period_end: true,
+                cancelAtPeriodEnd: true,
+                current_period_end: periodEnd,
+                currentPeriodEnd: periodEnd,
+                updated_at: now,
+                updatedAt: now,
+              };
+
+              // Do not mark the farmer inactive yet. Access continues
+              // through the already-paid billing period.
+              try {
+                const { error } = await supabase
+                  .from("farmers")
+                  .update({
+                    cancel_at_period_end: true,
+                    current_period_end: periodEnd,
+                    updated_at: now,
+                  })
+                  .eq("id", farmerId);
+
+                if (error) {
+                  console.log(
+                    "farmers cancellation sync skipped:",
+                    error.message
+                  );
+                }
+              } catch (error: any) {
+                console.log(
+                  "farmers cancellation sync skipped:",
+                  error?.message || error
+                );
+              }
+
+              try {
+                let updateQuery = supabase
+                  .from("farmer_subscriptions")
+                  .update({
+                    cancel_at_period_end: true,
+                    current_period_end: periodEnd,
+                    updated_at: now,
+                  });
+
+                // Prefer Stripe subscription ID so the exact membership row is updated.
+                updateQuery = updateQuery.eq(
+                  "stripe_subscription_id",
+                  subscriptionId
+                );
+
+                const { error } = await updateQuery;
+
+                if (error) {
+                  console.log(
+                    "farmer_subscriptions cancellation sync skipped:",
+                    error.message
+                  );
+                }
+              } catch (error: any) {
+                console.log(
+                  "farmer_subscriptions cancellation sync skipped:",
+                  error?.message || error
+                );
+              }
+
+              await AsyncStorage.multiSet([
+                ["currentFarmer", JSON.stringify(updatedFarmer)],
+                ["farm2homeCurrentFarmer", JSON.stringify(updatedFarmer)],
+                ["farm2homeFarmerSession", JSON.stringify(updatedFarmer)],
+                ["currentUser", JSON.stringify(updatedFarmer)],
+              ]);
+
+              setFarmer(updatedFarmer);
+
+              Alert.alert(
+                "Cancellation Scheduled",
+                periodEnd
+                  ? `Your farmer membership will remain active until ${new Date(
+                      periodEnd
+                    ).toLocaleDateString()}. It will not renew after that date.`
+                  : "Your farmer membership will remain active through the current billing period and will not renew."
+              );
+            } catch (error: any) {
+              console.log("cancelSubscription error:", error);
+              Alert.alert(
+                "Cancel Subscription Error",
+                error?.message || "Unable to cancel the farmer subscription."
+              );
+            } finally {
+              setCancelLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
   function goTo(pathname: string, params?: Record<string, string>) {
     router.push(params ? ({ pathname, params } as any) : (pathname as any));
   }
@@ -389,6 +692,101 @@ export default function FarmerProfileScreen() {
           <StatCard label="Pickup" value={pickupEnabled ? "On" : "Off"} icon="bag-handle-outline" />
           <StatCard label="Delivery" value={deliveryEnabled ? "On" : "Off"} icon="car-outline" />
           <StatCard label="Driver Board" value={postToFarm2Driver ? "Auto" : "Manual"} icon="trail-sign-outline" />
+        </View>
+
+        <View style={styles.card}>
+          <SectionHeader
+            step="Membership"
+            title="Farmer Subscription"
+            subtitle="Manage the Farm2Home Direct farmer membership."
+            icon="card-outline"
+          />
+
+          <View style={styles.membershipStatusBox}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.membershipLabel}>Membership Status</Text>
+              <Text style={styles.membershipValue}>
+                {cancellationScheduled(farmer)
+                  ? "Cancellation Scheduled"
+                  : getMembershipStatus(farmer)
+                      .replace(/_/g, " ")
+                      .replace(/\b\w/g, (char) => char.toUpperCase())}
+              </Text>
+            </View>
+
+            <Ionicons
+              name={
+                cancellationScheduled(farmer)
+                  ? "time-outline"
+                  : isStripeSubscriptionId(getStripeSubscriptionId(farmer))
+                    ? "checkmark-circle-outline"
+                    : "alert-circle-outline"
+              }
+              size={26}
+              color={
+                cancellationScheduled(farmer)
+                  ? "#B45309"
+                  : isStripeSubscriptionId(getStripeSubscriptionId(farmer))
+                    ? COLORS.primary
+                    : COLORS.danger
+              }
+            />
+          </View>
+
+          <View style={styles.membershipInfoRow}>
+            <Text style={styles.membershipInfoLabel}>Subscription ID</Text>
+            <Text style={styles.membershipInfoValue} numberOfLines={1}>
+              {getStripeSubscriptionId(farmer) || "Not connected"}
+            </Text>
+          </View>
+
+          <View style={styles.membershipInfoRow}>
+            <Text style={styles.membershipInfoLabel}>
+              {cancellationScheduled(farmer) ? "Access Until" : "Current Period End"}
+            </Text>
+            <Text style={styles.membershipInfoValue}>
+              {getCurrentPeriodEnd(farmer)
+                ? new Date(getCurrentPeriodEnd(farmer)).toLocaleDateString()
+                : "Not listed"}
+            </Text>
+          </View>
+
+          <Pressable
+            style={[
+              styles.cancelSubscriptionButton,
+              (cancelLoading || cancellationScheduled(farmer)) &&
+                styles.disabled,
+            ]}
+            onPress={cancelSubscription}
+            disabled={cancelLoading || cancellationScheduled(farmer)}
+          >
+            {cancelLoading ? (
+              <ActivityIndicator color={COLORS.danger} />
+            ) : (
+              <>
+                <Ionicons
+                  name={
+                    cancellationScheduled(farmer)
+                      ? "time-outline"
+                      : "close-circle-outline"
+                  }
+                  size={19}
+                  color={COLORS.danger}
+                />
+                <Text style={styles.cancelSubscriptionText}>
+                  {cancellationScheduled(farmer)
+                    ? "Subscription Cancellation Scheduled"
+                    : "Cancel Subscription"}
+                </Text>
+              </>
+            )}
+          </Pressable>
+
+          <Text style={styles.cancelSubscriptionNote}>
+            {cancellationScheduled(farmer)
+              ? "Your farmer membership remains active through the current paid billing period and will not renew."
+              : "Canceling stops automatic renewal at the end of your current billing period. Your farmer account remains available through the paid period."}
+          </Text>
         </View>
 
         <View style={styles.card}>
@@ -1097,6 +1495,70 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   routeButtonText: { flex: 1, color: COLORS.text, fontWeight: "900" },
+
+  membershipStatusBox: {
+    backgroundColor: COLORS.soft,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
+  },
+  membershipLabel: {
+    color: COLORS.muted,
+    fontWeight: "900",
+    fontSize: 11,
+    textTransform: "uppercase",
+  },
+  membershipValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+    marginTop: 4,
+  },
+  membershipInfoRow: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingVertical: 11,
+  },
+  membershipInfoLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  membershipInfoValue: {
+    color: COLORS.text,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  cancelSubscriptionButton: {
+    backgroundColor: COLORS.dangerSoft,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 17,
+    minHeight: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8,
+  },
+  cancelSubscriptionText: {
+    color: COLORS.danger,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  cancelSubscriptionNote: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
+  },
 
   saveButton: {
     backgroundColor: COLORS.primary,

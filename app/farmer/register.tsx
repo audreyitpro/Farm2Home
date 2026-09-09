@@ -1,4 +1,4 @@
-// app/farmer/register.tsx
+
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useMemo, useState } from "react";
@@ -107,14 +107,254 @@ const productOptions = [
   "Farm Supplies",
 ];
 
+const LEGAL_AGREEMENT_TYPE = "platform_agreement";
+const LEGAL_AGREEMENT_VERSION = "1.0";
+
+const PLATFORM_AGREEMENT_TEXT = `
+FARM2HOME DIRECT PLATFORM AGREEMENT
+VERSION 1.0
+
+Effective Date: September 9, 2026
+
+1. PURPOSE OF FARM2HOME DIRECT
+
+Farm2Home Direct is a technology marketplace and platform designed to connect customers with independent farmers, producers, freight carriers, drivers, and other marketplace participants.
+
+Farm2Home Direct provides technology that may allow users to discover products, communicate, place orders, coordinate pickup or delivery, arrange transportation, process payments, manage subscriptions, receive payouts, and use related marketplace services.
+
+Farm2Home Direct does not itself grow, manufacture, produce, harvest, inspect, package, prepare, transport, deliver, store, or independently verify products or services offered by independent users of the platform unless Farm2Home Direct expressly states otherwise for a particular service.
+
+2. INDEPENDENT FARMERS AND SELLERS
+
+Farmers, producers, growers, ranchers, food producers, and sellers using Farm2Home Direct operate independently.
+
+They are not employees, agents, representatives, partners, or joint venturers of Farm2Home Direct merely because they use the Farm2Home Direct platform.
+
+Each farmer or seller is responsible for their own business operations, products, employees or contractors, licenses, registrations, permits, insurance, taxes, facilities, equipment, product claims, and regulatory compliance.
+
+3. FARMER AND SELLER RESPONSIBILITIES
+
+Farmers and sellers are responsible for every product they list, advertise, offer, or sell through Farm2Home Direct.
+
+This includes responsibility for, where applicable:
+
+• Product quality, condition, and safety.
+• Accurate product names and descriptions.
+• Accurate pricing, quantity, weight, and availability.
+• Ingredients and allergen disclosures.
+• Packaging and labeling.
+• Food handling and sanitation.
+• Refrigeration and temperature control.
+• Storage requirements.
+• Harvest, production, preparation, and expiration information.
+• Organic, natural, halal, grass-fed, local, or other product claims.
+• Required licenses, registrations, inspections, certifications, and permits.
+• Product liability insurance when required.
+• Compliance with applicable federal, state, and local laws and regulations.
+
+Farm2Home Direct does not guarantee the quality, condition, safety, legality, freshness, suitability, or accuracy of products offered by independent farmers or sellers.
+
+4. FOOD SAFETY AND REGULATORY COMPLIANCE
+
+Farmers and sellers are solely responsible for determining and complying with laws and regulations that apply to their products and operations.
+
+Depending on the farmer's products and location, requirements may include food safety rules, cottage food laws, produce safety requirements, meat or dairy requirements, labeling requirements, health department requirements, agricultural requirements, licensing requirements, permits, inspections, certifications, and other regulatory obligations.
+
+The ability to create an account, upload a document, list a product, or receive a platform status does not constitute legal, regulatory, licensing, food-safety, or compliance approval by Farm2Home Direct.
+
+5. FARMER DOCUMENTS
+
+Farmers may be required to provide documents such as:
+
+• Farm or business licenses.
+• Food safety documentation.
+• Product liability insurance.
+• W-9 documentation.
+• Farm permits.
+• Organic certification when applicable.
+• Meat or dairy licenses when applicable.
+• Produce safety certification when applicable.
+• Other documentation required by Farm2Home Direct or applicable law.
+
+Farmers are responsible for ensuring submitted documents are authentic, accurate, current, and applicable to their operations.
+
+6. PRODUCT INFORMATION AND ALLERGENS
+
+Farmers and sellers are responsible for providing accurate information about products offered through Farm2Home Direct.
+
+Where applicable, sellers must provide accurate ingredient, allergen, handling, preparation, storage, and warning information.
+
+Farm2Home Direct does not independently test products or verify every ingredient, allergen, product claim, or label submitted by independent sellers.
+
+7. CUSTOMER ORDERS
+
+Farmers and sellers are responsible for fulfilling accepted customer orders accurately and within the commitments represented through the platform.
+
+Farmers are responsible for product availability, substitutions, packaging, pickup readiness, delivery handoff, and communication concerning orders.
+
+If an order cannot be fulfilled as represented, the farmer or seller is responsible for promptly communicating the issue and following applicable refund, replacement, cancellation, or credit procedures.
+
+8. REFUNDS, REPLACEMENTS, AND CUSTOMER COMPLAINTS
+
+Farmers and sellers agree to reasonably address legitimate customer complaints involving their products.
+
+Depending on the circumstances and Farm2Home Direct policies, resolution may include a refund, replacement, credit, correction, or other appropriate remedy.
+
+Farm2Home Direct may provide dispute-management or support tools but does not assume the farmer's responsibility for products supplied by that farmer.
+
+9. FREIGHT, DELIVERY, AND PICKUP
+
+Farm2Home Direct may provide technology that allows farmers to coordinate customer pickup, delivery, freight, or transportation.
+
+Independent freight carriers and drivers remain responsible for their own transportation services.
+
+Farmers are responsible for properly preparing, packaging, labeling, storing, and tendering products for pickup or transportation.
+
+Farmers must communicate any special handling, temperature, safety, or delivery requirements applicable to their products.
+
+10. PLATFORM ROLE
+
+Farm2Home Direct facilitates connections between marketplace participants.
+
+Depending on the features being used, Farm2Home Direct may provide technology for:
+
+• Marketplace listings.
+• Search and discovery.
+• Farmer storefronts.
+• Product and inventory management.
+• Order coordination.
+• Customer communication.
+• Pickup and delivery coordination.
+• Freight coordination.
+• Location and tracking.
+• Payment processing.
+• Subscription management.
+• Stripe Connect payment or payout functionality.
+• Notifications.
+• Customer support.
+• Sales and business-management tools.
+• Related marketplace services.
+
+The availability of these features does not make Farm2Home Direct the grower, producer, manufacturer, farmer, seller, carrier, driver, employer, or direct provider of products or independent transportation services offered by platform users.
+
+11. PAYMENTS, PAYOUTS, SUBSCRIPTIONS, AND FEES
+
+Farm2Home Direct may charge membership, processing, transaction, platform, service, or other disclosed fees.
+
+Farmers agree to applicable fees and payment terms presented before purchase, subscription, or transaction.
+
+Farm2Home Direct may use third-party payment providers, including Stripe, to process payments, subscriptions, connected accounts, and payouts.
+
+Use of third-party payment services may also be subject to the third party's terms, verification requirements, and policies.
+
+12. TAXES
+
+Farmers and sellers are responsible for their own business and income tax obligations and for maintaining records necessary for their business.
+
+The collection, calculation, reporting, or remittance of particular transaction taxes may depend on applicable law and the services provided by Farm2Home Direct or third-party providers.
+
+Nothing provided through Farm2Home Direct should be treated as individualized tax or legal advice.
+
+13. NO GUARANTEE OF SALES OR REVENUE
+
+Farm2Home Direct does not guarantee any particular number of customers, orders, sales, subscriptions, transactions, revenue, profits, delivery opportunities, or business results.
+
+Results depend on factors outside Farm2Home Direct's control, including customer demand, product availability, pricing, seller performance, location, competition, expenses, and market conditions.
+
+14. USER CONTENT AND REPRESENTATIONS
+
+Farmers are responsible for product images, descriptions, prices, business information, messages, documents, licenses, certifications, insurance information, and other content they submit.
+
+Farmers agree not to knowingly provide false, misleading, fraudulent, unlawful, expired, or unauthorized information.
+
+15. INTELLECTUAL PROPERTY AND PRODUCT CONTENT
+
+Farmers must have the right to use product photographs, business names, trademarks, descriptions, logos, and other content they submit to Farm2Home Direct.
+
+Farmers must not knowingly upload content that infringes another person's intellectual property or other legal rights.
+
+16. PROHIBITED PRODUCTS AND CONDUCT
+
+Farmers may not use Farm2Home Direct to sell unlawful, prohibited, recalled, unsafe, fraudulent, counterfeit, or materially misrepresented products.
+
+Farm2Home Direct may restrict or remove products, listings, content, or accounts that violate platform policies, applicable law, safety requirements, or third-party service requirements.
+
+17. INSURANCE
+
+Farmers are responsible for determining and maintaining insurance appropriate for their business and products, including product liability or other coverage when required by law, contract, or Farm2Home Direct eligibility requirements.
+
+Farm2Home Direct does not provide insurance coverage for an independent farmer's products or operations unless expressly stated in a separate written agreement.
+
+18. INDEMNIFICATION
+
+To the extent permitted by applicable law and the Farm2Home Direct Terms of Service, farmers and sellers agree to be responsible for claims, losses, damages, liabilities, penalties, costs, or expenses arising from their products, business operations, legal violations, false representations, or breach of applicable platform obligations.
+
+Any indemnification obligations are subject to applicable law and the controlling Terms of Service.
+
+19. LIMITATION OF PLATFORM RESPONSIBILITY
+
+To the fullest extent permitted by applicable law, Farm2Home Direct is not responsible for the independent acts, omissions, representations, products, services, business practices, transportation activities, or conduct of users of the platform.
+
+Nothing in this agreement is intended to exclude, waive, or limit any responsibility or liability that cannot lawfully be excluded or limited.
+
+20. ACCOUNT RESPONSIBILITY
+
+Farmers are responsible for maintaining the security of their Farm2Home Direct account and login credentials.
+
+Farmers must keep their business, contact, product, licensing, insurance, tax, payout, and other required account information reasonably accurate and current.
+
+Farmers must not knowingly allow unauthorized individuals to use their account.
+
+21. PRIVACY
+
+Use of Farm2Home Direct is also governed by the Farm2Home Direct Privacy Policy.
+
+The Privacy Policy describes how Farm2Home Direct collects, uses, stores, processes, shares, and protects information.
+
+22. TERMS OF SERVICE
+
+Use of Farm2Home Direct is also governed by the Farm2Home Direct Terms of Service.
+
+If additional terms apply to a particular product, subscription, payment, payout, delivery, freight, or marketplace feature, those additional terms may also apply.
+
+23. ELECTRONIC ACCEPTANCE
+
+By selecting the required acknowledgment boxes and pressing "I Agree & Continue," the farmer confirms that:
+
+• The farmer has been given an opportunity to read this Platform Agreement.
+• The farmer understands that Farm2Home Direct operates primarily as a technology marketplace connecting independent participants.
+• The farmer understands that the farmer remains responsible for products and business operations.
+• The farmer agrees to comply with this Platform Agreement.
+• The farmer agrees to the Farm2Home Direct Terms of Service.
+• The farmer acknowledges the Farm2Home Direct Privacy Policy.
+• The farmer's acceptance may be recorded electronically with the agreement version and acceptance date.
+
+24. AGREEMENT VERSION
+
+This is Farm2Home Direct Platform Agreement Version 1.0.
+
+Acceptance of Version 1.0 applies to this version only.
+
+If Farm2Home Direct materially updates this agreement, the platform may require the farmer to review and accept a new agreement version before continuing to use applicable services.
+
+25. ACKNOWLEDGMENT
+
+BY SELECTING "I AGREE & CONTINUE," YOU ACKNOWLEDGE THAT YOU HAVE READ AND UNDERSTAND THIS FARM2HOME DIRECT PLATFORM AGREEMENT, VERSION 1.0, AND AGREE TO BE BOUND BY ITS TERMS.
+`.trim();
+
 const agreements = [
-  "I understand I am an independent seller and not an employee, agent, or partner of Farm2Home.",
-  "I accept full responsibility for food quality, safety, storage, packaging, labeling, and product accuracy.",
-  "I certify I comply with state and federal laws required to sell my products.",
-  "I agree to resolve customer complaints through refund, replacement, or credit when appropriate.",
-  "I agree to indemnify and hold harmless Farm2Home and ASO Developments LLC from claims related to my products, operations, or legal violations.",
-  "I accept Farm2Home service fees, membership fees, payout terms, and platform policies.",
+  "I acknowledge that I have read and understand the Farm2Home Direct Platform Agreement.",
+  "I understand that I am an independent farmer or seller and remain responsible for my products, food safety, labeling, licensing, insurance, and business operations.",
+  "I understand that Farm2Home Direct operates as a technology marketplace connecting independent customers, farmers, freight carriers, and drivers.",
+  "I agree to the Farm2Home Direct Terms of Service and acknowledge the Privacy Policy.",
 ];
+
+function formatLegalDate(value: any) {
+  const raw = clean(value);
+  if (!raw) return "";
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleString();
+}
 
 type StepKey = (typeof STEPS)[number]["key"];
 
@@ -361,6 +601,11 @@ export default function FarmerRegister() {
 
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [accepted, setAccepted] = useState<Record<number, boolean>>({});
+  const [legalLoading, setLegalLoading] = useState(false);
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const [legalAcceptedAt, setLegalAcceptedAt] = useState("");
+  const [legalAgreementVersion, setLegalAgreementVersion] =
+    useState(LEGAL_AGREEMENT_VERSION);
 
   const [farmBusinessLicenseDocument, setFarmBusinessLicenseDocument] = useState("");
   const [foodSafetyDocument, setFoodSafetyDocument] = useState("");
@@ -406,7 +651,8 @@ export default function FarmerRegister() {
   );
 
   const productsComplete = selectedProducts.length > 0;
-  const legalComplete = agreements.every((_, index) => accepted[index]);
+  const legalAcknowledgmentsComplete = agreements.every((_, index) => accepted[index]);
+  const legalComplete = legalAccepted;
 
   const documentsComplete = useMemo(
     () =>
@@ -453,8 +699,15 @@ export default function FarmerRegister() {
         complete: documentsComplete,
         value: documentsComplete ? "Complete" : "Missing",
       },
+      {
+        label: "Legal Agreement",
+        complete: legalAccepted,
+        value: legalAccepted
+          ? `Accepted v${legalAgreementVersion}`
+          : "Required",
+      },
     ],
-    [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete]
+    [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete, legalAccepted, legalAgreementVersion]
   );
 
   const setupScore = useMemo(
@@ -495,7 +748,185 @@ export default function FarmerRegister() {
     }
   }, [params?.stripe, params?.payment, params?.farmerId, params?.farmer_id, params?.email]);
 
+  async function loadLegalAcceptance(userId?: string) {
+    const id = clean(userId);
+    if (!id) return null;
+
+    const { data, error } = await supabase
+      .from("legal_agreement_acceptances")
+      .select(
+        "id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at"
+      )
+      .eq("user_id", id)
+      .eq("role", "farmer")
+      .eq("agreement_type", LEGAL_AGREEMENT_TYPE)
+      .eq("agreement_version", LEGAL_AGREEMENT_VERSION)
+      .eq("accepted", true)
+      .maybeSingle();
+
+    if (error) {
+      console.log("Farmer legal agreement lookup:", error.message);
+      return null;
+    }
+
+    if (data) {
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(
+        clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION
+      );
+
+      const restored: Record<number, boolean> = {};
+      agreements.forEach((_, index) => {
+        restored[index] = true;
+      });
+      setAccepted(restored);
+
+      await AsyncStorage.multiSet([
+        ["farm2homeLegalAgreementAccepted", "true"],
+        ["farm2homeLegalAgreementVersion", clean(data.agreement_version)],
+        ["farm2homeLegalAgreementAcceptedAt", clean(data.accepted_at)],
+        ["farm2homeLegalAgreementRole", "farmer"],
+      ]);
+    }
+
+    return data;
+  }
+
+  async function acceptLegalAgreement() {
+    if (legalLoading) return;
+
+    if (!legalAcknowledgmentsComplete) {
+      Alert.alert(
+        "Acknowledgment Required",
+        "You must select every Legal & Agreements acknowledgment before continuing."
+      );
+      return;
+    }
+
+    try {
+      setLegalLoading(true);
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) throw userError;
+
+      if (!user?.id) {
+        throw new Error(
+          "You must save your farmer account and be signed in before accepting the agreement."
+        );
+      }
+
+      const existing = await loadLegalAcceptance(user.id);
+
+      if (existing) {
+        setStep(6);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("legal_agreement_acceptances")
+        .insert({
+          user_id: user.id,
+          role: "farmer",
+          agreement_type: LEGAL_AGREEMENT_TYPE,
+          agreement_version: LEGAL_AGREEMENT_VERSION,
+          agreement_text: PLATFORM_AGREEMENT_TEXT,
+          agreement_hash: `farm2home-platform-v${LEGAL_AGREEMENT_VERSION}`,
+          accepted: true,
+        })
+        .select(
+          "id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at"
+        )
+        .single();
+
+      if (error) {
+        if (String(error.code) === "23505") {
+          const duplicate = await loadLegalAcceptance(user.id);
+          if (duplicate) {
+            setStep(6);
+            return;
+          }
+        }
+        throw error;
+      }
+
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(
+        clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION
+      );
+
+      await AsyncStorage.multiSet([
+        ["farm2homeLegalAgreementAccepted", "true"],
+        ["farm2homeLegalAgreementVersion", clean(data.agreement_version)],
+        ["farm2homeLegalAgreementAcceptedAt", clean(data.accepted_at)],
+        ["farm2homeLegalAgreementRole", "farmer"],
+      ]);
+
+      Alert.alert(
+        "Agreement Accepted",
+        `Farm2Home Direct Platform Agreement Version ${LEGAL_AGREEMENT_VERSION} was accepted on ${formatLegalDate(
+          data.accepted_at
+        )}.`
+      );
+
+      setStep(6);
+    } catch (error: any) {
+      console.log("Farmer legal agreement acceptance error:", error);
+      Alert.alert(
+        "Agreement Error",
+        error?.message ||
+          "Unable to save your Farm2Home Direct Legal & Agreements acknowledgment."
+      );
+    } finally {
+      setLegalLoading(false);
+    }
+  }
+
+  async function requireLegalAgreement(userId?: string, showAlert = true) {
+    const id = clean(userId);
+
+    if (!id) {
+      if (showAlert) {
+        Alert.alert(
+          "Legal Agreement Required",
+          "Save your farmer account and accept Legal & Agreements before continuing."
+        );
+      }
+      setStep(5);
+      return false;
+    }
+
+    if (legalAccepted) return true;
+
+    const acceptance = await loadLegalAcceptance(id);
+    if (acceptance) return true;
+
+    setStep(5);
+
+    if (showAlert) {
+      Alert.alert(
+        "Legal Agreement Required",
+        "You must review and accept the Farm2Home Direct Platform Agreement before continuing."
+      );
+    }
+
+    return false;
+  }
+
   function goNext() {
+    if (step === 5 && !legalAccepted) {
+      Alert.alert(
+        "Legal Agreement Required",
+        "Read the agreement, select every acknowledgment, and press I Agree & Continue."
+      );
+      return;
+    }
+
     setStep((prev) => Math.min(prev + 1, STEPS.length - 1));
   }
 
@@ -503,7 +934,15 @@ export default function FarmerRegister() {
     setStep((prev) => Math.max(prev - 1, 0));
   }
 
-  function goDashboard() {
+  async function goDashboard() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const id = clean(user?.id || savedFarmerId || farmerId);
+    const legalOk = await requireLegalAgreement(id, true);
+    if (!legalOk) return;
+
     router.replace("/farmer/dashboard" as any);
   }
 
@@ -632,6 +1071,9 @@ export default function FarmerRegister() {
           (finalSub ? "active" : "pending_payment")
       ),
       membership_status: finalSub ? "active" : "pending_payment",
+      legal_agreement_accepted: legalAccepted,
+      legal_agreement_version: legalAgreementVersion,
+      legal_agreement_accepted_at: legalAcceptedAt || null,
       farm_business_license_document: clean(
         base.farm_business_license_document || farmBusinessLicenseDocument
       ),
@@ -703,7 +1145,7 @@ export default function FarmerRegister() {
     if (!legalComplete) {
       Alert.alert(
         "Agreement Required",
-        "Accept all Farmer Seller Agreement items before continuing."
+        "Accept the Farm2Home Direct Platform Agreement before continuing."
       );
       setStep(5);
       return false;
@@ -1091,6 +1533,9 @@ export default function FarmerRegister() {
       selected_products: selectedProducts,
       selected_product_categories: selectedProducts,
       legal_agreements: accepted,
+      legal_agreement_accepted: legalAccepted,
+      legal_agreement_version: legalAgreementVersion,
+      legal_agreement_accepted_at: legalAcceptedAt || null,
 
       farm_business_license_document: farmBusinessLicenseDocument.trim(),
       food_safety_document: foodSafetyDocument.trim(),
@@ -1332,7 +1777,7 @@ export default function FarmerRegister() {
           return null;
         }
 
-        if (routeWhenReady && hasCompleteDashboardAccess(backendSynced)) goDashboard();
+        if (routeWhenReady && hasCompleteDashboardAccess(backendSynced)) await goDashboard();
 
         return backendSynced;
       }
@@ -1377,7 +1822,7 @@ export default function FarmerRegister() {
           dbFarmer?.account_id || accountId || undefined
         );
 
-        if (routeWhenReady && hasCompleteDashboardAccess(saved)) goDashboard();
+        if (routeWhenReady && hasCompleteDashboardAccess(saved)) await goDashboard();
 
         return saved;
       }
@@ -1533,6 +1978,14 @@ export default function FarmerRegister() {
 
   async function loadSavedFarmer() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user?.id) {
+        await loadLegalAcceptance(user.id);
+      }
+
       const saved =
         (await AsyncStorage.getItem("currentFarmer")) ||
         (await AsyncStorage.getItem(PENDING_FARMER_KEY)) ||
@@ -1562,7 +2015,9 @@ export default function FarmerRegister() {
   }
 
   async function handleSaveAndContinue() {
-    const saved = await saveFarmerProfile(step >= 4);
+    // Full validation should begin only after the Legal step.
+    // Documents must be allowed to save before the user can accept Legal.
+    const saved = await saveFarmerProfile(step >= 5);
     if (saved) goNext();
   }
 
@@ -1815,32 +2270,165 @@ export default function FarmerRegister() {
       return (
         <SectionCard
           icon="shield-checkmark-outline"
-          title="Farmer Seller Agreement"
-          subtitle="Accept all items before continuing."
-          done={legalComplete}
+          title="Legal & Agreements"
+          subtitle="Required before Stripe payment and Farmer Dashboard access."
+          done={legalAccepted}
         >
-          {agreements.map((item, index) => {
-            const checked = Boolean(accepted[index]);
+          {legalAccepted ? (
+            <View style={styles.legalAcceptedBox}>
+              <Ionicons
+                name="checkmark-circle"
+                size={30}
+                color={COLORS.green}
+              />
 
-            return (
+              <View style={{ flex: 1 }}>
+                <Text style={styles.legalAcceptedTitle}>
+                  Agreement Accepted
+                </Text>
+
+                <Text style={styles.legalAcceptedText}>
+                  Farm2Home Direct Platform Agreement Version{" "}
+                  {legalAgreementVersion}
+                </Text>
+
+                <Text style={styles.legalAcceptedText}>
+                  Accepted: {formatLegalDate(legalAcceptedAt)}
+                </Text>
+
+                <Text style={styles.legalPermanentText}>
+                  Your original acceptance date and agreement version are
+                  permanently recorded and cannot be changed from the app.
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <>
+              <View style={styles.legalRequiredBox}>
+                <Ionicons
+                  name="alert-circle-outline"
+                  size={22}
+                  color={COLORS.amber}
+                />
+                <Text style={styles.legalRequiredText}>
+                  Read the agreement and select every acknowledgment before
+                  continuing.
+                </Text>
+              </View>
+
+              <View style={styles.legalDocument}>
+                <Text style={styles.legalDocumentTitle}>
+                  Farm2Home Direct Platform Agreement
+                </Text>
+                <Text style={styles.legalVersion}>
+                  Version {LEGAL_AGREEMENT_VERSION}
+                </Text>
+
+                <View style={styles.legalDivider} />
+
+                <Text style={styles.legalText}>
+                  {PLATFORM_AGREEMENT_TEXT}
+                </Text>
+              </View>
+
+              {agreements.map((item, index) => {
+                const checked = Boolean(accepted[index]);
+
+                return (
+                  <TouchableOpacity
+                    key={`${index}-${item}`}
+                    style={[
+                      styles.legalCheckRow,
+                      checked && styles.legalCheckRowSelected,
+                    ]}
+                    onPress={() =>
+                      setAccepted((prev) => ({
+                        ...prev,
+                        [index]: !prev[index],
+                      }))
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <View
+                      style={[
+                        styles.legalCheckbox,
+                        checked && styles.legalCheckboxSelected,
+                      ]}
+                    >
+                      {checked ? (
+                        <Ionicons
+                          name="checkmark"
+                          size={18}
+                          color={COLORS.white}
+                        />
+                      ) : null}
+                    </View>
+
+                    <Text style={styles.legalCheckText}>{item}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              <View style={styles.legalLinksRow}>
+                <TouchableOpacity onPress={() => router.push("/terms" as any)}>
+                  <Text style={styles.legalLink}>Terms of Service</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.legalLinkDivider}>•</Text>
+
+                <TouchableOpacity onPress={() => router.push("/privacy" as any)}>
+                  <Text style={styles.legalLink}>Privacy Policy</Text>
+                </TouchableOpacity>
+              </View>
+
               <TouchableOpacity
-                key={item}
-                style={styles.legalRow}
-                onPress={() =>
-                  setAccepted((prev) => ({
-                    ...prev,
-                    [index]: !prev[index],
-                  }))
-                }
-                activeOpacity={0.85}
+                style={[
+                  styles.legalAgreeButton,
+                  (!legalAcknowledgmentsComplete || legalLoading) &&
+                    styles.legalAgreeButtonDisabled,
+                ]}
+                disabled={!legalAcknowledgmentsComplete || legalLoading}
+                onPress={acceptLegalAgreement}
+                activeOpacity={0.9}
               >
-                <View style={[styles.checkbox, checked && styles.checkboxOn]}>
-                  <Text style={styles.checkText}>{checked ? "✓" : ""}</Text>
-                </View>
-                <Text style={styles.legalText}>{item}</Text>
+                {legalLoading ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={21}
+                      color={COLORS.white}
+                    />
+                    <Text style={styles.legalAgreeButtonText}>
+                      I Agree & Continue
+                    </Text>
+                  </>
+                )}
               </TouchableOpacity>
-            );
-          })}
+
+              <Text style={styles.legalNotice}>
+                Your official acceptance date is generated by the database.
+                The original acceptance record is not editable from the farmer
+                profile.
+              </Text>
+            </>
+          )}
+
+          {legalAccepted ? (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => setStep(6)}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.primaryButtonText}>Continue to Stripe</Text>
+              <Ionicons
+                name="arrow-forward-outline"
+                size={19}
+                color={COLORS.white}
+              />
+            </TouchableOpacity>
+          ) : null}
         </SectionCard>
       );
     }
@@ -2350,12 +2938,6 @@ const styles = StyleSheet.create({
   },
   checkboxOn: { backgroundColor: COLORS.primary },
   checkText: { color: "#FFFFFF", fontWeight: "900" },
-  legalText: {
-    flex: 1,
-    color: COLORS.text,
-    fontWeight: "800",
-    lineHeight: 21,
-  },
 
   docWrap: { marginBottom: 14 },
   docLabel: {
@@ -2505,4 +3087,207 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontWeight: "900",
   },
+
+  legalAcceptedBox: {
+    backgroundColor: "#ECFDF3",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+
+  legalAcceptedTitle: {
+    color: COLORS.primaryDark,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+
+  legalAcceptedText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+
+  legalPermanentText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 6,
+  },
+
+  legalRequiredBox: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 14,
+  },
+
+  legalRequiredText: {
+    flex: 1,
+    color: "#92400E",
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+
+  legalDocument: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+  },
+
+  legalDocumentTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+
+  legalVersion: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  legalDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 14,
+  },
+
+  legalText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 21,
+  },
+
+  legalCheckRow: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 11,
+    marginBottom: 10,
+  },
+
+  legalCheckRowSelected: {
+    backgroundColor: COLORS.primarySoft,
+    borderColor: "#86EFAC",
+  },
+
+  legalCheckbox: {
+    width: 25,
+    height: 25,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: "#98A2B3",
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+
+  legalCheckboxSelected: {
+    backgroundColor: COLORS.green,
+    borderColor: COLORS.green,
+  },
+
+  legalCheckText: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 20,
+  },
+
+  legalLinksRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 2,
+    marginBottom: 12,
+    flexWrap: "wrap",
+  },
+
+  legalLink: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textDecorationLine: "underline",
+  },
+
+  legalLinkDivider: {
+    color: COLORS.muted,
+    fontWeight: "900",
+  },
+
+  legalAgreeButton: {
+    minHeight: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.green,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 5,
+  },
+
+  legalAgreeButtonDisabled: {
+    opacity: 0.45,
+  },
+
+  legalAgreeButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+
+  legalNotice: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
+    marginTop: 9,
+    marginBottom: 14,
+  },
+
+
+  primaryButton: {
+    minHeight: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 18,
+    marginTop: 14,
+  },
+
+  primaryButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
 });

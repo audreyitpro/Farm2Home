@@ -74,6 +74,7 @@ const STEPS = [
   { key: "delivery", title: "Delivery", icon: "location-outline" },
   { key: "security", title: "Security", icon: "key-outline" },
   { key: "stripe", title: "Stripe", icon: "card-outline" },
+  { key: "legal", title: "Legal", icon: "document-text-outline" },
   { key: "review", title: "Review", icon: "checkmark-done-outline" },
 ] as const;
 
@@ -358,6 +359,65 @@ async function saveCurrentCustomer(customerAccount: any) {
   ]);
 }
 
+
+const LEGAL_AGREEMENT_TYPE = "platform_agreement";
+const LEGAL_AGREEMENT_VERSION = "1.0";
+
+const PLATFORM_AGREEMENT_TEXT = `
+FARM2HOME DIRECT PLATFORM AGREEMENT
+VERSION 1.0
+
+Effective Date: September 9, 2026
+
+1. PLATFORM PURPOSE
+Farm2Home Direct is a technology marketplace designed to connect customers with independent farmers, producers, freight carriers, and drivers. Farm2Home Direct provides technology for marketplace listings, communications, orders, payments, pickup, delivery, freight coordination, tracking, subscriptions, and related services.
+
+2. INDEPENDENT USERS
+Farmers, producers, sellers, freight carriers, and drivers using Farm2Home Direct are independent businesses or service providers. They are not employees, agents, representatives, partners, or joint venturers of Farm2Home Direct merely because they use the platform.
+
+3. FARMER AND SELLER RESPONSIBILITY
+Independent farmers, producers, and sellers are responsible for the products they list or sell, including quality, safety, legality, freshness, descriptions, pricing, availability, packaging, labeling, allergen information, storage, handling, permits, licenses, taxes, and compliance with applicable law.
+
+4. CUSTOMER RESPONSIBILITY
+Customers are responsible for reviewing product descriptions, seller information, ingredients, allergens, pickup or delivery terms, storage requirements, and other relevant information before purchasing, receiving, storing, preparing, or consuming products.
+
+5. FREIGHT AND DRIVER RESPONSIBILITY
+Independent freight carriers and drivers are responsible for their transportation and delivery activities, including licensing, registrations, operating authority where applicable, insurance, vehicle condition, safety, handling, custody, security, pickup, transportation, and delivery.
+
+6. FARM2HOME DIRECT'S ROLE
+Farm2Home Direct provides technology that facilitates connections and transactions between platform participants. Except where expressly stated otherwise for a specific service, Farm2Home Direct does not itself grow, manufacture, produce, harvest, inspect, package, prepare, transport, deliver, or independently verify products or services offered by independent users.
+
+7. USER CONDUCT
+Each user is responsible for the accuracy and legality of information, listings, messages, documents, images, business information, and other content submitted to Farm2Home Direct.
+
+8. THIRD-PARTY SERVICES
+Farm2Home Direct may use third-party providers for authentication, payments, payouts, hosting, communications, notifications, mapping, location, and other platform functions. Third-party services may also be subject to the applicable provider's terms and policies.
+
+9. NO GUARANTEE OF INDEPENDENT USER PERFORMANCE
+Farm2Home Direct cannot guarantee that an independent user will complete a transaction, fulfill an order, deliver a product, perform transportation services, or otherwise perform exactly as another user expects.
+
+10. LIMITATION OF PLATFORM RESPONSIBILITY
+To the fullest extent permitted by applicable law, Farm2Home Direct is not responsible for the independent acts, omissions, representations, products, services, transportation activities, delivery performance, business practices, or conduct of users of the platform. Nothing in this agreement excludes or limits responsibility or liability that cannot lawfully be excluded or limited.
+
+11. PRIVACY AND TERMS
+Use of Farm2Home Direct is also governed by the Farm2Home Direct Privacy Policy and Terms of Service.
+
+12. ELECTRONIC ACCEPTANCE
+By selecting all required acknowledgment boxes and pressing "I Agree & Continue," the user confirms that the user has had an opportunity to read this Platform Agreement, understands Farm2Home Direct's role as a technology marketplace, agrees to this Platform Agreement and the Terms of Service, and acknowledges the Privacy Policy.
+
+13. AGREEMENT VERSION
+This acceptance applies to Farm2Home Direct Platform Agreement Version 1.0. If a materially updated agreement is issued, Farm2Home Direct may require acceptance of the new version before continued access to applicable services.
+
+BY SELECTING "I AGREE & CONTINUE," YOU ACKNOWLEDGE THAT YOU HAVE READ AND UNDERSTAND THIS FARM2HOME DIRECT PLATFORM AGREEMENT, VERSION 1.0, AND AGREE TO BE BOUND BY ITS TERMS.
+`.trim();
+
+function formatLegalDate(value: any) {
+  const raw = clean(value);
+  if (!raw) return "";
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleString();
+}
+
 export default function CustomerRegister() {
   const params = useLocalSearchParams();
 
@@ -366,6 +426,13 @@ export default function CustomerRegister() {
   const [stripeLoading, setStripeLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
+  const [legalLoading, setLegalLoading] = useState(false);
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const [legalAcceptedAt, setLegalAcceptedAt] = useState("");
+  const [legalAgreementVersion, setLegalAgreementVersion] = useState(LEGAL_AGREEMENT_VERSION);
+  const [ackAgreement, setAckAgreement] = useState(false);
+  const [ackPlatformRole, setAckPlatformRole] = useState(false);
+  const [ackTermsPrivacy, setAckTermsPrivacy] = useState(false);
 
   const [customerId, setCustomerId] = useState("");
   const [profileId, setProfileId] = useState("");
@@ -467,7 +534,11 @@ export default function CustomerRegister() {
     setStep((prev) => Math.max(prev - 1, 0));
   }
 
-  function goMarketplace() {
+  async function goMarketplace() {
+    const { data: authData } = await supabase.auth.getUser();
+    const authId = clean(authData?.user?.id || customerId);
+    const legalOk = await requireLegalBeforeMarketplace(authId);
+    if (!legalOk) return;
     router.replace("/customer/marketplace" as any);
   }
 
@@ -1267,6 +1338,135 @@ export default function CustomerRegister() {
     }
   }
 
+  async function loadLegalAcceptance(userId?: string) {
+    const id = clean(userId);
+    if (!id) return null;
+
+    const { data, error } = await supabase
+      .from("legal_agreement_acceptances")
+      .select("id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at")
+      .eq("user_id", id)
+      .eq("role", "customer")
+      .eq("agreement_type", LEGAL_AGREEMENT_TYPE)
+      .eq("agreement_version", LEGAL_AGREEMENT_VERSION)
+      .eq("accepted", true)
+      .maybeSingle();
+
+    if (error) {
+      console.log("Customer legal acceptance lookup:", error.message);
+      return null;
+    }
+
+    if (data) {
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION);
+      setAckAgreement(true);
+      setAckPlatformRole(true);
+      setAckTermsPrivacy(true);
+    }
+
+    return data;
+  }
+
+  async function acceptLegalAgreement() {
+    if (legalLoading) return;
+
+    if (!ackAgreement || !ackPlatformRole || !ackTermsPrivacy) {
+      Alert.alert(
+        "Acknowledgment Required",
+        "You must select all three Legal & Agreements acknowledgments before continuing."
+      );
+      return;
+    }
+
+    try {
+      setLegalLoading(true);
+
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+
+      const authUserId = clean(authData?.user?.id);
+      if (!authUserId) throw new Error("You must be signed in before accepting the agreement.");
+
+      const existing = await loadLegalAcceptance(authUserId);
+      if (existing) {
+        setStep(5);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("legal_agreement_acceptances")
+        .insert({
+          user_id: authUserId,
+          role: "customer",
+          agreement_type: LEGAL_AGREEMENT_TYPE,
+          agreement_version: LEGAL_AGREEMENT_VERSION,
+          agreement_text: PLATFORM_AGREEMENT_TEXT,
+          agreement_hash: `farm2home-platform-v${LEGAL_AGREEMENT_VERSION}`,
+          accepted: true,
+          // accepted_at is intentionally omitted.
+          // PostgreSQL DEFAULT now() creates the official permanent timestamp.
+        })
+        .select("id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at")
+        .single();
+
+      if (error) {
+        if (String(error.code) === "23505") {
+          const duplicate = await loadLegalAcceptance(authUserId);
+          if (duplicate) {
+            setStep(5);
+            return;
+          }
+        }
+        throw error;
+      }
+
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION);
+
+      await AsyncStorage.multiSet([
+        ["farm2homeLegalAgreementAccepted", "true"],
+        ["farm2homeLegalAgreementVersion", clean(data.agreement_version)],
+        ["farm2homeLegalAgreementAcceptedAt", clean(data.accepted_at)],
+        ["farm2homeLegalAgreementRole", "customer"],
+      ]);
+
+      Alert.alert(
+        "Agreement Accepted",
+        `Farm2Home Direct Platform Agreement Version ${LEGAL_AGREEMENT_VERSION} was accepted on ${formatLegalDate(
+          data.accepted_at
+        )}. The original acceptance record and date cannot be changed from the app.`
+      );
+
+      setStep(5);
+    } catch (error: any) {
+      console.log("Customer legal acceptance error:", error);
+      Alert.alert(
+        "Agreement Error",
+        error?.message || "Unable to save your Legal & Agreements acknowledgment."
+      );
+    } finally {
+      setLegalLoading(false);
+    }
+  }
+
+  async function requireLegalBeforeMarketplace(userId?: string) {
+    const id = clean(userId);
+    if (!id) return false;
+
+    const acceptance = await loadLegalAcceptance(id);
+    if (acceptance) return true;
+
+    setStep(4);
+    Alert.alert(
+      "Legal Agreement Required",
+      "You must review and accept the Farm2Home Direct Platform Agreement before proceeding to the marketplace."
+    );
+    return false;
+  }
+
   async function loadSavedCustomer() {
     try {
       const saved =
@@ -1289,6 +1489,10 @@ export default function CustomerRegister() {
       const { data: authData } = await supabase.auth.getUser();
       const authId = clean(authData?.user?.id || "");
       const authEmail = normalize(authData?.user?.email || "");
+
+      if (authId) {
+        await loadLegalAcceptance(authId);
+      }
 
       const lookupId = clean(
         String(params?.customerId || params?.customer_id || "") ||
@@ -1434,6 +1638,12 @@ export default function CustomerRegister() {
 
     await upsertCustomerSubscriptionRow(finalCustomer);
     await saveCurrentCustomer(finalCustomer);
+
+    const legalOk = await requireLegalBeforeMarketplace(
+      clean(finalCustomer.auth_user_id || finalCustomer.id)
+    );
+    if (!legalOk) return;
+
     router.replace("/customer/marketplace" as any);
   }
 
@@ -2056,6 +2266,132 @@ export default function CustomerRegister() {
       );
     }
 
+    if (step === 4) {
+      return (
+        <View>
+          <SectionTitle
+            title="Legal & Agreements"
+            subtitle="Required before proceeding to Farm2Home Direct."
+          />
+
+          {legalAccepted ? (
+            <View style={styles.legalAcceptedBox}>
+              <Ionicons name="checkmark-circle" size={28} color={COLORS.accent} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.legalAcceptedTitle}>Agreement Accepted</Text>
+                <Text style={styles.legalAcceptedText}>
+                  Farm2Home Direct Platform Agreement Version {legalAgreementVersion}
+                </Text>
+                <Text style={styles.legalAcceptedText}>
+                  Accepted: {formatLegalDate(legalAcceptedAt)}
+                </Text>
+                <Text style={styles.legalPermanentText}>
+                  Your original agreement version and acceptance date are permanently recorded and cannot be changed from the app.
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <>
+              <View style={styles.legalRequiredBox}>
+                <Ionicons name="alert-circle-outline" size={22} color={COLORS.warning} />
+                <Text style={styles.legalRequiredText}>
+                  You must read the agreement and select all three acknowledgments before continuing.
+                </Text>
+              </View>
+
+              <View style={styles.legalDocument}>
+                <Text style={styles.legalDocumentTitle}>Farm2Home Direct Platform Agreement</Text>
+                <Text style={styles.legalVersion}>Version {LEGAL_AGREEMENT_VERSION}</Text>
+                <View style={styles.legalDivider} />
+                <Text style={styles.legalText}>{PLATFORM_AGREEMENT_TEXT}</Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.legalCheckRow, ackAgreement && styles.legalCheckRowSelected]}
+                onPress={() => setAckAgreement((value) => !value)}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.legalCheckbox, ackAgreement && styles.legalCheckboxSelected]}>
+                  {ackAgreement ? <Ionicons name="checkmark" size={18} color={COLORS.white} /> : null}
+                </View>
+                <Text style={styles.legalCheckText}>
+                  I acknowledge that I have read and understand the Farm2Home Direct Platform Agreement.
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.legalCheckRow, ackPlatformRole && styles.legalCheckRowSelected]}
+                onPress={() => setAckPlatformRole((value) => !value)}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.legalCheckbox, ackPlatformRole && styles.legalCheckboxSelected]}>
+                  {ackPlatformRole ? <Ionicons name="checkmark" size={18} color={COLORS.white} /> : null}
+                </View>
+                <Text style={styles.legalCheckText}>
+                  I understand that Farm2Home Direct operates as a technology platform connecting customers with independent farmers, freight carriers and drivers.
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.legalCheckRow, ackTermsPrivacy && styles.legalCheckRowSelected]}
+                onPress={() => setAckTermsPrivacy((value) => !value)}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.legalCheckbox, ackTermsPrivacy && styles.legalCheckboxSelected]}>
+                  {ackTermsPrivacy ? <Ionicons name="checkmark" size={18} color={COLORS.white} /> : null}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.legalCheckText}>
+                    I agree to the Terms of Service and acknowledge the Privacy Policy.
+                  </Text>
+                  <View style={styles.legalLinksRow}>
+                    <TouchableOpacity onPress={() => router.push("/terms" as any)}>
+                      <Text style={styles.legalLink}>Terms of Service</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.legalLinkDivider}>•</Text>
+                    <TouchableOpacity onPress={() => router.push("/privacy" as any)}>
+                      <Text style={styles.legalLink}>Privacy Policy</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.legalAgreeButton,
+                  (!ackAgreement || !ackPlatformRole || !ackTermsPrivacy || legalLoading) &&
+                    styles.legalAgreeButtonDisabled,
+                ]}
+                disabled={!ackAgreement || !ackPlatformRole || !ackTermsPrivacy || legalLoading}
+                onPress={acceptLegalAgreement}
+                activeOpacity={0.9}
+              >
+                {legalLoading ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle-outline" size={21} color={COLORS.white} />
+                    <Text style={styles.legalAgreeButtonText}>I Agree & Continue</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <Text style={styles.legalNotice}>
+                Your official acceptance date is generated by the database. The original acceptance record is not editable from your profile.
+              </Text>
+            </>
+          )}
+
+          {legalAccepted ? (
+            <TouchableOpacity style={styles.primaryButton} onPress={() => setStep(5)} activeOpacity={0.9}>
+              <Text style={styles.primaryButtonText}>Continue to Review</Text>
+              <Ionicons name="arrow-forward-outline" size={19} color={COLORS.white} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      );
+    }
+
     return (
       <View>
         <SectionTitle title="Review & Open Marketplace" subtitle="Confirm saved customer fields and marketplace access." />
@@ -2135,7 +2471,17 @@ export default function CustomerRegister() {
                   <TouchableOpacity
                     key={item.key}
                     style={[styles.stepNav, active && styles.stepNavActive]}
-                    onPress={() => setStep(index)}
+                    onPress={() => {
+                      if (index >= 5 && !legalAccepted) {
+                        setStep(4);
+                        Alert.alert(
+                          "Legal Agreement Required",
+                          "You must accept Legal & Agreements before proceeding to Review."
+                        );
+                        return;
+                      }
+                      setStep(index);
+                    }}
                     activeOpacity={0.9}
                   >
                     <View style={[styles.stepNavIcon, active && styles.stepNavIconActive, done && styles.stepNavIconDone]}>
@@ -2838,4 +3184,163 @@ const styles = StyleSheet.create({
   disabledButton: {
     opacity: 0.55,
   },
+
+  legalAcceptedBox: {
+    backgroundColor: "#ECFDF3",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+  legalAcceptedTitle: {
+    color: "#047857",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  legalAcceptedText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  legalPermanentText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 6,
+  },
+  legalRequiredBox: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 14,
+  },
+  legalRequiredText: {
+    flex: 1,
+    color: "#92400E",
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+  legalDocument: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+  },
+  legalDocumentTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  legalVersion: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  legalDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 14,
+  },
+  legalText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 21,
+  },
+  legalCheckRow: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 11,
+    marginBottom: 10,
+  },
+  legalCheckRowSelected: {
+    backgroundColor: "#ECFDF3",
+    borderColor: "#86EFAC",
+  },
+  legalCheckbox: {
+    width: 25,
+    height: 25,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: "#98A2B3",
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  legalCheckboxSelected: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  legalCheckText: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 20,
+  },
+  legalLinksRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+  legalLink: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textDecorationLine: "underline",
+  },
+  legalLinkDivider: {
+    color: COLORS.muted,
+    fontWeight: "900",
+  },
+  legalAgreeButton: {
+    minHeight: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.accent,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 5,
+  },
+  legalAgreeButtonDisabled: {
+    opacity: 0.45,
+  },
+  legalAgreeButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  legalNotice: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
+    marginTop: 9,
+    marginBottom: 14,
+  },
+
 });

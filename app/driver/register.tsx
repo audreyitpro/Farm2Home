@@ -65,6 +65,7 @@ const STEPS = [
   { key: "documents", title: "Documents", icon: "document-text-outline" },
   { key: "security", title: "Security", icon: "key-outline" },
   { key: "stripe", title: "Stripe", icon: "card-outline" },
+  { key: "legal", title: "Legal", icon: "shield-checkmark-outline" },
   { key: "review", title: "Review", icon: "checkmark-done-outline" },
 ] as const;
 
@@ -249,6 +250,221 @@ function hasCompleteDashboardAccess(row: any) {
   );
 }
 
+
+const LEGAL_AGREEMENT_TYPE = "platform_agreement";
+const LEGAL_AGREEMENT_VERSION = "1.0";
+
+const PLATFORM_AGREEMENT_TEXT = `
+FARM2HOME DIRECT PLATFORM AGREEMENT
+VERSION 1.0
+
+Effective Date: September 9, 2026
+
+1. PURPOSE OF FARM2HOME DIRECT
+
+Farm2Home Direct is a technology marketplace and platform designed to connect customers with independent farmers, producers, freight carriers, and drivers.
+
+Farm2Home Direct provides technology that may allow users to discover products, communicate, place orders, coordinate pickup or delivery, arrange transportation, process payments, manage subscriptions, receive payouts, and use related marketplace services.
+
+Farm2Home Direct does not itself grow, manufacture, produce, harvest, inspect, package, prepare, transport, deliver, store, or independently verify products or services offered by independent users of the platform unless Farm2Home Direct expressly states otherwise for a particular service.
+
+2. INDEPENDENT PLATFORM USERS
+
+Farmers, producers, sellers, freight carriers, drivers, and other service providers using Farm2Home Direct operate independently.
+
+They are not employees, agents, representatives, partners, or joint venturers of Farm2Home Direct merely because they use the Farm2Home Direct platform.
+
+Each independent user is responsible for their own business operations, products, services, licenses, registrations, permits, insurance, taxes, equipment, vehicles, personnel, legal obligations, and regulatory compliance.
+
+3. FARMER AND SELLER RESPONSIBILITIES
+
+Farmers, producers, and sellers are responsible for the products they list or sell through Farm2Home Direct.
+
+This includes responsibility for, where applicable:
+
+• Product quality and safety.
+• Accurate product descriptions.
+• Pricing and availability.
+• Packaging and labeling.
+• Ingredients and allergen information.
+• Food handling and storage.
+• Product claims.
+• Required licenses, registrations, and permits.
+• Compliance with applicable federal, state, and local laws and regulations.
+
+Farm2Home Direct does not guarantee the quality, condition, safety, legality, freshness, suitability, or accuracy of products offered by independent farmers or sellers.
+
+4. CUSTOMER RESPONSIBILITIES
+
+Customers are responsible for reviewing product information before making a purchase.
+
+Customers should review relevant product descriptions, seller information, ingredients, allergen information, pickup or delivery terms, storage requirements, and other information relevant to the product being purchased.
+
+Customers are responsible for determining whether a product is suitable for their individual needs.
+
+5. FREIGHT CARRIER RESPONSIBILITIES
+
+Freight carriers using Farm2Home Direct are independent transportation providers.
+
+Each freight carrier is responsible for maintaining all licenses, permits, registrations, operating authority, insurance, vehicle requirements, safety requirements, and other qualifications required for transportation services performed by the carrier.
+
+Freight carriers are responsible for transportation, handling, custody, security, and delivery of loads accepted by the carrier.
+
+Farm2Home Direct does not operate an independent carrier's vehicles and does not control the manner in which an independent carrier performs transportation services.
+
+6. DRIVER RESPONSIBILITIES
+
+Drivers using Farm2Home Direct are independent service providers unless expressly stated otherwise in a separate written agreement.
+
+Each driver is responsible for maintaining all qualifications required for the driving or delivery services the driver performs, including where applicable:
+
+• A valid driver's license.
+• Required registrations and permits.
+• Appropriate vehicle insurance.
+• A safe and legally compliant vehicle.
+• Accurate driver and vehicle information.
+• Proper handling and custody of products.
+• Safe pickup, transportation, and delivery.
+• Compliance with applicable traffic, transportation, safety, insurance, and delivery laws and regulations.
+
+Drivers are responsible for their own conduct while performing independent pickup, transportation, or delivery services.
+
+Farm2Home Direct does not control the manner or means by which an independent driver operates a vehicle or performs independent delivery services, except that Farm2Home Direct may establish platform eligibility, safety, documentation, conduct, and marketplace rules.
+
+7. PLATFORM ROLE
+
+Farm2Home Direct facilitates connections between marketplace participants.
+
+Depending on the features being used, Farm2Home Direct may provide technology for:
+
+• Marketplace listings.
+• Search and discovery.
+• Account management.
+• Communication.
+• Order coordination.
+• Delivery coordination.
+• Freight coordination.
+• Location and tracking.
+• Payment processing.
+• Subscription management.
+• Stripe Connect payment or payout functionality.
+• Notifications.
+• Customer support.
+• Related marketplace services.
+
+The availability of these platform features does not make Farm2Home Direct the farmer, producer, seller, carrier, driver, employer, or direct provider of products or independent transportation services offered by platform users.
+
+8. DRIVER DOCUMENTS AND VERIFICATION
+
+Drivers may be required to provide documents or information relating to licensing, insurance, vehicle registration, identity, eligibility, or other platform requirements.
+
+A driver's ability to upload documents or receive a platform status does not constitute a warranty, guarantee, or representation by Farm2Home Direct that the driver satisfies every legal requirement applicable to that driver's activities.
+
+Drivers remain responsible for maintaining current and legally sufficient documentation and qualifications.
+
+9. USER TRANSACTIONS
+
+Transactions involving products or independent services are between the applicable platform participants, subject to the Farm2Home Direct Terms of Service and applicable law.
+
+Users are responsible for the representations they make, products or services they provide, and their conduct while using the platform.
+
+10. PAYMENTS, SUBSCRIPTIONS, AND THIRD-PARTY SERVICES
+
+Farm2Home Direct may use third-party service providers to support payments, subscriptions, payouts, authentication, communications, hosting, notifications, mapping, location services, and other functionality.
+
+Use of those services may also be subject to the applicable third party's terms and policies.
+
+A Farm2Home Direct subscription provides access to applicable platform functionality and does not create an employment relationship, transportation contract, partnership, agency relationship, or guarantee of available work, loads, orders, earnings, or revenue.
+
+11. NO GUARANTEE OF WORK OR EARNINGS
+
+Farm2Home Direct does not guarantee that a driver will receive any particular number of delivery opportunities, orders, loads, customers, assignments, earnings, revenue, or profits.
+
+Any earnings depend on factors outside Farm2Home Direct's control, including user demand, availability, accepted opportunities, pricing, service performance, expenses, and market conditions.
+
+12. NO GUARANTEE OF USER PERFORMANCE
+
+Farm2Home Direct cannot guarantee that an independent user will complete a transaction, fulfill an order, deliver a product, perform transportation services, or otherwise perform exactly as another user expects.
+
+Farm2Home Direct may provide technology, records, support tools, dispute-management features, or account controls, but independent users remain responsible for their own conduct and performance.
+
+13. USER CONTENT AND REPRESENTATIONS
+
+Users are responsible for information, images, product listings, business information, messages, documents, licenses, insurance information, delivery information, vehicle information, and other content submitted to Farm2Home Direct.
+
+Users agree not to knowingly provide false, misleading, fraudulent, unlawful, expired, or unauthorized information.
+
+14. COMPLIANCE WITH LAW
+
+All users must comply with applicable federal, state, and local laws and regulations relating to their activities on Farm2Home Direct.
+
+Farmers, carriers, drivers, customers, and other users remain responsible for determining which laws, registrations, licenses, permits, insurance requirements, taxes, and regulations apply to them.
+
+15. LIMITATION OF PLATFORM RESPONSIBILITY
+
+To the fullest extent permitted by applicable law, Farm2Home Direct is not responsible for the independent acts, omissions, representations, products, services, transportation activities, delivery performance, business practices, or conduct of users of the platform.
+
+Nothing in this agreement is intended to exclude, waive, or limit any responsibility or liability that cannot lawfully be excluded or limited.
+
+16. SAFETY
+
+Users must exercise reasonable judgment and follow applicable safety requirements when purchasing, selling, transporting, delivering, receiving, handling, storing, or consuming products.
+
+Drivers must operate vehicles safely and legally and must not use Farm2Home Direct while driving in a manner that distracts from safe vehicle operation.
+
+Users should report suspected fraud, unsafe activity, prohibited conduct, or serious platform concerns through Farm2Home Direct support.
+
+17. ACCOUNT RESPONSIBILITY
+
+Users are responsible for maintaining the security of their Farm2Home Direct account and login credentials.
+
+Users must not knowingly allow unauthorized individuals to use their account.
+
+Users are responsible for keeping account, driver, vehicle, insurance, and other required information reasonably accurate and current.
+
+18. PRIVACY
+
+Use of Farm2Home Direct is also governed by the Farm2Home Direct Privacy Policy.
+
+The Privacy Policy describes how Farm2Home Direct collects, uses, stores, processes, shares, and protects information.
+
+19. TERMS OF SERVICE
+
+Use of Farm2Home Direct is also governed by the Farm2Home Direct Terms of Service.
+
+If additional terms apply to a particular product, service, subscription, payment, delivery, transportation, or payout feature, those additional terms may also apply.
+
+20. ELECTRONIC ACCEPTANCE
+
+By selecting the required acknowledgment boxes and pressing "I Agree & Continue," the user confirms that:
+
+• The user has been given an opportunity to read this Platform Agreement.
+• The user understands that Farm2Home Direct operates primarily as a technology marketplace connecting independent participants.
+• The user agrees to comply with this Platform Agreement.
+• The user agrees to the Farm2Home Direct Terms of Service.
+• The user acknowledges the Farm2Home Direct Privacy Policy.
+• The user's acceptance may be recorded electronically with the agreement version and acceptance date.
+
+21. AGREEMENT VERSION
+
+This is Farm2Home Direct Platform Agreement Version 1.0.
+
+Acceptance of Version 1.0 applies to this version only.
+
+If Farm2Home Direct materially updates this agreement, the platform may require the user to review and accept a new agreement version before continuing to use applicable services.
+
+22. ACKNOWLEDGMENT
+
+BY SELECTING "I AGREE & CONTINUE," YOU ACKNOWLEDGE THAT YOU HAVE READ AND UNDERSTAND THIS FARM2HOME DIRECT PLATFORM AGREEMENT, VERSION 1.0, AND AGREE TO BE BOUND BY ITS TERMS.
+`.trim();
+
+function formatLegalDate(value: any) {
+  const raw = clean(value);
+  if (!raw) return "";
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleString();
+}
+
 export default function DriverRegisterScreen() {
   const params = useLocalSearchParams();
 
@@ -258,6 +474,14 @@ export default function DriverRegisterScreen() {
   const [connectLoading, setConnectLoading] = useState(false);
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [processingReturn, setProcessingReturn] = useState(false);
+  const [legalLoading, setLegalLoading] = useState(false);
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const [legalAcceptedAt, setLegalAcceptedAt] = useState("");
+  const [legalAgreementVersion, setLegalAgreementVersion] =
+    useState(LEGAL_AGREEMENT_VERSION);
+  const [ackAgreement, setAckAgreement] = useState(false);
+  const [ackPlatformRole, setAckPlatformRole] = useState(false);
+  const [ackTermsPrivacy, setAckTermsPrivacy] = useState(false);
 
   const [savedDriverId, setSavedDriverId] = useState("");
   const [profileId, setProfileId] = useState("");
@@ -380,6 +604,14 @@ export default function DriverRegisterScreen() {
   }, [params?.stripe, params?.payment, params?.connect, params?.driverId, params?.driver_id, params?.email]);
 
   function goNext() {
+    if (step === 5 && !legalAccepted) {
+      Alert.alert(
+        "Legal Agreement Required",
+        "You must read and accept all Legal & Agreements acknowledgments before continuing."
+      );
+      return;
+    }
+
     setStep((prev) => Math.min(prev + 1, STEPS.length - 1));
   }
 
@@ -1143,7 +1375,13 @@ export default function DriverRegisterScreen() {
       if (!dbDriver && !subRow) {
         const backendSynced = await syncStripeFromBackend(true);
         if (backendSynced && routeWhenReady && hasCompleteDashboardAccess(backendSynced)) {
-          router.replace("/driver/mobile-driver-app" as any);
+          const legalOk = await requireLegalAgreement(
+            clean(backendSynced.id || backendSynced.driver_id || id),
+            true
+          );
+          if (legalOk) {
+            router.replace("/driver/mobile-driver-app" as any);
+          }
         }
         if (!backendSynced) Alert.alert("Not Found", "No driver Stripe records were found.");
         return backendSynced;
@@ -1168,7 +1406,13 @@ export default function DriverRegisterScreen() {
       const saved = await saveDriverProfile(false);
 
       if (routeWhenReady && saved && hasCompleteDashboardAccess(saved)) {
-        router.replace("/driver/mobile-driver-app" as any);
+        const legalOk = await requireLegalAgreement(
+          clean(saved.id || saved.driver_id || targetId),
+          true
+        );
+        if (legalOk) {
+          router.replace("/driver/mobile-driver-app" as any);
+        }
       } else if (saved) {
         Alert.alert("Stripe Info Retrieved", "Missing Stripe fields were synced and saved.");
       }
@@ -1180,6 +1424,178 @@ export default function DriverRegisterScreen() {
     } finally {
       setSyncingStripe(false);
     }
+  }
+
+  async function loadLegalAcceptance(userId?: string) {
+    const id = clean(userId);
+    if (!id) return null;
+
+    const { data, error } = await supabase
+      .from("legal_agreement_acceptances")
+      .select(
+        "id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at"
+      )
+      .eq("user_id", id)
+      .eq("role", "driver")
+      .eq("agreement_type", LEGAL_AGREEMENT_TYPE)
+      .eq("agreement_version", LEGAL_AGREEMENT_VERSION)
+      .eq("accepted", true)
+      .maybeSingle();
+
+    if (error) {
+      console.log("Driver legal agreement lookup:", error.message);
+      return null;
+    }
+
+    if (data) {
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(
+        clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION
+      );
+      setAckAgreement(true);
+      setAckPlatformRole(true);
+      setAckTermsPrivacy(true);
+
+      await AsyncStorage.multiSet([
+        ["farm2homeLegalAgreementAccepted", "true"],
+        ["farm2homeLegalAgreementVersion", clean(data.agreement_version)],
+        ["farm2homeLegalAgreementAcceptedAt", clean(data.accepted_at)],
+        ["farm2homeLegalAgreementRole", "driver"],
+      ]);
+    }
+
+    return data;
+  }
+
+  async function acceptLegalAgreement() {
+    if (legalLoading) return;
+
+    if (!ackAgreement || !ackPlatformRole || !ackTermsPrivacy) {
+      Alert.alert(
+        "Acknowledgment Required",
+        "You must select all three Legal & Agreements acknowledgments before continuing."
+      );
+      return;
+    }
+
+    try {
+      setLegalLoading(true);
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) throw userError;
+
+      if (!user?.id) {
+        throw new Error(
+          "You must be signed in before accepting the Farm2Home Direct agreement."
+        );
+      }
+
+      const existing = await loadLegalAcceptance(user.id);
+
+      if (existing) {
+        setStep(6);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("legal_agreement_acceptances")
+        .insert({
+          user_id: user.id,
+          role: "driver",
+          agreement_type: LEGAL_AGREEMENT_TYPE,
+          agreement_version: LEGAL_AGREEMENT_VERSION,
+          agreement_text: PLATFORM_AGREEMENT_TEXT,
+          agreement_hash: `farm2home-platform-v${LEGAL_AGREEMENT_VERSION}`,
+          accepted: true,
+
+          // IMPORTANT:
+          // Do not send accepted_at from the app.
+          // PostgreSQL DEFAULT now() creates the official acceptance date.
+        })
+        .select(
+          "id,user_id,role,agreement_type,agreement_version,accepted,accepted_at,created_at"
+        )
+        .single();
+
+      if (error) {
+        if (String(error.code) === "23505") {
+          const duplicate = await loadLegalAcceptance(user.id);
+
+          if (duplicate) {
+            setStep(6);
+            return;
+          }
+        }
+
+        throw error;
+      }
+
+      setLegalAccepted(true);
+      setLegalAcceptedAt(clean(data.accepted_at));
+      setLegalAgreementVersion(
+        clean(data.agreement_version) || LEGAL_AGREEMENT_VERSION
+      );
+
+      await AsyncStorage.multiSet([
+        ["farm2homeLegalAgreementAccepted", "true"],
+        ["farm2homeLegalAgreementVersion", clean(data.agreement_version)],
+        ["farm2homeLegalAgreementAcceptedAt", clean(data.accepted_at)],
+        ["farm2homeLegalAgreementRole", "driver"],
+      ]);
+
+      Alert.alert(
+        "Agreement Accepted",
+        `Farm2Home Direct Platform Agreement Version ${LEGAL_AGREEMENT_VERSION} was accepted on ${formatLegalDate(
+          data.accepted_at
+        )}. The original acceptance date and agreement version cannot be changed from the app.`
+      );
+
+      setStep(6);
+    } catch (error: any) {
+      console.log("Driver legal agreement acceptance error:", error);
+
+      Alert.alert(
+        "Agreement Error",
+        error?.message ||
+          "Unable to save your Farm2Home Direct Legal & Agreements acknowledgment."
+      );
+    } finally {
+      setLegalLoading(false);
+    }
+  }
+
+  async function requireLegalAgreement(userId?: string, showAlert = true) {
+    const id = clean(userId);
+
+    if (!id) {
+      if (showAlert) {
+        Alert.alert(
+          "Login Required",
+          "A signed-in driver account is required before accepting Legal & Agreements."
+        );
+      }
+      return false;
+    }
+
+    const acceptance = await loadLegalAcceptance(id);
+
+    if (acceptance) return true;
+
+    setStep(5);
+
+    if (showAlert) {
+      Alert.alert(
+        "Legal Agreement Required",
+        "You must review and accept the Farm2Home Direct Platform Agreement, Terms of Service, and Privacy Policy before proceeding to the Driver Dashboard."
+      );
+    }
+
+    return false;
   }
 
   async function loadSavedDriver() {
@@ -1208,6 +1624,10 @@ export default function DriverRegisterScreen() {
       const { data: authData } = await supabase.auth.getUser();
       const authId = clean(authData?.user?.id || "");
       const authEmail = normalize(authData?.user?.email || "");
+
+      if (authId) {
+        await loadLegalAcceptance(authId);
+      }
 
       const lookupId =
         returnedId ||
@@ -1543,6 +1963,9 @@ export default function DriverRegisterScreen() {
   }
 
   async function markDriverApplicationSubmittedAndOpenDashboard(driverId: string) {
+    const legalOk = await requireLegalAgreement(driverId, true);
+    if (!legalOk) return;
+
     const now = new Date().toISOString();
 
     const { data: driverRow } = await supabase
@@ -1860,6 +2283,245 @@ export default function DriverRegisterScreen() {
       );
     }
 
+    if (step === 5) {
+      return (
+        <View>
+          <SectionTitle
+            title="Legal & Agreements"
+            subtitle="Required before you can proceed to the Driver Dashboard."
+          />
+
+          {legalAccepted ? (
+            <View style={styles.legalAcceptedBox}>
+              <Ionicons
+                name="checkmark-circle"
+                size={30}
+                color={COLORS.accentDark}
+              />
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.legalAcceptedTitle}>
+                  Agreement Accepted
+                </Text>
+
+                <Text style={styles.legalAcceptedText}>
+                  Farm2Home Direct Platform Agreement Version{" "}
+                  {legalAgreementVersion}
+                </Text>
+
+                <Text style={styles.legalAcceptedText}>
+                  Accepted: {formatLegalDate(legalAcceptedAt)}
+                </Text>
+
+                <Text style={styles.legalPermanentText}>
+                  Your original acceptance date and agreement version are permanently
+                  recorded and cannot be changed from the app.
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <>
+              <View style={styles.legalRequiredBox}>
+                <Ionicons
+                  name="alert-circle-outline"
+                  size={22}
+                  color={COLORS.warning}
+                />
+
+                <Text style={styles.legalRequiredText}>
+                  You must read this agreement and select all three acknowledgments
+                  before continuing.
+                </Text>
+              </View>
+
+              <View style={styles.legalDocument}>
+                <Text style={styles.legalDocumentTitle}>
+                  Farm2Home Direct Platform Agreement
+                </Text>
+
+                <Text style={styles.legalVersion}>
+                  Version {LEGAL_AGREEMENT_VERSION}
+                </Text>
+
+                <View style={styles.legalDivider} />
+
+                <Text style={styles.legalText}>
+                  {PLATFORM_AGREEMENT_TEXT}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.legalCheckRow,
+                  ackAgreement && styles.legalCheckRowSelected,
+                ]}
+                onPress={() => setAckAgreement((value) => !value)}
+                activeOpacity={0.85}
+              >
+                <View
+                  style={[
+                    styles.legalCheckbox,
+                    ackAgreement && styles.legalCheckboxSelected,
+                  ]}
+                >
+                  {ackAgreement ? (
+                    <Ionicons
+                      name="checkmark"
+                      size={18}
+                      color={COLORS.white}
+                    />
+                  ) : null}
+                </View>
+
+                <Text style={styles.legalCheckText}>
+                  I acknowledge that I have read and understand the Farm2Home Direct
+                  Platform Agreement.
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.legalCheckRow,
+                  ackPlatformRole && styles.legalCheckRowSelected,
+                ]}
+                onPress={() => setAckPlatformRole((value) => !value)}
+                activeOpacity={0.85}
+              >
+                <View
+                  style={[
+                    styles.legalCheckbox,
+                    ackPlatformRole && styles.legalCheckboxSelected,
+                  ]}
+                >
+                  {ackPlatformRole ? (
+                    <Ionicons
+                      name="checkmark"
+                      size={18}
+                      color={COLORS.white}
+                    />
+                  ) : null}
+                </View>
+
+                <Text style={styles.legalCheckText}>
+                  I understand that Farm2Home Direct operates as a technology platform
+                  connecting customers with independent farmers, freight carriers and
+                  drivers.
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.legalCheckRow,
+                  ackTermsPrivacy && styles.legalCheckRowSelected,
+                ]}
+                onPress={() => setAckTermsPrivacy((value) => !value)}
+                activeOpacity={0.85}
+              >
+                <View
+                  style={[
+                    styles.legalCheckbox,
+                    ackTermsPrivacy && styles.legalCheckboxSelected,
+                  ]}
+                >
+                  {ackTermsPrivacy ? (
+                    <Ionicons
+                      name="checkmark"
+                      size={18}
+                      color={COLORS.white}
+                    />
+                  ) : null}
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.legalCheckText}>
+                    I agree to the Terms of Service and acknowledge the Privacy Policy.
+                  </Text>
+
+                  <View style={styles.legalLinksRow}>
+                    <TouchableOpacity
+                      onPress={() => router.push("/terms" as any)}
+                    >
+                      <Text style={styles.legalLink}>
+                        Terms of Service
+                      </Text>
+                    </TouchableOpacity>
+
+                    <Text style={styles.legalLinkDivider}>•</Text>
+
+                    <TouchableOpacity
+                      onPress={() => router.push("/privacy" as any)}
+                    >
+                      <Text style={styles.legalLink}>
+                        Privacy Policy
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.legalAgreeButton,
+                  (!ackAgreement ||
+                    !ackPlatformRole ||
+                    !ackTermsPrivacy ||
+                    legalLoading) &&
+                    styles.legalAgreeButtonDisabled,
+                ]}
+                disabled={
+                  !ackAgreement ||
+                  !ackPlatformRole ||
+                  !ackTermsPrivacy ||
+                  legalLoading
+                }
+                onPress={acceptLegalAgreement}
+                activeOpacity={0.9}
+              >
+                {legalLoading ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={21}
+                      color={COLORS.white}
+                    />
+
+                    <Text style={styles.legalAgreeButtonText}>
+                      I Agree & Continue
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <Text style={styles.legalNotice}>
+                Your official acceptance date is generated by the database. The original
+                acceptance record is not editable from your driver profile.
+              </Text>
+            </>
+          )}
+
+          {legalAccepted ? (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => setStep(6)}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.primaryButtonText}>
+                Continue to Review
+              </Text>
+
+              <Ionicons
+                name="arrow-forward-outline"
+                size={19}
+                color={COLORS.white}
+              />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      );
+    }
+
     return (
       <View>
         <SectionTitle title="Review & Submit" subtitle="Confirm saved fields and open Driver Dashboard." />
@@ -1874,6 +2536,14 @@ export default function DriverRegisterScreen() {
         <ReviewRow label="Stripe Customer" value={maskId(stripeCustomerId)} />
         <ReviewRow label="Subscription" value={maskId(stripeSubscriptionId)} />
         <ReviewRow label="Stripe Account" value={maskId(stripeAccountId)} />
+        <ReviewRow
+          label="Legal Agreement"
+          value={
+            legalAccepted
+              ? `Accepted v${legalAgreementVersion} - ${formatLegalDate(legalAcceptedAt)}`
+              : "Required"
+          }
+        />
 
         <View style={styles.noticeBox}>
           <Ionicons
@@ -1883,7 +2553,9 @@ export default function DriverRegisterScreen() {
           />
           <Text style={styles.noticeText}>
             {allRequirementsFound
-              ? "Driver profile, documents, Stripe customer, subscription, and Stripe account are saved."
+              ? legalAccepted
+                ? "Driver profile, documents, Stripe customer, subscription, Stripe account, and Legal Agreement are saved."
+                : "Driver setup is complete, but Legal & Agreements must be accepted before dashboard access."
               : "Membership and required profile data must be saved before dashboard routing."}
           </Text>
         </View>
@@ -1940,7 +2612,18 @@ export default function DriverRegisterScreen() {
                   <TouchableOpacity
                     key={item.key}
                     style={[styles.stepNav, active && styles.stepNavActive]}
-                    onPress={() => setStep(index)}
+                    onPress={() => {
+                      if (index >= 6 && !legalAccepted) {
+                        setStep(5);
+                        Alert.alert(
+                          "Legal Agreement Required",
+                          "You must accept Legal & Agreements before proceeding to Review."
+                        );
+                        return;
+                      }
+
+                      setStep(index);
+                    }}
                     activeOpacity={0.9}
                   >
                     <View style={[styles.stepNavIcon, active && styles.stepNavIconActive, done && styles.stepNavIconDone]}>
@@ -2000,7 +2683,9 @@ export default function DriverRegisterScreen() {
 
                 {step < STEPS.length - 1 ? (
                   <TouchableOpacity style={styles.primaryButtonSmall} onPress={goNext} activeOpacity={0.9}>
-                    <Text style={styles.primaryButtonText}>Continue</Text>
+                    <Text style={styles.primaryButtonText}>
+                      {step === 5 && !legalAccepted ? "Agreement Required" : "Continue"}
+                    </Text>
                     <Ionicons name="arrow-forward-outline" size={18} color={COLORS.white} />
                   </TouchableOpacity>
                 ) : (
@@ -2477,4 +3162,185 @@ const styles = StyleSheet.create({
   },
   navButtonText: { color: COLORS.primary, fontWeight: "900" },
   disabledButton: { opacity: 0.6 },
+
+  legalAcceptedBox: {
+    backgroundColor: "#ECFDF3",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+
+  legalAcceptedTitle: {
+    color: COLORS.accentDark,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+
+  legalAcceptedText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+
+  legalPermanentText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 6,
+  },
+
+  legalRequiredBox: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 14,
+  },
+
+  legalRequiredText: {
+    flex: 1,
+    color: "#92400E",
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+
+  legalDocument: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+  },
+
+  legalDocumentTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+
+  legalVersion: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  legalDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 14,
+  },
+
+  legalText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 21,
+  },
+
+  legalCheckRow: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 11,
+    marginBottom: 10,
+  },
+
+  legalCheckRowSelected: {
+    backgroundColor: "#ECFDF3",
+    borderColor: "#86EFAC",
+  },
+
+  legalCheckbox: {
+    width: 25,
+    height: 25,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: "#98A2B3",
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+
+  legalCheckboxSelected: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+
+  legalCheckText: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 20,
+  },
+
+  legalLinksRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+
+  legalLink: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textDecorationLine: "underline",
+  },
+
+  legalLinkDivider: {
+    color: COLORS.muted,
+    fontWeight: "900",
+  },
+
+  legalAgreeButton: {
+    minHeight: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.accent,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 5,
+  },
+
+  legalAgreeButtonDisabled: {
+    opacity: 0.45,
+  },
+
+  legalAgreeButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+
+  legalNotice: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
+    marginTop: 9,
+    marginBottom: 14,
+  },
+
 });
