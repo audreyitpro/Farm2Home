@@ -39,26 +39,65 @@ type FarmerStateSummary = {
 };
 
 const STATE_NAMES: Record<string, string> = {
-  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
-  CO: "Colorado", CT: "Connecticut", DE: "Delaware", FL: "Florida", GA: "Georgia",
-  HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa",
-  KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland",
-  MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri",
-  MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey",
-  NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio",
-  OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina",
-  SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont",
-  VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
   DC: "District of Columbia",
 };
 
-const STATE_ABBREVIATIONS = Object.entries(STATE_NAMES).reduce<Record<string, string>>(
-  (acc, [abbr, name]) => {
-    acc[name.toLowerCase()] = abbr;
-    return acc;
-  },
-  {}
-);
+const STATE_ABBREVIATIONS = Object.entries(STATE_NAMES).reduce<
+  Record<string, string>
+>((acc, [abbr, name]) => {
+  acc[name.toLowerCase()] = abbr;
+  return acc;
+}, {});
 
 function clean(value: any) {
   return String(value ?? "").trim();
@@ -66,9 +105,15 @@ function clean(value: any) {
 
 function normalizeState(value: any) {
   const raw = clean(value);
+
   if (!raw) return "";
+
   const upper = raw.toUpperCase();
-  if (STATE_NAMES[upper]) return upper;
+
+  if (STATE_NAMES[upper]) {
+    return upper;
+  }
+
   return STATE_ABBREVIATIONS[raw.toLowerCase()] || upper.slice(0, 2);
 }
 
@@ -82,11 +127,13 @@ function isFarmerActive(row: any) {
     row?.subscription_active,
   ];
 
-  // Any explicit true means the farmer is active.
-  if (explicitFlags.some((value) => value === true)) return true;
+  if (explicitFlags.some((value) => value === true)) {
+    return true;
+  }
 
-  // Any explicit false is respected when no active flag is true.
-  if (explicitFlags.some((value) => value === false)) return false;
+  if (explicitFlags.some((value) => value === false)) {
+    return false;
+  }
 
   const statuses = [
     row?.status,
@@ -101,26 +148,48 @@ function isFarmerActive(row: any) {
 
   if (
     statuses.some((status) =>
-      ["inactive", "disabled", "suspended", "rejected", "cancelled", "canceled"].includes(status)
+      [
+        "inactive",
+        "disabled",
+        "suspended",
+        "rejected",
+        "cancelled",
+        "canceled",
+      ].includes(status)
     )
   ) {
     return false;
   }
 
   return statuses.some((status) =>
-    ["active", "approved", "verified", "complete", "completed", "submitted", "live", "published"].includes(status)
+    [
+      "active",
+      "approved",
+      "verified",
+      "complete",
+      "completed",
+      "submitted",
+      "live",
+      "published",
+    ].includes(status)
   );
 }
 
 function getFarmerState(row: any) {
   return normalizeState(
-    row?.state || row?.farm_state || row?.business_state || row?.store_state || row?.address_state
+    row?.state ||
+      row?.farm_state ||
+      row?.business_state ||
+      row?.store_state ||
+      row?.address_state
   );
 }
 
-
 export default function HomeScreen() {
-  const [farmersByState, setFarmersByState] = useState<FarmerStateSummary[]>([]);
+  const [farmersByState, setFarmersByState] = useState<
+    FarmerStateSummary[]
+  >([]);
+
   const [activeFarmerTotal, setActiveFarmerTotal] = useState(0);
   const [loadingFarmerStates, setLoadingFarmerStates] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -144,9 +213,12 @@ export default function HomeScreen() {
         public.get_active_farmer_counts_by_state()
 
         This RPC is used because the homepage is normally viewed before login.
-        A direct public.farmers query can return an empty array when Row Level
-        Security blocks anonymous reads, even though farmer rows exist.
+
+        A direct public.farmers query can return an empty array when
+        Row Level Security blocks anonymous reads, even though farmer
+        rows exist.
       */
+
       const { data: rpcData, error: rpcError } = await supabase.rpc(
         "get_active_farmer_counts_by_state"
       );
@@ -170,11 +242,19 @@ export default function HomeScreen() {
           );
 
         setFarmersByState(summaries);
+
         setActiveFarmerTotal(
-          summaries.reduce((total, item) => total + item.farmerCount, 0)
+          summaries.reduce(
+            (total, item) => total + item.farmerCount,
+            0
+          )
         );
 
-        console.log("Homepage active farmer counts from RPC:", summaries);
+        console.log(
+          "Homepage active farmer counts from RPC:",
+          summaries
+        );
+
         return;
       }
 
@@ -184,10 +264,12 @@ export default function HomeScreen() {
       );
 
       /*
-        Development fallback:
-        This works only when the current user or anonymous role has SELECT access
-        to public.farmers.
+        Development fallback.
+
+        This works only when the current user or anonymous role has
+        SELECT access to public.farmers.
       */
+
       const { data, error } = await supabase
         .from("farmers")
         .select("id,state,farmer_activation_paid")
@@ -208,6 +290,7 @@ export default function HomeScreen() {
           }
 
           acc[state] = (acc[state] || 0) + 1;
+
           return acc;
         },
         {}
@@ -222,17 +305,27 @@ export default function HomeScreen() {
         .sort(
           (a, b) =>
             b.farmerCount - a.farmerCount ||
-            STATE_NAMES[a.state].localeCompare(STATE_NAMES[b.state])
+            STATE_NAMES[a.state].localeCompare(
+              STATE_NAMES[b.state]
+            )
         );
 
       setFarmersByState(summaries);
+
       setActiveFarmerTotal(
-        summaries.reduce((total, item) => total + item.farmerCount, 0)
+        summaries.reduce(
+          (total, item) => total + item.farmerCount,
+          0
+        )
       );
 
-      console.log("Homepage active farmer counts from table:", summaries);
+      console.log(
+        "Homepage active farmer counts from table:",
+        summaries
+      );
     } catch (error: any) {
       console.log("Active farmer state load failed:", error);
+
       setFarmersByState([]);
       setActiveFarmerTotal(0);
     } finally {
@@ -250,28 +343,69 @@ export default function HomeScreen() {
     await loadActiveFarmersByState();
   }
 
+  /*
+   * ---------------------------------------------------------
+   * GUEST MARKETPLACE
+   * ---------------------------------------------------------
+   *
+   * This function gives the public homepage one consistent
+   * entry point into the customer marketplace.
+   *
+   * No authentication is required to browse.
+   */
+  function openGuestMarketplace() {
+    router.push({
+      pathname: "/customer/marketplace",
+      params: {
+        guest: "true",
+        mode: "guest",
+      },
+    } as any);
+  }
+
+  /*
+   * Open marketplace filtered to a farmer's state while
+   * retaining guest browsing mode.
+   */
   function openMarketplaceForState(state: string) {
     router.push({
       pathname: "/customer/marketplace",
-      params: { state, farmerState: state },
+      params: {
+        state,
+        farmerState: state,
+        guest: "true",
+        mode: "guest",
+      },
     } as any);
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={ui.greenDark} />
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={ui.greenDark}
+      />
 
       <ScrollView
         style={styles.page}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ui.green} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={ui.green}
+          />
         }
       >
+        {/* =====================================================
+            HERO
+        ===================================================== */}
+
         <View style={styles.hero}>
           <Image
             source={{
-              uri: "https://images.unsplash.com/photo-1500937386664-56d1dfef3854",
+              uri:
+                "https://images.unsplash.com/photo-1500937386664-56d1dfef3854",
             }}
             style={styles.heroImage}
           />
@@ -284,7 +418,12 @@ export default function HomeScreen() {
             />
 
             <View style={styles.badge}>
-              <Ionicons name="leaf-outline" size={17} color={ui.greenDark} />
+              <Ionicons
+                name="leaf-outline"
+                size={17}
+                color={ui.greenDark}
+              />
+
               <Text style={styles.badgeText}>
                 Local Farms • Fresh Food • Fast Delivery
               </Text>
@@ -295,34 +434,92 @@ export default function HomeScreen() {
             </Text>
 
             <Text style={styles.heroSubtitle}>
-              Shop fresh produce, eggs, dairy, meat, fish, honey, baked goods,
-              flowers, hay, and local farm products directly from trusted farmers.
+              Shop fresh produce, eggs, dairy, meat, fish, honey,
+              baked goods, flowers, hay, and local farm products
+              directly from trusted farmers.
             </Text>
 
+            {/* =================================================
+                HERO ACTIONS
+            ================================================= */}
+
             <View style={styles.heroActions}>
+              {/* CUSTOMER LOGIN */}
+
               <TouchableOpacity
                 style={styles.primaryButton}
-                onPress={() => router.push("/customer/login" as any)}
+                onPress={() =>
+                  router.push("/customer/login" as any)
+                }
                 activeOpacity={0.88}
               >
-                <Ionicons name="basket-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.primaryText}>Shop Farm Fresh</Text>
+                <Ionicons
+                  name="basket-outline"
+                  size={20}
+                  color="#FFFFFF"
+                />
+
+                <Text style={styles.primaryText}>
+                  Shop Farm Fresh
+                </Text>
               </TouchableOpacity>
+
+              {/* GUEST MARKETPLACE */}
+
+              <TouchableOpacity
+                style={styles.guestButton}
+                onPress={openGuestMarketplace}
+                activeOpacity={0.88}
+              >
+                <Ionicons
+                  name="storefront-outline"
+                  size={21}
+                  color={ui.greenDark}
+                />
+
+                <View>
+                  <Text style={styles.guestButtonText}>
+                    Browse as Guest
+                  </Text>
+
+                  <Text style={styles.guestButtonSubtext}>
+                    No account required
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* FARMER REGISTRATION */}
 
               <TouchableOpacity
                 style={styles.lightButton}
-                onPress={() => router.push("/farmer/register" as any)}
+                onPress={() =>
+                  router.push("/farmer/register" as any)
+                }
                 activeOpacity={0.88}
               >
-                <Ionicons name="leaf-outline" size={20} color={ui.greenDark} />
-                <Text style={styles.lightButtonText}>Sell As A Farmer</Text>
+                <Ionicons
+                  name="leaf-outline"
+                  size={20}
+                  color={ui.greenDark}
+                />
+
+                <Text style={styles.lightButtonText}>
+                  Sell As A Farmer
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
 
+        {/* =====================================================
+            HOW IT WORKS
+        ===================================================== */}
+
         <View style={styles.section}>
-          <Text style={styles.sectionEyebrow}>How it works</Text>
+          <Text style={styles.sectionEyebrow}>
+            How it works
+          </Text>
+
           <Text style={styles.sectionTitle}>
             Farm2Home connects the whole farm market.
           </Text>
@@ -353,6 +550,10 @@ export default function HomeScreen() {
             />
           </View>
 
+          {/* ===================================================
+              PORTALS
+          =================================================== */}
+
           <View style={styles.portalGrid}>
             <PortalCard
               icon="person-circle-outline"
@@ -364,6 +565,47 @@ export default function HomeScreen() {
               secondaryRoute="/customer/register"
               color={ui.green}
             />
+
+            {/* GUEST MARKETPLACE CARD */}
+
+            <TouchableOpacity
+              style={styles.guestMarketplaceCard}
+              onPress={openGuestMarketplace}
+              activeOpacity={0.88}
+            >
+              <View style={styles.guestMarketplaceIcon}>
+                <Ionicons
+                  name="eye-outline"
+                  size={26}
+                  color={ui.greenDark}
+                />
+              </View>
+
+              <View style={styles.guestMarketplaceContent}>
+                <Text style={styles.guestMarketplaceTitle}>
+                  Guest Marketplace
+                </Text>
+
+                <Text style={styles.guestMarketplaceText}>
+                  Browse local farmers and farm-fresh products
+                  without creating an account.
+                </Text>
+
+                <View style={styles.guestMarketplaceLink}>
+                  <Text
+                    style={styles.guestMarketplaceLinkText}
+                  >
+                    Browse Marketplace
+                  </Text>
+
+                  <Ionicons
+                    name="arrow-forward-outline"
+                    size={16}
+                    color={ui.green}
+                  />
+                </View>
+              </View>
+            </TouchableOpacity>
 
             <PortalCard
               icon="leaf-outline"
@@ -399,53 +641,107 @@ export default function HomeScreen() {
             />
           </View>
 
+          {/* ===================================================
+              ACTIVE FARMERS BY STATE
+          =================================================== */}
+
           <View style={styles.farmerStatesSection}>
             <View style={styles.farmerStatesHeader}>
               <View style={styles.farmerStatesHeaderText}>
-                <Text style={styles.farmerStatesEyebrow}>Growing across America</Text>
-                <Text style={styles.farmerStatesTitle}>Active Farmers by State</Text>
+                <Text style={styles.farmerStatesEyebrow}>
+                  Growing across America
+                </Text>
+
+                <Text style={styles.farmerStatesTitle}>
+                  Active Farmers by State
+                </Text>
+
                 <Text style={styles.farmerStatesSubtitle}>
-                  {activeFarmerTotal} active {activeFarmerTotal === 1 ? "farmer" : "farmers"} across{" "}
-                  {activeStateTotal} active {activeStateTotal === 1 ? "state" : "states"}.
+                  {activeFarmerTotal} active{" "}
+                  {activeFarmerTotal === 1
+                    ? "farmer"
+                    : "farmers"}{" "}
+                  across {activeStateTotal} active{" "}
+                  {activeStateTotal === 1
+                    ? "state"
+                    : "states"}
+                  .
                 </Text>
               </View>
 
               <TouchableOpacity
                 style={styles.viewAllButton}
-                onPress={() => router.push("/customer/marketplace" as any)}
+                onPress={openGuestMarketplace}
                 activeOpacity={0.88}
               >
-                <Text style={styles.viewAllText}>View all farmers</Text>
-                <Ionicons name="arrow-forward-outline" size={16} color={ui.green} />
+                <Text style={styles.viewAllText}>
+                  View all farmers
+                </Text>
+
+                <Ionicons
+                  name="arrow-forward-outline"
+                  size={16}
+                  color={ui.green}
+                />
               </TouchableOpacity>
             </View>
+
+            {/* FARMER STATS */}
 
             <View style={styles.farmerStatsRow}>
               <View style={styles.farmerStatCard}>
                 <View style={styles.farmerStatIcon}>
-                  <Ionicons name="leaf-outline" size={20} color={ui.greenDark} />
+                  <Ionicons
+                    name="leaf-outline"
+                    size={20}
+                    color={ui.greenDark}
+                  />
                 </View>
+
                 <View>
-                  <Text style={styles.farmerStatValue}>{activeFarmerTotal}</Text>
-                  <Text style={styles.farmerStatLabel}>Active Farmers</Text>
+                  <Text style={styles.farmerStatValue}>
+                    {activeFarmerTotal}
+                  </Text>
+
+                  <Text style={styles.farmerStatLabel}>
+                    Active Farmers
+                  </Text>
                 </View>
               </View>
 
               <View style={styles.farmerStatCard}>
                 <View style={styles.farmerStatIcon}>
-                  <Ionicons name="map-outline" size={20} color={ui.greenDark} />
+                  <Ionicons
+                    name="map-outline"
+                    size={20}
+                    color={ui.greenDark}
+                  />
                 </View>
+
                 <View>
-                  <Text style={styles.farmerStatValue}>{activeStateTotal}</Text>
-                  <Text style={styles.farmerStatLabel}>Active States</Text>
+                  <Text style={styles.farmerStatValue}>
+                    {activeStateTotal}
+                  </Text>
+
+                  <Text style={styles.farmerStatLabel}>
+                    Active States
+                  </Text>
                 </View>
               </View>
             </View>
 
+            {/* FARMER STATES */}
+
             {loadingFarmerStates ? (
               <View style={styles.farmerLoadingCard}>
-                <ActivityIndicator size="small" color={ui.green} />
-                <Text style={styles.farmerLoadingText}>Loading active farmer states...</Text>
+                <ActivityIndicator
+                  size="small"
+                  color={ui.green}
+                />
+
+                <Text style={styles.farmerLoadingText}>
+                  Loading active farmer states...
+                </Text>
               </View>
             ) : activeStateCards.length ? (
               <View style={styles.farmerStateCards}>
@@ -453,7 +749,9 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     key={item.state}
                     style={styles.farmerStateCard}
-                    onPress={() => openMarketplaceForState(item.state)}
+                    onPress={() =>
+                      openMarketplaceForState(item.state)
+                    }
                     activeOpacity={0.88}
                   >
                     <View style={styles.stateIcon}>
@@ -468,8 +766,13 @@ export default function HomeScreen() {
                       <Text style={styles.stateAbbreviation}>
                         {item.state}: {item.farmerCount} active
                       </Text>
-                      <Text style={styles.stateFullName} numberOfLines={1}>
-                        {STATE_NAMES[item.state] || item.state}
+
+                      <Text
+                        style={styles.stateFullName}
+                        numberOfLines={1}
+                      >
+                        {STATE_NAMES[item.state] ||
+                          item.state}
                       </Text>
                     </View>
 
@@ -484,27 +787,57 @@ export default function HomeScreen() {
             ) : (
               <View style={styles.noFarmerStatesCard}>
                 <View style={styles.noFarmerIcon}>
-                  <Ionicons name="leaf-outline" size={24} color={ui.muted} />
+                  <Ionicons
+                    name="leaf-outline"
+                    size={24}
+                    color={ui.muted}
+                  />
                 </View>
+
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.noFarmerStatesTitle}>No active farmer states yet</Text>
+                  <Text
+                    style={styles.noFarmerStatesTitle}
+                  >
+                    No active farmer states yet
+                  </Text>
+
                   <Text style={styles.noFarmerStatesText}>
-                    No public counts were returned. Confirm farmer_activation_paid is true, state is populated, and the public counter RPC is installed.
+                    No public counts were returned. Confirm
+                    farmer_activation_paid is true, state is
+                    populated, and the public counter RPC is
+                    installed.
                   </Text>
                 </View>
-                <TouchableOpacity style={styles.refreshStatesButton} onPress={loadActiveFarmersByState}>
-                  <Ionicons name="refresh-outline" size={17} color={ui.green} />
+
+                <TouchableOpacity
+                  style={styles.refreshStatesButton}
+                  onPress={loadActiveFarmersByState}
+                >
+                  <Ionicons
+                    name="refresh-outline"
+                    size={17}
+                    color={ui.green}
+                  />
                 </TouchableOpacity>
               </View>
             )}
 
+            {/* PUBLIC / GUEST MARKETPLACE */}
+
             <TouchableOpacity
               style={styles.marketplaceButton}
-              onPress={() => router.push("/customer/marketplace" as any)}
+              onPress={openGuestMarketplace}
               activeOpacity={0.88}
             >
-              <Ionicons name="storefront-outline" size={19} color={ui.white} />
-              <Text style={styles.marketplaceButtonText}>Explore All Active Farmers</Text>
+              <Ionicons
+                name="storefront-outline"
+                size={19}
+                color={ui.white}
+              />
+
+              <Text style={styles.marketplaceButtonText}>
+                Explore All Active Farmers
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -512,6 +845,10 @@ export default function HomeScreen() {
     </SafeAreaView>
   );
 }
+
+/* ============================================================
+   FEATURE CARD
+============================================================ */
 
 function FeatureCard({
   icon,
@@ -525,13 +862,27 @@ function FeatureCard({
   return (
     <View style={styles.featureCard}>
       <View style={styles.featureIcon}>
-        <Ionicons name={icon} size={26} color={ui.greenDark} />
+        <Ionicons
+          name={icon}
+          size={26}
+          color={ui.greenDark}
+        />
       </View>
-      <Text style={styles.cardTitle}>{title}</Text>
-      <Text style={styles.cardText}>{text}</Text>
+
+      <Text style={styles.cardTitle}>
+        {title}
+      </Text>
+
+      <Text style={styles.cardText}>
+        {text}
+      </Text>
     </View>
   );
 }
+
+/* ============================================================
+   PORTAL CARD
+============================================================ */
 
 function PortalCard({
   icon,
@@ -554,27 +905,61 @@ function PortalCard({
 }) {
   return (
     <View style={styles.portalCard}>
-      <View style={[styles.portalIcon, { backgroundColor: `${color}18` }]}>
-        <Ionicons name={icon} size={28} color={color} />
+      <View
+        style={[
+          styles.portalIcon,
+          {
+            backgroundColor: `${color}18`,
+          },
+        ]}
+      >
+        <Ionicons
+          name={icon}
+          size={28}
+          color={color}
+        />
       </View>
 
-      <Text style={styles.portalTitle}>{title}</Text>
-      <Text style={styles.portalText}>{text}</Text>
+      <Text style={styles.portalTitle}>
+        {title}
+      </Text>
+
+      <Text style={styles.portalText}>
+        {text}
+      </Text>
 
       <TouchableOpacity
-        style={[styles.portalPrimaryButton, { backgroundColor: color }]}
-        onPress={() => router.push(primaryRoute as any)}
+        style={[
+          styles.portalPrimaryButton,
+          {
+            backgroundColor: color,
+          },
+        ]}
+        onPress={() =>
+          router.push(primaryRoute as any)
+        }
         activeOpacity={0.88}
       >
-        <Text style={styles.portalPrimaryText}>{primaryLabel}</Text>
+        <Text style={styles.portalPrimaryText}>
+          {primaryLabel}
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.portalSecondaryButton}
-        onPress={() => router.push(secondaryRoute as any)}
+        onPress={() =>
+          router.push(secondaryRoute as any)
+        }
         activeOpacity={0.88}
       >
-        <Text style={[styles.portalSecondaryText, { color }]}>
+        <Text
+          style={[
+            styles.portalSecondaryText,
+            {
+              color,
+            },
+          ]}
+        >
           {secondaryLabel}
         </Text>
       </TouchableOpacity>
@@ -582,23 +967,33 @@ function PortalCard({
   );
 }
 
+/* ============================================================
+   STYLES
+============================================================ */
+
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: ui.bg,
   },
+
   page: {
     flex: 1,
     backgroundColor: ui.bg,
   },
+
+  /* HERO */
+
   hero: {
     height: 760,
     position: "relative",
   },
+
   heroImage: {
     width: "100%",
     height: "100%",
   },
+
   overlay: {
     position: "absolute",
     inset: 0 as any,
@@ -607,12 +1002,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 22,
   },
+
   logo: {
     width: 230,
     height: 150,
     marginBottom: 14,
     borderRadius: 24,
   },
+
   badge: {
     flexDirection: "row",
     alignItems: "center",
@@ -623,11 +1020,13 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     marginBottom: 16,
   },
+
   badgeText: {
     color: ui.greenDark,
     fontWeight: "900",
     fontSize: 13,
   },
+
   heroTitle: {
     color: "#FFFFFF",
     fontSize: 46,
@@ -636,6 +1035,7 @@ const styles = StyleSheet.create({
     maxWidth: 920,
     marginBottom: 14,
   },
+
   heroSubtitle: {
     color: "#F8FAFC",
     fontSize: 20,
@@ -645,12 +1045,14 @@ const styles = StyleSheet.create({
     marginBottom: 28,
     fontWeight: "600",
   },
+
   heroActions: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 12,
     justifyContent: "center",
   },
+
   primaryButton: {
     backgroundColor: ui.green,
     paddingHorizontal: 26,
@@ -660,11 +1062,40 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+
   primaryText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
+
+  /* GUEST BUTTON */
+
+  guestButton: {
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 2,
+    borderColor: ui.greenSoft,
+  },
+
+  guestButtonText: {
+    color: ui.greenDark,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+
+  guestButtonSubtext: {
+    color: ui.muted,
+    fontWeight: "700",
+    fontSize: 10,
+    marginTop: 1,
+  },
+
   lightButton: {
     backgroundColor: "#FFFFFF",
     paddingHorizontal: 24,
@@ -674,15 +1105,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+
   lightButtonText: {
     color: ui.greenDark,
     fontWeight: "900",
     fontSize: 16,
   },
+
+  /* MAIN SECTION */
+
   section: {
     padding: 20,
     paddingBottom: 70,
   },
+
   sectionEyebrow: {
     color: ui.green,
     fontWeight: "900",
@@ -691,6 +1127,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginBottom: 8,
   },
+
   sectionTitle: {
     fontSize: 34,
     lineHeight: 41,
@@ -699,6 +1136,9 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 24,
   },
+
+  /* FEATURE CARDS */
+
   cardRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -706,6 +1146,7 @@ const styles = StyleSheet.create({
     gap: 14,
     marginBottom: 28,
   },
+
   featureCard: {
     width: 280,
     backgroundColor: ui.card,
@@ -715,6 +1156,7 @@ const styles = StyleSheet.create({
     borderColor: ui.border,
     alignItems: "center",
   },
+
   featureIcon: {
     width: 54,
     height: 54,
@@ -724,6 +1166,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
+
   cardTitle: {
     fontSize: 18,
     fontWeight: "900",
@@ -731,12 +1174,16 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: "center",
   },
+
   cardText: {
     color: ui.muted,
     fontWeight: "700",
     textAlign: "center",
     lineHeight: 21,
   },
+
+  /* PORTALS */
+
   portalGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -744,6 +1191,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 8,
   },
+
   portalCard: {
     width: 310,
     backgroundColor: ui.card,
@@ -752,6 +1200,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: ui.border,
   },
+
   portalIcon: {
     width: 58,
     height: 58,
@@ -760,12 +1209,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
+
   portalTitle: {
     color: ui.text,
     fontSize: 22,
     fontWeight: "900",
     marginBottom: 8,
   },
+
   portalText: {
     color: ui.muted,
     fontWeight: "700",
@@ -773,18 +1224,21 @@ const styles = StyleSheet.create({
     minHeight: 64,
     marginBottom: 16,
   },
+
   portalPrimaryButton: {
     borderRadius: 16,
     padding: 15,
     alignItems: "center",
     marginBottom: 10,
   },
+
   portalPrimaryText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 15,
     textAlign: "center",
   },
+
   portalSecondaryButton: {
     borderRadius: 16,
     padding: 14,
@@ -793,11 +1247,67 @@ const styles = StyleSheet.create({
     borderColor: ui.border,
     backgroundColor: "#FFFFFF",
   },
+
   portalSecondaryText: {
     fontWeight: "900",
     fontSize: 15,
     textAlign: "center",
   },
+
+  /* GUEST MARKETPLACE CARD */
+
+  guestMarketplaceCard: {
+    width: 310,
+    backgroundColor: "#F0FDF4",
+    borderRadius: 26,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    flexDirection: "row",
+    gap: 14,
+  },
+
+  guestMarketplaceIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: ui.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  guestMarketplaceContent: {
+    flex: 1,
+  },
+
+  guestMarketplaceTitle: {
+    color: ui.text,
+    fontSize: 19,
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+
+  guestMarketplaceText: {
+    color: ui.muted,
+    fontWeight: "700",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  guestMarketplaceLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 12,
+  },
+
+  guestMarketplaceLinkText: {
+    color: ui.green,
+    fontWeight: "900",
+    fontSize: 13,
+  },
+
+  /* FARMER STATES */
 
   farmerStatesSection: {
     width: "100%",
@@ -810,6 +1320,7 @@ const styles = StyleSheet.create({
     padding: 20,
     marginTop: 30,
   },
+
   farmerStatesHeader: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -818,10 +1329,12 @@ const styles = StyleSheet.create({
     gap: 14,
     marginBottom: 18,
   },
+
   farmerStatesHeaderText: {
     flex: 1,
     minWidth: 240,
   },
+
   farmerStatesEyebrow: {
     color: ui.green,
     fontWeight: "900",
@@ -829,6 +1342,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 12,
   },
+
   farmerStatesTitle: {
     color: ui.text,
     fontSize: 28,
@@ -836,12 +1350,14 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 5,
   },
+
   farmerStatesSubtitle: {
     color: ui.muted,
     fontWeight: "700",
     lineHeight: 21,
     marginTop: 6,
   },
+
   viewAllButton: {
     backgroundColor: ui.greenSoft,
     borderRadius: 999,
@@ -851,17 +1367,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
+
   viewAllText: {
     color: ui.green,
     fontWeight: "900",
     fontSize: 12,
   },
+
   farmerStatsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
     marginBottom: 16,
   },
+
   farmerStatCard: {
     flex: 1,
     minWidth: 180,
@@ -874,6 +1393,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 11,
   },
+
   farmerStatIcon: {
     width: 42,
     height: 42,
@@ -882,17 +1402,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   farmerStatValue: {
     color: ui.greenDark,
     fontSize: 24,
     fontWeight: "900",
   },
+
   farmerStatLabel: {
     color: ui.muted,
     fontSize: 12,
     fontWeight: "800",
     marginTop: 2,
   },
+
   farmerLoadingCard: {
     minHeight: 120,
     backgroundColor: ui.surface,
@@ -903,16 +1426,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
   },
+
   farmerLoadingText: {
     color: ui.muted,
     fontWeight: "800",
   },
+
   farmerStateCards: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
     paddingBottom: 4,
   },
+
   farmerStateCard: {
     width: 220,
     minHeight: 72,
@@ -929,6 +1455,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
+
   stateIcon: {
     width: 36,
     height: 36,
@@ -937,22 +1464,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   compactStateText: {
     flex: 1,
     minWidth: 0,
   },
+
   stateAbbreviation: {
     color: ui.greenDark,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: "900",
   },
+
   stateFullName: {
     color: ui.muted,
     fontSize: 11,
     fontWeight: "800",
     marginTop: 2,
   },
+
   noFarmerStatesCard: {
     backgroundColor: ui.surface,
     borderRadius: 20,
@@ -963,6 +1494,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
+
   noFarmerIcon: {
     width: 46,
     height: 46,
@@ -971,17 +1503,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   noFarmerStatesTitle: {
     color: ui.text,
     fontWeight: "900",
     fontSize: 15,
   },
+
   noFarmerStatesText: {
     color: ui.muted,
     fontWeight: "700",
     lineHeight: 19,
     marginTop: 4,
   },
+
   refreshStatesButton: {
     width: 42,
     height: 42,
@@ -990,6 +1525,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   marketplaceButton: {
     alignSelf: "center",
     backgroundColor: ui.green,
@@ -1002,6 +1538,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 18,
   },
+
   marketplaceButtonText: {
     color: ui.white,
     fontWeight: "900",
