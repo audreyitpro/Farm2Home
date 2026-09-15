@@ -138,6 +138,7 @@ export default function FreightProfileScreen() {
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [billingLoading, setBillingLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   const [carrier, setCarrier] = useState<any>(null);
   const [allCarriers, setAllCarriers] = useState<any[]>([]);
@@ -891,6 +892,228 @@ export default function FreightProfileScreen() {
     );
   }
 
+  function confirmDeleteAccount() {
+    if (!carrier || deleteLoading) return;
+
+    Alert.alert(
+      "Permanently Delete Freight Account",
+      "Deleting your Farm2Home freight account is permanent. Farm2Home will request deletion of your Stripe subscription/customer records, Stripe Connect payout account, Supabase freight/profile records, and Supabase authentication account. This cannot be undone.",
+      [
+        {
+          text: "Keep Account",
+          style: "cancel",
+        },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Final Confirmation",
+              "Are you absolutely sure you want to permanently delete this freight carrier account and its connected Farm2Home billing and payout records?",
+              [
+                {
+                  text: "Cancel",
+                  style: "cancel",
+                },
+                {
+                  text: "Delete Permanently",
+                  style: "destructive",
+                  onPress: deleteFreightAccount,
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  }
+
+  async function deleteFreightAccount() {
+    if (!carrier || deleteLoading) return;
+
+    try {
+      setDeleteLoading(true);
+
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) throw sessionError;
+
+      if (!session?.access_token || !session.user?.id) {
+        throw new Error(
+          "Your login session has expired. Please sign in again before deleting your account."
+        );
+      }
+
+      const freightId = clean(
+        carrier?.id || carrier?.freightId || carrier?.freight_id
+      );
+
+      if (!freightId) {
+        throw new Error("Missing freight profile ID.");
+      }
+
+      /*
+       * IMPORTANT:
+       * Stripe secret keys and the Supabase service_role key must NEVER be
+       * stored in this Expo application. The Farm2Home backend performs the
+       * privileged Stripe + Supabase deletion after verifying the Bearer token.
+       */
+      const response = await fetch(`${API_BASE_URL}/account/delete`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          role: "freight",
+
+          userId: freightId,
+          carrierId: freightId,
+          freightId,
+          freight_id: freightId,
+
+          profileId:
+            clean(carrier?.profile_id || carrier?.profileId) || null,
+          profile_id:
+            clean(carrier?.profile_id || carrier?.profileId) || null,
+
+          accountId:
+            clean(carrier?.accountId || carrier?.account_id) || null,
+          account_id:
+            clean(carrier?.accountId || carrier?.account_id) || null,
+
+          authUserId: session.user.id,
+          auth_user_id: session.user.id,
+
+          email: normalize(email || carrier?.email || session.user.email),
+          freight_email: normalize(
+            email || carrier?.email || session.user.email
+          ),
+
+          stripeCustomerId: stripeCustomerId || null,
+          stripe_customer_id: stripeCustomerId || null,
+
+          stripeSubscriptionId: stripeSubscriptionId || null,
+          stripe_subscription_id: stripeSubscriptionId || null,
+
+          stripeAccountId: stripeAccountId || null,
+          stripe_account_id: stripeAccountId || null,
+
+          deleteStripeCustomer: true,
+          delete_stripe_customer: true,
+          cancelStripeSubscription: true,
+          cancel_stripe_subscription: true,
+          deleteStripeConnectAccount: true,
+          delete_stripe_connect_account: true,
+          deleteSupabaseAccount: true,
+          delete_supabase_account: true,
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+
+      if (!response.ok || data?.success === false || data?.error) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            "Farm2Home could not permanently delete the freight account."
+        );
+      }
+
+      /*
+       * Clear the device only after the server confirms that the permanent
+       * deletion workflow completed successfully.
+       */
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // The backend may already have deleted the Supabase Auth user.
+      }
+
+      await AsyncStorage.multiRemove([
+        "currentFreightCarrier",
+        "currentFreight",
+        "currentFreightUser",
+        "farm2homeCurrentFreight",
+        "currentUser",
+        "userRole",
+        "currentUserRole",
+        "lastLoginRole",
+        "pendingFreight",
+        "pendingFreightSubscription",
+        "freightSubscriptionStatus",
+        "freightMembershipStatus",
+        "freightStripeCustomerId",
+        "freightStripeSubscriptionId",
+        "freightStripeAccountId",
+      ]);
+
+      // Best-effort cleanup of the locally cached freight carrier collection.
+      try {
+        const savedCarriers = await AsyncStorage.getItem(
+          "farm2homeFreightCarriers"
+        );
+        const parsedCarriers = savedCarriers
+          ? JSON.parse(savedCarriers)
+          : [];
+
+        if (Array.isArray(parsedCarriers)) {
+          const currentFreightId = clean(freightId);
+          const currentEmail = normalize(email || carrier?.email);
+
+          const remainingCarriers = parsedCarriers.filter((item: any) => {
+            const itemId = clean(
+              item?.id || item?.freightId || item?.freight_id
+            );
+            const itemEmail = normalize(item?.email);
+
+            const sameId =
+              Boolean(currentFreightId) && itemId === currentFreightId;
+            const sameEmail =
+              Boolean(currentEmail) && itemEmail === currentEmail;
+
+            return !sameId && !sameEmail;
+          });
+
+          if (remainingCarriers.length > 0) {
+            await AsyncStorage.setItem(
+              "farm2homeFreightCarriers",
+              JSON.stringify(remainingCarriers)
+            );
+          } else {
+            await AsyncStorage.removeItem("farm2homeFreightCarriers");
+          }
+        }
+      } catch (localError) {
+        console.log("Local freight cache cleanup skipped:", localError);
+      }
+
+      Alert.alert(
+        "Account Deleted",
+        "Your Farm2Home freight account has been permanently deleted.",
+        [
+          {
+            text: "OK",
+            onPress: () => router.replace(ROUTES.login as any),
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.log("deleteFreightAccount error:", error);
+
+      Alert.alert(
+        "Delete Account Error",
+        error?.message ||
+          "Farm2Home could not permanently delete your account. Your local login has not been removed. Please try again."
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
   async function logout() {
     await supabase.auth.signOut();
 
@@ -1222,6 +1445,65 @@ export default function FreightProfileScreen() {
                 </View>
               </View>
 
+              <View style={styles.card}>
+                <SectionHeader
+                  icon="shield-checkmark-outline"
+                  title="Privacy & Account"
+                  subtitle="Manage permanent deletion of your Farm2Home freight carrier account."
+                />
+
+                <View style={styles.deleteWarningBox}>
+                  <Ionicons
+                    name="warning-outline"
+                    size={22}
+                    color={COLORS.red}
+                  />
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.deleteWarningTitle}>
+                      Permanent Account Deletion
+                    </Text>
+                    <Text style={styles.deleteWarningText}>
+                      Deleting your freight account is permanent. Farm2Home
+                      will request removal of your Supabase account/profile,
+                      Stripe subscription and customer records, and connected
+                      Stripe payout account.
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.deleteAccountButton,
+                    deleteLoading && styles.disabledButton,
+                  ]}
+                  onPress={confirmDeleteAccount}
+                  disabled={deleteLoading}
+                  activeOpacity={0.9}
+                >
+                  {deleteLoading ? (
+                    <ActivityIndicator color={COLORS.red} />
+                  ) : (
+                    <Ionicons
+                      name="trash-outline"
+                      size={19}
+                      color={COLORS.red}
+                    />
+                  )}
+
+                  <Text style={styles.deleteAccountText}>
+                    {deleteLoading
+                      ? "Deleting Account..."
+                      : "Permanently Delete Account"}
+                  </Text>
+                </TouchableOpacity>
+
+                <Text style={styles.deleteAccountNote}>
+                  This action cannot be undone. You will be signed out after
+                  the server confirms the account deletion.
+                </Text>
+              </View>
+
               <View style={styles.bottomActions}>
                 <TouchableOpacity style={styles.primaryButton} onPress={() => goTo(ROUTES.dashboard)}>
                   <Ionicons name="grid-outline" size={18} color={COLORS.white} />
@@ -1510,6 +1792,54 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 18,
     marginTop: 9,
+  },
+
+  deleteWarningBox: {
+    backgroundColor: COLORS.redSoft,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 11,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  deleteWarningTitle: {
+    color: COLORS.red,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  deleteWarningText: {
+    color: COLORS.text,
+    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  deleteAccountButton: {
+    backgroundColor: COLORS.redSoft,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 16,
+    minHeight: 54,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  deleteAccountText: {
+    color: COLORS.red,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  deleteAccountNote: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
   },
 
   bottomActions: { flexDirection: Platform.OS === "web" ? "row" : "column", gap: 10, marginBottom: 40 },

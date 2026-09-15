@@ -776,6 +776,7 @@ export default function MarketplaceScreen() {
   const [loading, setLoading] = useState(false);
   const [accessChecking, setAccessChecking] = useState(true);
   const [accessAllowed, setAccessAllowed] = useState(false);
+  const [isGuest, setIsGuest] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [cartCount, setCartCount] = useState(0);
@@ -905,27 +906,14 @@ export default function MarketplaceScreen() {
       const activeCustomer = await loadCustomerSession();
 
       if (!customerReady(activeCustomer)) {
-        setAccessAllowed(false);
-        Alert.alert(
-          "Membership Required",
-          "Complete customer membership before shopping the marketplace.",
-          [
-            {
-              text: "Go to Registration",
-              onPress: () =>
-                router.replace({
-                  pathname: "/customer/register" as any,
-                  params: {
-                    customerId: getCustomerId(activeCustomer),
-                    email: activeCustomer?.email || "",
-                  },
-                }),
-            },
-          ]
-        );
+        // Guest browsing is allowed. Guests can view the marketplace,
+        // but purchasing actions remain restricted.
+        setIsGuest(true);
+        setAccessAllowed(true);
         return;
       }
 
+      setIsGuest(false);
       setAccessAllowed(true);
     } catch (error) {
       console.log("Marketplace access check error:", error);
@@ -1105,10 +1093,28 @@ export default function MarketplaceScreen() {
       });
   }, [farmers, selectedCategory, searchText]);
 
+  function requireCustomerAccount(action = "continue") {
+    Alert.alert(
+      "Customer Account Required",
+      `You can browse Farm2Home as a guest. Please sign in or register to ${action}.`,
+      [
+        { text: "Keep Browsing", style: "cancel" },
+        {
+          text: "Register",
+          onPress: () => router.push("/customer/register" as any),
+        },
+        {
+          text: "Sign In",
+          onPress: () => router.push("/customer/login" as any),
+        },
+      ]
+    );
+  }
+
   async function handleAddToCart(farmer: Farmer, product: Product) {
     try {
-      if (!accessAllowed || !customerReady(customer)) {
-        Alert.alert("Membership Required", "Complete customer membership before adding items.");
+      if (isGuest || !customerReady(customer)) {
+        requireCustomerAccount("add items to your cart");
         return;
       }
 
@@ -1185,7 +1191,21 @@ export default function MarketplaceScreen() {
   }
 
   function openCart() {
+    if (isGuest || !customerReady(customer)) {
+      requireCustomerAccount("view your cart and checkout");
+      return;
+    }
+
     router.push("/customer/cart" as any);
+  }
+
+  function openOrders() {
+    if (isGuest || !customerReady(customer)) {
+      requireCustomerAccount("view your orders");
+      return;
+    }
+
+    router.push("/customer/my-orders" as any);
   }
 
   function renderProductCard(farmer: Farmer, product: Product, compact = false) {
@@ -1266,7 +1286,9 @@ export default function MarketplaceScreen() {
             onPress={() => handleAddToCart(farmer, product)}
           >
             <Ionicons name="add-outline" size={16} color={COLORS.white} />
-            <Text style={styles.addButtonText}>{isBundle ? "Add Bundle" : "Add"}</Text>
+            <Text style={styles.addButtonText}>
+              {isGuest ? "Sign In to Buy" : isBundle ? "Add Bundle" : "Add"}
+            </Text>
           </Pressable>
         </View>
       </View>
@@ -1350,7 +1372,9 @@ export default function MarketplaceScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>Hello, {getCustomerName(customer)}</Text>
+            <Text style={styles.greeting}>
+              {isGuest ? "Welcome, Guest" : `Hello, ${getCustomerName(customer)}`}
+            </Text>
             <Text style={styles.locationLine}>
               {allProductCount} local farm goods from {farmers.length} farms
             </Text>
@@ -1383,12 +1407,14 @@ export default function MarketplaceScreen() {
                 onPress={openCart}
               >
                 <Ionicons name="cart-outline" size={16} color={COLORS.white} />
-                <Text style={styles.heroButtonText}>Cart ({cartCount})</Text>
+                <Text style={styles.heroButtonText}>
+                  {isGuest ? "Sign In to Shop" : `Cart (${cartCount})`}
+                </Text>
               </Pressable>
 
               <Pressable
                 style={({ pressed }) => [styles.heroButtonLight, pressed && styles.pressedButton]}
-                onPress={() => router.push("/customer/my-orders" as any)}
+                onPress={openOrders}
               >
                 <Ionicons name="receipt-outline" size={16} color={COLORS.primary} />
                 <Text style={styles.heroButtonLightText}>Orders</Text>
@@ -1580,7 +1606,9 @@ export default function MarketplaceScreen() {
         onPress={openCart}
       >
         <Ionicons name="cart-outline" size={18} color={COLORS.white} />
-        <Text style={styles.cartFloatingText}>Cart ({cartCount})</Text>
+        <Text style={styles.cartFloatingText}>
+          {isGuest ? "Sign In to Shop" : `Cart (${cartCount})`}
+        </Text>
       </Pressable>
     </SafeAreaView>
   );

@@ -91,6 +91,7 @@ export default function FarmerProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   const [farmer, setFarmer] = useState<any>(null);
   const [farmerId, setFarmerId] = useState("");
@@ -622,6 +623,220 @@ export default function FarmerProfileScreen() {
     );
   }
 
+  function confirmDeleteAccount() {
+    if (!farmerId || deleteLoading) return;
+
+    Alert.alert(
+      "Permanently Delete Farmer Account",
+      "Deleting your Farm2Home farmer account is permanent. Farm2Home will request deletion of your Stripe subscription/customer records, Stripe Connect payout account if one exists, Supabase farmer/profile records, and Supabase authentication account. This cannot be undone.",
+      [
+        {
+          text: "Keep Account",
+          style: "cancel",
+        },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Final Confirmation",
+              "Are you absolutely sure you want to permanently delete this farmer account, store profile, and connected Farm2Home billing records?",
+              [
+                {
+                  text: "Cancel",
+                  style: "cancel",
+                },
+                {
+                  text: "Delete Permanently",
+                  style: "destructive",
+                  onPress: deleteFarmerAccount,
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  }
+
+  async function deleteFarmerAccount() {
+    if (!farmerId || deleteLoading) return;
+
+    try {
+      setDeleteLoading(true);
+
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) throw sessionError;
+
+      if (!session?.access_token || !session.user?.id) {
+        throw new Error(
+          "Your login session has expired. Please sign in again before deleting your account."
+        );
+      }
+
+      const stripeCustomerId = clean(
+        farmer?.stripe_customer_id || farmer?.stripeCustomerId
+      );
+      const stripeSubscriptionId = getStripeSubscriptionId(farmer);
+      const stripeAccountId = clean(
+        farmer?.stripe_account_id ||
+          farmer?.stripeAccountId ||
+          farmer?.connect_account_id ||
+          farmer?.connectAccountId
+      );
+
+      /*
+       * Stripe secret keys and the Supabase service_role key must remain
+       * on the Farm2Home backend. The backend must verify this Bearer token
+       * and derive the authenticated user before performing deletion.
+       */
+      const response = await fetch(`${API_BASE_URL}/account/delete`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          role: "farmer",
+
+          userId: farmerId,
+          farmerId,
+          farmer_id: farmerId,
+
+          profileId:
+            clean(farmer?.profile_id || farmer?.profileId) || null,
+          profile_id:
+            clean(farmer?.profile_id || farmer?.profileId) || null,
+
+          accountId:
+            clean(farmer?.account_id || farmer?.accountId) || null,
+          account_id:
+            clean(farmer?.account_id || farmer?.accountId) || null,
+
+          authUserId: session.user.id,
+          auth_user_id: session.user.id,
+
+          email: normalize(email || farmer?.email || session.user.email),
+          farmer_email: normalize(
+            email || farmer?.email || session.user.email
+          ),
+
+          stripeCustomerId: stripeCustomerId || null,
+          stripe_customer_id: stripeCustomerId || null,
+
+          stripeSubscriptionId: stripeSubscriptionId || null,
+          stripe_subscription_id: stripeSubscriptionId || null,
+
+          stripeAccountId: stripeAccountId || null,
+          stripe_account_id: stripeAccountId || null,
+
+          deleteStripeCustomer: true,
+          delete_stripe_customer: true,
+          cancelStripeSubscription: true,
+          cancel_stripe_subscription: true,
+          deleteStripeConnectAccount: true,
+          delete_stripe_connect_account: true,
+          deleteSupabaseAccount: true,
+          delete_supabase_account: true,
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+
+      if (!response.ok || data?.success === false) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            "Farm2Home could not permanently delete the farmer account."
+        );
+      }
+
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // The backend may already have deleted the Supabase auth user.
+      }
+
+      await AsyncStorage.multiRemove([
+        "currentFarmer",
+        "farm2homeCurrentFarmer",
+        "farm2homeFarmerSession",
+        "currentUser",
+        "userRole",
+        "currentUserRole",
+        "lastLoginRole",
+        "pendingFarmer",
+        "pendingFarmerSubscription",
+        "farmerSubscriptionStatus",
+        "farmerMembershipStatus",
+        "farmerStripeCustomerId",
+        "farmerStripeSubscriptionId",
+        "farmerStripeAccountId",
+      ]);
+
+      // Best-effort removal from any locally cached farmer collection.
+      try {
+        const savedFarmers = await AsyncStorage.getItem("farm2homeFarmers");
+        const parsedFarmers = savedFarmers ? JSON.parse(savedFarmers) : [];
+
+        if (Array.isArray(parsedFarmers)) {
+          const currentFarmerId = clean(farmerId);
+          const currentEmail = normalize(email || farmer?.email);
+
+          const remainingFarmers = parsedFarmers.filter((item: any) => {
+            const itemId = clean(
+              item?.id || item?.farmer_id || item?.farmerId
+            );
+            const itemEmail = normalize(item?.email);
+
+            const sameId =
+              Boolean(currentFarmerId) && itemId === currentFarmerId;
+            const sameEmail =
+              Boolean(currentEmail) && itemEmail === currentEmail;
+
+            return !sameId && !sameEmail;
+          });
+
+          if (remainingFarmers.length > 0) {
+            await AsyncStorage.setItem(
+              "farm2homeFarmers",
+              JSON.stringify(remainingFarmers)
+            );
+          } else {
+            await AsyncStorage.removeItem("farm2homeFarmers");
+          }
+        }
+      } catch (localError) {
+        console.log("Local farmer cache cleanup skipped:", localError);
+      }
+
+      Alert.alert(
+        "Account Deleted",
+        "Your Farm2Home farmer account has been permanently deleted.",
+        [
+          {
+            text: "OK",
+            onPress: () => router.replace("/" as any),
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.log("deleteFarmerAccount error:", error);
+
+      Alert.alert(
+        "Delete Account Error",
+        error?.message ||
+          "Farm2Home could not permanently delete your account. Your local login has not been removed. Please try again."
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
   function goTo(pathname: string, params?: Record<string, string>) {
     router.push(params ? ({ pathname, params } as any) : (pathname as any));
   }
@@ -976,6 +1191,63 @@ export default function FarmerProfileScreen() {
           <RouteButton title="Post Load" icon="trail-sign-outline" onPress={() => goTo("/farmer/post-load")} />
           <RouteButton title="Farmer Driver Chat" icon="chatbox-outline" onPress={() => goTo("/farmer/driver-chat", { farmerId })} />
           <RouteButton title="Customer / Driver Chat" icon="chatbubbles-outline" onPress={() => goTo("/farmer/customer-driver-chat", { farmerId })} />
+        </View>
+
+        <View style={styles.card}>
+          <SectionHeader
+            step="Account"
+            title="Privacy & Account"
+            subtitle="Manage your Farm2Home farmer account and permanent account deletion."
+            icon="shield-checkmark-outline"
+          />
+
+          <View style={styles.deleteWarningBox}>
+            <Ionicons
+              name="warning-outline"
+              size={22}
+              color={COLORS.danger}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.deleteWarningTitle}>
+                Permanent Account Deletion
+              </Text>
+              <Text style={styles.deleteWarningText}>
+                Deleting your farmer account is permanent. Your Farm2Home
+                account, Supabase authentication/profile records, and connected
+                Stripe billing records will be submitted for deletion.
+              </Text>
+            </View>
+          </View>
+
+          <Pressable
+            style={[
+              styles.deleteAccountButton,
+              deleteLoading && styles.disabled,
+            ]}
+            onPress={confirmDeleteAccount}
+            disabled={deleteLoading}
+          >
+            {deleteLoading ? (
+              <ActivityIndicator color={COLORS.danger} />
+            ) : (
+              <Ionicons
+                name="trash-outline"
+                size={19}
+                color={COLORS.danger}
+              />
+            )}
+
+            <Text style={styles.deleteAccountText}>
+              {deleteLoading
+                ? "Deleting Account..."
+                : "Permanently Delete Account"}
+            </Text>
+          </Pressable>
+
+          <Text style={styles.deleteAccountNote}>
+            This action cannot be undone. You will be signed out after the
+            server confirms deletion.
+          </Text>
         </View>
 
         <Pressable
@@ -1553,6 +1825,53 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   cancelSubscriptionNote: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
+  },
+
+  deleteWarningBox: {
+    backgroundColor: COLORS.dangerSoft,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 11,
+    marginBottom: 12,
+  },
+  deleteWarningTitle: {
+    color: COLORS.danger,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  deleteWarningText: {
+    color: COLORS.text,
+    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  deleteAccountButton: {
+    backgroundColor: COLORS.dangerSoft,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 17,
+    minHeight: 54,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  deleteAccountText: {
+    color: COLORS.danger,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+  deleteAccountNote: {
     color: COLORS.muted,
     fontWeight: "700",
     fontSize: 12,

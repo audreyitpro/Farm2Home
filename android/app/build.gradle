@@ -9,35 +9,50 @@ def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
-    reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
-    hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
-    codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
+    entryFile = file([
+        "node",
+        "-e",
+        "require('expo/scripts/resolveAppEntry')",
+        projectRoot,
+        "android",
+        "absolute"
+    ].execute(null, rootDir).text.trim())
 
-    enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
+    reactNativeDir = new File([
+        "node",
+        "--print",
+        "require.resolve('react-native/package.json')"
+    ].execute(null, rootDir).text.trim())
+        .getParentFile()
+        .getAbsoluteFile()
+
+    hermesCommand = new File([
+        "node",
+        "--print",
+        "require.resolve('react-native/package.json')"
+    ].execute(null, rootDir).text.trim())
+        .getParentFile()
+        .getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
+
+    codegenDir = new File([
+        "node",
+        "--print",
+        "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"
+    ].execute(null, rootDir).text.trim())
+        .getParentFile()
+        .getAbsoluteFile()
+
+    enableBundleCompression =
+        (findProperty('android.enableBundleCompression') ?: false).toBoolean()
 
     // Use Expo CLI to bundle the app.
-    cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
+    cliFile = new File([
+        "node",
+        "--print",
+        "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"
+    ].execute(null, rootDir).text.trim())
+
     bundleCommand = "export:embed"
-
-    /* Folders */
-    // root = file("../../")
-    // reactNativeDir = file("../../node_modules/react-native")
-    // codegenDir = file("../../node_modules/@react-native/codegen")
-
-    /* Variants */
-    // debuggableVariants = ["liteDebug", "prodDebug"]
-
-    /* Bundling */
-    // nodeExecutableAndArgs = ["node"]
-    // bundleConfig = file(../rn-cli.config.js)
-    // bundleAssetName = "MyApplication.android.bundle"
-    // entryFile = file("../js/MyApplication.android.js")
-    // extraPackagerArgs = []
-
-    /* Hermes Commands */
-    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
-    // hermesFlags = ["-O", "-output-source-map"]
 
     /* Autolinking */
     autolinkLibrariesWithApp()
@@ -46,12 +61,32 @@ react {
 /**
  * Set this to true in release builds to optimize the app using R8.
  */
-def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
+def enableMinifyInReleaseBuilds =
+    (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
 
 /**
  * Preferred JavaScriptCore flavor.
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+
+/*
+ * ---------------------------------------------------------
+ * Google Maps API key
+ * ---------------------------------------------------------
+ *
+ * AndroidManifest.xml contains:
+ *
+ * ${GOOGLE_MAPS_API_KEY}
+ *
+ * Gradle must supply the value during manifest merging.
+ *
+ * First checks Gradle properties.
+ * Then checks the system/environment variable.
+ */
+def googleMapsApiKey =
+    findProperty("GOOGLE_MAPS_API_KEY") ?:
+    System.getenv("GOOGLE_MAPS_API_KEY") ?:
+    ""
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -59,23 +94,29 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    // Keep existing native namespace.
     namespace 'com.asodevelopments.farm2home'
 
     defaultConfig {
-
-        // Google Play package name.
         applicationId 'com.asodevelopments.farm2home'
 
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
 
-        // EAS remote versioning will override versionCode
-        // during your production build.
         versionCode 1
         versionName "1.0.0"
 
-        buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+        /*
+         * Supply GOOGLE_MAPS_API_KEY to AndroidManifest.xml
+         */
+        manifestPlaceholders = [
+            GOOGLE_MAPS_API_KEY: googleMapsApiKey
+        ]
+
+        buildConfigField(
+            "String",
+            "REACT_NATIVE_RELEASE_LEVEL",
+            "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+        )
     }
 
     signingConfigs {
@@ -94,40 +135,54 @@ android {
 
         release {
             /*
-             * EAS Build will handle your production signing credentials.
+             * Local release build currently uses debug signing.
+             * EAS production signing will be handled separately.
              */
             signingConfig signingConfigs.debug
 
-            def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
+            def enableShrinkResources =
+                findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
+
             shrinkResources enableShrinkResources.toBoolean()
 
             minifyEnabled enableMinifyInReleaseBuilds
 
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            proguardFiles(
+                getDefaultProguardFile("proguard-android.txt"),
+                "proguard-rules.pro"
+            )
 
-            def enablePngCrunchInRelease = findProperty('android.enablePngCrunchInReleaseBuilds') ?: 'true'
+            def enablePngCrunchInRelease =
+                findProperty('android.enablePngCrunchInReleaseBuilds') ?: 'true'
+
             crunchPngs enablePngCrunchInRelease.toBoolean()
         }
     }
 
     packagingOptions {
         jniLibs {
-            def enableLegacyPackaging = findProperty('expo.useLegacyPackaging') ?: 'false'
+            def enableLegacyPackaging =
+                findProperty('expo.useLegacyPackaging') ?: 'false'
+
             useLegacyPackaging enableLegacyPackaging.toBoolean()
         }
     }
 
     androidResources {
-        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+        ignoreAssetsPattern(
+            '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+        )
     }
 }
 
-/**
- * Apply static values from gradle.properties to android.packagingOptions.
+/*
+ * Apply static values from gradle.properties
+ * to android.packagingOptions.
  */
 ["pickFirsts", "excludes", "merges", "doNotStrip"].each { prop ->
 
-    def options = (findProperty("android.packagingOptions.$prop") ?: "").split(",")
+    def options =
+        (findProperty("android.packagingOptions.$prop") ?: "").split(",")
 
     for (i in 0..<options.size()) {
         options[i] = options[i].trim()
@@ -136,7 +191,9 @@ android {
     options -= ""
 
     if (options.length > 0) {
-        println "android.packagingOptions.$prop += $options ($options.length)"
+        println(
+            "android.packagingOptions.$prop += $options ($options.length)"
+        )
 
         options.each {
             android.packagingOptions[prop] += it
@@ -146,22 +203,36 @@ android {
 
 dependencies {
 
-    // React Native version is managed by the React Native Gradle Plugin.
+    /*
+     * React Native version is provided by the
+     * React Native Gradle Plugin.
+     */
     implementation("com.facebook.react:react-android")
 
-    def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true"
-    def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true"
-    def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true"
+    def isGifEnabled =
+        (findProperty('expo.gif.enabled') ?: "") == "true"
+
+    def isWebpEnabled =
+        (findProperty('expo.webp.enabled') ?: "") == "true"
+
+    def isWebpAnimatedEnabled =
+        (findProperty('expo.webp.animated') ?: "") == "true"
 
     if (isGifEnabled) {
-        implementation("com.facebook.fresco:animated-gif:${expoLibs.versions.fresco.get()}")
+        implementation(
+            "com.facebook.fresco:animated-gif:${expoLibs.versions.fresco.get()}"
+        )
     }
 
     if (isWebpEnabled) {
-        implementation("com.facebook.fresco:webpsupport:${expoLibs.versions.fresco.get()}")
+        implementation(
+            "com.facebook.fresco:webpsupport:${expoLibs.versions.fresco.get()}"
+        )
 
         if (isWebpAnimatedEnabled) {
-            implementation("com.facebook.fresco:animated-webp:${expoLibs.versions.fresco.get()}")
+            implementation(
+                "com.facebook.fresco:animated-webp:${expoLibs.versions.fresco.get()}"
+            )
         }
     }
 

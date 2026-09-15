@@ -302,6 +302,7 @@ export default function DriverProfileScreen() {
   const [syncingStripe, setSyncingStripe] = useState(false);
   const [connectLoading, setConnectLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   const [driver, setDriver] = useState<DriverProfile | null>(null);
 
@@ -902,8 +903,217 @@ export default function DriverProfileScreen() {
     router.push("/privacy" as any);
   }
 
-  function openDeleteAccount() {
-    router.push("/delete-account" as any);
+  function confirmDeleteAccount() {
+    if (!driver?.id || deleteLoading) return;
+
+    Alert.alert(
+      "Permanently Delete Driver Account",
+      "Deleting your Farm2Home driver account is permanent. Farm2Home will request deletion of your Stripe subscription/customer records, Stripe Connect payout account, Supabase driver/profile records, and Supabase authentication account. This cannot be undone.",
+      [
+        {
+          text: "Keep Account",
+          style: "cancel",
+        },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Final Confirmation",
+              "Are you absolutely sure you want to permanently delete this driver account and disconnect its Farm2Home billing and payout records?",
+              [
+                {
+                  text: "Cancel",
+                  style: "cancel",
+                },
+                {
+                  text: "Delete Permanently",
+                  style: "destructive",
+                  onPress: deleteDriverAccount,
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  }
+
+  async function deleteDriverAccount() {
+    if (!driver?.id || deleteLoading) return;
+
+    try {
+      setDeleteLoading(true);
+
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) throw sessionError;
+
+      if (!session?.access_token || !session.user?.id) {
+        throw new Error(
+          "Your login session has expired. Please sign in again before deleting your account."
+        );
+      }
+
+      /*
+       * IMPORTANT:
+       * Stripe secret keys and the Supabase service_role key must NEVER be
+       * stored in this Expo app. The backend endpoint performs the privileged
+       * Stripe + Supabase deletion after verifying this access token.
+       */
+      const response = await fetch(`${getBackendUrl()}/account/delete`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          role: "driver",
+
+          // These identifiers help the backend locate related records.
+          // The backend must derive/verify the actual auth user from the
+          // Bearer token and must not trust authUserId by itself.
+          userId: driver.id,
+          driverId: driver.id,
+          driver_id: driver.id,
+
+          profileId: driver.profile_id || null,
+          profile_id: driver.profile_id || null,
+
+          accountId: driver.account_id || null,
+          account_id: driver.account_id || null,
+
+          authUserId: session.user.id,
+          auth_user_id: session.user.id,
+
+          email: normalize(email || driver.email || session.user.email),
+          driver_email: normalize(email || driver.email || session.user.email),
+
+          stripeCustomerId: driver.stripe_customer_id || null,
+          stripe_customer_id: driver.stripe_customer_id || null,
+
+          stripeSubscriptionId:
+            pickSubscription(
+              driver.stripe_subscription_id,
+              driver.subscription_id
+            ) || null,
+          stripe_subscription_id:
+            pickSubscription(
+              driver.stripe_subscription_id,
+              driver.subscription_id
+            ) || null,
+
+          stripeAccountId: driver.stripe_account_id || null,
+          stripe_account_id: driver.stripe_account_id || null,
+
+          deleteStripeCustomer: true,
+          delete_stripe_customer: true,
+          cancelStripeSubscription: true,
+          cancel_stripe_subscription: true,
+          deleteStripeConnectAccount: true,
+          delete_stripe_connect_account: true,
+          deleteSupabaseAccount: true,
+          delete_supabase_account: true,
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+
+      if (!response.ok || data?.success === false) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            "Farm2Home could not permanently delete the driver account."
+        );
+      }
+
+      /*
+       * Only clear the device after the server confirms the permanent
+       * deletion request completed successfully.
+       */
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // The backend may already have deleted the Supabase auth user.
+      }
+
+      await AsyncStorage.multiRemove([
+        "currentDriver",
+        "currentUser",
+        "farm2homeCurrentDriver",
+        "farm2homeDriverSession",
+        "userRole",
+        "currentUserRole",
+        "lastLoginRole",
+        "pendingDriverSubscription",
+        "driverSubscriptionStatus",
+        "driverMembershipStatus",
+        "driverStripeCustomerId",
+        "driverStripeSubscriptionId",
+        "driverStripeAccountId",
+      ]);
+
+      /*
+       * Remove this driver from any local cached driver collection if one
+       * exists. This is best-effort local cleanup only.
+       */
+      try {
+        const savedDrivers = await AsyncStorage.getItem("farm2homeDrivers");
+        const parsedDrivers = savedDrivers ? JSON.parse(savedDrivers) : [];
+
+        if (Array.isArray(parsedDrivers)) {
+          const currentDriverId = clean(driver.id);
+          const currentEmail = normalize(email || driver.email);
+
+          const remainingDrivers = parsedDrivers.filter((item: any) => {
+            const itemId = clean(item?.id || item?.driver_id || item?.driverId);
+            const itemEmail = normalize(item?.email);
+
+            const sameId =
+              Boolean(currentDriverId) && itemId === currentDriverId;
+            const sameEmail =
+              Boolean(currentEmail) && itemEmail === currentEmail;
+
+            return !sameId && !sameEmail;
+          });
+
+          if (remainingDrivers.length > 0) {
+            await AsyncStorage.setItem(
+              "farm2homeDrivers",
+              JSON.stringify(remainingDrivers)
+            );
+          } else {
+            await AsyncStorage.removeItem("farm2homeDrivers");
+          }
+        }
+      } catch (localError) {
+        console.log("Local driver cache cleanup skipped:", localError);
+      }
+
+      Alert.alert(
+        "Account Deleted",
+        "Your Farm2Home driver account has been permanently deleted.",
+        [
+          {
+            text: "OK",
+            onPress: () => router.replace("/" as any),
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.log("deleteDriverAccount error:", error);
+
+      Alert.alert(
+        "Delete Account Error",
+        error?.message ||
+          "Farm2Home could not permanently delete your account. Your local login has not been removed. Please try again."
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
   }
 
   async function logout() {
@@ -1180,9 +1390,29 @@ export default function DriverProfileScreen() {
 
         <PrimaryButton title="Back to Driver Home" icon="home-outline" loading={false} onPress={() => router.replace("/driver/mobile-driver-app" as any)} secondary />
 
-        <TouchableOpacity style={styles.deleteButton} onPress={openDeleteAccount} activeOpacity={0.9}>
-          <Ionicons name="trash-outline" size={18} color={COLORS.danger} />
-          <Text style={styles.deleteText}>Delete Account</Text>
+        <TouchableOpacity
+          style={[
+            styles.deleteButton,
+            deleteLoading && styles.disabledButton,
+          ]}
+          onPress={confirmDeleteAccount}
+          disabled={deleteLoading}
+          activeOpacity={0.9}
+        >
+          {deleteLoading ? (
+            <ActivityIndicator size="small" color={COLORS.danger} />
+          ) : (
+            <Ionicons
+              name="trash-outline"
+              size={18}
+              color={COLORS.danger}
+            />
+          )}
+          <Text style={styles.deleteText}>
+            {deleteLoading
+              ? "Deleting Account..."
+              : "Permanently Delete Account"}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.9}>
