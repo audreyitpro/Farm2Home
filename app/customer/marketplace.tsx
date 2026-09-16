@@ -1208,6 +1208,15 @@ export default function MarketplaceScreen() {
     router.push("/customer/my-orders" as any);
   }
 
+  function openProfile() {
+    if (isGuest || !customerReady(customer)) {
+      requireCustomerAccount("view your profile");
+      return;
+    }
+
+    router.push("/customer/profile" as any);
+  }
+
   function renderProductCard(farmer: Farmer, product: Product, compact = false) {
     const imageSource = getProductImage(product);
     const stock = getProductStock(product);
@@ -1380,17 +1389,39 @@ export default function MarketplaceScreen() {
             </Text>
           </View>
 
-          <Pressable
-            style={({ pressed }) => [styles.cartTopButton, pressed && styles.pressedButton]}
-            onPress={openCart}
-          >
-            <Ionicons name="cart-outline" size={21} color={COLORS.primary} />
-            {cartCount > 0 && (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>{cartCount}</Text>
-              </View>
-            )}
-          </Pressable>
+          <View style={styles.topBarActions}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.profileTopButton,
+                pressed && styles.pressedButton,
+              ]}
+              onPress={openProfile}
+            >
+              <Ionicons
+                name={isGuest ? "person-add-outline" : "person-circle-outline"}
+                size={21}
+                color={COLORS.primary}
+              />
+              <Text style={styles.profileTopButtonText}>
+                {isGuest ? "Sign In" : "Profile"}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.cartTopButton,
+                pressed && styles.pressedButton,
+              ]}
+              onPress={openCart}
+            >
+              <Ionicons name="cart-outline" size={21} color={COLORS.primary} />
+              {cartCount > 0 && (
+                <View style={styles.cartBadge}>
+                  <Text style={styles.cartBadgeText}>{cartCount}</Text>
+                </View>
+              )}
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.heroWrap}>
@@ -1672,6 +1703,28 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     marginTop: 4,
+  },
+  topBarActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  profileTopButton: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  profileTopButtonText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "900",
   },
   cartTopButton: {
     width: 48,
