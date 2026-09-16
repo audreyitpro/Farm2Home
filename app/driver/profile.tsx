@@ -1395,7 +1395,7 @@ export default function DriverProfileScreen() {
             styles.deleteButton,
             deleteLoading && styles.disabledButton,
           ]}
-          onPress={confirmDeleteAccount}
+          onPress={() => router.push("/delete-account" as any)}
           disabled={deleteLoading}
           activeOpacity={0.9}
         >

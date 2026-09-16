@@ -1,5 +1,4 @@
 
-
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -1224,7 +1223,7 @@ export default function FarmerProfileScreen() {
               styles.deleteAccountButton,
               deleteLoading && styles.disabled,
             ]}
-            onPress={confirmDeleteAccount}
+            onPress={() => router.push("/delete-account" as any)}
             disabled={deleteLoading}
           >
             {deleteLoading ? (

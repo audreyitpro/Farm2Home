@@ -1533,40 +1533,12 @@ export default function CustomerProfile() {
               icon="shield-checkmark-outline"
             />
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.deleteAccountRow,
-                pressed && styles.pressed,
-                deleteLoading && styles.disabledButton,
-              ]}
-              onPress={confirmDeleteAccount}
-              disabled={deleteLoading}
-            >
-              <View style={styles.deleteAccountIconBox}>
-                {deleteLoading ? (
-                  <ActivityIndicator color={COLORS.danger} size="small" />
-                ) : (
-                  <Ionicons name="trash-outline" size={20} color={COLORS.danger} />
-                )}
-              </View>
-
-              <View style={styles.actionTextBlock}>
-                <Text style={styles.deleteAccountTitle}>
-                  {deleteLoading ? "Deleting Account..." : "Delete Account"}
-                </Text>
-                <Text style={styles.actionSubtitle}>
-                  Permanently delete your Farm2Home account and personal profile data
-                </Text>
-              </View>
-
-              {!deleteLoading && (
-                <Ionicons
-                  name="chevron-forward-outline"
-                  size={20}
-                  color={COLORS.danger}
-                />
-              )}
-            </Pressable>
+            <RouteRow
+              title="Delete Account"
+              subtitle="Permanently delete your Farm2Home account and personal profile data"
+              path="/delete-account"
+              icon="trash-outline"
+            />
           </View>
 
           <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.9}>

@@ -1477,7 +1477,7 @@ export default function FreightProfileScreen() {
                     styles.deleteAccountButton,
                     deleteLoading && styles.disabledButton,
                   ]}
-                  onPress={confirmDeleteAccount}
+                  onPress={() => router.push("/delete-account" as any)}
                   disabled={deleteLoading}
                   activeOpacity={0.9}
                 >
