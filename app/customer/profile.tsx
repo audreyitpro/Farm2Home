@@ -1529,7 +1529,7 @@ export default function CustomerProfile() {
             <RouteRow
               title="Privacy Policy"
               subtitle="Review how Farm2Home Direct collects, uses, and protects your information"
-              path="/privacy"
+              path="/legal/privacy"
               icon="shield-checkmark-outline"
             />
 

@@ -900,7 +900,7 @@ export default function DriverProfileScreen() {
   }
 
   function openPrivacyPolicy() {
-    router.push("/privacy" as any);
+    router.push("/legal/privacy" as any);
   }
 
   function confirmDeleteAccount() {
