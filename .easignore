@@ -1,0 +1,55 @@
+﻿# Dependencies - EAS installs these from package-lock.json
+node_modules/
+
+# Expo local files
+.expo/
+.expo-shared/
+
+# Local environment files
+.env
+.env.*
+backend/.env
+*.env
+
+# Local Android SDK configuration
+android/local.properties
+
+# Android build outputs/caches
+android/.gradle/
+android/build/
+android/app/build/
+android/.cxx/
+android/app/.cxx/
+
+# iOS local build artifacts
+ios/Pods/
+ios/build/
+
+# General build output
+dist/
+web-build/
+
+# Git / editor / OS
+.git/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+gradle-debug.txt
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Credentials / certificates
+credentials.json
+credentials/
+*.jks
+*.keystore
+*.pem
+
+# Design/source files not needed to compile the app
+UI-Kit/
+*.fig
