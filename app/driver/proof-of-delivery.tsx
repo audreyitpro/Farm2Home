@@ -1,4 +1,4 @@
-// app/driver/proof-of-delivery.tsx
+
 
 import React, { useState } from "react";
 import {
@@ -63,22 +63,20 @@ export default function ProofOfDelivery() {
   const [signatureText, setSignatureText] = useState("");
 
   async function pickDeliveryPhoto() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: true,
+        aspect: [4, 3],
+      });
 
-    if (!permission.granted) {
-      Alert.alert("Permission Needed", "Please allow photo access.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-      allowsEditing: true,
-      aspect: [4, 3],
-    });
-
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setPhotoUri(result.assets[0].uri);
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setPhotoUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.log("Delivery photo picker error:", error);
+      Alert.alert("Photo Error", "Unable to select a photo.");
     }
   }
 

@@ -193,21 +193,19 @@ export default function ProofOfPickupScreen() {
   }
 
   async function chooseFromLibrary() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        quality: 0.75,
+        allowsEditing: false,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      });
 
-    if (!permission.granted) {
-      Alert.alert("Photo Permission Needed", "Please allow photo library access.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      quality: 0.75,
-      allowsEditing: false,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    });
-
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setPhotoUri(result.assets[0].uri);
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setPhotoUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.log("Pickup photo picker error:", error);
+      Alert.alert("Photo Error", "Unable to select a photo.");
     }
   }
 

@@ -91,25 +91,24 @@ export default function EditProfileScreen() {
   }
 
   async function chooseImage() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
 
-    if (!permission.granted) {
-      Alert.alert("Permission Needed", "Photo library permission is required.");
-      return;
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
+
+      const image = result.assets[0];
+      setAvatarUrl(image.uri);
+    } catch (error) {
+      console.log("Profile image picker error:", error);
+      Alert.alert("Photo Error", "Unable to select a profile photo.");
     }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-      allowsEditing: true,
-      aspect: [1, 1],
-    });
-
-    if (result.canceled) return;
-
-    const image = result.assets[0];
-
-    setAvatarUrl(image.uri);
   }
 
   async function saveProfile() {

@@ -262,6 +262,7 @@ export default function CustomerProfile() {
   const [syncing, setSyncing] = useState(false);
   const [billingLoading, setBillingLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -999,6 +1000,161 @@ export default function CustomerProfile() {
     );
   }
 
+  function confirmDeleteAccount() {
+    if (deleteLoading) return;
+
+    Alert.alert(
+      "Permanently Delete Account",
+      "This permanently deletes your Farm2Home customer account and personal profile data. This action cannot be undone. If you have an active paid subscription, the deletion request will also tell the Farm2Home server to cancel it according to the account-deletion policy.",
+      [
+        {
+          text: "Keep Account",
+          style: "cancel",
+        },
+        {
+          text: "Delete Account",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Final Confirmation",
+              "Are you absolutely sure? Your Farm2Home account will be permanently deleted and you will be signed out.",
+              [
+                {
+                  text: "Cancel",
+                  style: "cancel",
+                },
+                {
+                  text: "Delete Permanently",
+                  style: "destructive",
+                  onPress: deleteAccount,
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  }
+
+  async function deleteAccount() {
+    if (deleteLoading) return;
+
+    try {
+      setDeleteLoading(true);
+
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) throw sessionError;
+
+      if (!session?.access_token || !session.user?.id) {
+        throw new Error("Your login session has expired. Please sign in again before deleting your account.");
+      }
+
+      const response = await fetch(`${API_BASE_URL}/account/delete`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          role: "customer",
+          customerId: getCustomerId(customer),
+          customer_id: getCustomerId(customer),
+          profileId: getProfileId(customer),
+          profile_id: getProfileId(customer),
+          authUserId: session.user.id,
+          auth_user_id: session.user.id,
+          email: normalize(email || customer?.email || session.user.email),
+          stripeCustomerId: getStripeCustomer(customer),
+          stripe_customer_id: getStripeCustomer(customer),
+          stripeSubscriptionId: getStripeSubscription(customer),
+          stripe_subscription_id: getStripeSubscription(customer),
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+
+      if (!response.ok || data?.success === false) {
+        throw new Error(data?.error || data?.message || "Unable to permanently delete your account.");
+      }
+
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // The server may already have deleted the auth user/session.
+      }
+
+      await AsyncStorage.multiRemove([
+        "currentCustomer",
+        "farm2homeCurrentCustomer",
+        "currentUser",
+        "userRole",
+        "currentUserRole",
+        "pendingCustomerSubscription",
+        "customerSubscriptionStatus",
+        "farm2homeCart",
+        "cart",
+      ]);
+
+      // Remove this customer from the locally cached customer list.
+      try {
+        const savedCustomers = await AsyncStorage.getItem("farm2homeCustomers");
+        const parsedCustomers = savedCustomers ? JSON.parse(savedCustomers) : [];
+        const customerId = getCustomerId(customer);
+        const customerEmail = normalize(email || customer?.email);
+
+        const remainingCustomers = Array.isArray(parsedCustomers)
+          ? parsedCustomers.filter((item: CustomerRecord) => {
+              const sameId =
+                Boolean(customerId) &&
+                getCustomerId(item) === customerId;
+
+              const sameEmail =
+                Boolean(customerEmail) &&
+                normalize(item?.email) === customerEmail;
+
+              return !sameId && !sameEmail;
+            })
+          : [];
+
+        if (remainingCustomers.length > 0) {
+          await AsyncStorage.setItem(
+            "farm2homeCustomers",
+            JSON.stringify(remainingCustomers)
+          );
+        } else {
+          await AsyncStorage.removeItem("farm2homeCustomers");
+        }
+      } catch (localError) {
+        console.log("Local customer cleanup skipped:", localError);
+      }
+
+      Alert.alert(
+        "Account Deleted",
+        "Your Farm2Home customer account has been permanently deleted.",
+        [
+          {
+            text: "OK",
+            onPress: () => router.replace("/" as any),
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.log("Customer account deletion error:", error);
+
+      Alert.alert(
+        "Delete Account Error",
+        error?.message ||
+          "Farm2Home could not permanently delete your account. Please try again."
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
   async function logout() {
     try {
       await supabase.auth.signOut();
@@ -1373,13 +1529,13 @@ export default function CustomerProfile() {
             <RouteRow
               title="Privacy Policy"
               subtitle="Review how Farm2Home Direct collects, uses, and protects your information"
-              path="/privacy"
+              path="/legal/privacy"
               icon="shield-checkmark-outline"
             />
 
             <RouteRow
               title="Delete Account"
-              subtitle="Request deletion of your Farm2Home Direct account and associated personal data"
+              subtitle="Permanently delete your Farm2Home account and personal profile data"
               path="/delete-account"
               icon="trash-outline"
             />
@@ -1776,6 +1932,32 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 12,
     marginTop: 3,
+  },
+  deleteAccountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.dangerSoft,
+    padding: 13,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#FFD2D2",
+    marginBottom: 10,
+    gap: 12,
+  },
+  deleteAccountIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.white,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#FFD2D2",
+  },
+  deleteAccountTitle: {
+    color: COLORS.danger,
+    fontWeight: "900",
+    fontSize: 16,
   },
   pressed: { opacity: 0.75 },
 });

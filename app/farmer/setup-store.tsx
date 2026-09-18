@@ -454,13 +454,6 @@ export default function FarmerSetupStoreScreen() {
 
   async function pickLogo() {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-      if (!permission.granted) {
-        Alert.alert("Permission Needed", "Please allow photo access to upload logo.");
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         quality: 0.85,

@@ -204,22 +204,20 @@ export default function AddProduct() {
   }
 
   async function pickImage() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+        allowsEditing: true,
+        aspect: [4, 3],
+      });
 
-    if (!permission.granted) {
-      Alert.alert("Permission Needed", "Please allow photo access.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-      allowsEditing: true,
-      aspect: [4, 3],
-    });
-
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setImage(result.assets[0].uri);
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.log("Product image picker error:", error);
+      Alert.alert("Image Error", "Unable to select a product image.");
     }
   }
 
