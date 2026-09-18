@@ -1,9 +1,11 @@
 // app/services/locationTrackingService.ts
 
 import * as Location from "expo-location";
-import { Platform } from "react-native";
 import { supabase } from "./supabaseClient";
 
+/**
+ * Payload used when saving a driver's current location.
+ */
 export type DriverLocationPayload = {
   driverId: string;
   loadId?: string;
@@ -14,25 +16,31 @@ export type DriverLocationPayload = {
   accuracy?: number | null;
 };
 
-export async function requestLocationPermissions() {
+/**
+ * Request foreground location permission.
+ *
+ * Farm2Home currently uses foreground location for:
+ * - Driver live location
+ * - Freight live routes
+ * - Navigation assistance
+ * - Current-location lookups
+ *
+ * Background location permission is intentionally NOT requested.
+ */
+export async function requestLocationPermissions(): Promise<boolean> {
   const foreground = await Location.requestForegroundPermissionsAsync();
 
   if (foreground.status !== "granted") {
     throw new Error("Foreground location permission denied.");
   }
 
-  if (Platform.OS !== "web") {
-    const background = await Location.requestBackgroundPermissionsAsync();
-
-    if (background.status !== "granted") {
-      console.log("Background location permission not granted.");
-    }
-  }
-
   return true;
 }
 
-export async function getCurrentLocation() {
+/**
+ * Get the user's current location.
+ */
+export async function getCurrentLocation(): Promise<Location.LocationObjectCoords> {
   await requestLocationPermissions();
 
   const location = await Location.getCurrentPositionAsync({
@@ -42,12 +50,18 @@ export async function getCurrentLocation() {
   return location.coords;
 }
 
+/**
+ * Watch the driver's location while the Farm2Home tracking
+ * feature is actively running.
+ *
+ * This is foreground location tracking only.
+ */
 export async function watchDriverLocation(
   callback: (coords: Location.LocationObjectCoords) => void
-) {
+): Promise<Location.LocationSubscription> {
   await requestLocationPermissions();
 
-  return await Location.watchPositionAsync(
+  const subscription = await Location.watchPositionAsync(
     {
       accuracy: Location.Accuracy.High,
       distanceInterval: 10,
@@ -57,8 +71,13 @@ export async function watchDriverLocation(
       callback(location.coords);
     }
   );
+
+  return subscription;
 }
 
+/**
+ * Save or update a driver's latest location in Supabase.
+ */
 export async function updateDriverLocation({
   driverId,
   loadId,
@@ -67,22 +86,30 @@ export async function updateDriverLocation({
   heading = null,
   speed = null,
   accuracy = null,
-}: DriverLocationPayload) {
-  if (!driverId) {
+}: DriverLocationPayload): Promise<boolean> {
+  if (!driverId || !driverId.trim()) {
     throw new Error("Missing driverId.");
   }
 
   if (
     typeof latitude !== "number" ||
     typeof longitude !== "number" ||
-    Number.isNaN(latitude) ||
-    Number.isNaN(longitude)
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude)
   ) {
     throw new Error("Invalid latitude or longitude.");
   }
 
-  const payload: Record<string, any> = {
-    driver_id: driverId,
+  if (latitude < -90 || latitude > 90) {
+    throw new Error("Latitude must be between -90 and 90.");
+  }
+
+  if (longitude < -180 || longitude > 180) {
+    throw new Error("Longitude must be between -180 and 180.");
+  }
+
+  const payload: Record<string, unknown> = {
+    driver_id: driverId.trim(),
     latitude,
     longitude,
     heading,
@@ -91,32 +118,37 @@ export async function updateDriverLocation({
     updated_at: new Date().toISOString(),
   };
 
-  if (loadId) {
-    payload.load_id = loadId;
+  if (loadId?.trim()) {
+    payload.load_id = loadId.trim();
   }
 
-  const result = await supabase
+  const { error } = await supabase
     .from("driver_locations")
     .upsert(payload, {
-      onConflict: loadId ? "driver_id,load_id" : "driver_id",
+      onConflict: loadId?.trim()
+        ? "driver_id,load_id"
+        : "driver_id",
     });
 
-  if (result.error) {
-    throw result.error;
+  if (error) {
+    throw error;
   }
 
   return true;
 }
 
+/**
+ * Retrieve the driver's most recently stored location.
+ */
 export async function getDriverLocation(driverId: string) {
-  if (!driverId) {
+  if (!driverId || !driverId.trim()) {
     throw new Error("Missing driverId.");
   }
 
   const { data, error } = await supabase
     .from("driver_locations")
     .select("*")
-    .eq("driver_id", driverId)
+    .eq("driver_id", driverId.trim())
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -128,8 +160,15 @@ export async function getDriverLocation(driverId: string) {
   return data;
 }
 
-export async function stopLocationWatcher(subscription?: Location.LocationSubscription | null) {
-  if (subscription) {
-    subscription.remove();
+/**
+ * Stop an active foreground location watcher.
+ */
+export async function stopLocationWatcher(
+  subscription?: Location.LocationSubscription | null
+): Promise<void> {
+  if (!subscription) {
+    return;
   }
+
+  subscription.remove();
 }
