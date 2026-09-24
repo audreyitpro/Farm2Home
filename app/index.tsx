@@ -412,7 +412,7 @@ export default function HomeScreen() {
 
           <View style={styles.overlay}>
             <Image
-              source={require("../assets/images/farm2home-logo.jpg")}
+              source={require("../assets/images/farm2home-logo.png")}
               style={styles.logo}
               resizeMode="contain"
             />
