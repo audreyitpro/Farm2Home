@@ -2805,3 +2805,956 @@ router.post("/connect-account-status", async (req, res) => {
     });
   }
 });
+// ============================================================
+// UNIVERSAL MEMBERSHIP SUBSCRIPTION CANCELLATION
+//
+// Supported profiles:
+//   customer
+//   farmer
+//   freight
+//   driver
+//
+// Endpoint:
+//   POST /payments/cancel-subscription
+//
+// Default behavior:
+//   Cancel at the end of the current Stripe billing period.
+//
+// This preserves access until Stripe actually changes the
+// subscription to canceled.
+// ============================================================
+
+router.post("/cancel-subscription", async (req, res) => {
+  try {
+    if (!requireStripe(res)) return;
+    if (!requireSupabase(res)) return;
+
+    const body = req.body || {};
+
+    // --------------------------------------------------------
+    // 1. Resolve role
+    // --------------------------------------------------------
+
+    const role = roleName(
+      body.role ||
+        body.profileRole ||
+        body.profile_role ||
+        body.userRole ||
+        body.user_role
+    );
+
+    const allowedRoles = [
+      "customer",
+      "farmer",
+      "freight",
+      "driver",
+    ];
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Valid role is required. Supported roles: customer, farmer, freight, driver.",
+      });
+    }
+
+    // --------------------------------------------------------
+    // 2. Resolve correct tables/columns
+    // --------------------------------------------------------
+
+    const roleTable = getRoleTable(role);
+    const subscriptionTable = getSubscriptionTable(role);
+    const roleIdColumn = getRoleIdColumn(role);
+    const roleEmailColumn = getRoleEmailColumn(role);
+
+    if (!roleTable || !subscriptionTable) {
+      return res.status(400).json({
+        success: false,
+        error: `Subscription configuration was not found for role=${role}.`,
+      });
+    }
+
+    // --------------------------------------------------------
+    // 3. Resolve profile/user ID
+    // --------------------------------------------------------
+
+    let roleId = getRoleIdFromBody(body, role);
+
+    // Extra compatibility with all profile payloads
+    if (!roleId) {
+      roleId = clean(
+        body.id ||
+          body.profileId ||
+          body.profile_id ||
+          body.authUserId ||
+          body.auth_user_id ||
+          body.userId ||
+          body.user_id
+      );
+    }
+
+    // --------------------------------------------------------
+    // 4. Resolve email
+    // --------------------------------------------------------
+
+    let emailValue = email(
+      body.email ||
+        body.customerEmail ||
+        body.customer_email ||
+        body.farmerEmail ||
+        body.farmer_email ||
+        body.freightEmail ||
+        body.freight_email ||
+        body.driverEmail ||
+        body.driver_email
+    );
+
+    // --------------------------------------------------------
+    // 5. Resolve Stripe IDs sent by frontend
+    // --------------------------------------------------------
+
+    let stripeCustomerId = clean(
+      body.stripeCustomerId ||
+        body.stripe_customer_id ||
+        body.customerStripeId ||
+        body.customer_stripe_id
+    );
+
+    let subscriptionId = clean(
+      body.stripeSubscriptionId ||
+        body.stripe_subscription_id ||
+        body.subscriptionId ||
+        body.subscription_id
+    );
+
+    console.log("========================================");
+    console.log("CANCEL SUBSCRIPTION REQUEST");
+    console.log("role:", role);
+    console.log("roleId:", roleId);
+    console.log("email:", emailValue);
+    console.log("stripeCustomerId:", stripeCustomerId);
+    console.log("subscriptionId:", subscriptionId);
+    console.log("========================================");
+
+    // --------------------------------------------------------
+    // 6. Find main profile row
+    //
+    // We use this as another source for:
+    //   role ID
+    //   email
+    //   Stripe customer
+    //   Stripe subscription
+    // --------------------------------------------------------
+
+    let roleRow = null;
+
+    if (roleId) {
+      try {
+        const result = await supabase
+          .from(roleTable)
+          .select("*")
+          .or(getIdFilter(role, roleId))
+          .maybeSingle();
+
+        if (result.error) {
+          console.log(
+            `${roleTable} lookup by ID skipped:`,
+            result.error.message
+          );
+        } else {
+          roleRow = result.data;
+        }
+      } catch (error) {
+        console.log(
+          `${roleTable} lookup by ID exception:`,
+          error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // If ID lookup failed, try email
+    // --------------------------------------------------------
+
+    if (!roleRow && emailValue) {
+      try {
+        let result = await supabase
+          .from(roleTable)
+          .select("*")
+          .eq("email", emailValue)
+          .maybeSingle();
+
+        // Some tables may use their role-specific email column.
+        if (
+          result.error &&
+          roleEmailColumn &&
+          roleEmailColumn !== "email"
+        ) {
+          result = await supabase
+            .from(roleTable)
+            .select("*")
+            .eq(roleEmailColumn, emailValue)
+            .maybeSingle();
+        }
+
+        if (result.error) {
+          console.log(
+            `${roleTable} lookup by email skipped:`,
+            result.error.message
+          );
+        } else {
+          roleRow = result.data;
+        }
+      } catch (error) {
+        console.log(
+          `${roleTable} lookup by email exception:`,
+          error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // Fill missing identifiers from main profile
+    // --------------------------------------------------------
+
+    if (roleRow) {
+      if (!roleId) {
+        roleId = clean(
+          roleRow.id ||
+            roleRow[roleIdColumn] ||
+            roleRow.profile_id ||
+            roleRow.auth_user_id
+        );
+      }
+
+      if (!emailValue) {
+        emailValue = email(
+          roleRow.email ||
+            roleRow[roleEmailColumn]
+        );
+      }
+
+      if (!isCus(stripeCustomerId)) {
+        stripeCustomerId = clean(
+          roleRow.stripe_customer_id
+        );
+      }
+
+      if (!isSub(subscriptionId)) {
+        subscriptionId = clean(
+          roleRow.stripe_subscription_id ||
+            roleRow.subscription_id
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // 7. Search role subscription table
+    // --------------------------------------------------------
+
+    let subscriptionRow = null;
+
+    // First search using Stripe subscription ID
+    if (isSub(subscriptionId)) {
+      try {
+        const result = await supabase
+          .from(subscriptionTable)
+          .select("*")
+          .eq("stripe_subscription_id", subscriptionId)
+          .maybeSingle();
+
+        if (!result.error) {
+          subscriptionRow = result.data;
+        }
+      } catch (error) {
+        console.log(
+          `${subscriptionTable} lookup by subscription skipped:`,
+          error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // Search by role ID
+    // --------------------------------------------------------
+
+    if (!subscriptionRow && roleId) {
+      try {
+        const result = await supabase
+          .from(subscriptionTable)
+          .select("*")
+          .eq(roleIdColumn, roleId)
+          .maybeSingle();
+
+        if (result.error) {
+          console.log(
+            `${subscriptionTable} lookup by role ID skipped:`,
+            result.error.message
+          );
+        } else {
+          subscriptionRow = result.data;
+        }
+      } catch (error) {
+        console.log(
+          `${subscriptionTable} lookup by role ID exception:`,
+          error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // Search by email
+    // --------------------------------------------------------
+
+    if (!subscriptionRow && emailValue) {
+      try {
+        const result = await supabase
+          .from(subscriptionTable)
+          .select("*")
+          .eq(roleEmailColumn, emailValue)
+          .maybeSingle();
+
+        if (result.error) {
+          console.log(
+            `${subscriptionTable} lookup by email skipped:`,
+            result.error.message
+          );
+        } else {
+          subscriptionRow = result.data;
+        }
+      } catch (error) {
+        console.log(
+          `${subscriptionTable} lookup by email exception:`,
+          error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // Fill missing Stripe IDs from subscription table
+    // --------------------------------------------------------
+
+    if (subscriptionRow) {
+      if (!roleId) {
+        roleId = clean(
+          subscriptionRow[roleIdColumn] ||
+            subscriptionRow.profile_id
+        );
+      }
+
+      if (!emailValue) {
+        emailValue = email(
+          subscriptionRow[roleEmailColumn] ||
+            subscriptionRow.email
+        );
+      }
+
+      if (!isCus(stripeCustomerId)) {
+        stripeCustomerId = clean(
+          subscriptionRow.stripe_customer_id
+        );
+      }
+
+      if (!isSub(subscriptionId)) {
+        subscriptionId = clean(
+          subscriptionRow.stripe_subscription_id ||
+            subscriptionRow.subscription_id
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // 8. If subscription ID still missing, find Stripe customer
+    // --------------------------------------------------------
+
+    let stripeCustomer = null;
+
+    if (isCus(stripeCustomerId)) {
+      try {
+        const customer =
+          await stripe.customers.retrieve(stripeCustomerId);
+
+        if (customer && !customer.deleted) {
+          stripeCustomer = customer;
+        }
+      } catch (error) {
+        console.log(
+          "Stripe customer retrieve skipped:",
+          error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // Search Stripe by email if needed
+    // --------------------------------------------------------
+
+    if (!stripeCustomer && emailValue) {
+      try {
+        stripeCustomer = await findCustomerSmart({
+          emailValue,
+          businessName:
+            roleRow?.business_name ||
+            roleRow?.company_name ||
+            roleRow?.farm_name ||
+            roleRow?.name ||
+            "",
+          username:
+            roleRow?.username ||
+            subscriptionRow?.username ||
+            "",
+          role,
+          stripeCustomerId,
+        });
+      } catch (error) {
+        console.log(
+          "Stripe customer search skipped:",
+          error.message
+        );
+      }
+    }
+
+    if (stripeCustomer?.id) {
+      stripeCustomerId = stripeCustomer.id;
+
+      if (!emailValue) {
+        emailValue = email(stripeCustomer.email);
+      }
+    }
+
+    // --------------------------------------------------------
+    // 9. Search Stripe subscriptions when subscription ID
+    // wasn't stored correctly in Supabase
+    // --------------------------------------------------------
+
+    if (!isSub(subscriptionId) && isCus(stripeCustomerId)) {
+      try {
+        const subscriptions =
+          await listCustomerSubscriptions(stripeCustomerId);
+
+        const selectedSubscription =
+          bestSubscription(subscriptions);
+
+        if (selectedSubscription?.id) {
+          subscriptionId = selectedSubscription.id;
+        }
+      } catch (error) {
+        console.log(
+          "Stripe subscription search skipped:",
+          error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // 10. Cannot cancel without Stripe subscription
+    // --------------------------------------------------------
+
+    if (!isSub(subscriptionId)) {
+      return res.status(404).json({
+        success: false,
+        error:
+          `No Stripe membership subscription was found for this ${role} profile.`,
+        role,
+        userId: roleId || null,
+        email: emailValue || null,
+        stripeCustomerId:
+          isCus(stripeCustomerId)
+            ? stripeCustomerId
+            : null,
+      });
+    }
+
+    // --------------------------------------------------------
+    // 11. Retrieve subscription directly from Stripe
+    // --------------------------------------------------------
+
+    let currentSubscription;
+
+    try {
+      currentSubscription =
+        await stripe.subscriptions.retrieve(subscriptionId);
+    } catch (error) {
+      console.error(
+        "Stripe subscription retrieve error:",
+        error
+      );
+
+      if (error?.code === "resource_missing") {
+        return res.status(404).json({
+          success: false,
+          error:
+            "The Stripe subscription no longer exists.",
+          role,
+          stripeSubscriptionId: subscriptionId,
+        });
+      }
+
+      throw error;
+    }
+
+    // --------------------------------------------------------
+    // 12. Subscription already fully canceled
+    // --------------------------------------------------------
+
+    if (currentSubscription.status === "canceled") {
+      const currentPeriodEnd = stripeDate(
+        currentSubscription.current_period_end
+      );
+
+      const canceledPayload = {
+        stripe_customer_id:
+          typeof currentSubscription.customer === "string"
+            ? currentSubscription.customer
+            : currentSubscription.customer?.id ||
+              stripeCustomerId ||
+              null,
+
+        stripe_subscription_id:
+          currentSubscription.id,
+
+        subscription_id:
+          currentSubscription.id,
+
+        subscription_status: "canceled",
+        membership_status: "canceled",
+        account_active: false,
+        cancel_at_period_end: false,
+        current_period_end: currentPeriodEnd,
+        updated_at: nowIso(),
+      };
+
+      if (role === "customer") {
+        canceledPayload.customer_membership_paid = false;
+      }
+
+      if (role === "farmer") {
+        canceledPayload.farmer_membership_paid = false;
+        canceledPayload.monthly_membership_started = false;
+      }
+
+      if (role === "freight") {
+        canceledPayload.freight_membership_paid = false;
+      }
+
+      if (role === "driver") {
+        canceledPayload.driver_membership_paid = false;
+      }
+
+      if (roleId || emailValue) {
+        await updateMainRoleRow(
+          role,
+          roleId,
+          emailValue,
+          canceledPayload
+        );
+
+        await updateProfiles(
+          role,
+          roleId,
+          emailValue,
+          canceledPayload
+        );
+
+        await updateAdminVerifications(
+          role,
+          roleId,
+          emailValue,
+          canceledPayload
+        );
+      }
+
+      return res.json({
+        success: true,
+        alreadyCanceled: true,
+        role,
+        userId: roleId || null,
+        message: "Subscription is already canceled.",
+        stripeCustomerId:
+          canceledPayload.stripe_customer_id,
+        stripeSubscriptionId:
+          currentSubscription.id,
+        subscriptionId:
+          currentSubscription.id,
+        subscriptionStatus: "canceled",
+        membershipStatus: "canceled",
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd,
+        accessUntil: currentPeriodEnd,
+      });
+    }
+
+    // --------------------------------------------------------
+    // 13. Schedule cancellation at billing period end
+    // --------------------------------------------------------
+
+    let updatedSubscription;
+
+    if (currentSubscription.cancel_at_period_end) {
+      updatedSubscription = currentSubscription;
+    } else {
+      updatedSubscription =
+        await stripe.subscriptions.update(
+          subscriptionId,
+          {
+            cancel_at_period_end: true,
+          }
+        );
+    }
+
+    // --------------------------------------------------------
+    // 14. Resolve Stripe values
+    // --------------------------------------------------------
+
+    const finalStripeCustomerId =
+      typeof updatedSubscription.customer === "string"
+        ? updatedSubscription.customer
+        : updatedSubscription.customer?.id ||
+          stripeCustomerId ||
+          null;
+
+    const currentPeriodEnd = stripeDate(
+      updatedSubscription.current_period_end
+    );
+
+    // --------------------------------------------------------
+    // IMPORTANT:
+    //
+    // Stripe remains active/trialing/past_due until period end.
+    // Therefore membership access should remain enabled.
+    // --------------------------------------------------------
+
+    const stillActive = isActiveSubscription(
+      updatedSubscription.status
+    );
+
+    const cancellationPayload = {
+      stripe_customer_id: finalStripeCustomerId,
+
+      stripe_subscription_id:
+        updatedSubscription.id,
+
+      subscription_id:
+        updatedSubscription.id,
+
+      subscription_status:
+        updatedSubscription.status,
+
+      membership_status: "canceling",
+
+      account_active: stillActive,
+
+      cancel_at_period_end: true,
+
+      current_period_end: currentPeriodEnd,
+
+      updated_at: nowIso(),
+    };
+
+    // --------------------------------------------------------
+    // 15. Role-specific membership fields
+    // --------------------------------------------------------
+
+    if (role === "customer") {
+      cancellationPayload.customer_membership_paid =
+        stillActive;
+    }
+
+    if (role === "farmer") {
+      cancellationPayload.farmer_membership_paid =
+        stillActive;
+
+      cancellationPayload.monthly_membership_started =
+        stillActive;
+    }
+
+    if (role === "freight") {
+      cancellationPayload.freight_membership_paid =
+        stillActive;
+    }
+
+    if (role === "driver") {
+      cancellationPayload.driver_membership_paid =
+        stillActive;
+    }
+
+    // --------------------------------------------------------
+    // 16. Update main role table
+    // --------------------------------------------------------
+
+    if (roleId || emailValue) {
+      const mainUpdate = await updateMainRoleRow(
+        role,
+        roleId,
+        emailValue,
+        cancellationPayload
+      );
+
+      if (mainUpdate.error) {
+        console.log(
+          `${roleTable} cancellation sync skipped:`,
+          mainUpdate.error.message
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // 17. Update subscription table
+    // --------------------------------------------------------
+
+    const subscriptionUpdatePayload = {
+      stripe_customer_id: finalStripeCustomerId,
+
+      stripe_subscription_id:
+        updatedSubscription.id,
+
+      subscription_status:
+        updatedSubscription.status,
+
+      current_period_end: currentPeriodEnd,
+
+      cancel_at_period_end: true,
+
+      updated_at: nowIso(),
+    };
+
+    const subscriptionFilters = [];
+
+    if (roleId) {
+      subscriptionFilters.push(
+        `${roleIdColumn}.eq.${roleId}`
+      );
+    }
+
+    if (emailValue) {
+      subscriptionFilters.push(
+        `${roleEmailColumn}.eq.${emailValue}`
+      );
+    }
+
+    subscriptionFilters.push(
+      `stripe_subscription_id.eq.${updatedSubscription.id}`
+    );
+
+    try {
+      const subUpdate = await safeUpdate(
+        subscriptionTable,
+        subscriptionUpdatePayload,
+        (query) =>
+          query.or(subscriptionFilters.join(",")),
+        subscriptionTable
+      );
+
+      if (subUpdate.error) {
+        console.log(
+          `${subscriptionTable} cancellation sync skipped:`,
+          subUpdate.error.message
+        );
+      }
+    } catch (error) {
+      console.log(
+        `${subscriptionTable} cancellation exception:`,
+        error.message
+      );
+    }
+
+    // --------------------------------------------------------
+    // 18. Update profile table
+    // --------------------------------------------------------
+
+    try {
+      await updateProfiles(
+        role,
+        roleId,
+        emailValue,
+        cancellationPayload
+      );
+    } catch (error) {
+      console.log(
+        "profiles cancellation sync skipped:",
+        error.message
+      );
+    }
+
+    // --------------------------------------------------------
+    // 19. Update admin verification
+    // --------------------------------------------------------
+
+    try {
+      await updateAdminVerifications(
+        role,
+        roleId,
+        emailValue,
+        cancellationPayload
+      );
+    } catch (error) {
+      console.log(
+        "admin_verifications cancellation sync skipped:",
+        error.message
+      );
+    }
+
+    // --------------------------------------------------------
+    // 20. Success
+    // --------------------------------------------------------
+
+    return res.json({
+      success: true,
+
+      alreadyCanceled: false,
+
+      role,
+
+      userId: roleId || null,
+
+      email: emailValue || null,
+
+      message:
+        "Subscription cancellation is scheduled for the end of the current billing period.",
+
+      stripeCustomerId:
+        finalStripeCustomerId,
+
+      stripeSubscriptionId:
+        updatedSubscription.id,
+
+      subscriptionId:
+        updatedSubscription.id,
+
+      subscriptionStatus:
+        updatedSubscription.status,
+
+      membershipStatus: "canceling",
+
+      cancelAtPeriodEnd:
+        Boolean(
+          updatedSubscription.cancel_at_period_end
+        ),
+
+      currentPeriodEnd,
+
+      accessUntil: currentPeriodEnd,
+    });
+  } catch (error) {
+    console.error(
+      "cancel-subscription error:",
+      error
+    );
+
+    if (error?.code === "resource_missing") {
+      return res.status(404).json({
+        success: false,
+        error:
+          "Stripe could not find the requested subscription.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error:
+        error?.message ||
+        "Unable to cancel subscription.",
+    });
+  }
+});
+
+
+// ============================================================
+// ROLE-SPECIFIC CANCEL ROUTE ALIASES
+//
+// These all use the SAME cancellation implementation above.
+// They make the backend compatible with profile screens that
+// use role-specific endpoint names.
+// ============================================================
+
+async function forwardCancelSubscription(
+  req,
+  res,
+  role
+) {
+  req.body = {
+    ...(req.body || {}),
+    role,
+  };
+
+  // Change the URL so Express routes this internally
+  // through /cancel-subscription.
+  req.url = "/cancel-subscription";
+
+  return router.handle(req, res);
+}
+
+
+// ------------------------------------------------------------
+// FARMER
+// ------------------------------------------------------------
+
+router.post(
+  "/cancel-farmer-subscription",
+  (req, res) => {
+    return forwardCancelSubscription(
+      req,
+      res,
+      "farmer"
+    );
+  }
+);
+
+
+// ------------------------------------------------------------
+// CUSTOMER
+// ------------------------------------------------------------
+
+router.post(
+  "/cancel-customer-subscription",
+  (req, res) => {
+    return forwardCancelSubscription(
+      req,
+      res,
+      "customer"
+    );
+  }
+);
+
+
+// ------------------------------------------------------------
+// FREIGHT
+// ------------------------------------------------------------
+
+router.post(
+  "/cancel-freight-subscription",
+  (req, res) => {
+    return forwardCancelSubscription(
+      req,
+      res,
+      "freight"
+    );
+  }
+);
+
+
+// ------------------------------------------------------------
+// DRIVER
+// ------------------------------------------------------------
+
+router.post(
+  "/cancel-driver-subscription",
+  (req, res) => {
+    return forwardCancelSubscription(
+      req,
+      res,
+      "driver"
+    );
+  }
+);
+
+
+// ============================================================
+// EXPORT ROUTER
+//
+// IMPORTANT:
+// This MUST remain the final statement in payments.js.
+// Do not put routes below this line.
+// ============================================================
+
+module.exports = router;
