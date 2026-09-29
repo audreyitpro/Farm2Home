@@ -25,7 +25,9 @@ const supabase =
       )
     : null;
 
-const SERVICE_FEE_RATE = 0.04;
+const FARMER_PLATFORM_FEE_RATE = 0.04;
+const CUSTOMER_CHECKOUT_SERVICE_FEE = 4.99;
+const FARMER_ACTIVATION_GRACE_DAYS = 60;
 
 function clean(value) {
   return String(value || "").trim();
@@ -646,7 +648,7 @@ async function updateProfiles(role, idValue, emailValue, payload) {
       },
       "profiles"
     );
-  } catch (error) {
+      } catch (error) {
     console.log("profiles update skipped:", error.message);
   }
 }
@@ -1296,7 +1298,7 @@ async function createConnectAccount(req, res) {
         body.freight_email ||
         body.driver_email ||
         body.farmer_email
-    );
+          );
 
     const requestedBusinessName = clean(
       body.companyName ||
@@ -1714,7 +1716,7 @@ async function saveMarketplaceTransfers(order, paymentIntentId = null) {
     stripe_account_id: split.stripeAccountId,
     amount: split.amount,
     subtotal: split.subtotal,
-    platform_fee: Number((split.subtotal * SERVICE_FEE_RATE).toFixed(2)),
+    platform_fee: Number((split.subtotal * FARMER_PLATFORM_FEE_RATE).toFixed(2)),
     transfer_status: isAcct(split.stripeAccountId)
       ? "pending_payment"
       : "missing_connect_account",
@@ -1759,7 +1761,7 @@ async function createStripeTransfersForMarketplaceOrder(order, paymentIntentId) 
     }
 
     const grossCents = cents(split.subtotal);
-    const platformFeeCents = Math.round(grossCents * SERVICE_FEE_RATE);
+    const platformFeeCents = Math.round(grossCents * FARMER_PLATFORM_FEE_RATE);
     const transferAmountCents = Math.max(grossCents - platformFeeCents, 0);
 
     if (transferAmountCents <= 0) continue;
@@ -1809,6 +1811,99 @@ async function createStripeTransfersForMarketplaceOrder(order, paymentIntentId) 
   return transfers;
 }
 
+async function markFarmersFirstPaidSale(order) {
+  if (!supabase || !order) return [];
+
+  const farmerIds = new Set();
+
+  for (const split of order.payoutSplits || []) {
+    const farmerId = clean(split.farmerId || split.farmer_id);
+    if (farmerId) farmerIds.add(farmerId);
+  }
+
+  for (const item of order.items || []) {
+    const farmerId = clean(item.farmerId || item.farmer_id);
+    if (farmerId) farmerIds.add(farmerId);
+  }
+
+  const results = [];
+
+  for (const farmerId of farmerIds) {
+    try {
+      const lookup = await supabase
+        .from("farmers")
+        .select("*")
+        .or(getIdFilter("farmer", farmerId))
+        .maybeSingle();
+
+      if (lookup.error) {
+        console.log("Farmer first-sale lookup skipped:", lookup.error.message);
+        results.push({ farmerId, success: false, error: lookup.error.message });
+        continue;
+      }
+
+      const farmer = lookup.data;
+      if (!farmer) {
+        results.push({ farmerId, success: false, error: "Farmer not found." });
+        continue;
+      }
+
+      // Idempotent: never move an already-paid/activated farmer backward.
+      const membershipStatus = roleName(farmer.membership_status);
+      const subscriptionStatus = roleName(farmer.subscription_status);
+      const alreadyActivated =
+        farmer.farmer_membership_paid === true ||
+        ["active", "trialing", "past_due"].includes(subscriptionStatus) ||
+        membershipStatus === "active";
+
+      if (alreadyActivated) {
+        results.push({ farmerId, success: true, alreadyActivated: true });
+        continue;
+      }
+
+      const firstSaleAt = clean(farmer.first_sale_at) || nowIso();
+      const due = new Date(firstSaleAt);
+      due.setUTCDate(due.getUTCDate() + FARMER_ACTIVATION_GRACE_DAYS);
+
+      const payload = {
+        account_active: true,
+        first_sale_completed: true,
+        first_sale_at: firstSaleAt,
+        membership_status: "activation_required",
+        subscription_status: "not_started",
+        farmer_membership_paid: false,
+        monthly_membership_started: false,
+        membership_activation_due_at: due.toISOString(),
+        updated_at: nowIso(),
+      };
+
+      const updated = await updateMainRoleRow(
+        "farmer",
+        farmerId,
+        email(farmer.email || farmer.farmer_email),
+        payload
+      );
+
+      if (updated.error) {
+        results.push({ farmerId, success: false, error: updated.error.message });
+        continue;
+      }
+
+      results.push({
+        farmerId,
+        success: true,
+        firstSaleAt,
+        activationDueAt: due.toISOString(),
+      });
+    } catch (error) {
+      console.error("First-sale activation error:", error);
+      results.push({ farmerId, success: false, error: error.message });
+    }
+  }
+
+  return results;
+}
+
 async function updateMarketplaceOrderPaid(session) {
   if (!supabase || !stripe) return;
 
@@ -1853,7 +1948,7 @@ async function updateMarketplaceOrderPaid(session) {
   }
 
   if (!order) {
-    try {
+       try {
       order = JSON.parse(metadata.orderPayload || "{}");
     } catch {
       order = null;
@@ -1886,6 +1981,10 @@ async function updateMarketplaceOrderPaid(session) {
       );
     } catch {}
   }
+
+  // A farmer's first sale is triggered only after Stripe confirms the marketplace
+  // checkout was successfully paid. This is intentionally server-side/idempotent.
+  await markFarmersFirstPaidSale(order);
 
   for (const table of ["marketplace_transfers", "farmer_payouts", "payout_splits"]) {
     for (const transfer of transfers) {
@@ -1928,7 +2027,10 @@ router.get("/health", (req, res) => {
     farmerApplicationPriceConfigured: Boolean(
       process.env.STRIPE_FARMER_APPLICATION_FEE_PRICE_ID
     ),
-    customerPriceConfigured: Boolean(process.env.STRIPE_CUSTOMER_MEMBERSHIP_PRICE_ID),
+    customerMonthlyMembershipEnabled: false,
+    customerCheckoutServiceFee: CUSTOMER_CHECKOUT_SERVICE_FEE,
+    farmerPlatformFeeRate: FARMER_PLATFORM_FEE_RATE,
+    farmerFirstSaleGraceDays: FARMER_ACTIVATION_GRACE_DAYS,
     marketplaceCheckoutConfigured: true,
   });
 });
@@ -1986,13 +2088,10 @@ router.post("/create-farmer-application-checkout", (req, res) => {
 });
 
 router.post("/create-customer-subscription-checkout", (req, res) => {
-  req.body = {
-    ...(req.body || {}),
-    role: "customer",
-    planType: "customer",
-  };
-
-  return createSubscriptionCheckout(req, res);
+  return res.status(410).json({
+    success: false,
+    error: "Customer monthly memberships are no longer used. Customers pay a flat $4.99 service fee at marketplace checkout.",
+  });
 });
 
 router.post("/create-freight-connect-account", (req, res) => {
@@ -2076,13 +2175,9 @@ router.post("/create-marketplace-checkout", async (req, res) => {
           .toFixed(2)
       );
 
-    const serviceFee = Number(
-      body.serviceFee ||
-        body.service_fee ||
-        body.platformFee ||
-        body.platform_fee ||
-        subtotal * SERVICE_FEE_RATE
-    );
+    // Customer pricing: no monthly membership and no percentage checkout fee.
+    // Charge one flat $4.99 Farm2Home service fee per completed checkout.
+    const serviceFee = CUSTOMER_CHECKOUT_SERVICE_FEE;
 
     const deliveryFee = Number(body.deliveryFee || body.delivery_fee || 0);
     const freightHandlingFee = Number(
@@ -2090,7 +2185,7 @@ router.post("/create-marketplace-checkout", async (req, res) => {
     );
     const tip = Number(body.tip || 0);
     const total = Number(
-      body.total || subtotal + serviceFee + deliveryFee + freightHandlingFee + tip
+      (subtotal + serviceFee + deliveryFee + freightHandlingFee + tip).toFixed(2)
     );
 
     const deliveryOption = clean(
@@ -2503,7 +2598,7 @@ router.post("/sync-stripe-by-email", async (req, res) => {
     return res.json({
       success: true,
       role,
-      email: resolvedEmail,
+           email: resolvedEmail,
       stripeCustomerId: customer.id,
       stripeSubscriptionId: subscription?.id || null,
       subscriptionStatus: subscription?.status || null,
@@ -2752,7 +2847,8 @@ router.post("/cancel-bundle-subscription", async (req, res) => {
     });
   }
 });
-module.exports = router;
+// Router export intentionally kept at the end of this file.
+
 router.post("/connect-account-status", async (req, res) => {
   try {
     const { farmerId } = req.body;
@@ -3152,7 +3248,7 @@ router.post("/cancel-subscription", async (req, res) => {
       if (!isCus(stripeCustomerId)) {
         stripeCustomerId = clean(
           subscriptionRow.stripe_customer_id
-        );
+                  );
       }
 
       if (!isSub(subscriptionId)) {

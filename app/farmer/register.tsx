@@ -28,13 +28,16 @@ import { supabase } from "../data/supabaseClient";
  * Farm2Home Farmer Registration
  *
  * Freight-style flow:
- * Account -> Farm -> Location -> Products -> Documents -> Legal -> Stripe -> Review
+ * Account -> Farm -> Location -> Products -> Documents -> Legal -> Review
  *
  * Important:
  * - Profiles save is intentionally minimal to avoid POST /profiles 400 errors.
  * - Farmers save is schema-safe and removes missing columns automatically.
  * - Admin verification save is optional and non-blocking.
  * - Farmer document upload uses Supabase Storage bucket: farmer-documents
+ * - Only 3 baseline documents are required during onboarding.
+ * - Farmer membership is free until the first successfully completed sale.
+ * - Stripe recurring membership is NOT required for initial dashboard access.
  *
  * Install if needed:
  * npx expo install expo-document-picker
@@ -68,7 +71,6 @@ const STEPS = [
   { key: "products", title: "Products", icon: "leaf-outline" },
   { key: "documents", title: "Documents", icon: "document-text-outline" },
   { key: "legal", title: "Legal", icon: "shield-checkmark-outline" },
-  { key: "stripe", title: "Stripe", icon: "card-outline" },
   { key: "review", title: "Review", icon: "checkmark-done-outline" },
 ] as const;
 
@@ -105,6 +107,7 @@ const productOptions = [
   "Pumpkins",
   "Seasonal Items",
   "Farm Supplies",
+  "Fresh Pet Food",
 ];
 
 const LEGAL_AGREEMENT_TYPE = "platform_agreement";
@@ -495,20 +498,13 @@ function hasCompleteDashboardAccess(row: any) {
   return Boolean(
     clean(row?.id || row?.farmer_id || row?.farmerId) &&
       clean(row?.account_id || row?.accountId) &&
-      isStripeCustomerId(row?.stripe_customer_id || row?.stripeCustomerId) &&
-      isStripeSubscriptionId(
-        row?.subscription_id ||
-          row?.stripe_subscription_id ||
-          row?.stripeSubscriptionId
-      ) &&
       clean(row?.farm_business_license_document || row?.farmBusinessLicenseDocument) &&
-      clean(row?.food_safety_document || row?.foodSafetyDocument) &&
       clean(
         row?.product_liability_insurance_document ||
           row?.productLiabilityInsuranceDocument
       ) &&
       clean(row?.w9_document || row?.w9Document) &&
-      clean(row?.farm_permit_document || row?.farmPermitDocument)
+      row?.legal_agreement_accepted !== false
   );
 }
 
@@ -654,21 +650,20 @@ export default function FarmerRegister() {
   const legalAcknowledgmentsComplete = agreements.every((_, index) => accepted[index]);
   const legalComplete = legalAccepted;
 
+  // Baseline Farm2Home onboarding documents.
+  // Other regulatory documents remain available but are conditional/optional
+  // because requirements vary by product type and jurisdiction.
   const documentsComplete = useMemo(
     () =>
       Boolean(
         farmBusinessLicenseDocument.trim() &&
-          foodSafetyDocument.trim() &&
           productLiabilityInsuranceDocument.trim() &&
-          w9Document.trim() &&
-          farmPermitDocument.trim()
+          w9Document.trim()
       ),
     [
       farmBusinessLicenseDocument,
-      foodSafetyDocument,
       productLiabilityInsuranceDocument,
       w9Document,
-      farmPermitDocument,
     ]
   );
 
@@ -685,19 +680,9 @@ export default function FarmerRegister() {
         value: accountId || "Missing",
       },
       {
-        label: "Stripe Customer",
-        complete: isStripeCustomerId(stripeCustomerId),
-        value: maskId(stripeCustomerId),
-      },
-      {
-        label: "Subscription",
-        complete: isStripeSubscriptionId(subscriptionId),
-        value: maskId(subscriptionId),
-      },
-      {
-        label: "Documents",
+        label: "Required Documents",
         complete: documentsComplete,
-        value: documentsComplete ? "Complete" : "Missing",
+        value: documentsComplete ? "3 of 3 complete" : "Required",
       },
       {
         label: "Legal Agreement",
@@ -706,8 +691,20 @@ export default function FarmerRegister() {
           ? `Accepted v${legalAgreementVersion}`
           : "Required",
       },
+      {
+        label: "Farmer Membership",
+        complete: true,
+        value: "Free until first sale",
+      },
     ],
-    [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete, legalAccepted, legalAgreementVersion]
+    [
+      savedFarmerId,
+      farmerId,
+      accountId,
+      documentsComplete,
+      legalAccepted,
+      legalAgreementVersion,
+    ]
   );
 
   const setupScore = useMemo(
@@ -715,16 +712,21 @@ export default function FarmerRegister() {
     [setupStatus]
   );
 
-  const allFiveRequirementsFound = useMemo(
+  const dashboardRequirementsFound = useMemo(
     () =>
       Boolean(
         (savedFarmerId || farmerId) &&
           accountId &&
-          isStripeCustomerId(stripeCustomerId) &&
-          isStripeSubscriptionId(subscriptionId) &&
-          documentsComplete
+          documentsComplete &&
+          legalAccepted
       ),
-    [savedFarmerId, farmerId, accountId, stripeCustomerId, subscriptionId, documentsComplete]
+    [
+      savedFarmerId,
+      farmerId,
+      accountId,
+      documentsComplete,
+      legalAccepted,
+    ]
   );
 
   useEffect(() => {
@@ -1068,9 +1070,13 @@ export default function FarmerRegister() {
       subscription_status: clean(
         base.subscription_status ||
           subscriptionStatus ||
-          (finalSub ? "active" : "pending_payment")
+          (finalSub ? "active" : "not_started")
       ),
-      membership_status: finalSub ? "active" : "pending_payment",
+      membership_status: finalSub ? "active" : "free_until_first_sale",
+      first_sale_completed: Boolean(
+        base.first_sale_completed || base.firstSaleCompleted
+      ),
+      first_sale_at: base.first_sale_at || base.firstSaleAt || null,
       legal_agreement_accepted: legalAccepted,
       legal_agreement_version: legalAgreementVersion,
       legal_agreement_accepted_at: legalAcceptedAt || null,
@@ -1092,7 +1098,7 @@ export default function FarmerRegister() {
       produce_safety_certificate_document: clean(
         base.produce_safety_certificate_document || produceSafetyCertificateDocument
       ),
-      account_active: Boolean(id && accountId && finalCustomer && finalSub && documentsComplete),
+      account_active: Boolean(id && accountId && documentsComplete && legalAccepted),
       updated_at: new Date().toISOString(),
     };
   }
@@ -1136,7 +1142,7 @@ export default function FarmerRegister() {
     if (!documentsComplete) {
       Alert.alert(
         "Documents Required",
-        "Upload all required farmer documents."
+        "Upload the 3 required documents: Farm/Business License, Product Liability Insurance, and W-9."
       );
       setStep(4);
       return false;
@@ -1496,14 +1502,13 @@ export default function FarmerRegister() {
     const finalStatus =
       subscriptionStatus ||
       subRow?.subscription_status ||
-      (finalSubscriptionId ? "active" : "pending_payment");
+      (finalSubscriptionId ? "active" : "not_started");
 
     const complete = Boolean(
       authId &&
         finalAccountId &&
-        finalCustomerId &&
-        finalSubscriptionId &&
-        documentsComplete
+        documentsComplete &&
+        legalAccepted
     );
 
     const profile = await upsertProfileForFarmer(authId, emailValue, finalAccountId);
@@ -1553,7 +1558,15 @@ export default function FarmerRegister() {
       stripe_subscription_id: finalSubscriptionId || null,
       subscription_id: finalSubscriptionId || null,
       subscription_status: finalStatus,
-      membership_status: finalSubscriptionId ? "active" : "pending_payment",
+      membership_status: finalSubscriptionId ? "active" : "free_until_first_sale",
+      first_sale_completed: Boolean(
+        existing?.first_sale_completed || existing?.firstSaleCompleted
+      ),
+      first_sale_at: existing?.first_sale_at || existing?.firstSaleAt || null,
+      membership_activation_due_at:
+        existing?.membership_activation_due_at ||
+        existing?.membershipActivationDueAt ||
+        null,
 
       approved: complete,
       rejected: false,
@@ -1566,26 +1579,10 @@ export default function FarmerRegister() {
       farmer_membership_paid: Boolean(finalSubscriptionId),
       monthly_membership_started: Boolean(finalSubscriptionId),
 
-      verification_status: complete
-        ? "SUBMITTED"
-        : finalSubscriptionId
-          ? "PENDING_DOCUMENTS"
-          : "REGISTERED",
-      compliance_status: complete
-        ? "SUBMITTED"
-        : finalSubscriptionId
-          ? "PENDING_DOCUMENTS"
-          : "PENDING_PAYMENT",
-      admin_review_status: complete
-        ? "submitted"
-        : finalSubscriptionId
-          ? "pending_documents"
-          : "pending_payment",
-      review_decision: complete
-        ? "submitted"
-        : finalSubscriptionId
-          ? "pending_documents"
-          : "pending_payment",
+      verification_status: complete ? "SUBMITTED" : "REGISTERED",
+      compliance_status: documentsComplete ? "SUBMITTED" : "PENDING_DOCUMENTS",
+      admin_review_status: complete ? "submitted" : "pending_documents",
+      review_decision: complete ? "submitted" : "pending_documents",
 
       updated_at: now,
       created_at: existing?.id ? existing?.created_at || now : now,
@@ -1597,13 +1594,17 @@ export default function FarmerRegister() {
       throw new Error("Farmer registration did not save.");
     }
 
-    await upsertFarmerSubscriptionRow({
-      farmerId: authId,
-      emailValue,
-      customerId: finalCustomerId,
-      subscriptionValue: finalSubscriptionId,
-      subscriptionStatusValue: finalStatus,
-    });
+    // A recurring farmer subscription is created only after the farmer's
+    // first successfully completed sale. Preserve existing paid subscriptions.
+    if (finalSubscriptionId) {
+      await upsertFarmerSubscriptionRow({
+        farmerId: authId,
+        emailValue,
+        customerId: finalCustomerId,
+        subscriptionValue: finalSubscriptionId,
+        subscriptionStatusValue: finalStatus,
+      });
+    }
 
     // Admin verification save removed to prevent schema mismatch 400 errors.
 
@@ -2203,8 +2204,7 @@ export default function FarmerRegister() {
             onChangeText={setFarmBusinessLicenseDocument}
           />
           <DocumentInput
-            label="Food Safety / Cottage Food Document"
-            required
+            label="Food Safety / Cottage Food Document (if applicable)"
             value={foodSafetyDocument}
             fieldName="food_safety_document"
             uploadingField={uploadingField}
@@ -2230,8 +2230,7 @@ export default function FarmerRegister() {
             onChangeText={setW9Document}
           />
           <DocumentInput
-            label="Farm Permit / Producer Certificate"
-            required
+            label="Farm Permit / Producer Certificate (if applicable)"
             value={farmPermitDocument}
             fieldName="farm_permit_document"
             uploadingField={uploadingField}
@@ -2239,7 +2238,7 @@ export default function FarmerRegister() {
             onChangeText={setFarmPermitDocument}
           />
           <DocumentInput
-            label="Organic Certification"
+            label="Organic Certification (if applicable)"
             value={organicCertificationDocument}
             fieldName="organic_certification_document"
             uploadingField={uploadingField}
@@ -2247,7 +2246,7 @@ export default function FarmerRegister() {
             onChangeText={setOrganicCertificationDocument}
           />
           <DocumentInput
-            label="Meat / Dairy License"
+            label="Meat / Dairy License (if applicable)"
             value={meatDairyLicenseDocument}
             fieldName="meat_dairy_license_document"
             uploadingField={uploadingField}
@@ -2255,7 +2254,7 @@ export default function FarmerRegister() {
             onChangeText={setMeatDairyLicenseDocument}
           />
           <DocumentInput
-            label="Produce Safety Certificate"
+            label="Produce Safety Certificate (if applicable)"
             value={produceSafetyCertificateDocument}
             fieldName="produce_safety_certificate_document"
             uploadingField={uploadingField}
@@ -2271,7 +2270,7 @@ export default function FarmerRegister() {
         <SectionCard
           icon="shield-checkmark-outline"
           title="Legal & Agreements"
-          subtitle="Required before Stripe payment and Farmer Dashboard access."
+          subtitle="Required before Farmer Dashboard access."
           done={legalAccepted}
         >
           {legalAccepted ? (
@@ -2421,7 +2420,7 @@ export default function FarmerRegister() {
               onPress={() => setStep(6)}
               activeOpacity={0.9}
             >
-              <Text style={styles.primaryButtonText}>Continue to Stripe</Text>
+              <Text style={styles.primaryButtonText}>Continue to Review</Text>
               <Ionicons
                 name="arrow-forward-outline"
                 size={19}
@@ -2433,67 +2432,12 @@ export default function FarmerRegister() {
       );
     }
 
-    if (key === "stripe") {
-      return (
-        <SectionCard
-          icon="card-outline"
-          title="Stripe Membership"
-          subtitle="Retrieve payment status or open checkout."
-          done={isStripeCustomerId(stripeCustomerId) && isStripeSubscriptionId(subscriptionId)}
-        >
-          <View style={styles.statusBox}>
-            {setupStatus.map((item) => (
-              <View key={item.label} style={styles.statusRow}>
-                <Ionicons
-                  name={item.complete ? "checkmark-circle" : "ellipse-outline"}
-                  size={18}
-                  color={item.complete ? COLORS.green : COLORS.muted}
-                />
-                <Text style={styles.statusLabel}>{item.label}</Text>
-                <Text style={[styles.statusValue, item.complete && styles.statusValueGood]}>
-                  {item.value}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          <TouchableOpacity
-            style={[styles.actionBtn, syncingStripe && styles.disabled]}
-            onPress={() => retrieveMissingStripeInfo(false)}
-            disabled={syncingStripe}
-          >
-            {syncingStripe ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.actionText}>Retrieve Stripe Payment</Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.submitBtn, stripeLoading && styles.disabled]}
-            onPress={createFarmerCheckout}
-            disabled={stripeLoading}
-            activeOpacity={0.85}
-          >
-            {stripeLoading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons name="card-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.submitText}>Continue to Secure Payment</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </SectionCard>
-      );
-    }
-
     return (
       <SectionCard
         icon="checkmark-done-outline"
         title="Review Farmer Setup"
-        subtitle={`${setupScore}/5 dashboard requirements complete.`}
-        done={allFiveRequirementsFound}
+        subtitle={`${setupScore}/${setupStatus.length} onboarding items complete.`}
+        done={dashboardRequirementsFound}
       >
         <View style={styles.statusBox}>
           {setupStatus.map((item) => (
@@ -2524,9 +2468,9 @@ export default function FarmerRegister() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.dashboardBtn, !allFiveRequirementsFound && styles.disabled]}
+          style={[styles.dashboardBtn, !dashboardRequirementsFound && styles.disabled]}
           onPress={goDashboard}
-          disabled={!allFiveRequirementsFound}
+          disabled={!dashboardRequirementsFound}
         >
           <Text style={styles.dashboardText}>Open Farmer Dashboard</Text>
         </TouchableOpacity>
@@ -2551,15 +2495,16 @@ export default function FarmerRegister() {
           <Text style={styles.kicker}>Farm2Home Farmer Portal</Text>
           <Text style={styles.heroTitle}>Create Your Farmer Account</Text>
           <Text style={styles.heroSub}>
-            Farmer registration now matches the freight setup pattern: profile,
-            documents, Stripe subscription, then verified dashboard access.
+            Create your farm profile, upload the few required documents, accept
+            the platform agreement, and start selling with no upfront membership payment.
           </Text>
         </View>
 
         <View style={styles.priceCard}>
           <Text style={styles.priceTitle}>Farmer Pricing</Text>
-          <Text style={styles.priceLine}>Application Process Fee: $29.99</Text>
-          <Text style={styles.priceLine}>Monthly Membership: $14.99</Text>
+          <Text style={styles.priceLine}>Upfront Membership: $0.00</Text>
+          <Text style={styles.priceLine}>Before First Sale: FREE</Text>
+          <Text style={styles.priceLine}>After First Sale: $14.99/month membership</Text>
           <Text style={styles.priceLine}>Marketplace Service Fee: 4%</Text>
         </View>
 

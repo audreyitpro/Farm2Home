@@ -1,5 +1,4 @@
 // app/farmer/dashboard.tsx
-
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -18,9 +17,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-
 import { supabase } from "../data/supabaseClient";
-
 const COLORS = {
   bg: "#F6F8F2",
   card: "#FFFFFF",
@@ -39,7 +36,6 @@ const COLORS = {
   border: "#E3E8DD",
   white: "#FFFFFF",
 };
-
 type FarmerSession = {
   id?: string;
   farmer_id?: string;
@@ -75,8 +71,17 @@ type FarmerSession = {
   stripeOnboardingComplete?: boolean;
   membership_status?: string;
   subscription_status?: string;
+  account_id?: string;
+  accountId?: string;
+  first_sale_completed?: boolean;
+  firstSaleCompleted?: boolean;
+  first_sale_at?: string | null;
+  firstSaleAt?: string | null;
+  membership_activation_due_at?: string | null;
+  membershipActivationDueAt?: string | null;
+  farmer_membership_paid?: boolean;
+  monthly_membership_started?: boolean;
 };
-
 type FarmProduct = {
   id: string;
   name: string;
@@ -85,26 +90,21 @@ type FarmProduct = {
   status?: string;
   image_url?: string;
 };
-
 type OrderRow = {
   id: string;
   status?: string;
   total?: number;
   created_at?: string;
 };
-
 function clean(value: any) {
   return String(value ?? "").trim();
 }
-
 function normalize(value: any) {
   return clean(value).toLowerCase();
 }
-
 function money(value: any) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
-
 function getFarmerId(farmer?: FarmerSession | null) {
   return clean(
     farmer?.farmer_id ||
@@ -114,7 +114,6 @@ function getFarmerId(farmer?: FarmerSession | null) {
       farmer?.auth_user_id
   );
 }
-
 function getFarmName(farmer?: FarmerSession | null) {
   return (
     clean(farmer?.farm_name || farmer?.farmName) ||
@@ -124,7 +123,6 @@ function getFarmName(farmer?: FarmerSession | null) {
     "Farm2Home Farm"
   );
 }
-
 function getLogo(farmer?: FarmerSession | null) {
   return clean(
     farmer?.logo_url ||
@@ -133,7 +131,6 @@ function getLogo(farmer?: FarmerSession | null) {
       farmer?.farmLogoUrl
   );
 }
-
 function getStripeAccount(farmer?: FarmerSession | null) {
   return clean(
     farmer?.farmer_account ||
@@ -143,19 +140,24 @@ function getStripeAccount(farmer?: FarmerSession | null) {
       farmer?.farmerStripeAccountId
   );
 }
-
-function isReadyStatus(value: any) {
-  const status = normalize(value || "active");
-  return ![
-    "canceled",
-    "cancelled",
-    "inactive",
-    "disabled",
-    "rejected",
-    "unpaid",
-  ].includes(status);
+function membershipStatus(farmer?: FarmerSession | null) {
+  return normalize(farmer?.membership_status || farmer?.subscription_status || (farmer?.first_sale_completed || farmer?.firstSaleCompleted ? "activation_required" : "free_until_first_sale"));
 }
-
+function hasFirstSale(farmer?: FarmerSession | null) {
+  return Boolean(farmer?.first_sale_completed || farmer?.firstSaleCompleted || clean(farmer?.first_sale_at || farmer?.firstSaleAt));
+}
+function hasFarmerAccess(farmer?: FarmerSession | null) {
+  const status = membershipStatus(farmer);
+  if (farmer?.account_active === false) return false;
+  return !["canceled", "cancelled", "inactive", "disabled", "rejected", "suspended"].includes(status);
+}
+function getMembershipLabel(farmer?: FarmerSession | null) {
+  const status = membershipStatus(farmer);
+  if (["free_until_first_sale", "not_started", "pending_payment", ""].includes(status)) return "Free Until First Sale";
+  if (status === "activation_required") return "Membership Activation Required";
+  if (["active", "trialing", "past_due"].includes(status)) return "Membership Active";
+  return status.replace(/_/g, " ");
+}
 function rowMatchesFarmer(row: any, farmerId: string, farmerEmail: string) {
   const idFields = [
     row?.farmer_id,
@@ -168,14 +170,12 @@ function rowMatchesFarmer(row: any, farmerId: string, farmerEmail: string) {
     row?.profile_id,
     row?.auth_user_id,
   ].map(clean);
-
   const emailFields = [
     row?.farmer_email,
     row?.seller_email,
     row?.vendor_email,
     row?.email,
   ].map(normalize);
-
   const itemMatch =
     Array.isArray(row?.items) &&
     row.items.some((item: any) =>
@@ -189,7 +189,6 @@ function rowMatchesFarmer(row: any, farmerId: string, farmerEmail: string) {
         .map(clean)
         .includes(farmerId)
     );
-
   const splitMatch =
     Array.isArray(row?.payout_splits) &&
     row.payout_splits.some((split: any) =>
@@ -203,7 +202,6 @@ function rowMatchesFarmer(row: any, farmerId: string, farmerEmail: string) {
         .map(clean)
         .includes(farmerId)
     );
-
   return Boolean(
     (farmerId && idFields.includes(farmerId)) ||
       (farmerEmail && emailFields.includes(farmerEmail)) ||
@@ -211,7 +209,6 @@ function rowMatchesFarmer(row: any, farmerId: string, farmerEmail: string) {
       splitMatch
   );
 }
-
 async function safeSelectRecent(table: string, limit = 100) {
   try {
     let result = await supabase
@@ -219,17 +216,13 @@ async function safeSelectRecent(table: string, limit = 100) {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(limit);
-
     if (!result.error) {
       return Array.isArray(result.data) ? result.data : [];
     }
-
     result = await supabase.from(table).select("*").limit(limit);
-
     if (!result.error) {
       return Array.isArray(result.data) ? result.data : [];
     }
-
     console.log(`${table} select skipped:`, result.error.message);
     return [];
   } catch (error: any) {
@@ -237,7 +230,6 @@ async function safeSelectRecent(table: string, limit = 100) {
     return [];
   }
 }
-
 export default function FarmerDashboardScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -245,29 +237,21 @@ export default function FarmerDashboardScreen() {
   const [products, setProducts] = useState<FarmProduct[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [preferredDrivers, setPreferredDrivers] = useState(0);
-
   useFocusEffect(
     useCallback(() => {
       loadDashboard();
     }, [])
   );
-
   const farmerId = getFarmerId(farmer);
   const farmName = getFarmName(farmer);
   const logoUrl = getLogo(farmer);
   const stripeAccount = getStripeAccount(farmer);
-
   const dashboardReady = useMemo(() => {
-    return Boolean(
-      farmerId &&
-        clean(farmer?.email) &&
-        isReadyStatus(
-          farmer?.membership_status || farmer?.subscription_status || "active"
-        ) &&
-        farmer?.account_active !== false
-    );
+    return Boolean(farmerId && clean(farmer?.email) && hasFarmerAccess(farmer));
   }, [farmer, farmerId]);
-
+  const farmerMembershipStatus = membershipStatus(farmer);
+  const firstSaleCompleted = hasFirstSale(farmer);
+  const activationRequired = farmerMembershipStatus === "activation_required";
   const payoutsReady = Boolean(
     stripeAccount &&
       (farmer?.stripe_payouts_enabled ||
@@ -275,23 +259,18 @@ export default function FarmerDashboardScreen() {
         farmer?.stripe_onboarding_complete ||
         farmer?.stripeOnboardingComplete)
   );
-
   const stats = useMemo(() => {
     const activeProducts = products.filter(
       (p) => normalize(p.status || "active") !== "inactive"
     ).length;
-
     const pendingOrders = orders.filter((o) =>
       ["new", "pending", "paid", "processing", "open"].includes(
         normalize(o.status || "new")
       )
     ).length;
-
-    const revenue = orders.reduce(
-      (sum, order) => sum + Number(order.total || 0),
-      0
-    );
-
+    const revenue = orders
+      .filter((order) => ["paid", "processing", "ready", "completed", "delivered", "picked_up", "fulfilled"].includes(normalize(order.status)))
+      .reduce((sum, order) => sum + Number(order.total || 0), 0);
     return {
       products: activeProducts,
       orders: pendingOrders,
@@ -299,27 +278,22 @@ export default function FarmerDashboardScreen() {
       revenue,
     };
   }, [products, orders, preferredDrivers]);
-
   async function readLocalFarmer() {
     const raw =
       (await AsyncStorage.getItem("currentFarmer")) ||
       (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
       (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
       (await AsyncStorage.getItem("currentUser"));
-
     if (!raw) return null;
-
     try {
       return JSON.parse(raw);
     } catch {
       return null;
     }
   }
-
   async function findSupabaseFarmer(local: any) {
     const { data: authData } = await supabase.auth.getUser();
     const authUser = authData?.user;
-
     const localId = clean(
       local?.farmer_id ||
         local?.farmerId ||
@@ -328,32 +302,24 @@ export default function FarmerDashboardScreen() {
         local?.auth_user_id ||
         authUser?.id
     );
-
     const localEmail = normalize(local?.email || authUser?.email);
-
     const rows = await safeSelectRecent("farmers", 500);
-
     if (localId) {
       const found = rows.find((row: any) =>
         [row?.id, row?.farmer_id, row?.profile_id, row?.auth_user_id]
           .map(clean)
           .includes(localId)
       );
-
       if (found) return found;
     }
-
     if (localEmail) {
       const found = rows.find((row: any) => normalize(row?.email) === localEmail);
       if (found) return found;
     }
-
     return null;
   }
-
   async function saveFarmerSession(nextFarmer: FarmerSession) {
     const id = getFarmerId(nextFarmer);
-
     const normalized = {
       ...nextFarmer,
       id,
@@ -362,7 +328,6 @@ export default function FarmerDashboardScreen() {
       role: "farmer",
       email: normalize(nextFarmer.email),
     };
-
     await AsyncStorage.multiSet([
       ["currentFarmer", JSON.stringify(normalized)],
       ["farm2homeCurrentFarmer", JSON.stringify(normalized)],
@@ -371,18 +336,14 @@ export default function FarmerDashboardScreen() {
       ["userRole", "farmer"],
       ["currentUserRole", "farmer"],
     ]);
-
     setFarmer(normalized);
     return normalized;
   }
-
   async function loadDashboard() {
     try {
       setLoading(true);
-
       const local = await readLocalFarmer();
       const dbFarmer = await findSupabaseFarmer(local);
-
       const merged = {
         ...(local || {}),
         ...(dbFarmer || {}),
@@ -411,17 +372,14 @@ export default function FarmerDashboardScreen() {
         ),
         role: "farmer",
       };
-
       if (!getFarmerId(merged)) {
         Alert.alert("Farmer Login Required", "Please login as a farmer.");
         router.replace("/farmer/login" as any);
         return;
       }
-
       const saved = await saveFarmerSession(merged);
       const activeFarmerId = getFarmerId(saved);
       const activeEmail = normalize(saved.email);
-
       await Promise.all([
         loadProducts(activeFarmerId, activeEmail),
         loadOrders(activeFarmerId, activeEmail),
@@ -438,18 +396,14 @@ export default function FarmerDashboardScreen() {
       setRefreshing(false);
     }
   }
-
   async function loadProducts(activeFarmerId: string, activeEmail: string) {
     const tables = ["farm_products", "farmer_products", "products"];
     const loaded: FarmProduct[] = [];
-
     for (const table of tables) {
       const rows = await safeSelectRecent(table, 300);
-
       const filtered = rows.filter((row: any) =>
         rowMatchesFarmer(row, activeFarmerId, activeEmail)
       );
-
       loaded.push(
         ...filtered.map((row: any, index: number) => ({
           id: clean(row.id || row.product_id || `${table}_${index}`),
@@ -463,7 +417,6 @@ export default function FarmerDashboardScreen() {
         }))
       );
     }
-
     setProducts(
       Array.from(
         new Map(loaded.filter((item) => item.id).map((item) => [item.id, item]))
@@ -471,18 +424,14 @@ export default function FarmerDashboardScreen() {
       )
     );
   }
-
   async function loadOrders(activeFarmerId: string, activeEmail: string) {
     const tables = ["farm_orders", "customer_orders", "orders", "delivery_orders"];
     const loaded: OrderRow[] = [];
-
     for (const table of tables) {
       const rows = await safeSelectRecent(table, 300);
-
       const filtered = rows.filter((row: any) =>
         rowMatchesFarmer(row, activeFarmerId, activeEmail)
       );
-
       loaded.push(
         ...filtered.map((row: any, index: number) => ({
           id: clean(row.id || row.order_id || `${table}_${index}`),
@@ -496,7 +445,6 @@ export default function FarmerDashboardScreen() {
         }))
       );
     }
-
     setOrders(
       Array.from(
         new Map(loaded.filter((item) => item.id).map((item) => [item.id, item]))
@@ -504,36 +452,29 @@ export default function FarmerDashboardScreen() {
       )
     );
   }
-
   async function loadDrivers(activeFarmerId: string) {
     if (!activeFarmerId) {
       setPreferredDrivers(0);
       return;
     }
-
     const rows = await safeSelectRecent("farmer_drivers", 500);
-
     const filtered = rows.filter((row: any) =>
       [row?.farmer_id, row?.owner_id, row?.user_id, row?.profile_id, row?.auth_user_id]
         .map(clean)
         .includes(activeFarmerId)
     );
-
     setPreferredDrivers(filtered.length);
   }
-
   async function refreshDashboard() {
     setRefreshing(true);
     await loadDashboard();
   }
-
   function go(pathname: string) {
     router.push({
       pathname,
       params: farmerId ? { farmerId } : {},
     } as any);
   }
-
   function logout() {
     Alert.alert("Log Out", "Log out of your farmer account?", [
       { text: "Cancel", style: "cancel" },
@@ -549,14 +490,12 @@ export default function FarmerDashboardScreen() {
             "userRole",
             "currentUserRole",
           ]);
-
           await supabase.auth.signOut();
           router.replace("/farmer/login" as any);
         },
       },
     ]);
   }
-
   if (loading && !farmer) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -568,11 +507,9 @@ export default function FarmerDashboardScreen() {
       </SafeAreaView>
     );
   }
-
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
-
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
@@ -586,7 +523,6 @@ export default function FarmerDashboardScreen() {
             <Text style={styles.pageTitle}>{farmName}</Text>
             <Text style={styles.pageSub}>Your digital farmers market</Text>
           </View>
-
           <TouchableOpacity
             style={styles.profileCircle}
             onPress={() => go("/farmer/profile")}
@@ -599,7 +535,6 @@ export default function FarmerDashboardScreen() {
             )}
           </TouchableOpacity>
         </View>
-
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
             <Text style={styles.heroBadge}>Farm2Home Market</Text>
@@ -610,7 +545,6 @@ export default function FarmerDashboardScreen() {
               Manage produce, meat, seafood, subscriptions, delivery, shipping,
               and payouts from one farmer dashboard.
             </Text>
-
             <View style={styles.heroActions}>
               <TouchableOpacity
                 style={styles.heroButton}
@@ -620,7 +554,6 @@ export default function FarmerDashboardScreen() {
                 <Ionicons name="add-circle-outline" size={18} color={COLORS.greenDark} />
                 <Text style={styles.heroButtonText}>Add Product</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.heroButtonLight}
                 onPress={() => go("/farmer/farm-bundles")}
@@ -631,19 +564,36 @@ export default function FarmerDashboardScreen() {
               </TouchableOpacity>
             </View>
           </View>
-
           <View style={styles.heroBasket}>
             <Text style={styles.heroBasketEmoji}>🧺</Text>
           </View>
         </View>
-
         <View style={styles.statsGrid}>
           <StatCard label="Products" value={String(stats.products)} icon="basket-outline" />
           <StatCard label="Orders" value={String(stats.orders)} icon="receipt-outline" />
           <StatCard label="Drivers" value={String(stats.drivers)} icon="car-outline" />
           <StatCard label="Revenue" value={money(stats.revenue)} icon="cash-outline" />
         </View>
-
+        <View style={[styles.membershipCard, activationRequired && styles.membershipCardWarn]}>
+          <View style={styles.membershipIcon}>
+            <Ionicons name={activationRequired ? "card-outline" : firstSaleCompleted ? "checkmark-circle-outline" : "leaf-outline"} size={23} color={activationRequired ? "#B45309" : COLORS.greenDark} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.membershipTitle}>{getMembershipLabel(farmer)}</Text>
+            <Text style={styles.membershipText}>
+              {activationRequired
+                ? "Congratulations on your first sale. Activate your $14.99/month farmer membership to continue under the paid plan."
+                : firstSaleCompleted
+                  ? "Your farmer membership is active. Stripe Connect remains separate and controls marketplace payouts."
+                  : "Start selling for $0. Your $14.99/month farmer membership begins only after your first successfully completed sale."}
+            </Text>
+          </View>
+          {activationRequired && (
+            <TouchableOpacity style={styles.membershipButton} onPress={() => go("/farmer/profile")} activeOpacity={0.9}>
+              <Text style={styles.membershipButtonText}>Activate</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <View style={styles.readyCard}>
           <View
             style={[
@@ -657,7 +607,6 @@ export default function FarmerDashboardScreen() {
               color={dashboardReady ? COLORS.greenDark : COLORS.orange}
             />
           </View>
-
           <View style={{ flex: 1 }}>
             <Text style={styles.readyTitle}>
               {dashboardReady ? "Market store is active" : "Finish your market setup"}
@@ -665,12 +614,11 @@ export default function FarmerDashboardScreen() {
             <Text style={styles.readyText}>
               {dashboardReady
                 ? payoutsReady
-                  ? "Your store and Stripe payouts are ready."
-                  : "Your store is active. Finish Stripe Connect to receive payouts."
-                : "Complete your farm profile so customers can shop from your farm."}
+                  ? "Your store is active and Stripe Connect payouts are ready."
+                  : "Your store is active. Finish Stripe Connect to receive payouts; membership payment is not required before your first sale."
+                : "Complete your farmer onboarding so customers can shop from your farm."}
             </Text>
           </View>
-
           <TouchableOpacity
             style={styles.readyButton}
             onPress={() =>
@@ -678,16 +626,14 @@ export default function FarmerDashboardScreen() {
             }
           >
             <Text style={styles.readyButtonText}>
-              {payoutsReady ? "Store" : "Stripe"}
+              {payoutsReady ? "Store" : "Connect Bank"}
             </Text>
           </TouchableOpacity>
         </View>
-
         <SectionTitle
           title="Build Your Farmers Market"
           subtitle="Start here: products first, then bundles, then customer fulfillment."
         />
-
         <View style={styles.flowGrid}>
           <FlowCard
             step="1"
@@ -711,9 +657,7 @@ export default function FarmerDashboardScreen() {
             onPress={() => go("/farmer/orders")}
           />
         </View>
-
         <SectionTitle title="Market Tools" subtitle="Daily farmer store actions." />
-
         <View style={styles.marketGrid}>
           <MarketTile
             title="Select Produce"
@@ -744,9 +688,7 @@ export default function FarmerDashboardScreen() {
             onPress={() => go("/farmer/farm-bundles")}
           />
         </View>
-
         <SectionTitle title="Quick Inventory" subtitle="Recently loaded products." />
-
         <View style={styles.productList}>
           {products.slice(0, 5).map((product) => (
             <View key={product.id} style={styles.productRow}>
@@ -757,14 +699,12 @@ export default function FarmerDashboardScreen() {
                   <Text style={styles.productEmoji}>🥕</Text>
                 )}
               </View>
-
               <View style={{ flex: 1 }}>
                 <Text style={styles.productName}>{product.name}</Text>
                 <Text style={styles.productMeta}>
                   {money(product.price)} • Qty {Number(product.quantity || 0)}
                 </Text>
               </View>
-
               <TouchableOpacity
                 style={styles.productEdit}
                 onPress={() => go("/farmer/inventory-management")}
@@ -773,7 +713,6 @@ export default function FarmerDashboardScreen() {
               </TouchableOpacity>
             </View>
           ))}
-
           {!products.length && (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyEmoji}>🧺</Text>
@@ -790,9 +729,7 @@ export default function FarmerDashboardScreen() {
             </View>
           )}
         </View>
-
         <SectionTitle title="Operations" subtitle="Orders, delivery, drivers, and messages." />
-
         <View style={styles.actionGrid}>
           <ActionCard
             title="Orders"
@@ -844,9 +781,7 @@ export default function FarmerDashboardScreen() {
             onPress={() => go("/farmer/driver-chat")}
           />
         </View>
-
         <SectionTitle title="Business Center" subtitle="Payments, compliance, reviews, and growth." />
-
         <View style={styles.actionGrid}>
           <ActionCard
             title="Setup Farmer Store"
@@ -885,20 +820,18 @@ export default function FarmerDashboardScreen() {
             icon="trending-up-outline"
             onPress={() => go("/farmer/farm-ai-growth-center")}
           />
-          
           <ActionCard
             title="Compliance Upload"
-            subtitle="Upload required farmer documents."
+            subtitle="Manage the 3 baseline documents and any conditional documents."
             icon="cloud-upload-outline"
             onPress={() => go("/farmer/compliance-upload")}
           />
           <ActionCard
             title="Documents"
-            subtitle="Manage farmer documents."
+            subtitle="View required and optional farmer documents."
             icon="document-text-outline"
             onPress={() => go("/farmer/documents")}
           />
-         
           <ActionCard
             title="Post Load"
             subtitle="Post delivery load needs."
@@ -924,7 +857,6 @@ export default function FarmerDashboardScreen() {
             onPress={() => go("/farmer/help-center")}
           />
         </View>
-
         <TouchableOpacity style={styles.logoutButton} onPress={logout}>
           <Ionicons name="log-out-outline" size={18} color={COLORS.red} />
           <Text style={styles.logoutText}>Log Out</Text>
@@ -933,7 +865,6 @@ export default function FarmerDashboardScreen() {
     </SafeAreaView>
   );
 }
-
 function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <View style={styles.sectionHeader}>
@@ -942,7 +873,6 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle?: string })
     </View>
   );
 }
-
 function StatCard({
   label,
   value,
@@ -962,7 +892,6 @@ function StatCard({
     </View>
   );
 }
-
 function FlowCard({
   step,
   title,
@@ -989,7 +918,6 @@ function FlowCard({
     </TouchableOpacity>
   );
 }
-
 function MarketTile({
   title,
   subtitle,
@@ -1016,7 +944,6 @@ function MarketTile({
     </TouchableOpacity>
   );
 }
-
 function ActionCard({
   title,
   subtitle,
@@ -1043,7 +970,6 @@ function ActionCard({
           color={primary ? COLORS.white : COLORS.greenDark}
         />
       </View>
-
       <View style={{ flex: 1 }}>
         <Text style={[styles.actionTitle, primary && styles.actionTitlePrimary]}>
           {title}
@@ -1052,7 +978,6 @@ function ActionCard({
           {subtitle}
         </Text>
       </View>
-
       <Ionicons
         name="chevron-forward-outline"
         size={18}
@@ -1061,13 +986,11 @@ function ActionCard({
     </TouchableOpacity>
   );
 }
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   loadingText: { marginTop: 10, color: COLORS.muted, fontWeight: "800" },
   content: { padding: 16, paddingBottom: 110 },
-
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -1098,7 +1021,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   profileLogo: { width: "100%", height: "100%" },
-
   hero: {
     backgroundColor: COLORS.green,
     borderRadius: 30,
@@ -1163,7 +1085,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   heroBasketEmoji: { fontSize: 42 },
-
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1191,7 +1112,13 @@ const styles = StyleSheet.create({
   },
   statValue: { color: COLORS.text, fontSize: 24, fontWeight: "900" },
   statLabel: { color: COLORS.muted, fontWeight: "900", marginTop: 2 },
-
+  membershipCard: { backgroundColor: COLORS.greenSoft, borderRadius: 22, padding: 15, borderWidth: 1, borderColor: COLORS.border, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  membershipCardWarn: { backgroundColor: COLORS.orangeSoft, borderColor: "#F5D9A8" },
+  membershipIcon: { width: 46, height: 46, borderRadius: 17, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  membershipTitle: { color: COLORS.text, fontWeight: "900", fontSize: 15 },
+  membershipText: { color: COLORS.muted, fontWeight: "700", lineHeight: 18, marginTop: 3 },
+  membershipButton: { backgroundColor: COLORS.white, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10 },
+  membershipButtonText: { color: COLORS.greenDark, fontWeight: "900" },
   readyCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -1226,7 +1153,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   readyButtonText: { color: COLORS.greenDark, fontWeight: "900" },
-
   sectionHeader: { marginBottom: 12, marginTop: 8 },
   sectionTitle: {
     color: COLORS.text,
@@ -1239,7 +1165,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: 19,
   },
-
   flowGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1278,7 +1203,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
     lineHeight: 18,
   },
-
   marketGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1312,7 +1236,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 3,
   },
-
   productList: { gap: 10, marginBottom: 18 },
   productRow: {
     backgroundColor: COLORS.card,
@@ -1375,7 +1298,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   emptyButtonText: { color: COLORS.white, fontWeight: "900" },
-
   actionGrid: { gap: 10, marginBottom: 18 },
   actionCard: {
     backgroundColor: COLORS.card,
@@ -1409,7 +1331,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   actionSubPrimary: { color: "rgba(255,255,255,0.86)" },
-
   logoutButton: {
     marginTop: 4,
     backgroundColor: COLORS.redSoft,
