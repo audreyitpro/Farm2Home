@@ -1,4 +1,3 @@
-
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,10 +13,8 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-
 import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
-
 const COLORS = {
   bg: "#F8FAF5",
   card: "#FFFFFF",
@@ -33,19 +30,15 @@ const COLORS = {
   dangerSoft: "#FEE2E2",
   orangeSoft: "#FFF3DE",
 };
-
 function clean(value: unknown) {
   return String(value ?? "").trim();
 }
-
 function normalize(value: unknown) {
   return clean(value).toLowerCase();
 }
-
 function isStripeSubscriptionId(value: unknown) {
   return clean(value).startsWith("sub_");
 }
-
 function getStripeSubscriptionId(farmer: any) {
   return clean(
     farmer?.stripe_subscription_id ||
@@ -54,7 +47,6 @@ function getStripeSubscriptionId(farmer: any) {
       farmer?.subscriptionId
   );
 }
-
 function getMembershipStatus(farmer: any) {
   return clean(
     farmer?.membership_status ||
@@ -64,18 +56,59 @@ function getMembershipStatus(farmer: any) {
       "not_started"
   );
 }
-
 function getCurrentPeriodEnd(farmer: any) {
   return clean(farmer?.current_period_end || farmer?.currentPeriodEnd);
 }
-
 function cancellationScheduled(farmer: any) {
   return Boolean(farmer?.cancel_at_period_end || farmer?.cancelAtPeriodEnd);
 }
 
+function hasPaidFarmerSubscription(farmer: any) {
+  const subscriptionId = getStripeSubscriptionId(farmer);
+  const status = normalize(
+    farmer?.subscription_status ||
+      farmer?.subscriptionStatus ||
+      farmer?.membership_status ||
+      farmer?.membershipStatus
+  );
+  return (
+    isStripeSubscriptionId(subscriptionId) &&
+    ["active", "trialing", "past_due"].includes(status)
+  );
+}
+function hasCompletedFirstSale(farmer: any) {
+  if (
+    farmer?.first_sale_completed === true ||
+    farmer?.firstSaleCompleted === true
+  ) {
+    return true;
+  }
+  if (clean(farmer?.first_sale_at || farmer?.firstSaleAt)) {
+    return true;
+  }
+  const salesCount = Number(
+    farmer?.completed_sales_count ??
+      farmer?.completedSalesCount ??
+      farmer?.total_sales_count ??
+      farmer?.totalSalesCount ??
+      0
+  );
+  return Number.isFinite(salesCount) && salesCount > 0;
+}
+function getFarmerMembershipDisplay(farmer: any) {
+  if (cancellationScheduled(farmer)) return "Cancellation Scheduled";
+  if (hasPaidFarmerSubscription(farmer)) return "Active";
+  if (hasCompletedFirstSale(farmer)) return "Activation Required";
+  return "Free Until First Sale";
+}
+function getFirstSaleDate(farmer: any) {
+  return clean(farmer?.first_sale_at || farmer?.firstSaleAt);
+}
+function getAccountId(farmer: any) {
+  return clean(farmer?.account_id || farmer?.accountId) || "Not assigned";
+}
 async function parseApiResponse(response: Response) {
   const text = await response.text();
-
   try {
     return text ? JSON.parse(text) : {};
   } catch {
@@ -85,41 +118,33 @@ async function parseApiResponse(response: Response) {
     };
   }
 }
-
 export default function FarmerProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
-
   const [farmer, setFarmer] = useState<any>(null);
   const [farmerId, setFarmerId] = useState("");
-
   const [farmName, setFarmName] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-
   const [pickupEnabled, setPickupEnabled] = useState(true);
   const [deliveryEnabled, setDeliveryEnabled] = useState(true);
   const [internalDriversEnabled, setInternalDriversEnabled] = useState(false);
   const [postToFarm2Driver, setPostToFarm2Driver] = useState(true);
   const [autoFreightHay, setAutoFreightHay] = useState(true);
   const [autoFreightLivestock, setAutoFreightLivestock] = useState(true);
-
   const [deliveryRadius, setDeliveryRadius] = useState("25");
   const [costPerMile, setCostPerMile] = useState("2.50");
   const [minimumDeliveryFee, setMinimumDeliveryFee] = useState("15.00");
-
   const [driverName, setDriverName] = useState("");
   const [driverEmail, setDriverEmail] = useState("");
   const [driverPhone, setDriverPhone] = useState("");
   const [drivers, setDrivers] = useState<any[]>([]);
-
   useEffect(() => {
     loadProfile();
   }, []);
-
   const readiness = useMemo(() => {
     const checks = [
       Boolean(farmName.trim()),
@@ -128,49 +153,38 @@ export default function FarmerProfileScreen() {
       Boolean(phone.trim()),
       pickupEnabled || deliveryEnabled,
     ];
-
     const complete = checks.filter(Boolean).length;
-
     return {
       complete,
       total: checks.length,
       percent: Math.round((complete / checks.length) * 100),
     };
   }, [farmName, ownerName, email, phone, pickupEnabled, deliveryEnabled]);
-
   async function loadProfile() {
     try {
       setLoading(true);
-
       const saved =
         (await AsyncStorage.getItem("currentFarmer")) ||
         (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
         (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
         (await AsyncStorage.getItem("currentUser"));
-
       if (!saved) {
         router.replace("/farmer/login" as any);
         return;
       }
-
       const parsed = JSON.parse(saved);
       const id = parsed.id || parsed.farmerId || parsed.farmer_id || parsed.profile_id;
-
       if (!id) {
         router.replace("/farmer/login" as any);
         return;
       }
-
       setFarmerId(id);
-
       let latestFarmer = parsed;
-
       const { data: farmerRow } = await supabase
         .from("farmers")
         .select("*")
         .eq("id", id)
         .maybeSingle();
-
       if (farmerRow) {
         latestFarmer = {
           ...parsed,
@@ -180,7 +194,6 @@ export default function FarmerProfileScreen() {
           farmer_id: farmerRow.farmer_id || farmerRow.id,
         };
       }
-
       // Pull the latest Stripe membership/cancellation state when available.
       try {
         const subscriptionFilters = [
@@ -194,7 +207,6 @@ export default function FarmerProfileScreen() {
         ]
           .filter(Boolean)
           .join(",");
-
         if (subscriptionFilters) {
           const { data: subscriptionRows } = await supabase
             .from("farmer_subscriptions")
@@ -202,11 +214,9 @@ export default function FarmerProfileScreen() {
             .or(subscriptionFilters)
             .order("updated_at", { ascending: false })
             .limit(1);
-
           const subscriptionRow = Array.isArray(subscriptionRows)
             ? subscriptionRows[0]
             : null;
-
           if (subscriptionRow) {
             latestFarmer = {
               ...latestFarmer,
@@ -249,9 +259,7 @@ export default function FarmerProfileScreen() {
           error?.message || error
         );
       }
-
       setFarmer(latestFarmer);
-
       setFarmName(
         latestFarmer.farmName ||
           latestFarmer.farm_name ||
@@ -263,13 +271,11 @@ export default function FarmerProfileScreen() {
       setOwnerName(latestFarmer.ownerName || latestFarmer.owner_name || "");
       setEmail(String(latestFarmer.email || latestFarmer.farmer_email || "").toLowerCase());
       setPhone(latestFarmer.phone || "");
-
       const { data: settings } = await supabase
         .from("farmer_delivery_settings")
         .select("*")
         .eq("farmer_id", id)
         .maybeSingle();
-
       if (settings) {
         setPickupEnabled(settings.pickup_enabled !== false);
         setDeliveryEnabled(settings.delivery_enabled !== false);
@@ -283,14 +289,12 @@ export default function FarmerProfileScreen() {
         setCostPerMile(String(settings.cost_per_mile || 2.5));
         setMinimumDeliveryFee(String(settings.minimum_delivery_fee || 15));
       }
-
       const { data: driverRows } = await supabase
         .from("farmer_internal_drivers")
         .select("*")
         .eq("farmer_id", id)
         .eq("active", true)
         .order("created_at", { ascending: false });
-
       setDrivers(Array.isArray(driverRows) ? driverRows : []);
     } catch (error: any) {
       Alert.alert("Profile Error", error?.message || "Unable to load profile.");
@@ -298,29 +302,23 @@ export default function FarmerProfileScreen() {
       setLoading(false);
     }
   }
-
   async function saveProfile() {
     try {
       setSaving(true);
-
       if (!farmerId) {
         Alert.alert("Session Error", "Please login again.");
         router.replace("/farmer/login" as any);
         return;
       }
-
       if (!farmName.trim() || !ownerName.trim() || !email.trim()) {
         Alert.alert("Missing Details", "Farm name, owner name, and email are required.");
         return;
       }
-
       if (!pickupEnabled && !deliveryEnabled) {
         Alert.alert("Fulfillment Needed", "Enable pickup, delivery, or both.");
         return;
       }
-
       const now = new Date().toISOString();
-
       const updatedFarmer = {
         ...farmer,
         id: farmerId,
@@ -338,7 +336,6 @@ export default function FarmerProfileScreen() {
         updatedAt: now,
         updated_at: now,
       };
-
       await AsyncStorage.multiSet([
         ["currentFarmer", JSON.stringify(updatedFarmer)],
         ["farm2homeCurrentFarmer", JSON.stringify(updatedFarmer)],
@@ -347,7 +344,6 @@ export default function FarmerProfileScreen() {
         ["userRole", "farmer"],
         ["currentUserRole", "farmer"],
       ]);
-
       await supabase
         .from("farmers")
         .update({
@@ -360,7 +356,6 @@ export default function FarmerProfileScreen() {
           updated_at: now,
         })
         .eq("id", farmerId);
-
       await supabase.from("farmer_delivery_settings").upsert(
         {
           farmer_id: farmerId,
@@ -377,7 +372,6 @@ export default function FarmerProfileScreen() {
         },
         { onConflict: "farmer_id" }
       );
-
       setFarmer(updatedFarmer);
       Alert.alert("Saved", "Farmer profile and market operations settings were saved.");
     } catch (error: any) {
@@ -386,13 +380,11 @@ export default function FarmerProfileScreen() {
       setSaving(false);
     }
   }
-
   async function addInternalDriver() {
     if (!driverName.trim()) {
       Alert.alert("Missing Driver Name", "Enter the driver name.");
       return;
     }
-
     try {
       const { error } = await supabase.from("farmer_internal_drivers").insert({
         farmer_id: farmerId,
@@ -403,20 +395,16 @@ export default function FarmerProfileScreen() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
-
       if (error) throw error;
-
       setDriverName("");
       setDriverEmail("");
       setDriverPhone("");
       await loadProfile();
-
       Alert.alert("Driver Added", "Internal driver was added to your farm team.");
     } catch (error: any) {
       Alert.alert("Driver Error", error?.message || "Unable to add driver.");
     }
   }
-
   async function removeDriver(driverId: string) {
     Alert.alert("Remove Driver", "Remove this driver from your farm team?", [
       { text: "Cancel", style: "cancel" },
@@ -432,7 +420,6 @@ export default function FarmerProfileScreen() {
                 updated_at: new Date().toISOString(),
               })
               .eq("id", driverId);
-
             await loadProfile();
           } catch (error: any) {
             Alert.alert("Remove Error", error?.message || "Unable to remove driver.");
@@ -441,12 +428,9 @@ export default function FarmerProfileScreen() {
       },
     ]);
   }
-
   async function cancelSubscription() {
     if (!farmerId || cancelLoading) return;
-
     const subscriptionId = getStripeSubscriptionId(farmer);
-
     if (!isStripeSubscriptionId(subscriptionId)) {
       Alert.alert(
         "No Subscription",
@@ -454,10 +438,8 @@ export default function FarmerProfileScreen() {
       );
       return;
     }
-
     if (cancellationScheduled(farmer)) {
       const periodEnd = getCurrentPeriodEnd(farmer);
-
       Alert.alert(
         "Cancellation Already Scheduled",
         periodEnd
@@ -468,7 +450,6 @@ export default function FarmerProfileScreen() {
       );
       return;
     }
-
     Alert.alert(
       "Cancel Farmer Subscription",
       "Your Farm2Home Direct farmer membership will stay active until the end of the current billing period and will not renew.",
@@ -483,7 +464,6 @@ export default function FarmerProfileScreen() {
           onPress: async () => {
             try {
               setCancelLoading(true);
-
               const response = await fetch(
                 `${API_BASE_URL}/payments/cancel-subscription`,
                 {
@@ -505,9 +485,7 @@ export default function FarmerProfileScreen() {
                   }),
                 }
               );
-
               const data = await parseApiResponse(response);
-
               if (!response.ok || data.error) {
                 throw new Error(
                   data.error ||
@@ -515,16 +493,13 @@ export default function FarmerProfileScreen() {
                     "Unable to cancel the farmer subscription."
                 );
               }
-
               const periodEnd =
                 clean(
                   data.currentPeriodEnd ||
                     data.current_period_end ||
                     getCurrentPeriodEnd(farmer)
                 ) || null;
-
               const now = new Date().toISOString();
-
               const updatedFarmer = {
                 ...farmer,
                 cancel_at_period_end: true,
@@ -534,7 +509,6 @@ export default function FarmerProfileScreen() {
                 updated_at: now,
                 updatedAt: now,
               };
-
               // Do not mark the farmer inactive yet. Access continues
               // through the already-paid billing period.
               try {
@@ -546,7 +520,6 @@ export default function FarmerProfileScreen() {
                     updated_at: now,
                   })
                   .eq("id", farmerId);
-
                 if (error) {
                   console.log(
                     "farmers cancellation sync skipped:",
@@ -559,7 +532,6 @@ export default function FarmerProfileScreen() {
                   error?.message || error
                 );
               }
-
               try {
                 let updateQuery = supabase
                   .from("farmer_subscriptions")
@@ -568,15 +540,12 @@ export default function FarmerProfileScreen() {
                     current_period_end: periodEnd,
                     updated_at: now,
                   });
-
                 // Prefer Stripe subscription ID so the exact membership row is updated.
                 updateQuery = updateQuery.eq(
                   "stripe_subscription_id",
                   subscriptionId
                 );
-
                 const { error } = await updateQuery;
-
                 if (error) {
                   console.log(
                     "farmer_subscriptions cancellation sync skipped:",
@@ -589,16 +558,13 @@ export default function FarmerProfileScreen() {
                   error?.message || error
                 );
               }
-
               await AsyncStorage.multiSet([
                 ["currentFarmer", JSON.stringify(updatedFarmer)],
                 ["farm2homeCurrentFarmer", JSON.stringify(updatedFarmer)],
                 ["farm2homeFarmerSession", JSON.stringify(updatedFarmer)],
                 ["currentUser", JSON.stringify(updatedFarmer)],
               ]);
-
               setFarmer(updatedFarmer);
-
               Alert.alert(
                 "Cancellation Scheduled",
                 periodEnd
@@ -621,10 +587,8 @@ export default function FarmerProfileScreen() {
       ]
     );
   }
-
   function confirmDeleteAccount() {
     if (!farmerId || deleteLoading) return;
-
     Alert.alert(
       "Permanently Delete Farmer Account",
       "Deleting your Farm2Home farmer account is permanent. Farm2Home will request deletion of your Stripe subscription/customer records, Stripe Connect payout account if one exists, Supabase farmer/profile records, and Supabase authentication account. This cannot be undone.",
@@ -657,26 +621,20 @@ export default function FarmerProfileScreen() {
       ]
     );
   }
-
   async function deleteFarmerAccount() {
     if (!farmerId || deleteLoading) return;
-
     try {
       setDeleteLoading(true);
-
       const {
         data: { session },
         error: sessionError,
       } = await supabase.auth.getSession();
-
       if (sessionError) throw sessionError;
-
       if (!session?.access_token || !session.user?.id) {
         throw new Error(
           "Your login session has expired. Please sign in again before deleting your account."
         );
       }
-
       const stripeCustomerId = clean(
         farmer?.stripe_customer_id || farmer?.stripeCustomerId
       );
@@ -687,7 +645,6 @@ export default function FarmerProfileScreen() {
           farmer?.connect_account_id ||
           farmer?.connectAccountId
       );
-
       /*
        * Stripe secret keys and the Supabase service_role key must remain
        * on the Farm2Home backend. The backend must verify this Bearer token
@@ -701,38 +658,29 @@ export default function FarmerProfileScreen() {
         },
         body: JSON.stringify({
           role: "farmer",
-
           userId: farmerId,
           farmerId,
           farmer_id: farmerId,
-
           profileId:
             clean(farmer?.profile_id || farmer?.profileId) || null,
           profile_id:
             clean(farmer?.profile_id || farmer?.profileId) || null,
-
           accountId:
             clean(farmer?.account_id || farmer?.accountId) || null,
           account_id:
             clean(farmer?.account_id || farmer?.accountId) || null,
-
           authUserId: session.user.id,
           auth_user_id: session.user.id,
-
           email: normalize(email || farmer?.email || session.user.email),
           farmer_email: normalize(
             email || farmer?.email || session.user.email
           ),
-
           stripeCustomerId: stripeCustomerId || null,
           stripe_customer_id: stripeCustomerId || null,
-
           stripeSubscriptionId: stripeSubscriptionId || null,
           stripe_subscription_id: stripeSubscriptionId || null,
-
           stripeAccountId: stripeAccountId || null,
           stripe_account_id: stripeAccountId || null,
-
           deleteStripeCustomer: true,
           delete_stripe_customer: true,
           cancelStripeSubscription: true,
@@ -743,9 +691,7 @@ export default function FarmerProfileScreen() {
           delete_supabase_account: true,
         }),
       });
-
       const data = await parseApiResponse(response);
-
       if (!response.ok || data?.success === false) {
         throw new Error(
           data?.error ||
@@ -753,13 +699,11 @@ export default function FarmerProfileScreen() {
             "Farm2Home could not permanently delete the farmer account."
         );
       }
-
       try {
         await supabase.auth.signOut();
       } catch {
         // The backend may already have deleted the Supabase auth user.
       }
-
       await AsyncStorage.multiRemove([
         "currentFarmer",
         "farm2homeCurrentFarmer",
@@ -776,30 +720,24 @@ export default function FarmerProfileScreen() {
         "farmerStripeSubscriptionId",
         "farmerStripeAccountId",
       ]);
-
       // Best-effort removal from any locally cached farmer collection.
       try {
         const savedFarmers = await AsyncStorage.getItem("farm2homeFarmers");
         const parsedFarmers = savedFarmers ? JSON.parse(savedFarmers) : [];
-
         if (Array.isArray(parsedFarmers)) {
           const currentFarmerId = clean(farmerId);
           const currentEmail = normalize(email || farmer?.email);
-
           const remainingFarmers = parsedFarmers.filter((item: any) => {
             const itemId = clean(
               item?.id || item?.farmer_id || item?.farmerId
             );
             const itemEmail = normalize(item?.email);
-
             const sameId =
               Boolean(currentFarmerId) && itemId === currentFarmerId;
             const sameEmail =
               Boolean(currentEmail) && itemEmail === currentEmail;
-
             return !sameId && !sameEmail;
           });
-
           if (remainingFarmers.length > 0) {
             await AsyncStorage.setItem(
               "farm2homeFarmers",
@@ -812,7 +750,6 @@ export default function FarmerProfileScreen() {
       } catch (localError) {
         console.log("Local farmer cache cleanup skipped:", localError);
       }
-
       Alert.alert(
         "Account Deleted",
         "Your Farm2Home farmer account has been permanently deleted.",
@@ -825,7 +762,6 @@ export default function FarmerProfileScreen() {
       );
     } catch (error: any) {
       console.log("deleteFarmerAccount error:", error);
-
       Alert.alert(
         "Delete Account Error",
         error?.message ||
@@ -835,11 +771,9 @@ export default function FarmerProfileScreen() {
       setDeleteLoading(false);
     }
   }
-
   function goTo(pathname: string, params?: Record<string, string>) {
     router.push(params ? ({ pathname, params } as any) : (pathname as any));
   }
-
   if (loading) {
     return (
       <View style={styles.center}>
@@ -848,7 +782,6 @@ export default function FarmerProfileScreen() {
       </View>
     );
   }
-
   return (
     <View style={styles.page}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -856,7 +789,6 @@ export default function FarmerProfileScreen() {
           <Pressable style={styles.backButton} onPress={() => goTo("/farmer/dashboard")}>
             <Ionicons name="arrow-back-outline" size={22} color={COLORS.text} />
           </Pressable>
-
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Farm2Home Market</Text>
             <Text style={styles.title}>Farmer Profile</Text>
@@ -865,14 +797,12 @@ export default function FarmerProfileScreen() {
             </Text>
           </View>
         </View>
-
         <View style={styles.heroCard}>
           <View style={styles.farmInitialBox}>
             <Text style={styles.farmInitial}>
               {(farmName || "F").slice(0, 1).toUpperCase()}
             </Text>
           </View>
-
           <View style={{ flex: 1 }}>
             <Text style={styles.heroBadge}>Farmer Operations Center</Text>
             <Text style={styles.heroTitle}>{farmName || "Farm2Home Farm"}</Text>
@@ -880,15 +810,13 @@ export default function FarmerProfileScreen() {
             <Text style={styles.heroMeta}>{drivers.length} internal driver(s)</Text>
           </View>
         </View>
-
         <View style={styles.flowCard}>
           <Text style={styles.flowTitle}>Profile Setup Flow</Text>
           <FlowStep number="1" text="Save business information customers can trust" />
           <FlowStep number="2" text="Set pickup, delivery radius, and delivery fees" />
           <FlowStep number="3" text="Add internal drivers for local fulfillment" />
-          <FlowStep number="4" text="Use operations links to manage orders and deliveries" />
+          <FlowStep number="4" text="Start selling for $0; paid membership begins after your first completed sale" />
         </View>
-
         <View style={styles.readinessCard}>
           <View style={styles.readinessHeader}>
             <Text style={styles.readinessTitle}>Market Readiness</Text>
@@ -901,108 +829,132 @@ export default function FarmerProfileScreen() {
             {readiness.complete}/{readiness.total} required profile items complete.
           </Text>
         </View>
-
         <View style={styles.statsRow}>
           <StatCard label="Pickup" value={pickupEnabled ? "On" : "Off"} icon="bag-handle-outline" />
           <StatCard label="Delivery" value={deliveryEnabled ? "On" : "Off"} icon="car-outline" />
           <StatCard label="Driver Board" value={postToFarm2Driver ? "Auto" : "Manual"} icon="trail-sign-outline" />
         </View>
-
         <View style={styles.card}>
           <SectionHeader
             step="Membership"
-            title="Farmer Subscription"
-            subtitle="Manage the Farm2Home Direct farmer membership."
+            title="First Sale Membership"
+            subtitle="Start for $0. Your paid farmer membership begins only after your first successfully completed sale."
             icon="card-outline"
           />
-
           <View style={styles.membershipStatusBox}>
             <View style={{ flex: 1 }}>
               <Text style={styles.membershipLabel}>Membership Status</Text>
               <Text style={styles.membershipValue}>
-                {cancellationScheduled(farmer)
-                  ? "Cancellation Scheduled"
-                  : getMembershipStatus(farmer)
-                      .replace(/_/g, " ")
-                      .replace(/\b\w/g, (char) => char.toUpperCase())}
+                {getFarmerMembershipDisplay(farmer)}
               </Text>
             </View>
-
             <Ionicons
               name={
                 cancellationScheduled(farmer)
                   ? "time-outline"
-                  : isStripeSubscriptionId(getStripeSubscriptionId(farmer))
+                  : hasPaidFarmerSubscription(farmer)
                     ? "checkmark-circle-outline"
-                    : "alert-circle-outline"
+                    : hasCompletedFirstSale(farmer)
+                      ? "card-outline"
+                      : "leaf-outline"
               }
               size={26}
               color={
                 cancellationScheduled(farmer)
                   ? "#B45309"
-                  : isStripeSubscriptionId(getStripeSubscriptionId(farmer))
+                  : hasPaidFarmerSubscription(farmer)
                     ? COLORS.primary
-                    : COLORS.danger
+                    : hasCompletedFirstSale(farmer)
+                      ? "#B45309"
+                      : COLORS.primary
               }
             />
           </View>
-
           <View style={styles.membershipInfoRow}>
-            <Text style={styles.membershipInfoLabel}>Subscription ID</Text>
+            <Text style={styles.membershipInfoLabel}>Account ID</Text>
             <Text style={styles.membershipInfoValue} numberOfLines={1}>
-              {getStripeSubscriptionId(farmer) || "Not connected"}
+              {getAccountId(farmer)}
             </Text>
           </View>
-
           <View style={styles.membershipInfoRow}>
-            <Text style={styles.membershipInfoLabel}>
-              {cancellationScheduled(farmer) ? "Access Until" : "Current Period End"}
-            </Text>
+            <Text style={styles.membershipInfoLabel}>First Sale</Text>
             <Text style={styles.membershipInfoValue}>
-              {getCurrentPeriodEnd(farmer)
-                ? new Date(getCurrentPeriodEnd(farmer)).toLocaleDateString()
-                : "Not listed"}
+              {hasCompletedFirstSale(farmer)
+                ? getFirstSaleDate(farmer)
+                  ? new Date(getFirstSaleDate(farmer)).toLocaleDateString()
+                  : "Completed"
+                : "Not yet completed"}
             </Text>
           </View>
-
-          <Pressable
-            style={[
-              styles.cancelSubscriptionButton,
-              (cancelLoading || cancellationScheduled(farmer)) &&
-                styles.disabled,
-            ]}
-            onPress={cancelSubscription}
-            disabled={cancelLoading || cancellationScheduled(farmer)}
-          >
-            {cancelLoading ? (
-              <ActivityIndicator color={COLORS.danger} />
-            ) : (
-              <>
-                <Ionicons
-                  name={
-                    cancellationScheduled(farmer)
-                      ? "time-outline"
-                      : "close-circle-outline"
-                  }
-                  size={19}
-                  color={COLORS.danger}
-                />
-                <Text style={styles.cancelSubscriptionText}>
-                  {cancellationScheduled(farmer)
-                    ? "Subscription Cancellation Scheduled"
-                    : "Cancel Subscription"}
+          <View style={styles.membershipInfoRow}>
+            <Text style={styles.membershipInfoLabel}>Monthly Charge Before First Sale</Text>
+            <Text style={styles.membershipInfoValue}>$0.00</Text>
+          </View>
+          {hasPaidFarmerSubscription(farmer) ? (
+            <>
+              <View style={styles.membershipInfoRow}>
+                <Text style={styles.membershipInfoLabel}>Subscription ID</Text>
+                <Text style={styles.membershipInfoValue} numberOfLines={1}>
+                  {getStripeSubscriptionId(farmer)}
                 </Text>
-              </>
-            )}
-          </Pressable>
-
-          <Text style={styles.cancelSubscriptionNote}>
-            {cancellationScheduled(farmer)
-              ? "Your farmer membership remains active through the current paid billing period and will not renew."
-              : "Canceling stops automatic renewal at the end of your current billing period. Your farmer account remains available through the paid period."}
-          </Text>
+              </View>
+              <View style={styles.membershipInfoRow}>
+                <Text style={styles.membershipInfoLabel}>
+                  {cancellationScheduled(farmer) ? "Access Until" : "Current Period End"}
+                </Text>
+                <Text style={styles.membershipInfoValue}>
+                  {getCurrentPeriodEnd(farmer)
+                    ? new Date(getCurrentPeriodEnd(farmer)).toLocaleDateString()
+                    : "Not listed"}
+                </Text>
+              </View>
+              <Pressable
+                style={[
+                  styles.cancelSubscriptionButton,
+                  (cancelLoading || cancellationScheduled(farmer)) && styles.disabled,
+                ]}
+                onPress={cancelSubscription}
+                disabled={cancelLoading || cancellationScheduled(farmer)}
+              >
+                {cancelLoading ? (
+                  <ActivityIndicator color={COLORS.danger} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name={cancellationScheduled(farmer) ? "time-outline" : "close-circle-outline"}
+                      size={19}
+                      color={COLORS.danger}
+                    />
+                    <Text style={styles.cancelSubscriptionText}>
+                      {cancellationScheduled(farmer)
+                        ? "Subscription Cancellation Scheduled"
+                        : "Cancel Subscription"}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+              <Text style={styles.cancelSubscriptionNote}>
+                {cancellationScheduled(farmer)
+                  ? "Your farmer membership remains active through the current paid billing period and will not renew."
+                  : "Canceling stops automatic renewal at the end of the current billing period."}
+              </Text>
+            </>
+          ) : hasCompletedFirstSale(farmer) ? (
+            <View style={styles.firstSaleNotice}>
+              <Ionicons name="checkmark-circle-outline" size={22} color="#B45309" />
+              <Text style={styles.firstSaleNoticeText}>
+                Your first sale has been completed. Your farmer membership is now ready for paid-plan activation. Stripe subscription billing should begin only from the post-sale activation flow.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.freeUntilSaleNotice}>
+              <Ionicons name="leaf-outline" size={22} color={COLORS.primaryDark} />
+              <Text style={styles.freeUntilSaleNoticeText}>
+                Start selling for free. You can build your store, list products, and receive orders with no upfront monthly membership charge. Your paid farmer membership begins only after your first successfully completed sale.
+              </Text>
+            </View>
+          )}
         </View>
-
         <View style={styles.card}>
           <SectionHeader
             step="Step 1"
@@ -1010,7 +962,6 @@ export default function FarmerProfileScreen() {
             subtitle="This information appears across the farmer market."
             icon="storefront-outline"
           />
-
           <Field label="Farm / Business Name" value={farmName} onChangeText={setFarmName} icon="leaf-outline" />
           <Field label="Owner Name" value={ownerName} onChangeText={setOwnerName} icon="person-outline" />
           <Field
@@ -1022,7 +973,6 @@ export default function FarmerProfileScreen() {
           />
           <Field label="Phone" value={phone} onChangeText={setPhone} icon="call-outline" keyboardType="phone-pad" />
         </View>
-
         <View style={styles.card}>
           <SectionHeader
             step="Step 2"
@@ -1030,7 +980,6 @@ export default function FarmerProfileScreen() {
             subtitle="Control how customers receive products and bundles."
             icon="car-outline"
           />
-
           <SettingRow
             title="Customer Pickup"
             subtitle="Allow customers to pick up orders from the farm."
@@ -1038,7 +987,6 @@ export default function FarmerProfileScreen() {
             onValueChange={setPickupEnabled}
             icon="bag-handle-outline"
           />
-
           <SettingRow
             title="Farm Delivery"
             subtitle="Allow this farm to offer local delivery."
@@ -1046,7 +994,6 @@ export default function FarmerProfileScreen() {
             onValueChange={setDeliveryEnabled}
             icon="bicycle-outline"
           />
-
           <View style={styles.rateRow}>
             <View style={styles.rateField}>
               <Field
@@ -1057,7 +1004,6 @@ export default function FarmerProfileScreen() {
                 keyboardType="numeric"
               />
             </View>
-
             <View style={styles.rateField}>
               <Field
                 label="Cost / Mile"
@@ -1068,7 +1014,6 @@ export default function FarmerProfileScreen() {
               />
             </View>
           </View>
-
           <Field
             label="Minimum Delivery Fee"
             value={minimumDeliveryFee}
@@ -1077,7 +1022,6 @@ export default function FarmerProfileScreen() {
             keyboardType="numeric"
           />
         </View>
-
         <View style={styles.card}>
           <SectionHeader
             step="Step 3"
@@ -1085,7 +1029,6 @@ export default function FarmerProfileScreen() {
             subtitle="Choose how farm orders become delivery or freight jobs."
             icon="git-branch-outline"
           />
-
           <SettingRow
             title="Use Internal Drivers First"
             subtitle="Assign orders to farm drivers before posting to Farm2Driver."
@@ -1093,7 +1036,6 @@ export default function FarmerProfileScreen() {
             onValueChange={setInternalDriversEnabled}
             icon="people-outline"
           />
-
           <SettingRow
             title="Post to Farm2Driver if No Driver"
             subtitle="Automatically post open delivery orders to the driver board."
@@ -1101,7 +1043,6 @@ export default function FarmerProfileScreen() {
             onValueChange={setPostToFarm2Driver}
             icon="trail-sign-outline"
           />
-
           <SettingRow
             title="Auto Freight for Hay"
             subtitle="Hay and bale orders can automatically create freight loads."
@@ -1109,7 +1050,6 @@ export default function FarmerProfileScreen() {
             onValueChange={setAutoFreightHay}
             icon="cube-outline"
           />
-
           <SettingRow
             title="Auto Freight for Livestock"
             subtitle="Livestock orders can automatically create freight loads."
@@ -1118,7 +1058,6 @@ export default function FarmerProfileScreen() {
             icon="paw-outline"
           />
         </View>
-
         <View style={styles.card}>
           <SectionHeader
             step="Step 4"
@@ -1126,7 +1065,6 @@ export default function FarmerProfileScreen() {
             subtitle="Add trusted drivers who can deliver local farm orders."
             icon="people-outline"
           />
-
           <Field label="Driver Name" value={driverName} onChangeText={setDriverName} icon="person-add-outline" />
           <Field
             label="Driver Email"
@@ -1136,12 +1074,10 @@ export default function FarmerProfileScreen() {
             keyboardType="email-address"
           />
           <Field label="Driver Phone" value={driverPhone} onChangeText={setDriverPhone} icon="call-outline" keyboardType="phone-pad" />
-
           <Pressable style={styles.secondaryAction} onPress={addInternalDriver}>
             <Ionicons name="person-add-outline" size={18} color={COLORS.white} />
             <Text style={styles.secondaryActionText}>Add Internal Driver</Text>
           </Pressable>
-
           {drivers.length === 0 ? (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyEmoji}>🚚</Text>
@@ -1158,14 +1094,12 @@ export default function FarmerProfileScreen() {
                     {String(driver.driver_name || "D").slice(0, 1).toUpperCase()}
                   </Text>
                 </View>
-
                 <View style={{ flex: 1 }}>
                   <Text style={styles.driverName}>{driver.driver_name || "Farm Driver"}</Text>
                   <Text style={styles.driverMeta}>
                     {driver.driver_email || "No email"} · {driver.driver_phone || "No phone"}
                   </Text>
                 </View>
-
                 <Pressable style={styles.removeButton} onPress={() => removeDriver(driver.id)}>
                   <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
                 </Pressable>
@@ -1173,7 +1107,6 @@ export default function FarmerProfileScreen() {
             ))
           )}
         </View>
-
         <View style={styles.card}>
           <SectionHeader
             step="Step 5"
@@ -1181,7 +1114,6 @@ export default function FarmerProfileScreen() {
             subtitle="Jump into the farmer tools that run your market."
             icon="grid-outline"
           />
-
           <RouteButton title="Farmer Orders" icon="receipt-outline" onPress={() => goTo("/farmer/orders")} />
           <RouteButton title="Delivery Orders" icon="cube-outline" onPress={() => goTo("/farmer/delivery-orders")} />
           <RouteButton title="Assigned Drivers" icon="car-outline" onPress={() => goTo("/farmer/assigned-drivers")} />
@@ -1191,7 +1123,6 @@ export default function FarmerProfileScreen() {
           <RouteButton title="Farmer Driver Chat" icon="chatbox-outline" onPress={() => goTo("/farmer/driver-chat", { farmerId })} />
           <RouteButton title="Customer / Driver Chat" icon="chatbubbles-outline" onPress={() => goTo("/farmer/customer-driver-chat", { farmerId })} />
         </View>
-
         <View style={styles.card}>
           <SectionHeader
             step="Account"
@@ -1199,7 +1130,6 @@ export default function FarmerProfileScreen() {
             subtitle="Manage your Farm2Home farmer account and permanent account deletion."
             icon="shield-checkmark-outline"
           />
-
           <View style={styles.deleteWarningBox}>
             <Ionicons
               name="warning-outline"
@@ -1217,7 +1147,6 @@ export default function FarmerProfileScreen() {
               </Text>
             </View>
           </View>
-
           <Pressable
             style={[
               styles.deleteAccountButton,
@@ -1235,20 +1164,17 @@ export default function FarmerProfileScreen() {
                 color={COLORS.danger}
               />
             )}
-
             <Text style={styles.deleteAccountText}>
               {deleteLoading
                 ? "Deleting Account..."
                 : "Permanently Delete Account"}
             </Text>
           </Pressable>
-
           <Text style={styles.deleteAccountNote}>
             This action cannot be undone. You will be signed out after the
             server confirms deletion.
           </Text>
         </View>
-
         <Pressable
           style={[styles.saveButton, saving && styles.disabled]}
           onPress={saveProfile}
@@ -1267,7 +1193,6 @@ export default function FarmerProfileScreen() {
     </View>
   );
 }
-
 function SectionHeader({
   step,
   title,
@@ -1292,7 +1217,6 @@ function SectionHeader({
     </View>
   );
 }
-
 function FlowStep({ number, text }: { number: string; text: string }) {
   return (
     <View style={styles.flowStep}>
@@ -1301,7 +1225,6 @@ function FlowStep({ number, text }: { number: string; text: string }) {
     </View>
   );
 }
-
 function Field({
   label,
   value,
@@ -1334,7 +1257,6 @@ function Field({
     </View>
   );
 }
-
 function SettingRow({
   title,
   subtitle,
@@ -1361,7 +1283,6 @@ function SettingRow({
     </View>
   );
 }
-
 function RouteButton({
   title,
   icon,
@@ -1384,7 +1305,6 @@ function RouteButton({
     </Pressable>
   );
 }
-
 function StatCard({
   label,
   value,
@@ -1402,11 +1322,9 @@ function StatCard({
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: COLORS.bg },
   content: { padding: 16, paddingBottom: 90 },
-
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -1414,7 +1332,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   centerText: { marginTop: 10, color: COLORS.primary, fontWeight: "800" },
-
   header: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1450,7 +1367,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 4,
   },
-
   heroCard: {
     backgroundColor: COLORS.primaryDark,
     borderRadius: 28,
@@ -1488,7 +1404,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 12,
   },
-
   flowCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -1521,7 +1436,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 19,
   },
-
   readinessCard: {
     backgroundColor: COLORS.card,
     borderRadius: 22,
@@ -1553,7 +1467,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 9,
   },
-
   statsRow: {
     flexDirection: "row",
     gap: 10,
@@ -1579,7 +1492,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
     fontSize: 11,
   },
-
   card: {
     backgroundColor: COLORS.card,
     borderWidth: 1,
@@ -1617,7 +1529,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 3,
   },
-
   fieldWrap: { marginBottom: 12 },
   label: {
     color: COLORS.text,
@@ -1642,7 +1553,6 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontWeight: "800",
   },
-
   settingRow: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
@@ -1670,10 +1580,8 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginTop: 3,
   },
-
   rateRow: { flexDirection: "row", gap: 10 },
   rateField: { flex: 1 },
-
   secondaryAction: {
     backgroundColor: COLORS.primary,
     borderRadius: 17,
@@ -1686,7 +1594,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   secondaryActionText: { color: COLORS.white, fontWeight: "900" },
-
   emptyBox: {
     backgroundColor: COLORS.soft,
     borderRadius: 18,
@@ -1709,7 +1616,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 5,
   },
-
   driverRow: {
     backgroundColor: COLORS.soft,
     borderRadius: 18,
@@ -1745,7 +1651,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   routeButton: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
@@ -1766,7 +1671,42 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   routeButtonText: { flex: 1, color: COLORS.text, fontWeight: "900" },
-
+  freeUntilSaleNotice: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: COLORS.soft,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  freeUntilSaleNoticeText: {
+    flex: 1,
+    color: COLORS.primaryDark,
+    fontWeight: "800",
+    lineHeight: 20,
+    fontSize: 12,
+  },
+  firstSaleNotice: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: COLORS.orangeSoft,
+    borderWidth: 1,
+    borderColor: "#F5D9A8",
+  },
+  firstSaleNoticeText: {
+    flex: 1,
+    color: "#92400E",
+    fontWeight: "800",
+    lineHeight: 20,
+    fontSize: 12,
+  },
   membershipStatusBox: {
     backgroundColor: COLORS.soft,
     borderWidth: 1,
@@ -1830,7 +1770,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 8,
   },
-
   deleteWarningBox: {
     backgroundColor: COLORS.dangerSoft,
     borderWidth: 1,
@@ -1877,7 +1816,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 8,
   },
-
   saveButton: {
     backgroundColor: COLORS.primary,
     borderRadius: 18,

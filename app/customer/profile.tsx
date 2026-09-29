@@ -1,4 +1,4 @@
-
+// app/customer/profile.tsx
 
 import React, { useCallback, useState } from "react";
 import {
@@ -17,79 +17,36 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as WebBrowser from "expo-web-browser";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL, APP_URL } from "../config/api";
+import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 
-/**
- * app/customer/profile.tsx
- *
- * Full corrected customer profile.
- *
- * Saves:
- * - Customer name, username, email, phone
- * - Default delivery address
- * - Customer subscription / Stripe IDs
- * - Membership status
- * - Local AsyncStorage session
- * - Supabase customers table
- * - Supabase profiles table when available
- *
- * Buttons:
- * - Save Profile
- * - Change Password
- * - Sync Stripe Membership
- * - Manage Membership / Billing Portal
- * - Cancel Subscription
- * - Customer Dashboard
- * - Marketplace
- * - My Orders
- * - Notifications
- * - Favorites
- * - Support
- * - Logout
- */
-
 const COLORS = {
-  // Fina Admin Dashboard color scheme
-  // Keeping the old Grocerly property names so existing UI/schema does not break.
   bg: "#F8F8FB",
   card: "#FFFFFF",
   surface: "#FFFFFF",
   black: "#2A3042",
-
-  // Old red is now Fina primary indigo
   red: "#556EE6",
   redDark: "#485EC4",
   primaryLight: "#EEF2FF",
-
-  // Fina success
   green: "#34C38F",
   greenDark: "#2CA67A",
   greenSoft: "#E8FBF3",
-
-  // Fina warning
   amber: "#F1B44C",
   amberSoft: "#FFF6E5",
-
-  // Fina info
   blue: "#50A5F1",
   blueSoft: "#EAF5FE",
-
-  // Fina danger
   danger: "#F46A6A",
   dangerSoft: "#FFECEC",
-
-  // Fina typography/borders
   text: "#495057",
   muted: "#74788D",
   border: "#EFF2F7",
-
   white: "#FFFFFF",
 };
+
+const CUSTOMER_SERVICE_FEE = 4.99;
 
 type CustomerRecord = {
   id?: string;
@@ -102,6 +59,7 @@ type CustomerRecord = {
   account_id?: string;
   accountId?: string;
   email?: string;
+  customer_email?: string;
   name?: string;
   full_name?: string;
   fullName?: string;
@@ -119,22 +77,6 @@ type CustomerRecord = {
   deliveryInstructions?: string;
   preferred_delivery_option?: string;
   preferredDeliveryOption?: string;
-  stripe_customer_id?: string;
-  stripeCustomerId?: string;
-  stripe_subscription_id?: string;
-  stripeSubscriptionId?: string;
-  subscription_id?: string;
-  subscriptionId?: string;
-  subscription_status?: string;
-  subscriptionStatus?: string;
-  membership_status?: string;
-  membershipStatus?: string;
-  current_period_end?: string;
-  currentPeriodEnd?: string;
-  cancel_at_period_end?: boolean;
-  cancelAtPeriodEnd?: boolean;
-  canceled_at?: string;
-  canceledAt?: string;
   account_active?: boolean;
   accountActive?: boolean;
   role?: string;
@@ -156,16 +98,12 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function isCus(value: any) {
-  return clean(value).startsWith("cus_");
-}
-
-function isSub(value: any) {
-  return clean(value).startsWith("sub_");
-}
-
 function getCustomerId(customer: CustomerRecord | null) {
-  return clean(customer?.id || customer?.customer_id || customer?.customerId);
+  return clean(
+    customer?.id ||
+      customer?.customer_id ||
+      customer?.customerId
+  );
 }
 
 function getProfileId(customer: CustomerRecord | null) {
@@ -173,41 +111,10 @@ function getProfileId(customer: CustomerRecord | null) {
 }
 
 function getCustomerName(customer: CustomerRecord | null) {
-  return clean(customer?.full_name || customer?.fullName || customer?.name);
-}
-
-function getStripeCustomer(customer: CustomerRecord | null) {
-  return clean(customer?.stripe_customer_id || customer?.stripeCustomerId);
-}
-
-function getStripeSubscription(customer: CustomerRecord | null) {
   return clean(
-    customer?.stripe_subscription_id ||
-      customer?.stripeSubscriptionId ||
-      customer?.subscription_id ||
-      customer?.subscriptionId
-  );
-}
-
-function getMembershipStatus(customer: CustomerRecord | null) {
-  return clean(
-    customer?.membership_status ||
-      customer?.membershipStatus ||
-      customer?.subscription_status ||
-      customer?.subscriptionStatus ||
-      "not_started"
-  );
-}
-
-function statusIsActive(value: any) {
-  return ["active", "trialing", "past_due"].includes(normalize(value));
-}
-
-function membershipActive(customer: CustomerRecord | null) {
-  return (
-    statusIsActive(getMembershipStatus(customer)) ||
-    statusIsActive(customer?.subscription_status || customer?.subscriptionStatus) ||
-    (isCus(getStripeCustomer(customer)) && isSub(getStripeSubscription(customer)))
+    customer?.full_name ||
+      customer?.fullName ||
+      customer?.name
   );
 }
 
@@ -224,23 +131,11 @@ async function parseApiResponse(response: Response) {
   }
 }
 
-async function openUrl(url: string) {
-  if (!url || !url.startsWith("http")) {
-    Alert.alert("Link Error", "No valid URL was returned.");
-    return;
-  }
-
-  if (Platform.OS === "web") {
-    window.location.href = url;
-    return;
-  }
-
-  await WebBrowser.openBrowserAsync(url);
-}
-
 export default function CustomerProfile() {
-  const [customer, setCustomer] = useState<CustomerRecord | null>(null);
-  const [allCustomers, setAllCustomers] = useState<CustomerRecord[]>([]);
+  const [customer, setCustomer] =
+    useState<CustomerRecord | null>(null);
+  const [allCustomers, setAllCustomers] =
+    useState<CustomerRecord[]>([]);
 
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
@@ -251,22 +146,24 @@ export default function CustomerProfile() {
   const [deliveryCity, setDeliveryCity] = useState("");
   const [deliveryState, setDeliveryState] = useState("MI");
   const [deliveryZip, setDeliveryZip] = useState("");
-  const [deliveryInstructions, setDeliveryInstructions] = useState("");
-  const [preferredDeliveryOption, setPreferredDeliveryOption] = useState("Delivery");
+  const [deliveryInstructions, setDeliveryInstructions] =
+    useState("");
+  const [
+    preferredDeliveryOption,
+    setPreferredDeliveryOption,
+  ] = useState("Delivery");
 
   const [newPassword, setNewPassword] = useState("");
-  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] =
+    useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [billingLoading, setBillingLoading] = useState(false);
-  const [cancelLoading, setCancelLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
-      loadCustomer();
+      void loadCustomer();
     }, [])
   );
 
@@ -276,24 +173,64 @@ export default function CustomerProfile() {
 
       const currentRaw =
         (await AsyncStorage.getItem("currentCustomer")) ||
-        (await AsyncStorage.getItem("farm2homeCurrentCustomer")) ||
+        (await AsyncStorage.getItem(
+          "farm2homeCurrentCustomer"
+        )) ||
         (await AsyncStorage.getItem("currentUser"));
 
-      const savedCustomers = await AsyncStorage.getItem("farm2homeCustomers");
-      const customers = savedCustomers ? JSON.parse(savedCustomers) : [];
-      const safeCustomers = Array.isArray(customers) ? customers : [];
+      const savedCustomers =
+        await AsyncStorage.getItem("farm2homeCustomers");
+
+      let safeCustomers: CustomerRecord[] = [];
+
+      if (savedCustomers) {
+        try {
+          const parsed = JSON.parse(savedCustomers);
+          safeCustomers = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          safeCustomers = [];
+        }
+      }
 
       setAllCustomers(safeCustomers);
 
-      let current: CustomerRecord | null = currentRaw
-        ? JSON.parse(currentRaw)
-        : safeCustomers[safeCustomers.length - 1] || null;
+      let current: CustomerRecord | null = null;
 
-      const { data: authData } = await supabase.auth.getUser();
-      const authId = clean(authData?.user?.id || "");
-      const authEmail = normalize(authData?.user?.email || current?.email || "");
+      if (currentRaw) {
+        try {
+          current = JSON.parse(currentRaw);
+        } catch {
+          current = null;
+        }
+      }
 
-      if (!current?.id && !current?.email && !authId && !authEmail) {
+      if (!current && safeCustomers.length > 0) {
+        current =
+          safeCustomers[safeCustomers.length - 1] || null;
+      }
+
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
+
+      if (authError) {
+        console.log(
+          "Customer auth lookup:",
+          authError.message
+        );
+      }
+
+      const authId = clean(authData?.user?.id);
+      const authEmail = normalize(
+        authData?.user?.email || current?.email
+      );
+
+      if (
+        !current?.id &&
+        !current?.customer_id &&
+        !current?.email &&
+        !authId &&
+        !authEmail
+      ) {
         router.replace("/customer/login" as any);
         return;
       }
@@ -301,125 +238,247 @@ export default function CustomerProfile() {
       let dbCustomer: any = null;
       let profile: any = null;
 
-      const lookupId = clean(current?.id || current?.customer_id || current?.customerId || authId);
-      const lookupEmail = normalize(current?.email || authEmail);
+      const lookupId = clean(
+        current?.id ||
+          current?.customer_id ||
+          current?.customerId ||
+          authId
+      );
+
+      const lookupEmail = normalize(
+        current?.email ||
+          current?.customer_email ||
+          authEmail
+      );
 
       if (lookupId) {
         try {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from("customers")
             .select("*")
-            .or(`id.eq.${lookupId},customer_id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`)
+            .or(
+              `id.eq.${lookupId},customer_id.eq.${lookupId},auth_user_id.eq.${lookupId},profile_id.eq.${lookupId}`
+            )
             .limit(1);
 
-          if (Array.isArray(data) && data[0]) dbCustomer = data[0];
-        } catch {
-          // Try email.
+          if (!error && Array.isArray(data) && data[0]) {
+            dbCustomer = data[0];
+          }
+        } catch (error) {
+          console.log(
+            "Customer ID lookup skipped:",
+            error
+          );
         }
       }
 
       if (!dbCustomer && lookupEmail) {
         try {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from("customers")
             .select("*")
-            .eq("email", lookupEmail)
+            .or(
+              `email.eq.${lookupEmail},customer_email.eq.${lookupEmail}`
+            )
             .limit(1);
 
-          if (Array.isArray(data) && data[0]) dbCustomer = data[0];
-        } catch {
-          // Continue.
+          if (!error && Array.isArray(data) && data[0]) {
+            dbCustomer = data[0];
+          }
+        } catch (error) {
+          console.log(
+            "Customer email lookup skipped:",
+            error
+          );
         }
       }
 
-      const profileId = clean(dbCustomer?.profile_id || current?.profile_id || current?.profileId || authId);
+      const profileId = clean(
+        dbCustomer?.profile_id ||
+          current?.profile_id ||
+          current?.profileId ||
+          authId
+      );
 
       if (profileId) {
         try {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .select("*")
-            .or(`id.eq.${profileId},auth_user_id.eq.${profileId}`)
+            .or(
+              `id.eq.${profileId},auth_user_id.eq.${profileId}`
+            )
             .limit(1);
 
-          if (Array.isArray(data) && data[0]) profile = data[0];
-        } catch {
-          // Try email.
+          if (!error && Array.isArray(data) && data[0]) {
+            profile = data[0];
+          }
+        } catch (error) {
+          console.log(
+            "Profile ID lookup skipped:",
+            error
+          );
         }
       }
 
       if (!profile && lookupEmail) {
         try {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .select("*")
             .eq("email", lookupEmail)
             .eq("role", "customer")
             .limit(1);
 
-          if (Array.isArray(data) && data[0]) profile = data[0];
-        } catch {
-          // Continue.
+          if (!error && Array.isArray(data) && data[0]) {
+            profile = data[0];
+          }
+        } catch (error) {
+          console.log(
+            "Profile email lookup skipped:",
+            error
+          );
         }
       }
 
-      const subscription = await fetchCustomerSubscription(
-        dbCustomer?.id || lookupId,
-        dbCustomer?.email || lookupEmail
+      const customerId =
+        clean(
+          dbCustomer?.id ||
+            dbCustomer?.customer_id ||
+            current?.id ||
+            current?.customer_id ||
+            current?.customerId ||
+            authId
+        ) || `customer_${Date.now()}`;
+
+      const resolvedAuthId = clean(
+        dbCustomer?.auth_user_id ||
+          current?.auth_user_id ||
+          current?.authUserId ||
+          authId
       );
 
-      const customerId =
-        clean(dbCustomer?.id || dbCustomer?.customer_id || current?.id || current?.customer_id || current?.customerId || authId) ||
-        `customer_${Date.now()}`;
+      const resolvedProfileId = clean(
+        dbCustomer?.profile_id ||
+          current?.profile_id ||
+          current?.profileId ||
+          profile?.id
+      );
+
+      const resolvedAccountId = clean(
+        dbCustomer?.account_id ||
+          current?.account_id ||
+          current?.accountId
+      );
+
+      const resolvedName = clean(
+        dbCustomer?.full_name ||
+          dbCustomer?.name ||
+          profile?.full_name ||
+          current?.full_name ||
+          current?.fullName ||
+          current?.name
+      );
+
+      const resolvedEmail = normalize(
+        dbCustomer?.email ||
+          dbCustomer?.customer_email ||
+          profile?.email ||
+          current?.email ||
+          current?.customer_email ||
+          lookupEmail
+      );
+
+      const accountActive =
+        dbCustomer?.account_active ??
+        current?.account_active ??
+        current?.accountActive ??
+        true;
 
       const customerData: CustomerRecord = {
         ...(current || {}),
         ...(dbCustomer || {}),
+
         id: customerId,
         customer_id: customerId,
         customerId,
-        auth_user_id: clean(dbCustomer?.auth_user_id || current?.auth_user_id || current?.authUserId || authId),
-        authUserId: clean(dbCustomer?.auth_user_id || current?.auth_user_id || current?.authUserId || authId),
-        profile_id: clean(dbCustomer?.profile_id || current?.profile_id || current?.profileId || profile?.id),
-        profileId: clean(dbCustomer?.profile_id || current?.profile_id || current?.profileId || profile?.id),
-        account_id: clean(dbCustomer?.account_id || current?.account_id || current?.accountId),
-        accountId: clean(dbCustomer?.account_id || current?.account_id || current?.accountId),
+
+        auth_user_id: resolvedAuthId,
+        authUserId: resolvedAuthId,
+
+        profile_id: resolvedProfileId,
+        profileId: resolvedProfileId,
+
+        account_id: resolvedAccountId,
+        accountId: resolvedAccountId,
+
         role: "customer",
-        full_name: clean(
-          dbCustomer?.full_name ||
-            dbCustomer?.name ||
-            profile?.full_name ||
-            current?.full_name ||
-            current?.fullName ||
-            current?.name
+
+        full_name: resolvedName,
+        fullName: resolvedName,
+        name: resolvedName,
+
+        username: clean(
+          dbCustomer?.username ||
+            profile?.username ||
+            current?.username
         ),
-        fullName: clean(
-          dbCustomer?.full_name ||
-            dbCustomer?.name ||
-            profile?.full_name ||
-            current?.full_name ||
-            current?.fullName ||
-            current?.name
+
+        email: resolvedEmail,
+        customer_email: resolvedEmail,
+
+        phone: clean(
+          dbCustomer?.phone ||
+            profile?.phone ||
+            current?.phone
         ),
-        name: clean(
-          dbCustomer?.name ||
-            dbCustomer?.full_name ||
-            profile?.full_name ||
-            current?.name ||
-            current?.fullName ||
-            current?.full_name
+
+        delivery_address: clean(
+          dbCustomer?.delivery_address ||
+            current?.delivery_address ||
+            current?.deliveryAddress
         ),
-        username: clean(dbCustomer?.username || profile?.username || current?.username),
-        email: normalize(dbCustomer?.email || profile?.email || current?.email || lookupEmail),
-        phone: clean(dbCustomer?.phone || profile?.phone || current?.phone),
-        delivery_address: clean(dbCustomer?.delivery_address || current?.delivery_address || current?.deliveryAddress),
-        deliveryAddress: clean(dbCustomer?.delivery_address || current?.delivery_address || current?.deliveryAddress),
-        delivery_city: clean(dbCustomer?.delivery_city || current?.delivery_city || current?.deliveryCity),
-        deliveryCity: clean(dbCustomer?.delivery_city || current?.delivery_city || current?.deliveryCity),
-        delivery_state: clean(dbCustomer?.delivery_state || current?.delivery_state || current?.deliveryState || "MI"),
-        deliveryState: clean(dbCustomer?.delivery_state || current?.delivery_state || current?.deliveryState || "MI"),
-        delivery_zip: clean(dbCustomer?.delivery_zip || current?.delivery_zip || current?.deliveryZip),
-        deliveryZip: clean(dbCustomer?.delivery_zip || current?.delivery_zip || current?.deliveryZip),
+        deliveryAddress: clean(
+          dbCustomer?.delivery_address ||
+            current?.delivery_address ||
+            current?.deliveryAddress
+        ),
+
+        delivery_city: clean(
+          dbCustomer?.delivery_city ||
+            current?.delivery_city ||
+            current?.deliveryCity
+        ),
+        deliveryCity: clean(
+          dbCustomer?.delivery_city ||
+            current?.delivery_city ||
+            current?.deliveryCity
+        ),
+
+        delivery_state: clean(
+          dbCustomer?.delivery_state ||
+            current?.delivery_state ||
+            current?.deliveryState ||
+            "MI"
+        ),
+        deliveryState: clean(
+          dbCustomer?.delivery_state ||
+            current?.delivery_state ||
+            current?.deliveryState ||
+            "MI"
+        ),
+
+        delivery_zip: clean(
+          dbCustomer?.delivery_zip ||
+            current?.delivery_zip ||
+            current?.deliveryZip
+        ),
+        deliveryZip: clean(
+          dbCustomer?.delivery_zip ||
+            current?.delivery_zip ||
+            current?.deliveryZip
+        ),
+
         delivery_instructions: clean(
           dbCustomer?.delivery_instructions ||
             current?.delivery_instructions ||
@@ -430,6 +489,7 @@ export default function CustomerProfile() {
             current?.delivery_instructions ||
             current?.deliveryInstructions
         ),
+
         preferred_delivery_option: clean(
           dbCustomer?.preferred_delivery_option ||
             current?.preferred_delivery_option ||
@@ -442,86 +502,10 @@ export default function CustomerProfile() {
             current?.preferredDeliveryOption ||
             "Delivery"
         ),
-        stripe_customer_id: clean(
-          dbCustomer?.stripe_customer_id ||
-            current?.stripe_customer_id ||
-            current?.stripeCustomerId ||
-            subscription?.stripe_customer_id
-        ),
-        stripeCustomerId: clean(
-          dbCustomer?.stripe_customer_id ||
-            current?.stripe_customer_id ||
-            current?.stripeCustomerId ||
-            subscription?.stripe_customer_id
-        ),
-        stripe_subscription_id: clean(
-          dbCustomer?.stripe_subscription_id ||
-            dbCustomer?.subscription_id ||
-            current?.stripe_subscription_id ||
-            current?.stripeSubscriptionId ||
-            current?.subscription_id ||
-            current?.subscriptionId ||
-            subscription?.stripe_subscription_id
-        ),
-        stripeSubscriptionId: clean(
-          dbCustomer?.stripe_subscription_id ||
-            dbCustomer?.subscription_id ||
-            current?.stripe_subscription_id ||
-            current?.stripeSubscriptionId ||
-            current?.subscription_id ||
-            current?.subscriptionId ||
-            subscription?.stripe_subscription_id
-        ),
-        subscription_id: clean(
-          dbCustomer?.subscription_id ||
-            dbCustomer?.stripe_subscription_id ||
-            current?.subscription_id ||
-            current?.subscriptionId ||
-            subscription?.stripe_subscription_id
-        ),
-        subscriptionId: clean(
-          dbCustomer?.subscription_id ||
-            dbCustomer?.stripe_subscription_id ||
-            current?.subscription_id ||
-            current?.subscriptionId ||
-            subscription?.stripe_subscription_id
-        ),
-        membership_status: clean(
-          dbCustomer?.membership_status ||
-            current?.membership_status ||
-            current?.membershipStatus ||
-            subscription?.subscription_status ||
-            "not_started"
-        ),
-        membershipStatus: clean(
-          dbCustomer?.membership_status ||
-            current?.membership_status ||
-            current?.membershipStatus ||
-            subscription?.subscription_status ||
-            "not_started"
-        ),
-        subscription_status: clean(
-          dbCustomer?.subscription_status ||
-            current?.subscription_status ||
-            current?.subscriptionStatus ||
-            subscription?.subscription_status ||
-            "not_started"
-        ),
-        subscriptionStatus: clean(
-          dbCustomer?.subscription_status ||
-            current?.subscription_status ||
-            current?.subscriptionStatus ||
-            subscription?.subscription_status ||
-            "not_started"
-        ),
-        current_period_end: clean(subscription?.current_period_end || dbCustomer?.current_period_end || current?.current_period_end),
-        currentPeriodEnd: clean(subscription?.current_period_end || dbCustomer?.current_period_end || current?.currentPeriodEnd),
-        cancel_at_period_end: Boolean(subscription?.cancel_at_period_end ?? dbCustomer?.cancel_at_period_end ?? current?.cancel_at_period_end ?? current?.cancelAtPeriodEnd ?? false),
-        cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end ?? dbCustomer?.cancel_at_period_end ?? current?.cancel_at_period_end ?? current?.cancelAtPeriodEnd ?? false),
-        canceled_at: clean(subscription?.canceled_at || dbCustomer?.canceled_at || current?.canceled_at || current?.canceledAt),
-        canceledAt: clean(subscription?.canceled_at || dbCustomer?.canceled_at || current?.canceled_at || current?.canceledAt),
-        account_active: Boolean(dbCustomer?.account_active ?? current?.account_active ?? current?.accountActive ?? false),
-        accountActive: Boolean(dbCustomer?.account_active ?? current?.account_active ?? current?.accountActive ?? false),
+
+        account_active: Boolean(accountActive),
+        accountActive: Boolean(accountActive),
+
         updated_at: nowIso(),
         updatedAt: nowIso(),
       };
@@ -531,61 +515,123 @@ export default function CustomerProfile() {
       setUsername(clean(customerData.username));
       setEmail(normalize(customerData.email));
       setPhone(clean(customerData.phone));
-      setDeliveryAddress(clean(customerData.delivery_address || customerData.deliveryAddress));
-      setDeliveryCity(clean(customerData.delivery_city || customerData.deliveryCity));
-      setDeliveryState(clean(customerData.delivery_state || customerData.deliveryState || "MI"));
-      setDeliveryZip(clean(customerData.delivery_zip || customerData.deliveryZip));
-      setDeliveryInstructions(clean(customerData.delivery_instructions || customerData.deliveryInstructions));
-      setPreferredDeliveryOption(clean(customerData.preferred_delivery_option || customerData.preferredDeliveryOption || "Delivery"));
 
-      await persistCustomer(customerData, safeCustomers);
+      setDeliveryAddress(
+        clean(
+          customerData.delivery_address ||
+            customerData.deliveryAddress
+        )
+      );
+
+      setDeliveryCity(
+        clean(
+          customerData.delivery_city ||
+            customerData.deliveryCity
+        )
+      );
+
+      setDeliveryState(
+        clean(
+          customerData.delivery_state ||
+            customerData.deliveryState ||
+            "MI"
+        )
+      );
+
+      setDeliveryZip(
+        clean(
+          customerData.delivery_zip ||
+            customerData.deliveryZip
+        )
+      );
+
+      setDeliveryInstructions(
+        clean(
+          customerData.delivery_instructions ||
+            customerData.deliveryInstructions
+        )
+      );
+
+      setPreferredDeliveryOption(
+        clean(
+          customerData.preferred_delivery_option ||
+            customerData.preferredDeliveryOption ||
+            "Delivery"
+        )
+      );
+
+      await persistCustomer(
+        customerData,
+        safeCustomers
+      );
     } catch (error) {
-      console.log("Customer profile load error:", error);
+      console.log(
+        "Customer profile load error:",
+        error
+      );
+
       router.replace("/customer/login" as any);
     } finally {
       setLoading(false);
     }
   }
 
-  async function fetchCustomerSubscription(customerId?: string, customerEmail?: string) {
-    const filters = [
-      customerId ? `customer_id.eq.${customerId}` : "",
-      customerEmail ? `customer_email.eq.${normalize(customerEmail)}` : "",
-    ]
-      .filter(Boolean)
-      .join(",");
+  async function persistCustomer(
+    updatedCustomer: CustomerRecord,
+    providedCustomers?: CustomerRecord[]
+  ) {
+    const existing =
+      providedCustomers || allCustomers || [];
 
-    if (!filters) return null;
+    const updatedId =
+      getCustomerId(updatedCustomer);
 
-    try {
-      const { data } = await supabase
-        .from("customer_subscriptions")
-        .select("*")
-        .or(filters)
-        .order("updated_at", { ascending: false })
-        .limit(1);
+    const updatedEmail =
+      normalize(updatedCustomer.email);
 
-      return Array.isArray(data) ? data[0] : null;
-    } catch {
-      return null;
+    const existingIndex = existing.findIndex(
+      (item) => {
+        const sameId =
+          Boolean(updatedId) &&
+          getCustomerId(item) === updatedId;
+
+        const sameEmail =
+          Boolean(updatedEmail) &&
+          normalize(item.email) === updatedEmail;
+
+        return sameId || sameEmail;
+      }
+    );
+
+    const updatedCustomers = [...existing];
+
+    if (existingIndex >= 0) {
+      updatedCustomers[existingIndex] =
+        updatedCustomer;
+    } else {
+      updatedCustomers.push(updatedCustomer);
     }
-  }
-
-  async function persistCustomer(updatedCustomer: CustomerRecord, providedCustomers?: CustomerRecord[]) {
-    const existing = providedCustomers || allCustomers || [];
-    const exists = existing.some((item) => getCustomerId(item) === getCustomerId(updatedCustomer));
-
-    const updatedCustomers = exists
-      ? existing.map((item) =>
-          getCustomerId(item) === getCustomerId(updatedCustomer) ? updatedCustomer : item
-        )
-      : [...existing, updatedCustomer];
 
     await AsyncStorage.multiSet([
-      ["farm2homeCustomers", JSON.stringify(updatedCustomers)],
-      ["currentCustomer", JSON.stringify(updatedCustomer)],
-      ["farm2homeCurrentCustomer", JSON.stringify(updatedCustomer)],
-      ["currentUser", JSON.stringify({ ...updatedCustomer, role: "customer" })],
+      [
+        "farm2homeCustomers",
+        JSON.stringify(updatedCustomers),
+      ],
+      [
+        "currentCustomer",
+        JSON.stringify(updatedCustomer),
+      ],
+      [
+        "farm2homeCurrentCustomer",
+        JSON.stringify(updatedCustomer),
+      ],
+      [
+        "currentUser",
+        JSON.stringify({
+          ...updatedCustomer,
+          role: "customer",
+        }),
+      ],
       ["userRole", "customer"],
       ["currentUserRole", "customer"],
     ]);
@@ -596,17 +642,31 @@ export default function CustomerProfile() {
 
   async function saveProfile() {
     if (!customer) {
-      Alert.alert("No Customer", "No customer profile was found.");
+      Alert.alert(
+        "No Customer",
+        "No customer profile was found."
+      );
       return;
     }
 
     if (!clean(fullName)) {
-      Alert.alert("Name Required", "Please enter your name.");
+      Alert.alert(
+        "Name Required",
+        "Please enter your name."
+      );
       return;
     }
 
-    if (!normalize(email) || !normalize(email).includes("@")) {
-      Alert.alert("Email Required", "Please enter a valid customer email.");
+    const cleanEmail = normalize(email);
+
+    if (
+      !cleanEmail ||
+      !cleanEmail.includes("@")
+    ) {
+      Alert.alert(
+        "Email Required",
+        "Please enter a valid customer email."
+      );
       return;
     }
 
@@ -614,92 +674,168 @@ export default function CustomerProfile() {
       setSaving(true);
 
       const now = nowIso();
-      const customerId = getCustomerId(customer);
-      const profileId = getProfileId(customer);
+      const customerId =
+        getCustomerId(customer);
+      const profileId =
+        getProfileId(customer);
+
+      if (!customerId) {
+        throw new Error(
+          "Customer ID is missing. Please sign out and sign back in."
+        );
+      }
 
       const customerPayload: any = {
         id: customerId,
         customer_id: customerId,
-        auth_user_id: clean(customer.auth_user_id || customer.authUserId),
+
+        auth_user_id:
+          clean(
+            customer.auth_user_id ||
+              customer.authUserId
+          ) || null,
+
         profile_id: profileId || null,
-        account_id: clean(customer.account_id || customer.accountId),
+
+        account_id:
+          clean(
+            customer.account_id ||
+              customer.accountId
+          ) || null,
+
         full_name: clean(fullName),
         name: clean(fullName),
         username: clean(username),
-        email: normalize(email),
+
+        email: cleanEmail,
+        customer_email: cleanEmail,
+
         phone: clean(phone),
-        delivery_address: clean(deliveryAddress),
-        delivery_city: clean(deliveryCity),
-        delivery_state: clean(deliveryState || "MI"),
-        delivery_zip: clean(deliveryZip),
-        delivery_instructions: clean(deliveryInstructions),
-        preferred_delivery_option: clean(preferredDeliveryOption || "Delivery"),
-        stripe_customer_id: getStripeCustomer(customer) || null,
-        stripe_subscription_id: getStripeSubscription(customer) || null,
-        subscription_id: getStripeSubscription(customer) || null,
-        subscription_status: clean(customer.subscription_status || customer.subscriptionStatus || "not_started"),
-        membership_status: clean(customer.membership_status || customer.membershipStatus || "not_started"),
-        account_active: membershipActive(customer),
+
+        delivery_address:
+          clean(deliveryAddress),
+
+        delivery_city:
+          clean(deliveryCity),
+
+        delivery_state:
+          clean(deliveryState || "MI"),
+
+        delivery_zip:
+          clean(deliveryZip),
+
+        delivery_instructions:
+          clean(deliveryInstructions),
+
+        preferred_delivery_option:
+          clean(
+            preferredDeliveryOption ||
+              "Delivery"
+          ),
+
+        // Customer access is no longer tied to a paid
+        // monthly subscription.
+        account_active: true,
+
         role: "customer",
         updated_at: now,
       };
 
-      try {
-        const { error } = await supabase
+      const { error: customerError } =
+        await supabase
           .from("customers")
-          .upsert(customerPayload, { onConflict: "id" });
+          .upsert(
+            customerPayload,
+            { onConflict: "id" }
+          );
 
-        if (error) throw error;
-      } catch (error: any) {
-        console.log("customers profile upsert skipped:", error?.message || error);
+      if (customerError) {
+        throw customerError;
       }
 
       if (profileId) {
-        try {
+        const { error: profileError } =
           await supabase
             .from("profiles")
             .update({
               full_name: clean(fullName),
               name: clean(fullName),
               username: clean(username),
-              email: normalize(email),
+              email: cleanEmail,
               phone: clean(phone),
               role: "customer",
               updated_at: now,
             })
-            .or(`id.eq.${profileId},auth_user_id.eq.${profileId}`);
-        } catch (error: any) {
-          console.log("profiles update skipped:", error?.message || error);
+            .or(
+              `id.eq.${profileId},auth_user_id.eq.${profileId}`
+            );
+
+        if (profileError) {
+          console.log(
+            "profiles update skipped:",
+            profileError.message
+          );
         }
       }
 
       const updatedCustomer: CustomerRecord = {
         ...customer,
         ...customerPayload,
-        fullName: clean(fullName),
+
         customerId,
         profileId,
-        accountId: clean(customer.account_id || customer.accountId),
-        deliveryAddress: clean(deliveryAddress),
-        deliveryCity: clean(deliveryCity),
-        deliveryState: clean(deliveryState || "MI"),
-        deliveryZip: clean(deliveryZip),
-        deliveryInstructions: clean(deliveryInstructions),
-        preferredDeliveryOption: clean(preferredDeliveryOption || "Delivery"),
-        stripeCustomerId: getStripeCustomer(customer),
-        stripeSubscriptionId: getStripeSubscription(customer),
-        subscriptionId: getStripeSubscription(customer),
-        subscriptionStatus: customerPayload.subscription_status,
-        membershipStatus: customerPayload.membership_status,
-        accountActive: customerPayload.account_active,
+
+        accountId: clean(
+          customer.account_id ||
+            customer.accountId
+        ),
+
+        fullName: clean(fullName),
+
+        deliveryAddress:
+          clean(deliveryAddress),
+
+        deliveryCity:
+          clean(deliveryCity),
+
+        deliveryState:
+          clean(deliveryState || "MI"),
+
+        deliveryZip:
+          clean(deliveryZip),
+
+        deliveryInstructions:
+          clean(deliveryInstructions),
+
+        preferredDeliveryOption:
+          clean(
+            preferredDeliveryOption ||
+              "Delivery"
+          ),
+
+        accountActive: true,
         updatedAt: now,
       };
 
-      await persistCustomer(updatedCustomer);
+      await persistCustomer(
+        updatedCustomer
+      );
 
-      Alert.alert("Saved", "Customer profile updated successfully.");
+      Alert.alert(
+        "Saved",
+        "Customer profile updated successfully."
+      );
     } catch (error: any) {
-      Alert.alert("Save Error", error?.message || "Unable to save profile.");
+      console.log(
+        "Customer profile save error:",
+        error
+      );
+
+      Alert.alert(
+        "Save Error",
+        error?.message ||
+          "Unable to save profile."
+      );
     } finally {
       setSaving(false);
     }
@@ -709,295 +845,53 @@ export default function CustomerProfile() {
     if (!customer) return;
 
     if (!clean(newPassword)) {
-      Alert.alert("New Password Required", "Please enter a new password.");
+      Alert.alert(
+        "New Password Required",
+        "Please enter a new password."
+      );
       return;
     }
 
     if (newPassword.length < 6) {
-      Alert.alert("Password Too Short", "Password must be at least 6 characters.");
+      Alert.alert(
+        "Password Too Short",
+        "Password must be at least 6 characters."
+      );
       return;
     }
 
-    if (newPassword !== confirmNewPassword) {
-      Alert.alert("Password Mismatch", "New passwords do not match.");
+    if (
+      newPassword !== confirmNewPassword
+    ) {
+      Alert.alert(
+        "Password Mismatch",
+        "New passwords do not match."
+      );
       return;
     }
 
     try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
+      const { error } =
+        await supabase.auth.updateUser({
+          password: newPassword,
+        });
 
       if (error) throw error;
 
       setNewPassword("");
       setConfirmNewPassword("");
 
-      Alert.alert("Password Updated", "Your password was changed successfully.");
-    } catch (error: any) {
-      Alert.alert("Password Error", error?.message || "Unable to change password.");
-    }
-  }
-
-  async function syncStripeMembership() {
-    const customerId = getCustomerId(customer);
-    const cleanEmail = normalize(email || customer?.email);
-
-    if (!cleanEmail || !cleanEmail.includes("@")) {
-      Alert.alert("Missing Email", "Enter the email used for Stripe membership.");
-      return;
-    }
-
-    try {
-      setSyncing(true);
-
-      const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          role: "customer",
-          customerId,
-          customer_id: customerId,
-          userId: customerId,
-          profileId: getProfileId(customer),
-          email: cleanEmail,
-          name: clean(fullName),
-          fullName: clean(fullName),
-          username: clean(username),
-        }),
-      });
-
-      const data = await parseApiResponse(response);
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Unable to sync Stripe membership.");
-      }
-
-      const updatedCustomer: CustomerRecord = {
-        ...(customer || {}),
-        id: customerId || `customer_${Date.now()}`,
-        customer_id: customerId || `customer_${Date.now()}`,
-        customerId: customerId || `customer_${Date.now()}`,
-        email: cleanEmail,
-        full_name: clean(fullName),
-        fullName: clean(fullName),
-        name: clean(fullName),
-        username: clean(username),
-        role: "customer",
-        stripe_customer_id: data.stripeCustomerId,
-        stripeCustomerId: data.stripeCustomerId,
-        stripe_subscription_id: data.stripeSubscriptionId,
-        stripeSubscriptionId: data.stripeSubscriptionId,
-        subscription_id: data.stripeSubscriptionId,
-        subscriptionId: data.stripeSubscriptionId,
-        subscription_status: data.subscriptionStatus,
-        subscriptionStatus: data.subscriptionStatus,
-        membership_status: data.subscriptionActive ? "active" : data.subscriptionStatus,
-        membershipStatus: data.subscriptionActive ? "active" : data.subscriptionStatus,
-        account_active: Boolean(data.subscriptionActive),
-        accountActive: Boolean(data.subscriptionActive),
-        updated_at: nowIso(),
-        updatedAt: nowIso(),
-      };
-
-      setCustomer(updatedCustomer);
-      await persistCustomer(updatedCustomer);
-
-      await AsyncStorage.setItem(
-        "customerSubscriptionStatus",
-        data.subscriptionActive ? "active" : clean(data.subscriptionStatus)
-      );
-
-      Alert.alert("Membership Synced", "Customer Stripe membership was synced.");
-    } catch (error: any) {
-      Alert.alert("Sync Error", error?.message || "Unable to sync membership.");
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  async function openBillingPortal() {
-    const stripeCustomerId = getStripeCustomer(customer);
-
-    if (!isCus(stripeCustomerId)) {
-      Alert.alert("Missing Stripe Customer", "No Stripe customer ID was found. Tap Restore / Sync first.");
-      return;
-    }
-
-    try {
-      setBillingLoading(true);
-
-      const response = await fetch(`${API_BASE_URL}/payments/create-customer-portal-session`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          customerId: stripeCustomerId,
-          stripeCustomerId,
-          role: "customer",
-          returnUrl: `${APP_URL}/customer/profile`,
-          return_url: `${APP_URL}/customer/profile`,
-        }),
-      });
-
-      const data = await parseApiResponse(response);
-
-      if (!response.ok || !data.url) {
-        throw new Error(data.error || "Unable to open billing portal.");
-      }
-
-      await openUrl(data.url);
-    } catch (error: any) {
-      Alert.alert("Billing Error", error?.message || "Unable to open billing portal.");
-    } finally {
-      setBillingLoading(false);
-    }
-  }
-
-  async function cancelSubscription() {
-    const subscriptionId = getStripeSubscription(customer);
-
-    if (!isSub(subscriptionId)) {
-      Alert.alert("No Subscription", "No active customer subscription was found.");
-      return;
-    }
-
-    if (customer?.cancel_at_period_end || customer?.cancelAtPeriodEnd) {
       Alert.alert(
-        "Cancellation Already Scheduled",
-        customer.current_period_end || customer.currentPeriodEnd
-          ? `Your Farm2Home Direct membership is already scheduled to end on ${new Date(
-              customer.current_period_end || customer.currentPeriodEnd || ""
-            ).toLocaleDateString()}.`
-          : "Your Farm2Home Direct membership is already scheduled not to renew."
+        "Password Updated",
+        "Your password was changed successfully."
       );
-      return;
+    } catch (error: any) {
+      Alert.alert(
+        "Password Error",
+        error?.message ||
+          "Unable to change password."
+      );
     }
-
-    Alert.alert(
-      "Cancel Subscription",
-      "Are you sure you want to cancel your Farm2Home Direct customer membership? You will keep access through the end of your current paid billing period, and Stripe will stop the next renewal.",
-      [
-        { text: "Keep Membership", style: "cancel" },
-        {
-          text: "Cancel Subscription",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setCancelLoading(true);
-
-              const response = await fetch(`${API_BASE_URL}/payments/cancel-subscription`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  subscriptionId,
-                  stripeSubscriptionId: subscriptionId,
-                  customerId: getCustomerId(customer),
-                  stripeCustomerId: getStripeCustomer(customer),
-                  profileId: getProfileId(customer),
-                  email: normalize(email || customer?.email),
-                  role: "customer",
-                  cancelAtPeriodEnd: true,
-                  cancel_at_period_end: true,
-                }),
-              });
-
-              const data = await parseApiResponse(response);
-
-              if (!response.ok || data.error) {
-                throw new Error(data.error || "Unable to cancel subscription.");
-              }
-
-              const periodEnd = clean(
-                data.currentPeriodEnd ||
-                  data.current_period_end ||
-                  customer?.current_period_end ||
-                  customer?.currentPeriodEnd
-              );
-
-              const stripeStatus = clean(
-                data.subscriptionStatus ||
-                  data.subscription_status ||
-                  customer?.subscription_status ||
-                  customer?.subscriptionStatus ||
-                  "active"
-              );
-
-              // IMPORTANT: cancellation is scheduled at period end.
-              // The customer keeps paid access until Stripe actually ends the subscription.
-              const updatedCustomer: CustomerRecord = {
-                ...(customer || {}),
-                membership_status: stripeStatus,
-                membershipStatus: stripeStatus,
-                subscription_status: stripeStatus,
-                subscriptionStatus: stripeStatus,
-                cancel_at_period_end: true,
-                cancelAtPeriodEnd: true,
-                current_period_end: periodEnd,
-                currentPeriodEnd: periodEnd,
-                account_active: true,
-                accountActive: true,
-                updated_at: nowIso(),
-                updatedAt: nowIso(),
-              };
-
-              try {
-                await supabase
-                  .from("customers")
-                  .update({
-                    membership_status: stripeStatus,
-                    subscription_status: stripeStatus,
-                    cancel_at_period_end: true,
-                    current_period_end: periodEnd || null,
-                    account_active: true,
-                    updated_at: nowIso(),
-                  })
-                  .eq("id", getCustomerId(customer));
-              } catch (error: any) {
-                console.log("customers cancellation sync skipped:", error?.message || error);
-              }
-
-              try {
-                const subscriptionUpdate: any = {
-                  cancel_at_period_end: true,
-                  subscription_status: stripeStatus,
-                  updated_at: nowIso(),
-                };
-
-                if (periodEnd) subscriptionUpdate.current_period_end = periodEnd;
-
-                await supabase
-                  .from("customer_subscriptions")
-                  .update(subscriptionUpdate)
-                  .eq("stripe_subscription_id", subscriptionId);
-              } catch (error: any) {
-                console.log("customer_subscriptions cancellation sync skipped:", error?.message || error);
-              }
-
-              await persistCustomer(updatedCustomer);
-
-              Alert.alert(
-                "Cancellation Scheduled",
-                periodEnd
-                  ? `Your Farm2Home Direct membership will remain active through ${new Date(
-                      periodEnd
-                    ).toLocaleDateString()}. Stripe will not renew it after that date.`
-                  : "Your Farm2Home Direct membership will remain active through the current paid period and will not renew."
-              );
-            } catch (error: any) {
-              Alert.alert("Cancel Error", error?.message || "Unable to cancel subscription.");
-            } finally {
-              setCancelLoading(false);
-            }
-          },
-        },
-      ]
-    );
   }
 
   function confirmDeleteAccount() {
@@ -1005,7 +899,7 @@ export default function CustomerProfile() {
 
     Alert.alert(
       "Permanently Delete Account",
-      "This permanently deletes your Farm2Home customer account and personal profile data. This action cannot be undone. If you have an active paid subscription, the deletion request will also tell the Farm2Home server to cancel it according to the account-deletion policy.",
+      "This permanently deletes your Farm2Home Direct customer account and personal profile data. This action cannot be undone.",
       [
         {
           text: "Keep Account",
@@ -1017,7 +911,7 @@ export default function CustomerProfile() {
           onPress: () => {
             Alert.alert(
               "Final Confirmation",
-              "Are you absolutely sure? Your Farm2Home account will be permanently deleted and you will be signed out.",
+              "Are you absolutely sure? Your Farm2Home Direct account will be permanently deleted and you will be signed out.",
               [
                 {
                   text: "Cancel",
@@ -1026,7 +920,9 @@ export default function CustomerProfile() {
                 {
                   text: "Delete Permanently",
                   style: "destructive",
-                  onPress: deleteAccount,
+                  onPress: () => {
+                    void deleteAccount();
+                  },
                 },
               ]
             );
@@ -1045,46 +941,80 @@ export default function CustomerProfile() {
       const {
         data: { session },
         error: sessionError,
-      } = await supabase.auth.getSession();
+      } =
+        await supabase.auth.getSession();
 
-      if (sessionError) throw sessionError;
-
-      if (!session?.access_token || !session.user?.id) {
-        throw new Error("Your login session has expired. Please sign in again before deleting your account.");
+      if (sessionError) {
+        throw sessionError;
       }
 
-      const response = await fetch(`${API_BASE_URL}/account/delete`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          role: "customer",
-          customerId: getCustomerId(customer),
-          customer_id: getCustomerId(customer),
-          profileId: getProfileId(customer),
-          profile_id: getProfileId(customer),
-          authUserId: session.user.id,
-          auth_user_id: session.user.id,
-          email: normalize(email || customer?.email || session.user.email),
-          stripeCustomerId: getStripeCustomer(customer),
-          stripe_customer_id: getStripeCustomer(customer),
-          stripeSubscriptionId: getStripeSubscription(customer),
-          stripe_subscription_id: getStripeSubscription(customer),
-        }),
-      });
+      if (
+        !session?.access_token ||
+        !session.user?.id
+      ) {
+        throw new Error(
+          "Your login session has expired. Please sign in again before deleting your account."
+        );
+      }
 
-      const data = await parseApiResponse(response);
+      const response = await fetch(
+        `${API_BASE_URL}/account/delete`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Authorization:
+              `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            role: "customer",
 
-      if (!response.ok || data?.success === false) {
-        throw new Error(data?.error || data?.message || "Unable to permanently delete your account.");
+            customerId:
+              getCustomerId(customer),
+
+            customer_id:
+              getCustomerId(customer),
+
+            profileId:
+              getProfileId(customer),
+
+            profile_id:
+              getProfileId(customer),
+
+            authUserId:
+              session.user.id,
+
+            auth_user_id:
+              session.user.id,
+
+            email: normalize(
+              email ||
+                customer?.email ||
+                session.user.email
+            ),
+          }),
+        }
+      );
+
+      const data =
+        await parseApiResponse(response);
+
+      if (
+        !response.ok ||
+        data?.success === false
+      ) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            "Unable to permanently delete your account."
+        );
       }
 
       try {
         await supabase.auth.signOut();
       } catch {
-        // The server may already have deleted the auth user/session.
+        // Server may already have deleted the auth user.
       }
 
       await AsyncStorage.multiRemove([
@@ -1099,56 +1029,86 @@ export default function CustomerProfile() {
         "cart",
       ]);
 
-      // Remove this customer from the locally cached customer list.
       try {
-        const savedCustomers = await AsyncStorage.getItem("farm2homeCustomers");
-        const parsedCustomers = savedCustomers ? JSON.parse(savedCustomers) : [];
-        const customerId = getCustomerId(customer);
-        const customerEmail = normalize(email || customer?.email);
+        const savedCustomers =
+          await AsyncStorage.getItem(
+            "farm2homeCustomers"
+          );
 
-        const remainingCustomers = Array.isArray(parsedCustomers)
-          ? parsedCustomers.filter((item: CustomerRecord) => {
-              const sameId =
-                Boolean(customerId) &&
-                getCustomerId(item) === customerId;
+        const parsedCustomers =
+          savedCustomers
+            ? JSON.parse(savedCustomers)
+            : [];
 
-              const sameEmail =
-                Boolean(customerEmail) &&
-                normalize(item?.email) === customerEmail;
+        const customerId =
+          getCustomerId(customer);
 
-              return !sameId && !sameEmail;
-            })
-          : [];
+        const customerEmail =
+          normalize(
+            email || customer?.email
+          );
 
-        if (remainingCustomers.length > 0) {
+        const remainingCustomers =
+          Array.isArray(parsedCustomers)
+            ? parsedCustomers.filter(
+                (item: CustomerRecord) => {
+                  const sameId =
+                    Boolean(customerId) &&
+                    getCustomerId(item) ===
+                      customerId;
+
+                  const sameEmail =
+                    Boolean(customerEmail) &&
+                    normalize(item?.email) ===
+                      customerEmail;
+
+                  return !sameId && !sameEmail;
+                }
+              )
+            : [];
+
+        if (
+          remainingCustomers.length > 0
+        ) {
           await AsyncStorage.setItem(
             "farm2homeCustomers",
-            JSON.stringify(remainingCustomers)
+            JSON.stringify(
+              remainingCustomers
+            )
           );
         } else {
-          await AsyncStorage.removeItem("farm2homeCustomers");
+          await AsyncStorage.removeItem(
+            "farm2homeCustomers"
+          );
         }
       } catch (localError) {
-        console.log("Local customer cleanup skipped:", localError);
+        console.log(
+          "Local customer cleanup skipped:",
+          localError
+        );
       }
 
       Alert.alert(
         "Account Deleted",
-        "Your Farm2Home customer account has been permanently deleted.",
+        "Your Farm2Home Direct customer account has been permanently deleted.",
         [
           {
             text: "OK",
-            onPress: () => router.replace("/" as any),
+            onPress: () =>
+              router.replace("/" as any),
           },
         ]
       );
     } catch (error: any) {
-      console.log("Customer account deletion error:", error);
+      console.log(
+        "Customer account deletion error:",
+        error
+      );
 
       Alert.alert(
         "Delete Account Error",
         error?.message ||
-          "Farm2Home could not permanently delete your account. Please try again."
+          "Farm2Home Direct could not permanently delete your account. Please try again."
       );
     } finally {
       setDeleteLoading(false);
@@ -1169,18 +1129,31 @@ export default function CustomerProfile() {
       "userRole",
       "currentUserRole",
       "pendingCustomerSubscription",
+      "customerSubscriptionStatus",
     ]);
 
-    router.replace("/customer/login" as any);
+    router.replace(
+      "/customer/login" as any
+    );
   }
 
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+        <StatusBar
+          barStyle="light-content"
+          backgroundColor={COLORS.black}
+        />
+
         <View style={styles.center}>
-          <ActivityIndicator color={COLORS.red} size="large" />
-          <Text style={styles.centerText}>Loading customer profile...</Text>
+          <ActivityIndicator
+            color={COLORS.red}
+            size="large"
+          />
+
+          <Text style={styles.centerText}>
+            Loading customer profile...
+          </Text>
         </View>
       </SafeAreaView>
     );
@@ -1191,122 +1164,227 @@ export default function CustomerProfile() {
       <SafeAreaView style={styles.safe}>
         <View style={styles.emptyPage}>
           <View style={styles.emptyIconBox}>
-            <Text style={styles.emptyIconText}>C</Text>
+            <Text style={styles.emptyIconText}>
+              C
+            </Text>
           </View>
 
-          <Text style={styles.emptyTitle}>Customer Profile</Text>
-          <Text style={styles.emptyText}>No customer profile found.</Text>
+          <Text style={styles.emptyTitle}>
+            Customer Profile
+          </Text>
+
+          <Text style={styles.emptyText}>
+            No customer profile found.
+          </Text>
 
           <Pressable
-            style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
-            onPress={() => router.replace("/customer/login" as any)}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed && styles.pressed,
+            ]}
+            onPress={() =>
+              router.replace(
+                "/customer/login" as any
+              )
+            }
           >
-            <Text style={styles.buttonText}>Go to Customer Login</Text>
+            <Text style={styles.buttonText}>
+              Go to Customer Login
+            </Text>
           </Pressable>
         </View>
       </SafeAreaView>
     );
   }
 
-  const active = membershipActive(customer);
-  const status = active ? "active" : getMembershipStatus(customer);
+  const active =
+    customer.account_active !== false &&
+    customer.accountActive !== false;
+
+  const accountId =
+    clean(
+      customer.account_id ||
+        customer.accountId
+    ) || "Not assigned";
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.black} />
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={COLORS.black}
+      />
 
       <KeyboardAvoidingView
         style={styles.safe}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : undefined
+        }
       >
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={
+            styles.content
+          }
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.hero}>
             <TouchableOpacity
               style={styles.backButton}
-              onPress={() => router.push("/customer/dashboard" as any)}
+              onPress={() =>
+                router.push(
+                  "/customer/dashboard" as any
+                )
+              }
               activeOpacity={0.9}
             >
-              <Ionicons name="arrow-back-outline" size={18} color={COLORS.white} />
-              <Text style={styles.backButtonText}>Dashboard</Text>
+              <Ionicons
+                name="arrow-back-outline"
+                size={18}
+                color={COLORS.white}
+              />
+              <Text
+                style={styles.backButtonText}
+              >
+                Dashboard
+              </Text>
             </TouchableOpacity>
 
             <View style={styles.heroIcon}>
               <Text style={styles.heroInitial}>
-                {(fullName || username || "C").slice(0, 1).toUpperCase()}
+                {(fullName ||
+                  username ||
+                  "C")
+                  .slice(0, 1)
+                  .toUpperCase()}
               </Text>
             </View>
 
-            <Text style={styles.kicker}>Customer Account</Text>
-            <Text style={styles.heroTitle}>{fullName || "Farm2Home Customer"}</Text>
-            <Text style={styles.heroText}>{email || "No email saved"}</Text>
+            <Text style={styles.kicker}>
+              Customer Account
+            </Text>
 
-            <View style={[styles.statusPill, active ? styles.activePill : styles.pendingPill]}>
-              <Text style={[styles.statusPillText, active ? styles.activeText : styles.pendingText]}>
-                {active ? "Active Membership" : `Status: ${status}`}
+            <Text style={styles.heroTitle}>
+              {fullName ||
+                "Farm2Home Customer"}
+            </Text>
+
+            <Text style={styles.heroText}>
+              {email ||
+                "No email saved"}
+            </Text>
+
+            <View
+              style={[
+                styles.statusPill,
+                active
+                  ? styles.activePill
+                  : styles.pendingPill,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusPillText,
+                  active
+                    ? styles.activeText
+                    : styles.pendingText,
+                ]}
+              >
+                {active
+                  ? "Active Customer"
+                  : "Inactive Customer"}
               </Text>
             </View>
           </View>
 
           <View style={styles.metricsRow}>
-            <StatCard label="Membership" value={active ? "Active" : "Pending"} tone="green" />
-            <StatCard label="Role" value="Customer" tone="blue" />
-            <StatCard label="Account" value={customer.accountActive === false ? "Inactive" : "Active"} tone="red" />
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Stripe / Membership</Text>
-
-            <InfoLine label="Stripe Customer" value={getStripeCustomer(customer) || "Not synced"} />
-            <InfoLine label="Subscription" value={getStripeSubscription(customer) || "Not synced"} />
-            <InfoLine label="Customer ID" value={getCustomerId(customer) || "Not created"} />
-            <InfoLine label="Current Period End" value={clean(customer.current_period_end || customer.currentPeriodEnd) || "Not listed"} />
-            <InfoLine
-              label="Renewal"
-              value={customer.cancel_at_period_end || customer.cancelAtPeriodEnd ? "Cancellation scheduled" : "Automatic renewal active"}
+            <StatCard
+              label="Service Fee"
+              value={`$${CUSTOMER_SERVICE_FEE.toFixed(
+                2
+              )}`}
+              tone="green"
             />
 
-            <TouchableOpacity
-              style={[styles.primaryButton, syncing && styles.disabledButton]}
-              onPress={syncStripeMembership}
-              disabled={syncing}
-              activeOpacity={0.9}
-            >
-              {syncing ? (
-                <ActivityIndicator color={COLORS.white} />
-              ) : (
-                <>
-                  <Ionicons name="refresh-outline" size={19} color={COLORS.white} />
-                  <Text style={styles.buttonText}>Restore / Sync Stripe Membership</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            <StatCard
+              label="Role"
+              value="Customer"
+              tone="blue"
+            />
 
-            <TouchableOpacity
-              style={[styles.secondaryButton, billingLoading && styles.disabledButton]}
-              onPress={openBillingPortal}
-              disabled={billingLoading}
-              activeOpacity={0.9}
-            >
-              {billingLoading ? (
-                <ActivityIndicator color={COLORS.red} />
-              ) : (
-                <>
-                  <Ionicons name="card-outline" size={19} color={COLORS.red} />
-                  <Text style={styles.secondaryButtonText}>Manage Billing</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
+            <StatCard
+              label="Account"
+              value={
+                active
+                  ? "Active"
+                  : "Inactive"
+              }
+              tone="red"
+            />
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Profile Information</Text>
+            <Text style={styles.sectionTitle}>
+              Customer Pricing
+            </Text>
+
+            <InfoLine
+              label="Monthly Membership"
+              value="$0.00"
+            />
+
+            <InfoLine
+              label="Transaction Service Fee"
+              value="$4.99"
+            />
+
+            <InfoLine
+              label="Percentage Service Fee"
+              value="0%"
+            />
+
+            <InfoLine
+              label="Account ID"
+              value={accountId}
+            />
+
+            <InfoLine
+              label="Customer ID"
+              value={
+                getCustomerId(customer) ||
+                "Not created"
+              }
+            />
+
+            <View style={styles.pricingNotice}>
+              <Ionicons
+                name="information-circle-outline"
+                size={22}
+                color={COLORS.greenDark}
+              />
+
+              <Text
+                style={
+                  styles.pricingNoticeText
+                }
+              >
+                No monthly membership is
+                required. Farm2Home Direct
+                adds one $4.99 service fee to
+                each completed customer
+                checkout transaction.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>
+              Profile Information
+            </Text>
 
             <Label text="Full Name" />
+
             <TextInput
               style={styles.input}
               value={fullName}
@@ -1316,6 +1394,7 @@ export default function CustomerProfile() {
             />
 
             <Label text="Username" />
+
             <TextInput
               style={styles.input}
               value={username}
@@ -1326,6 +1405,7 @@ export default function CustomerProfile() {
             />
 
             <Label text="Email" />
+
             <TextInput
               style={styles.input}
               value={email}
@@ -1337,6 +1417,7 @@ export default function CustomerProfile() {
             />
 
             <Label text="Phone" />
+
             <TextInput
               style={styles.input}
               value={phone}
@@ -1346,67 +1427,75 @@ export default function CustomerProfile() {
               keyboardType="phone-pad"
             />
 
-            <View style={styles.profileMembershipBox}>
-              <View style={styles.profileMembershipHeader}>
-                <View>
-                  <Text style={styles.profileMembershipTitle}>Membership</Text>
-                  <Text style={styles.profileMembershipStatus}>
-                    {customer.cancel_at_period_end || customer.cancelAtPeriodEnd
-                      ? "Cancellation scheduled"
-                      : active
-                        ? "Active subscription"
-                        : `Status: ${status}`}
-                  </Text>
-                </View>
-                <Ionicons
-                  name={customer.cancel_at_period_end || customer.cancelAtPeriodEnd ? "time-outline" : "card-outline"}
-                  size={24}
-                  color={customer.cancel_at_period_end || customer.cancelAtPeriodEnd ? COLORS.amber : COLORS.greenDark}
+            <TouchableOpacity
+              style={[
+                styles.primaryButton,
+                saving &&
+                  styles.disabledButton,
+              ]}
+              onPress={() => {
+                void saveProfile();
+              }}
+              disabled={saving}
+              activeOpacity={0.9}
+            >
+              {saving ? (
+                <ActivityIndicator
+                  color={COLORS.white}
                 />
-              </View>
+              ) : (
+                <>
+                  <Ionicons
+                    name="save-outline"
+                    size={19}
+                    color={COLORS.white}
+                  />
 
-              {(customer.cancel_at_period_end || customer.cancelAtPeriodEnd) && (
-                <Text style={styles.cancellationNotice}>
-                  Your subscription will not renew. You keep access through {clean(customer.current_period_end || customer.currentPeriodEnd) ? new Date(clean(customer.current_period_end || customer.currentPeriodEnd)).toLocaleDateString() : "the end of your current billing period"}.
-                </Text>
+                  <Text
+                    style={styles.buttonText}
+                  >
+                    Save Customer Profile
+                  </Text>
+                </>
               )}
-
-              <TouchableOpacity
-                style={[styles.cancelButton, cancelLoading && styles.disabledButton]}
-                onPress={cancelSubscription}
-                disabled={cancelLoading || Boolean(customer.cancel_at_period_end || customer.cancelAtPeriodEnd)}
-                activeOpacity={0.9}
-              >
-                {cancelLoading ? (
-                  <ActivityIndicator color={COLORS.white} />
-                ) : (
-                  <>
-                    <Ionicons name="close-circle-outline" size={19} color={COLORS.white} />
-                    <Text style={styles.buttonText}>
-                      {customer.cancel_at_period_end || customer.cancelAtPeriodEnd
-                        ? "Cancellation Scheduled"
-                        : "Cancel Subscription"}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Default Delivery Settings</Text>
+            <Text style={styles.sectionTitle}>
+              Default Delivery Settings
+            </Text>
 
             <View style={styles.optionRow}>
-              {["Delivery", "Pickup"].map((option) => {
-                const selected = preferredDeliveryOption === option;
+              {[
+                "Delivery",
+                "Pickup",
+              ].map((option) => {
+                const selected =
+                  preferredDeliveryOption ===
+                  option;
 
                 return (
                   <Pressable
                     key={option}
-                    style={[styles.optionChip, selected && styles.optionChipActive]}
-                    onPress={() => setPreferredDeliveryOption(option)}
+                    style={[
+                      styles.optionChip,
+                      selected &&
+                        styles.optionChipActive,
+                    ]}
+                    onPress={() =>
+                      setPreferredDeliveryOption(
+                        option
+                      )
+                    }
                   >
-                    <Text style={[styles.optionText, selected && styles.optionTextActive]}>
+                    <Text
+                      style={[
+                        styles.optionText,
+                        selected &&
+                          styles.optionTextActive,
+                      ]}
+                    >
                       {option}
                     </Text>
                   </Pressable>
@@ -1415,10 +1504,13 @@ export default function CustomerProfile() {
             </View>
 
             <Label text="Delivery Address" />
+
             <TextInput
               style={styles.input}
               value={deliveryAddress}
-              onChangeText={setDeliveryAddress}
+              onChangeText={
+                setDeliveryAddress
+              }
               placeholder="Delivery address"
               placeholderTextColor="#ADB5BD"
             />
@@ -1426,10 +1518,13 @@ export default function CustomerProfile() {
             <View style={styles.inputRow}>
               <View style={{ flex: 1 }}>
                 <Label text="City" />
+
                 <TextInput
                   style={styles.input}
                   value={deliveryCity}
-                  onChangeText={setDeliveryCity}
+                  onChangeText={
+                    setDeliveryCity
+                  }
                   placeholder="City"
                   placeholderTextColor="#ADB5BD"
                 />
@@ -1437,10 +1532,13 @@ export default function CustomerProfile() {
 
               <View style={styles.stateBox}>
                 <Label text="State" />
+
                 <TextInput
                   style={styles.input}
                   value={deliveryState}
-                  onChangeText={setDeliveryState}
+                  onChangeText={
+                    setDeliveryState
+                  }
                   placeholder="MI"
                   placeholderTextColor="#ADB5BD"
                   autoCapitalize="characters"
@@ -1449,6 +1547,7 @@ export default function CustomerProfile() {
             </View>
 
             <Label text="Zip Code" />
+
             <TextInput
               style={styles.input}
               value={deliveryZip}
@@ -1459,34 +1558,59 @@ export default function CustomerProfile() {
             />
 
             <Label text="Delivery Instructions" />
+
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[
+                styles.input,
+                styles.textArea,
+              ]}
               value={deliveryInstructions}
-              onChangeText={setDeliveryInstructions}
+              onChangeText={
+                setDeliveryInstructions
+              }
               placeholder="Gate code, porch notes, apartment number, preferred drop-off..."
               placeholderTextColor="#ADB5BD"
               multiline
             />
 
             <TouchableOpacity
-              style={[styles.primaryButton, saving && styles.disabledButton]}
-              onPress={saveProfile}
+              style={[
+                styles.primaryButton,
+                saving &&
+                  styles.disabledButton,
+              ]}
+              onPress={() => {
+                void saveProfile();
+              }}
               disabled={saving}
               activeOpacity={0.9}
             >
               {saving ? (
-                <ActivityIndicator color={COLORS.white} />
+                <ActivityIndicator
+                  color={COLORS.white}
+                />
               ) : (
                 <>
-                  <Ionicons name="save-outline" size={19} color={COLORS.white} />
-                  <Text style={styles.buttonText}>Save Customer Profile</Text>
+                  <Ionicons
+                    name="save-outline"
+                    size={19}
+                    color={COLORS.white}
+                  />
+
+                  <Text
+                    style={styles.buttonText}
+                  >
+                    Save Delivery Settings
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Change Password</Text>
+            <Text style={styles.sectionTitle}>
+              Change Password
+            </Text>
 
             <TextInput
               style={styles.input}
@@ -1502,29 +1626,83 @@ export default function CustomerProfile() {
               placeholder="Confirm new password"
               placeholderTextColor="#ADB5BD"
               value={confirmNewPassword}
-              onChangeText={setConfirmNewPassword}
+              onChangeText={
+                setConfirmNewPassword
+              }
               secureTextEntry
             />
 
-            <TouchableOpacity style={styles.blueButton} onPress={changePassword} activeOpacity={0.9}>
-              <Ionicons name="lock-closed-outline" size={19} color={COLORS.white} />
-              <Text style={styles.buttonText}>Change Password</Text>
+            <TouchableOpacity
+              style={styles.blueButton}
+              onPress={() => {
+                void changePassword();
+              }}
+              activeOpacity={0.9}
+            >
+              <Ionicons
+                name="lock-closed-outline"
+                size={19}
+                color={COLORS.white}
+              />
+
+              <Text style={styles.buttonText}>
+                Change Password
+              </Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Quick Actions</Text>
+            <Text style={styles.sectionTitle}>
+              Quick Actions
+            </Text>
 
-            <RouteRow title="Marketplace" subtitle="Shop local farm goods" path="/customer/marketplace" icon="storefront-outline" />
-            <RouteRow title="Cart" subtitle="Review saved cart items" path="/customer/cart" icon="cart-outline" />
-            <RouteRow title="My Orders" subtitle="View confirmed orders and tracking" path="/customer/my-orders" icon="receipt-outline" />
-            <RouteRow title="Notifications" subtitle="Order, farmer, and driver alerts" path="/customer/notifications" icon="notifications-outline" />
-            <RouteRow title="Favorites" subtitle="Saved farms and products" path="/customer/favorites" icon="heart-outline" />
-            <RouteRow title="Support" subtitle="Get help with orders or payment" path="/customer/support" icon="help-buoy-outline" />
+            <RouteRow
+              title="Marketplace"
+              subtitle="Shop local farm goods"
+              path="/customer/marketplace"
+              icon="storefront-outline"
+            />
+
+            <RouteRow
+              title="Cart"
+              subtitle="Review saved cart items"
+              path="/customer/cart"
+              icon="cart-outline"
+            />
+
+            <RouteRow
+              title="My Orders"
+              subtitle="View confirmed orders and tracking"
+              path="/customer/my-orders"
+              icon="receipt-outline"
+            />
+
+            <RouteRow
+              title="Notifications"
+              subtitle="Order, farmer, and driver alerts"
+              path="/customer/notifications"
+              icon="notifications-outline"
+            />
+
+            <RouteRow
+              title="Favorites"
+              subtitle="Saved farms and products"
+              path="/customer/favorites"
+              icon="heart-outline"
+            />
+
+            <RouteRow
+              title="Support"
+              subtitle="Get help with orders or payment"
+              path="/customer/support"
+              icon="help-buoy-outline"
+            />
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Privacy & Account</Text>
+            <Text style={styles.sectionTitle}>
+              Privacy & Account
+            </Text>
 
             <RouteRow
               title="Privacy Policy"
@@ -1533,17 +1711,83 @@ export default function CustomerProfile() {
               icon="shield-checkmark-outline"
             />
 
-            <RouteRow
-              title="Delete Account"
-              subtitle="Permanently delete your Farm2Home account and personal profile data"
-              path="/delete-account"
-              icon="trash-outline"
-            />
+            <Pressable
+              style={({ pressed }) => [
+                styles.deleteAccountRow,
+                pressed && styles.pressed,
+              ]}
+              onPress={
+                confirmDeleteAccount
+              }
+              disabled={deleteLoading}
+            >
+              <View
+                style={
+                  styles.deleteAccountIconBox
+                }
+              >
+                {deleteLoading ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={COLORS.danger}
+                  />
+                ) : (
+                  <Ionicons
+                    name="trash-outline"
+                    size={20}
+                    color={COLORS.danger}
+                  />
+                )}
+              </View>
+
+              <View
+                style={
+                  styles.actionTextBlock
+                }
+              >
+                <Text
+                  style={
+                    styles.deleteAccountTitle
+                  }
+                >
+                  Delete Account
+                </Text>
+
+                <Text
+                  style={
+                    styles.actionSubtitle
+                  }
+                >
+                  Permanently delete your
+                  Farm2Home Direct account
+                  and personal profile data
+                </Text>
+              </View>
+
+              <Ionicons
+                name="chevron-forward-outline"
+                size={20}
+                color={COLORS.danger}
+              />
+            </Pressable>
           </View>
 
-          <TouchableOpacity style={styles.logoutButton} onPress={logout} activeOpacity={0.9}>
-            <Ionicons name="log-out-outline" size={19} color={COLORS.white} />
-            <Text style={styles.buttonText}>Logout</Text>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={() => {
+              void logout();
+            }}
+            activeOpacity={0.9}
+          >
+            <Ionicons
+              name="log-out-outline"
+              size={19}
+              color={COLORS.white}
+            />
+
+            <Text style={styles.buttonText}>
+              Logout
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1551,15 +1795,37 @@ export default function CustomerProfile() {
   );
 }
 
-function Label({ text }: { text: string }) {
-  return <Text style={styles.label}>{text}</Text>;
+function Label({
+  text,
+}: {
+  text: string;
+}) {
+  return (
+    <Text style={styles.label}>
+      {text}
+    </Text>
+  );
 }
 
-function InfoLine({ label, value }: { label: string; value: string }) {
+function InfoLine({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
   return (
     <View style={styles.infoLine}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue} numberOfLines={1}>{value}</Text>
+      <Text style={styles.infoLabel}>
+        {label}
+      </Text>
+
+      <Text
+        style={styles.infoValue}
+        numberOfLines={1}
+      >
+        {value}
+      </Text>
     </View>
   );
 }
@@ -1574,18 +1840,45 @@ function StatCard({
   tone: "green" | "blue" | "red";
 }) {
   const config = {
-    green: { bg: COLORS.greenSoft, color: COLORS.greenDark },
-    blue: { bg: COLORS.blueSoft, color: COLORS.blue },
-    red: { bg: COLORS.dangerSoft, color: COLORS.red },
+    green: {
+      bg: COLORS.greenSoft,
+      color: COLORS.greenDark,
+    },
+    blue: {
+      bg: COLORS.blueSoft,
+      color: COLORS.blue,
+    },
+    red: {
+      bg: COLORS.dangerSoft,
+      color: COLORS.red,
+    },
   }[tone];
 
   return (
     <View style={styles.statCard}>
-      <View style={[styles.statDot, { backgroundColor: config.bg }]}>
-        <Ionicons name="ellipse" size={12} color={config.color} />
+      <View
+        style={[
+          styles.statDot,
+          {
+            backgroundColor:
+              config.bg,
+          },
+        ]}
+      >
+        <Ionicons
+          name="ellipse"
+          size={12}
+          color={config.color}
+        />
       </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+
+      <Text style={styles.statValue}>
+        {value}
+      </Text>
+
+      <Text style={styles.statLabel}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -1603,28 +1896,65 @@ function RouteRow({
 }) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
-      onPress={() => router.push(path as any)}
+      style={({ pressed }) => [
+        styles.actionRow,
+        pressed && styles.pressed,
+      ]}
+      onPress={() =>
+        router.push(path as any)
+      }
     >
       <View style={styles.actionIconBox}>
-        <Ionicons name={icon} size={20} color={COLORS.red} />
+        <Ionicons
+          name={icon}
+          size={20}
+          color={COLORS.red}
+        />
       </View>
 
       <View style={styles.actionTextBlock}>
-        <Text style={styles.actionTitle}>{title}</Text>
-        <Text style={styles.actionSubtitle}>{subtitle}</Text>
+        <Text style={styles.actionTitle}>
+          {title}
+        </Text>
+
+        <Text
+          style={styles.actionSubtitle}
+        >
+          {subtitle}
+        </Text>
       </View>
 
-      <Ionicons name="chevron-forward-outline" size={20} color={COLORS.muted} />
+      <Ionicons
+        name="chevron-forward-outline"
+        size={20}
+        color={COLORS.muted}
+      />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  center: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
-  centerText: { color: COLORS.muted, fontWeight: "800" },
-  content: { paddingBottom: 70 },
+  safe: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  centerText: {
+    color: COLORS.muted,
+    fontWeight: "800",
+  },
+
+  content: {
+    paddingBottom: 70,
+  },
+
   emptyPage: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -1632,6 +1962,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 24,
   },
+
   emptyIconBox: {
     width: 68,
     height: 68,
@@ -1641,13 +1972,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
-  emptyIconText: { color: COLORS.white, fontWeight: "900", fontSize: 28 },
+
+  emptyIconText: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 28,
+  },
+
   emptyTitle: {
     color: COLORS.text,
     fontSize: 28,
     fontWeight: "900",
     textAlign: "center",
   },
+
   emptyText: {
     color: COLORS.muted,
     fontWeight: "700",
@@ -1655,12 +1993,14 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     textAlign: "center",
   },
+
   hero: {
     backgroundColor: COLORS.black,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 30,
   },
+
   backButton: {
     alignSelf: "flex-start",
     backgroundColor: COLORS.red,
@@ -1672,7 +2012,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 18,
   },
-  backButtonText: { color: COLORS.white, fontWeight: "900" },
+
+  backButtonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+  },
+
   heroIcon: {
     width: 72,
     height: 72,
@@ -1682,7 +2027,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 14,
   },
-  heroInitial: { color: COLORS.white, fontWeight: "900", fontSize: 32 },
+
+  heroInitial: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 32,
+  },
+
   kicker: {
     color: "#DDE4FF",
     fontSize: 12,
@@ -1690,8 +2041,21 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: "uppercase",
   },
-  heroTitle: { color: COLORS.white, fontSize: 34, fontWeight: "900", marginTop: 6 },
-  heroText: { color: "#EFF2F7", fontWeight: "700", lineHeight: 22, marginTop: 6 },
+
+  heroTitle: {
+    color: COLORS.white,
+    fontSize: 34,
+    fontWeight: "900",
+    marginTop: 6,
+  },
+
+  heroText: {
+    color: "#EFF2F7",
+    fontWeight: "700",
+    lineHeight: 22,
+    marginTop: 6,
+  },
+
   statusPill: {
     alignSelf: "flex-start",
     marginTop: 12,
@@ -1699,11 +2063,27 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 999,
   },
-  activePill: { backgroundColor: COLORS.greenSoft },
-  pendingPill: { backgroundColor: COLORS.amberSoft },
-  statusPillText: { fontWeight: "900", textTransform: "capitalize" },
-  activeText: { color: COLORS.greenDark },
-  pendingText: { color: "#B7791F" },
+
+  activePill: {
+    backgroundColor: COLORS.greenSoft,
+  },
+
+  pendingPill: {
+    backgroundColor: COLORS.amberSoft,
+  },
+
+  statusPillText: {
+    fontWeight: "900",
+  },
+
+  activeText: {
+    color: COLORS.greenDark,
+  },
+
+  pendingText: {
+    color: "#B7791F",
+  },
+
   metricsRow: {
     flexDirection: "row",
     gap: 10,
@@ -1711,6 +2091,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 14,
   },
+
   statCard: {
     flex: 1,
     backgroundColor: COLORS.card,
@@ -1719,6 +2100,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 12,
   },
+
   statDot: {
     width: 28,
     height: 28,
@@ -1727,8 +2109,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 8,
   },
-  statValue: { color: COLORS.text, fontWeight: "900", fontSize: 15 },
-  statLabel: { color: COLORS.muted, fontWeight: "800", marginTop: 4, fontSize: 11 },
+
+  statValue: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+
+  statLabel: {
+    color: COLORS.muted,
+    fontWeight: "800",
+    marginTop: 4,
+    fontSize: 11,
+  },
+
   card: {
     backgroundColor: COLORS.card,
     padding: 16,
@@ -1738,12 +2132,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+
   sectionTitle: {
     fontSize: 22,
     fontWeight: "900",
     marginBottom: 14,
     color: COLORS.text,
   },
+
   label: {
     color: COLORS.muted,
     marginTop: 6,
@@ -1752,6 +2148,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textTransform: "uppercase",
   },
+
   input: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -1762,17 +2159,27 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.text,
   },
+
   textArea: {
     minHeight: 95,
     textAlignVertical: "top",
   },
-  inputRow: { flexDirection: "row", gap: 10 },
-  stateBox: { width: 95 },
+
+  inputRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+
+  stateBox: {
+    width: 95,
+  },
+
   optionRow: {
     flexDirection: "row",
     gap: 10,
     marginBottom: 12,
   },
+
   optionChip: {
     flex: 1,
     backgroundColor: COLORS.surface,
@@ -1782,33 +2189,58 @@ const styles = StyleSheet.create({
     padding: 13,
     alignItems: "center",
   },
+
   optionChipActive: {
     backgroundColor: COLORS.red,
     borderColor: COLORS.red,
   },
+
   optionText: {
     color: COLORS.red,
     fontWeight: "900",
   },
+
   optionTextActive: {
     color: COLORS.white,
   },
+
   infoLine: {
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
     paddingVertical: 11,
   },
+
   infoLabel: {
     color: COLORS.muted,
     fontWeight: "900",
     fontSize: 11,
     textTransform: "uppercase",
   },
+
   infoValue: {
     color: COLORS.text,
     fontWeight: "800",
     marginTop: 3,
   },
+
+  pricingNotice: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginTop: 14,
+    padding: 13,
+    borderRadius: 14,
+    backgroundColor: COLORS.greenSoft,
+  },
+
+  pricingNoticeText: {
+    flex: 1,
+    color: COLORS.greenDark,
+    fontWeight: "800",
+    lineHeight: 20,
+    fontSize: 12,
+  },
+
   primaryButton: {
     backgroundColor: COLORS.red,
     padding: 15,
@@ -1820,22 +2252,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  secondaryButton: {
-    backgroundColor: COLORS.primaryLight,
-    padding: 15,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 10,
-    minHeight: 52,
-    flexDirection: "row",
-    gap: 8,
-  },
-  secondaryButtonText: {
-    color: COLORS.red,
-    fontWeight: "900",
-    fontSize: 15,
-  },
+
   blueButton: {
     backgroundColor: COLORS.blue,
     padding: 15,
@@ -1846,52 +2263,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  profileMembershipBox: {
-    marginTop: 14,
-    padding: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.bg,
-  },
-  profileMembershipHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  profileMembershipTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 15,
-  },
-  profileMembershipStatus: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    fontSize: 12,
-    marginTop: 3,
-    textTransform: "capitalize",
-  },
-  cancellationNotice: {
-    marginTop: 10,
-    color: "#B7791F",
-    backgroundColor: COLORS.amberSoft,
-    borderRadius: 12,
-    padding: 11,
-    fontWeight: "700",
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  cancelButton: {
-    backgroundColor: COLORS.danger,
-    padding: 15,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 10,
-    flexDirection: "row",
-    gap: 8,
-  },
+
   logoutButton: {
     backgroundColor: COLORS.black,
     padding: 16,
@@ -1904,8 +2276,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  disabledButton: { opacity: 0.65 },
-  buttonText: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
+
+  disabledButton: {
+    opacity: 0.65,
+  },
+
+  buttonText: {
+    color: COLORS.white,
+    fontWeight: "900",
+    fontSize: 15,
+  },
+
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1917,6 +2298,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 12,
   },
+
   actionIconBox: {
     width: 46,
     height: 46,
@@ -1925,14 +2307,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  actionTextBlock: { flex: 1 },
-  actionTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+
+  actionTextBlock: {
+    flex: 1,
+  },
+
+  actionTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+
   actionSubtitle: {
     color: COLORS.muted,
     fontWeight: "700",
     fontSize: 12,
     marginTop: 3,
   },
+
   deleteAccountRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1944,6 +2336,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 12,
   },
+
   deleteAccountIconBox: {
     width: 46,
     height: 46,
@@ -1954,10 +2347,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FFD2D2",
   },
+
   deleteAccountTitle: {
     color: COLORS.danger,
     fontWeight: "900",
     fontSize: 16,
   },
-  pressed: { opacity: 0.75 },
+
+  pressed: {
+    opacity: 0.75,
+  },
 });
