@@ -1,6 +1,9 @@
 // app/customer/login.tsx
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import React, { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,51 +19,39 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
 
-import { API_BASE_URL } from "../config/api";
 import { supabase } from "../data/supabaseClient";
 
 /**
- * app/customer/login.tsx
+ * Farm2Home Direct — Customer Login
  *
- * Fully corrected customer login with updated UI and dashboard access checklist.
- *
- * Customer access requires:
- * 1. customers.id
- * 2. customers.stripe_customer_id = cus_...
- * 3. customers.subscription_id or customers.stripe_subscription_id = sub_...
- * 4. subscription_status is active, trialing, or past_due
- *
- * DO NOT require account_id for customer cart/checkout/marketplace access.
- *
- * Customer Stripe rules:
- * - cus_ is Stripe Customer
- * - sub_ is Stripe Subscription
- * - acct_ is Stripe Connect and must NEVER count as a customer subscription/customer ID
+ * CUSTOMER ACCESS MODEL
+ * - No customer monthly subscription.
+ * - No Stripe Customer ID required for login.
+ * - No Stripe Subscription ID required for login.
+ * - No membership-status requirement for Marketplace access.
+ * - Customer signs in with Supabase Auth.
+ * - A customer profile must exist and account_active must not be false.
+ * - The $4.99 Farm2Home service fee is applied at checkout, not login.
  */
+
+const CUSTOMER_SERVICE_FEE = 4.99;
 
 const COLORS = {
   bg: "#F6F7FB",
   card: "#FFFFFF",
   surface: "#F8FAFC",
-  surface2: "#F1F5F9",
   black: "#020617",
   navy: "#020617",
   primary: "#635BFF",
   primaryDark: "#4638D8",
   primarySoft: "#EEF2FF",
-  red: "#635BFF",
-  redDark: "#4638D8",
   text: "#101828",
   muted: "#667085",
   border: "#E5E7EB",
   green: "#10B981",
   greenDark: "#047857",
   greenSoft: "#D1FAE5",
-  amber: "#F59E0B",
   amberSoft: "#FEF3C7",
   white: "#FFFFFF",
 };
@@ -72,28 +63,16 @@ type CustomerRecord = {
   profile_id?: string;
   account_id?: string;
   role?: string;
-
   full_name?: string;
   name?: string;
   email?: string;
+  customer_email?: string;
   phone?: string;
   username?: string;
-
   account_active?: boolean;
-  customer_membership_paid?: boolean;
-  subscription_status?: string;
-  membership_status?: string;
-  application_complete?: boolean;
-  application_submitted?: boolean;
-
-  stripe_id?: string | null;
-  stripe_customer_id?: string | null;
-  stripe_subscription_id?: string | null;
-  subscription_id?: string | null;
-  stripe_checkout_session_id?: string | null;
-
   created_at?: string;
   updated_at?: string;
+  [key: string]: any;
 };
 
 function clean(value: any) {
@@ -104,74 +83,10 @@ function normalize(value: any) {
   return clean(value).toLowerCase();
 }
 
-function isStripeCustomerId(value: any) {
-  return clean(value).startsWith("cus_");
-}
-
-function isStripeSubscriptionId(value: any) {
-  return clean(value).startsWith("sub_");
-}
-
-function isStripeConnectAccountId(value: any) {
-  return clean(value).startsWith("acct_");
-}
-
-function pickStripeCustomerId(...values: any[]) {
-  const found = values.find((value) => isStripeCustomerId(value));
-  return found ? clean(found) : "";
-}
-
-function pickStripeSubscriptionId(...values: any[]) {
-  const found = values.find((value) => isStripeSubscriptionId(value));
-  return found ? clean(found) : "";
-}
-
-function maskId(value: string, fallback = "Missing") {
-  const id = clean(value);
-  if (!id) return fallback;
-  if (id.length <= 14) return id;
-  return `${id.slice(0, 8)}...${id.slice(-5)}`;
-}
-
-function isValidCustomerSubscriptionStatus(value: any) {
-  return ["active", "trialing", "past_due"].includes(String(value || "").toLowerCase());
-}
-
-function statusIsBlocked(value: any) {
-  const status = normalize(value);
-  return ["canceled", "cancelled", "unpaid", "inactive", "disabled", "rejected"].includes(status);
-}
-
-function buildCustomerSession(row: any) {
-  const id = clean(row?.id || row?.customer_id || row?.customerId);
-  const accountId = clean(row?.account_id || row?.accountId);
-
-  const stripeCustomerId = pickStripeCustomerId(
-    row?.stripe_customer_id,
-    row?.stripeCustomerId,
-    row?.stripe_id,
-    row?.stripeId
-  );
-
-  const stripeSubscriptionId = pickStripeSubscriptionId(
-    row?.stripe_subscription_id,
-    row?.stripeSubscriptionId,
-    row?.subscription_id,
-    row?.subscriptionId
-  );
-
+function buildCustomerSession(row: any): CustomerRecord & Record<string, any> {
+  const id = clean(row?.id || row?.customer_id || row?.customerId || row?.auth_user_id);
   const fullName = clean(row?.full_name || row?.fullName || row?.name || "Customer");
-  const subscriptionStatus = clean(
-    row?.subscription_status ||
-      row?.subscriptionStatus ||
-      (stripeSubscriptionId ? "active" : "pending_payment")
-  );
-
-  const membershipStatus = clean(
-    row?.membership_status ||
-      row?.membershipStatus ||
-      (stripeSubscriptionId ? "active" : "pending_payment")
-  );
+  const customerEmail = normalize(row?.email || row?.customer_email);
 
   return {
     ...row,
@@ -183,46 +98,28 @@ function buildCustomerSession(row: any) {
     profileId: clean(row?.profile_id || row?.profileId || id),
     profile_id: clean(row?.profile_id || row?.profileId || id),
     role: "customer",
-
-    accountId,
-    account_id: accountId,
-
+    accountId: clean(row?.account_id || row?.accountId),
+    account_id: clean(row?.account_id || row?.accountId),
     fullName,
     full_name: fullName,
     name: clean(row?.name || fullName),
-    email: normalize(row?.email || row?.customer_email),
+    email: customerEmail,
+    customer_email: customerEmail,
     phone: clean(row?.phone),
     username: normalize(row?.username),
-
-    stripeId: stripeCustomerId,
-    stripe_id: stripeCustomerId,
-    stripeCustomerId,
-    stripe_customer_id: stripeCustomerId,
-
-    stripeSubscriptionId,
-    stripe_subscription_id: stripeSubscriptionId,
-    subscriptionId: stripeSubscriptionId,
-    subscription_id: stripeSubscriptionId,
-
-    subscriptionStatus,
-    subscription_status: subscriptionStatus,
-    membershipStatus,
-    membership_status: membershipStatus,
-
     accountActive: row?.account_active !== false,
     account_active: row?.account_active !== false,
 
-    customerMembershipPaid: Boolean(row?.customer_membership_paid || stripeSubscriptionId),
-    customer_membership_paid: Boolean(row?.customer_membership_paid || stripeSubscriptionId),
+    // Legacy compatibility only. These values DO NOT control access.
+    subscriptionStatus: "not_required",
+    subscription_status: "not_required",
+    membershipStatus: "not_required",
+    membership_status: "not_required",
+    customerMembershipPaid: false,
+    customer_membership_paid: false,
 
-    applicationComplete: Boolean(row?.application_complete || stripeSubscriptionId),
-    application_complete: Boolean(row?.application_complete || stripeSubscriptionId),
-
-    applicationSubmitted: Boolean(row?.application_submitted || stripeSubscriptionId),
-    application_submitted: Boolean(row?.application_submitted || stripeSubscriptionId),
-
-    createdAt: row?.created_at || "",
-    created_at: row?.created_at || "",
+    customerServiceFee: CUSTOMER_SERVICE_FEE,
+    customer_service_fee: CUSTOMER_SERVICE_FEE,
     updatedAt: row?.updated_at || new Date().toISOString(),
     updated_at: row?.updated_at || new Date().toISOString(),
   };
@@ -230,93 +127,23 @@ function buildCustomerSession(row: any) {
 
 function customerHasMarketplaceAccess(row: any) {
   const customer = buildCustomerSession(row);
-
-  return Boolean(
-    customer.id &&
-      isStripeCustomerId(customer.stripe_customer_id) &&
-      isStripeSubscriptionId(customer.subscription_id) &&
-      isValidCustomerSubscriptionStatus(customer.subscription_status)
-  );
-}
-
-function missingAccessItems(row: any) {
-  const customer = row ? buildCustomerSession(row) : null;
-
-  if (!customer) {
-    return ["Customer Profile", "Stripe Customer ID", "Subscription ID", "Valid Subscription Status"];
-  }
-
-  return [
-    !customer.id ? "Customer Profile" : "",
-    !isStripeCustomerId(customer.stripe_customer_id) ? "Stripe Customer ID" : "",
-    !isStripeSubscriptionId(customer.subscription_id) ? "Subscription ID" : "",
-    !isValidCustomerSubscriptionStatus(customer.subscription_status) ? "Valid Subscription Status" : "",
-  ].filter(Boolean);
-}
-
-async function parseApiResponse(response: Response) {
-  const text = await response.text();
-
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return { success: false, error: text || "Invalid backend response." };
-  }
+  return Boolean(customer.id && customer.account_active !== false);
 }
 
 export default function CustomerLoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
-  const [syncingStripe, setSyncingStripe] = useState(false);
+  const [openingMarketplace, setOpeningMarketplace] = useState(false);
   const [resetVisible, setResetVisible] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
-  const [lastCheckedCustomer, setLastCheckedCustomer] = useState<any>(null);
-  const [openingMarketplace, setOpeningMarketplace] = useState(false);
 
-  const previewTimerRef = useRef<any>(null);
   const routingLockedRef = useRef(false);
-
-  const accessStatus = useMemo(() => {
-    if (!lastCheckedCustomer) {
-      return [
-        { label: "Customer Profile", complete: false, value: "Login to check" },
-        { label: "Stripe Customer", complete: false, value: "Login to check" },
-        { label: "Subscription", complete: false, value: "Login to check" },
-        { label: "Membership Status", complete: false, value: "Login to check" },
-      ];
-    }
-
-    const customer = buildCustomerSession(lastCheckedCustomer);
-
-    return [
-      {
-        label: "Customer Profile",
-        complete: Boolean(customer.id),
-        value: customer.id ? "Found" : "Missing",
-      },
-      {
-        label: "Stripe Customer",
-        complete: isStripeCustomerId(customer.stripe_customer_id),
-        value: maskId(customer.stripe_customer_id),
-      },
-      {
-        label: "Subscription",
-        complete: isStripeSubscriptionId(customer.subscription_id),
-        value: maskId(customer.subscription_id),
-      },
-      {
-        label: "Membership Status",
-        complete: isValidCustomerSubscriptionStatus(customer.subscription_status),
-        value: customer.subscription_status || "Missing",
-      },
-    ];
-  }, [lastCheckedCustomer]);
 
   async function saveCurrentCustomer(customer: any) {
     const mapped = buildCustomerSession(customer);
+    const ready = customerHasMarketplaceAccess(mapped);
 
     await AsyncStorage.multiSet([
       ["pendingCustomer", JSON.stringify(mapped)],
@@ -326,7 +153,7 @@ export default function CustomerLoginScreen() {
       ["userRole", "customer"],
       ["currentUserRole", "customer"],
       ["lastLoginRole", "customer"],
-      ["lastCustomerDashboardReady", customerHasMarketplaceAccess(mapped) ? "true" : "false"],
+      ["lastCustomerDashboardReady", ready ? "true" : "false"],
     ]);
 
     return mapped;
@@ -392,314 +219,28 @@ export default function CustomerLoginScreen() {
     return null;
   }
 
-  async function findCustomerSubscription(userId?: string, cleanEmail?: string) {
-    const id = clean(userId);
-    const mail = normalize(cleanEmail);
-
-    const filters = [
-      id ? `customer_id.eq.${id}` : "",
-      mail ? `customer_email.eq.${mail}` : "",
-    ]
-      .filter(Boolean)
-      .join(",");
-
-    if (!filters) return null;
-
-    try {
-      const { data, error } = await supabase
-        .from("customer_subscriptions")
-        .select("*")
-        .or(filters)
-        .order("updated_at", { ascending: false })
-        .limit(10);
-
-      if (error) {
-        console.log("customer_subscriptions lookup error:", error.message);
-        return null;
-      }
-
-      if (!Array.isArray(data) || data.length === 0) return null;
-
-      const cleaned = data.map((row) => ({
-        ...row,
-        stripe_customer_id: isStripeConnectAccountId(row?.stripe_customer_id)
-          ? ""
-          : row?.stripe_customer_id,
-      }));
-
-      const complete = cleaned.find(
-        (row) =>
-          isStripeCustomerId(row?.stripe_customer_id) &&
-          isStripeSubscriptionId(row?.stripe_subscription_id)
-      );
-
-      return complete || cleaned[0];
-    } catch (error) {
-      console.log("customer_subscriptions lookup skipped:", error);
-      return null;
-    }
-  }
-
-  function mergeCustomerProfileSubscription(customer: any, profile: any, subscription: any) {
-    const base = {
-      ...(profile || {}),
-      ...(customer || {}),
-      id: clean(customer?.id || subscription?.customer_id || profile?.auth_user_id || profile?.id),
-      auth_user_id: clean(customer?.auth_user_id || profile?.auth_user_id || profile?.id),
-      profile_id: clean(customer?.profile_id || profile?.id || customer?.id),
-      role: "customer",
-      account_id: clean(customer?.account_id || profile?.account_id || ""),
-      full_name: clean(customer?.full_name || customer?.name || profile?.full_name || subscription?.name || "Customer"),
-      name: clean(customer?.name || customer?.full_name || profile?.full_name || subscription?.name || "Customer"),
-      email: normalize(customer?.email || profile?.email || subscription?.customer_email),
-      phone: clean(customer?.phone || profile?.phone),
-      username: normalize(customer?.username || subscription?.username),
-      stripe_customer_id: pickStripeCustomerId(
-        customer?.stripe_customer_id,
-        customer?.stripe_id,
-        subscription?.stripe_customer_id
-      ),
-      stripe_id: pickStripeCustomerId(
-        customer?.stripe_customer_id,
-        customer?.stripe_id,
-        subscription?.stripe_customer_id
-      ),
-      stripe_subscription_id: pickStripeSubscriptionId(
-        customer?.stripe_subscription_id,
-        customer?.subscription_id,
-        subscription?.stripe_subscription_id
-      ),
-      subscription_id: pickStripeSubscriptionId(
-        customer?.stripe_subscription_id,
-        customer?.subscription_id,
-        subscription?.stripe_subscription_id
-      ),
-      subscription_status: clean(
-        customer?.subscription_status ||
-          subscription?.subscription_status ||
-          (subscription?.stripe_subscription_id ? "active" : "pending_payment")
-      ),
-      membership_status: clean(
-        customer?.membership_status ||
-          (subscription?.stripe_subscription_id ? "active" : "pending_payment")
-      ),
-      account_active: customer?.account_active !== false,
-      customer_membership_paid: Boolean(
-        customer?.customer_membership_paid ||
-          customer?.subscription_id ||
-          customer?.stripe_subscription_id ||
-          subscription?.stripe_subscription_id
-      ),
-    };
-
-    return buildCustomerSession(base);
-  }
-
-  async function cleanBadAcctCustomerSubscription(id?: string, mail?: string) {
-    const filters = [
-      id ? `customer_id.eq.${id}` : "",
-      mail ? `customer_email.eq.${normalize(mail)}` : "",
-    ]
-      .filter(Boolean)
-      .join(",");
-
-    if (!filters) return;
-
-    try {
-      const { error } = await supabase
-        .from("customer_subscriptions")
-        .update({
-          stripe_customer_id: null,
-          stripe_subscription_id: null,
-          subscription_status: "pending_payment",
-          updated_at: new Date().toISOString(),
-        })
-        .or(filters)
-        .like("stripe_customer_id", "acct_%");
-
-      if (error) console.log("clean bad customer subscription skipped:", error.message);
-    } catch (error) {
-      console.log("clean bad customer subscription exception:", error);
-    }
-  }
-
-  async function upsertCustomerSubscriptionRow(customer: any) {
-    const mapped = buildCustomerSession(customer);
-    const id = mapped.id;
-    const mail = mapped.email;
-
-    if (!id && !mail) return;
-
-    await cleanBadAcctCustomerSubscription(id, mail);
-
-    const payload = {
-      customer_id: id,
-      customer_email: mail,
-      name: mapped.full_name,
-      username: mapped.username,
-      stripe_customer_id: isStripeCustomerId(mapped.stripe_customer_id)
-        ? mapped.stripe_customer_id
-        : null,
-      stripe_subscription_id: isStripeSubscriptionId(mapped.subscription_id)
-        ? mapped.subscription_id
-        : null,
-      subscription_status:
-        mapped.subscription_status ||
-        (isStripeSubscriptionId(mapped.subscription_id) ? "active" : "pending_payment"),
-      current_period_end: null,
-      updated_at: new Date().toISOString(),
-    };
-
-    try {
-      const { data: existing, error: lookupError } = await supabase
-        .from("customer_subscriptions")
-        .select("id")
-        .or(`customer_id.eq.${id},customer_email.eq.${mail}`)
-        .limit(1);
-
-      if (lookupError) {
-        console.log("customer_subscriptions upsert lookup skipped:", lookupError.message);
-        return;
-      }
-
-      if (Array.isArray(existing) && existing[0]?.id) {
-        const { error } = await supabase
-          .from("customer_subscriptions")
-          .update(payload)
-          .eq("id", existing[0].id);
-
-        if (error) console.log("customer_subscriptions update skipped:", error.message);
-        return;
-      }
-
-      const { error } = await supabase
-        .from("customer_subscriptions")
-        .insert({ ...payload, created_at: new Date().toISOString() });
-
-      if (error) console.log("customer_subscriptions insert skipped:", error.message);
-    } catch (error) {
-      console.log("customer_subscriptions upsert skipped:", error);
-    }
-  }
-
-  async function syncStripeByEmail(customer: any, showAlert = false) {
-    const mapped = buildCustomerSession(customer);
-
-    if (!mapped.email && !mapped.id) return mapped;
-
-    try {
-      setSyncingStripe(true);
-
-      const response = await fetch(`${API_BASE_URL}/payments/sync-stripe-by-email`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: "customer",
-          email: mapped.email,
-          name: mapped.full_name || mapped.name,
-          username: mapped.username,
-          userId: mapped.id,
-          customerId: mapped.id,
-          customer_id: mapped.id,
-        }),
-      });
-
-      const json = await parseApiResponse(response);
-
-      if (!response.ok || !json.success) {
-        if (showAlert) {
-          Alert.alert("Stripe Sync", json.error || "No customer subscription found in Stripe yet.");
-        }
-        return mapped;
-      }
-
-      const stripeCustomerId = pickStripeCustomerId(
-        json.stripeCustomerId,
-        json.stripe_customer_id
-      );
-
-      const stripeSubscriptionId = pickStripeSubscriptionId(
-        json.stripeSubscriptionId,
-        json.stripe_subscription_id
-      );
-
-      const updatePayload = {
-        stripe_id: stripeCustomerId || null,
-        stripe_customer_id: stripeCustomerId || null,
-        stripe_subscription_id: stripeSubscriptionId || null,
-        subscription_id: stripeSubscriptionId || null,
-        subscription_status:
-          json.subscriptionStatus ||
-          json.subscription_status ||
-          (stripeSubscriptionId ? "active" : "pending_payment"),
-        membership_status: isValidCustomerSubscriptionStatus(
-          json.subscriptionStatus || json.subscription_status || (stripeSubscriptionId ? "active" : "pending_payment")
-        )
-          ? "active"
-          : "pending_payment",
-        customer_membership_paid: Boolean(stripeSubscriptionId),
-        account_active: Boolean(stripeSubscriptionId),
-        application_complete: Boolean(stripeSubscriptionId),
-        application_submitted: Boolean(stripeSubscriptionId),
-        submitted_at: stripeSubscriptionId ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { data, error } = await supabase
-        .from("customers")
-        .update(updatePayload)
-        .eq("id", mapped.id)
-        .select("*")
-        .maybeSingle();
-
-      if (error) {
-        console.log("customers stripe sync update error:", error.message);
-        return mapped;
-      }
-
-      const finalCustomer = buildCustomerSession(data || { ...mapped, ...updatePayload });
-      await upsertCustomerSubscriptionRow(finalCustomer);
-      await saveCurrentCustomer(finalCustomer);
-      setLastCheckedCustomer(finalCustomer);
-
-      if (showAlert) Alert.alert("Stripe Synced", "Customer Stripe subscription was synced.");
-
-      return finalCustomer;
-    } catch (error: any) {
-      if (showAlert) Alert.alert("Sync Error", error?.message || "Unable to sync Stripe.");
-      return mapped;
-    } finally {
-      setSyncingStripe(false);
-    }
-  }
-
-  async function ensureCustomerRowFromProfile(userId: string, cleanEmail: string, profile: any) {
+  async function ensureCustomerRowFromProfile(
+    userId: string,
+    cleanEmail: string,
+    profile: any
+  ) {
     if (!profile?.id && !userId) return null;
 
     const id = clean(userId || profile?.auth_user_id || profile?.id);
     const now = new Date().toISOString();
 
+    // Keep this payload conservative so login does not depend on Stripe columns.
     const payload = {
       id,
-      customer_id: id,
       auth_user_id: id,
       profile_id: clean(profile?.id || id),
       role: "customer",
       account_id: clean(profile?.account_id || `Customer_${Date.now().toString().slice(-6)}`),
-      full_name: clean(profile?.full_name || "Customer"),
-      name: clean(profile?.full_name || "Customer"),
+      full_name: clean(profile?.full_name || profile?.name || "Customer"),
+      name: clean(profile?.name || profile?.full_name || "Customer"),
       email: normalize(profile?.email || cleanEmail),
       phone: clean(profile?.phone),
-      username: normalize(profile?.username || ""),
       account_active: true,
-      customer_membership_paid: false,
-      subscription_status: "pending_payment",
-      membership_status: "pending_payment",
-      application_complete: false,
-      application_submitted: false,
-      notifications_enabled: true,
-      expo_push_token: "",
-      created_at: now,
       updated_at: now,
     };
 
@@ -717,88 +258,47 @@ export default function CustomerLoginScreen() {
     return data;
   }
 
-  async function findAndSyncCustomerProfile(userId: string, cleanEmail: string, showStripeAlert = false) {
-    const customer = await findCustomerByIdOrEmail(userId, cleanEmail);
+  async function findCustomerProfile(userId: string, cleanEmail: string) {
+    let customer = await findCustomerByIdOrEmail(userId, cleanEmail);
     const profile = await findProfileByIdOrEmail(userId, cleanEmail);
-    const subscription = await findCustomerSubscription(customer?.id || userId, customer?.email || cleanEmail);
 
-    let finalCustomer = customer;
-
-    if (!finalCustomer && profile) {
-      finalCustomer = await ensureCustomerRowFromProfile(userId, cleanEmail, profile);
+    if (!customer && profile) {
+      customer = await ensureCustomerRowFromProfile(userId, cleanEmail, profile);
     }
 
-    if (!finalCustomer && !profile && !subscription) return null;
+    if (!customer) return null;
 
-    const merged = mergeCustomerProfileSubscription(finalCustomer || {}, profile || {}, subscription || {});
-    setLastCheckedCustomer(merged);
+    const merged = buildCustomerSession({
+      ...(profile || {}),
+      ...customer,
+      id: clean(customer?.id || userId),
+      auth_user_id: clean(customer?.auth_user_id || userId),
+      profile_id: clean(customer?.profile_id || profile?.id || userId),
+      email: normalize(customer?.email || profile?.email || cleanEmail),
+      full_name: clean(
+        customer?.full_name ||
+          customer?.name ||
+          profile?.full_name ||
+          profile?.name ||
+          "Customer"
+      ),
+      account_active: customer?.account_active !== false,
+    });
 
-    let synced = merged;
-
-    if (!customerHasMarketplaceAccess(merged)) {
-      synced = await syncStripeByEmail(merged, showStripeAlert);
-    } else {
-      await upsertCustomerSubscriptionRow(merged);
-      await saveCurrentCustomer(merged);
-    }
-
-    setLastCheckedCustomer(synced);
-    return synced;
+    await saveCurrentCustomer(merged);
+    return merged;
   }
-
-  async function previewCustomerByEmail(inputEmail: string) {
-    const mail = normalize(inputEmail);
-    if (!mail || !mail.includes("@")) {
-      setLastCheckedCustomer(null);
-      return;
-    }
-
-    try {
-      const customer = await findCustomerByIdOrEmail("", mail);
-      const profile = await findProfileByIdOrEmail("", mail);
-      const subscription = await findCustomerSubscription(customer?.id || "", customer?.email || mail);
-
-      if (customer || profile || subscription) {
-        const merged = mergeCustomerProfileSubscription(customer || {}, profile || {}, subscription || {});
-        setLastCheckedCustomer(merged);
-      }
-    } catch (error) {
-      console.log("customer preview skipped:", error);
-    }
-  }
-
-  useEffect(() => {
-    const mail = normalize(email);
-
-    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
-
-    if (!mail || !mail.includes("@")) {
-      setLastCheckedCustomer(null);
-      return;
-    }
-
-    previewTimerRef.current = setTimeout(() => {
-      previewCustomerByEmail(mail);
-    }, 650);
-
-    return () => {
-      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
-    };
-  }, [email]);
 
   async function openMarketplace(customer: any) {
     if (routingLockedRef.current) return;
 
     routingLockedRef.current = true;
     setOpeningMarketplace(true);
-
-    const mapped = await saveCurrentCustomer(customer);
+    await saveCurrentCustomer(customer);
 
     setTimeout(() => {
       router.replace("/customer/marketplace" as any);
     }, 120);
-
-    return mapped;
   }
 
   async function loginCustomer() {
@@ -831,13 +331,14 @@ export default function CustomerLoginScreen() {
         return;
       }
 
-      const customer = await findAndSyncCustomerProfile(userId, cleanEmail, false);
+      const customer = await findCustomerProfile(userId, cleanEmail);
 
       if (!customer) {
         Alert.alert(
           "Customer Profile Missing",
-          "Your login is valid, but no customer profile was found. Complete customer registration."
+          "Your login is valid, but no customer profile was found. Please complete customer registration."
         );
+
         router.replace({
           pathname: "/customer/register" as any,
           params: { customerId: userId, email: cleanEmail },
@@ -846,36 +347,20 @@ export default function CustomerLoginScreen() {
       }
 
       const mappedCustomer = await saveCurrentCustomer(customer);
-      setLastCheckedCustomer(mappedCustomer);
 
-      if (mappedCustomer.accountActive === false) {
-        Alert.alert("Account Disabled", "This customer account is not active.");
-        return;
-      }
-
-      if (statusIsBlocked(mappedCustomer.membershipStatus) || statusIsBlocked(mappedCustomer.subscriptionStatus)) {
+      if (mappedCustomer.account_active === false) {
         Alert.alert(
-          "Membership Required",
-          "Your customer membership is inactive. Please renew your membership."
+          "Account Disabled",
+          "This customer account is currently disabled. Please contact Farm2Home Direct support."
         );
-        router.replace({
-          pathname: "/customer/register" as any,
-          params: { customerId: mappedCustomer.id, email: mappedCustomer.email },
-        });
         return;
       }
 
       if (!customerHasMarketplaceAccess(mappedCustomer)) {
-        const missing = missingAccessItems(mappedCustomer);
-
         Alert.alert(
-          "Membership Setup Missing",
-          `Your account was found, but this setup is missing: ${missing.join(", ")}.`
+          "Customer Profile Required",
+          "Your customer profile must be completed before entering the marketplace."
         );
-        router.replace({
-          pathname: "/customer/register" as any,
-          params: { customerId: mappedCustomer.id, email: mappedCustomer.email },
-        });
         return;
       }
 
@@ -885,27 +370,6 @@ export default function CustomerLoginScreen() {
       Alert.alert("Login Error", error?.message || "Unable to login.");
     } finally {
       if (!routingLockedRef.current) setLoading(false);
-    }
-  }
-
-  async function handleSyncStripeButton() {
-    const cleanEmail = normalize(email);
-
-    if (!cleanEmail) {
-      Alert.alert("Email Required", "Enter your customer email first.");
-      return;
-    }
-
-    try {
-      const { data: authData } = await supabase.auth.getUser();
-      const userId = clean(authData?.user?.id || lastCheckedCustomer?.id || "");
-      const synced = await findAndSyncCustomerProfile(userId, cleanEmail, true);
-
-      if (synced && customerHasMarketplaceAccess(synced)) {
-        Alert.alert("Ready", "Customer membership is active. You can login to marketplace.");
-      }
-    } catch (error: any) {
-      Alert.alert("Sync Error", error?.message || "Unable to sync Stripe.");
     }
   }
 
@@ -974,47 +438,33 @@ export default function CustomerLoginScreen() {
               <Ionicons name="basket-outline" size={34} color={COLORS.white} />
             </View>
 
-            <Text style={styles.kicker}>Farm2Home Marketplace</Text>
+            <Text style={styles.kicker}>Farm2Home Direct Marketplace</Text>
             <Text style={styles.title}>Customer Login</Text>
-
             <Text style={styles.subtitle}>
-              Shop fresh produce, farm groceries, local goods, delivery tracking, and order updates.
+              Shop fresh produce, farm groceries, local goods, delivery options,
+              and more directly from Farm2Home farmers.
             </Text>
           </View>
 
           <View style={styles.noticeBox}>
             <View style={styles.noticeHeader}>
-              <Ionicons name="shield-checkmark-outline" size={22} color={COLORS.primary} />
-              <Text style={styles.noticeTitle}>Customer Marketplace Access</Text>
-            </View>
-            <Text style={styles.noticeText}>
-              Customer login verifies profile, Stripe customer ID, subscription ID, and active/trialing/past_due status before opening Marketplace. Account ID is optional for customers.
-            </Text>
-          </View>
-
-          <View style={styles.progressCard}>
-            <View style={styles.progressTop}>
-              <Text style={styles.progressTitle}>Access Checklist</Text>
-              <Text style={styles.progressScore}>
-                {accessStatus.filter((item) => item.complete).length}/4
-              </Text>
-            </View>
-
-            {accessStatus.map((item) => (
-              <View key={item.label} style={styles.statusRow}>
-                <View style={[styles.statusIcon, item.complete ? styles.statusGood : styles.statusMissing]}>
-                  <Ionicons
-                    name={item.complete ? "checkmark-outline" : "ellipse-outline"}
-                    size={15}
-                    color={item.complete ? COLORS.white : COLORS.muted}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.statusLabel}>{item.label}</Text>
-                  <Text style={styles.statusValue}>{item.value}</Text>
-                </View>
+              <View style={styles.noticeIcon}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={23}
+                  color={COLORS.greenDark}
+                />
               </View>
-            ))}
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.noticeTitle}>No Monthly Customer Subscription</Text>
+                <Text style={styles.noticeText}>
+                  Customers can browse and shop without a monthly membership. A $
+                  {CUSTOMER_SERVICE_FEE.toFixed(2)} Farm2Home service fee is applied
+                  only when you complete an order.
+                </Text>
+              </View>
+            </View>
           </View>
 
           <View style={styles.card}>
@@ -1022,6 +472,7 @@ export default function CustomerLoginScreen() {
               <View style={styles.cardHeaderIcon}>
                 <Ionicons name="log-in-outline" size={22} color={COLORS.white} />
               </View>
+
               <View style={{ flex: 1 }}>
                 <Text style={styles.sectionTitle}>Welcome Back</Text>
                 <Text style={styles.sectionSubtitle}>
@@ -1040,6 +491,7 @@ export default function CustomerLoginScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
+              textContentType="emailAddress"
             />
 
             <Text style={styles.label}>Password</Text>
@@ -1052,10 +504,14 @@ export default function CustomerLoginScreen() {
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
+              textContentType="password"
             />
 
             <TouchableOpacity
-              style={[styles.loginButton, (loading || openingMarketplace) && styles.disabledButton]}
+              style={[
+                styles.loginButton,
+                (loading || openingMarketplace) && styles.disabledButton,
+              ]}
               onPress={loginCustomer}
               disabled={loading || openingMarketplace}
               activeOpacity={0.85}
@@ -1066,22 +522,6 @@ export default function CustomerLoginScreen() {
                 <>
                   <Ionicons name="storefront-outline" size={20} color="#FFFFFF" />
                   <Text style={styles.loginButtonText}>Login to Marketplace</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.secondaryButton, syncingStripe && styles.disabledButton]}
-              onPress={handleSyncStripeButton}
-              disabled={syncingStripe}
-              activeOpacity={0.85}
-            >
-              {syncingStripe ? (
-                <ActivityIndicator color={COLORS.primary} />
-              ) : (
-                <>
-                  <Ionicons name="sync-outline" size={20} color={COLORS.primary} />
-                  <Text style={styles.secondaryText}>Retrieve Missing Stripe Info</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -1107,14 +547,46 @@ export default function CustomerLoginScreen() {
             </TouchableOpacity>
           </View>
 
+          <View style={styles.feeCard}>
+            <View style={styles.feeTop}>
+              <View style={styles.feeIcon}>
+                <Ionicons name="receipt-outline" size={22} color={COLORS.greenDark} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.feeTitle}>Simple Customer Pricing</Text>
+                <Text style={styles.feeSubtitle}>Pay only when you place an order.</Text>
+              </View>
+            </View>
+
+            <View style={styles.feeRow}>
+              <Text style={styles.feeLabel}>Monthly Customer Subscription</Text>
+              <Text style={styles.freeValue}>$0.00</Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.feeRow}>
+              <Text style={styles.feeLabel}>Farm2Home Service Fee</Text>
+              <Text style={styles.feeValue}>
+                ${CUSTOMER_SERVICE_FEE.toFixed(2)} / order
+              </Text>
+            </View>
+
+            <Text style={styles.feeFootnote}>
+              The service fee is calculated during checkout and is not required to
+              sign in or browse the marketplace.
+            </Text>
+          </View>
+
           <View style={styles.infoCard}>
             <View style={styles.infoIcon}>
               <Ionicons name="leaf-outline" size={20} color="#92400E" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.infoTitle}>Fresh from local farms</Text>
+              <Text style={styles.infoTitle}>Fresh from farmers</Text>
               <Text style={styles.infoText}>
-                Browse produce, groceries, farm goods, delivery options, and order updates from your Farm2Home customer account.
+                Browse fresh produce, farm goods, delivery and pickup options,
+                manage orders, and support farmers through Farm2Home Direct.
               </Text>
             </View>
           </View>
@@ -1130,9 +602,9 @@ export default function CustomerLoginScreen() {
               </View>
 
               <Text style={styles.modalTitle}>Reset Password</Text>
-
               <Text style={styles.modalSubtitle}>
-                Enter your customer email. Farm2Home will send a secure reset link if the Auth account exists.
+                Enter your customer email. Farm2Home Direct will send a secure
+                password reset link if the authentication account exists.
               </Text>
 
               <TextInput
@@ -1180,10 +652,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   keyboard: { flex: 1, backgroundColor: COLORS.bg },
   page: { flex: 1, backgroundColor: COLORS.bg },
-  content: {
-    flexGrow: 1,
-    paddingBottom: 70,
-  },
+  content: { flexGrow: 1, paddingBottom: 70 },
   hero: {
     backgroundColor: COLORS.navy,
     paddingTop: 22,
@@ -1233,8 +702,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   noticeBox: {
-    backgroundColor: COLORS.card,
-    borderColor: COLORS.border,
+    backgroundColor: COLORS.greenSoft,
+    borderColor: "#A7F3D0",
     borderWidth: 1,
     borderRadius: 22,
     padding: 16,
@@ -1244,77 +713,27 @@ const styles = StyleSheet.create({
   },
   noticeHeader: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 7,
+    alignItems: "flex-start",
+    gap: 11,
   },
-  noticeTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 17,
-  },
-  noticeText: {
-    color: COLORS.muted,
-    fontWeight: "700",
-    lineHeight: 22,
-  },
-  progressCard: {
-    backgroundColor: COLORS.card,
-    borderColor: COLORS.border,
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 16,
-    marginHorizontal: 18,
-    marginBottom: 14,
-  },
-  progressTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  progressTitle: {
-    color: COLORS.text,
-    fontWeight: "900",
-    fontSize: 18,
-  },
-  progressScore: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 24,
-  },
-  statusRow: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 15,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 8,
-  },
-  statusIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 12,
+  noticeIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: "#ECFDF5",
     alignItems: "center",
     justifyContent: "center",
   },
-  statusGood: {
-    backgroundColor: COLORS.green,
-  },
-  statusMissing: {
-    backgroundColor: "#E5E7EB",
-  },
-  statusLabel: {
-    color: COLORS.text,
+  noticeTitle: {
+    color: COLORS.greenDark,
     fontWeight: "900",
+    fontSize: 17,
+    marginBottom: 4,
   },
-  statusValue: {
-    color: COLORS.muted,
+  noticeText: {
+    color: "#065F46",
     fontWeight: "700",
-    marginTop: 2,
+    lineHeight: 21,
   },
   card: {
     backgroundColor: COLORS.card,
@@ -1384,23 +803,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 16,
   },
-  secondaryButton: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-    borderRadius: 18,
-    padding: 15,
-    marginTop: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  secondaryText: {
-    color: COLORS.primary,
-    fontWeight: "900",
-    fontSize: 15,
-  },
   marketButton: {
     backgroundColor: COLORS.white,
     borderWidth: 1,
@@ -1424,6 +826,72 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontWeight: "900",
   },
+  feeCard: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 22,
+    padding: 17,
+    marginHorizontal: 18,
+    marginBottom: 16,
+  },
+  feeTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    marginBottom: 14,
+  },
+  feeIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: COLORS.greenSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  feeTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 17,
+  },
+  feeSubtitle: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  feeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 7,
+  },
+  feeLabel: {
+    flex: 1,
+    color: COLORS.text,
+    fontWeight: "800",
+  },
+  freeValue: {
+    color: COLORS.greenDark,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  feeValue: {
+    color: COLORS.primaryDark,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 5,
+  },
+  feeFootnote: {
+    color: COLORS.muted,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 10,
+  },
   infoCard: {
     backgroundColor: "#FFFBEB",
     borderWidth: 1,
@@ -1439,7 +907,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 14,
-    backgroundColor: "#FEF3C7",
+    backgroundColor: COLORS.amberSoft,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1469,7 +937,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 20,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: COLORS.primarySoft,
     alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
