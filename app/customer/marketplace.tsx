@@ -233,12 +233,8 @@ function statusBlocked(value: any) {
 function customerReady(customer: CustomerSession | null) {
   return Boolean(
     getCustomerId(customer) &&
-      isCus(getStripeCustomer(customer)) &&
-      isSub(getStripeSubscription(customer)) &&
       customer?.account_active !== false &&
-      customer?.accountActive !== false &&
-      !statusBlocked(customer?.membership_status || customer?.membershipStatus) &&
-      !statusBlocked(customer?.subscription_status || customer?.subscriptionStatus)
+      customer?.accountActive !== false
   );
 }
 
@@ -622,19 +618,26 @@ async function queryProductTable(tableName: string): Promise<Product[]> {
 
 async function loadApprovedFarmersFromSupabase(): Promise<Farmer[]> {
   try {
+    // Query the table without optional-column filters. Some deployments do not
+    // have approved/farmer_active/store_unlocked, which makes PostgREST return 400.
     const { data, error } = await supabase
       .from("farmers")
-      .select("*")
-      .eq("approved", true)
-      .eq("farmer_active", true)
-      .eq("store_unlocked", true);
+      .select("*");
 
     if (error || !Array.isArray(data)) {
       if (error) console.log("farmers marketplace query skipped:", error.message);
       return [];
     }
 
-    return data.map((row) => {
+    const visibleRows = data.filter((row: any) => {
+      if (row?.account_active === false) return false;
+      if (row?.farmer_active === false) return false;
+      if (row?.approved === false) return false;
+      if (row?.store_unlocked === false) return false;
+      return true;
+    });
+
+    return visibleRows.map((row) => {
       const farmer = mapFarmerRow(row);
       const rawProducts = Array.isArray(row.products)
         ? row.products
@@ -679,13 +682,10 @@ async function loadProductsFromSupabase(): Promise<Farmer[]> {
     "inventory",
   ];
 
-  const bundleTables = [
-    "farm_bundles",
-    "farmer_bundles",
-    "farm_subscription_bundles",
-    "subscription_bundles",
-    "bundles",
-  ];
+  // Bundles are currently loaded from the farmer record / local farmer session.
+  // Do not probe non-existent bundle tables on every marketplace load.
+  // When a canonical farmer_bundles table is deployed, add only that table here.
+  const bundleTables: string[] = [];
 
   let products: Product[] = [];
 
@@ -813,21 +813,14 @@ export default function MarketplaceScreen() {
     if (authId || authEmail) {
       const dbCustomer = await fetchCustomer(authId, authEmail);
       if (dbCustomer) {
-        const sub = await fetchCustomerSubscription(dbCustomer.id, dbCustomer.email);
-        const merged = {
-          ...dbCustomer,
-          stripe_customer_id: dbCustomer.stripe_customer_id || dbCustomer.stripe_id || sub?.stripe_customer_id,
-          stripe_subscription_id: dbCustomer.stripe_subscription_id || dbCustomer.subscription_id || sub?.stripe_subscription_id,
-          subscription_id: dbCustomer.subscription_id || dbCustomer.stripe_subscription_id || sub?.stripe_subscription_id,
-          subscription_status: dbCustomer.subscription_status || sub?.subscription_status,
-        };
+        // Customer marketplace access no longer depends on Stripe membership.
+        // Customers pay the flat $4.99 service fee only when checkout completes.
+        const merged = { ...dbCustomer };
 
         const session = {
           ...merged,
           customerId: merged.id,
           accountId: merged.account_id,
-          stripeCustomerId: merged.stripe_customer_id,
-          subscriptionId: merged.subscription_id || merged.stripe_subscription_id,
         };
 
         setCustomer(session);
@@ -1577,8 +1570,8 @@ export default function MarketplaceScreen() {
       <SafeAreaView style={styles.safe}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
         <View style={styles.loadingPage}>
-          <Text style={styles.lockedTitle}>Membership Required</Text>
-          <Text style={styles.loadingText}>Complete customer membership to shop local farms.</Text>
+          <Text style={styles.lockedTitle}>Customer Account Required</Text>
+          <Text style={styles.loadingText}>Sign in or create a customer account to shop local farms.</Text>
 
           <TouchableOpacity
             style={styles.lockedButton}
@@ -1592,7 +1585,7 @@ export default function MarketplaceScreen() {
               })
             }
           >
-            <Text style={styles.lockedButtonText}>Fix Membership</Text>
+            <Text style={styles.lockedButtonText}>Create Customer Account</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
