@@ -516,7 +516,7 @@ export default function CustomerCart() {
     return cart.reduce((sum: number, item: any) => sum + getQuantity(item), 0);
   }, [cart]);
 
-  const serviceFee = useMemo(() => subtotal * 0.04, [subtotal]);
+  const serviceFee = useMemo(() => subtotal + 4.99, [subtotal]);
   const estimatedDelivery = useMemo(() => (subtotal > 0 ? 5.99 : 0), [subtotal]);
   const estimatedTotal = useMemo(
     () => subtotal + serviceFee + estimatedDelivery,
@@ -846,7 +846,7 @@ export default function CustomerCart() {
           <Text style={styles.summaryTitle}>Order Summary</Text>
 
           <SummaryLine label="Subtotal" value={money(subtotal)} />
-          <SummaryLine label="Marketplace Service Fee 4%" value={money(serviceFee)} />
+          <SummaryLine label="Marketplace Service Fee 4.99" value={money(serviceFee)} />
           <SummaryLine label="Estimated Delivery" value={money(estimatedDelivery)} />
 
           <View style={styles.divider} />
