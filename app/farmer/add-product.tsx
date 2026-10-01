@@ -1,6 +1,7 @@
 // app/farmer/add-product.tsx
 
 import React, { useCallback, useMemo, useState } from "react";
+
 import {
   ActivityIndicator,
   Alert,
@@ -12,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect } from "expo-router";
@@ -19,11 +21,18 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { addProductToFarmer, Product } from "../data/farmerStore";
 import { supabase } from "../data/supabaseClient";
+
 import {
   FARM_PRODUCT_CATEGORIES,
   FarmProductCategory,
   FarmProductUnit,
 } from "../data/farmProductCatalog";
+
+/*
+|--------------------------------------------------------------------------
+| PRODUCT UNITS
+|--------------------------------------------------------------------------
+*/
 
 const PRODUCT_UNITS: FarmProductUnit[] = [
   "lb",
@@ -45,11 +54,11 @@ const PRODUCT_UNITS: FarmProductUnit[] = [
   "flat",
 ];
 
-const FULFILLMENT_OPTIONS = [
-  "Pickup Only",
-  "Delivery Only",
-  "Pickup and Delivery",
-];
+/*
+|--------------------------------------------------------------------------
+| PROCESSING OPTIONS
+|--------------------------------------------------------------------------
+*/
 
 const PROCESSING_OPTIONS = [
   "Not Applicable",
@@ -62,6 +71,12 @@ const PROCESSING_REQUIRED_CATEGORIES: FarmProductCategory[] = [
   "Meat",
   "Fish & Aquaculture",
 ];
+
+/*
+|--------------------------------------------------------------------------
+| CATEGORY EMOJIS
+|--------------------------------------------------------------------------
+*/
 
 const CATEGORY_EMOJIS: Record<string, string> = {
   Vegetables: "🥬",
@@ -79,7 +94,15 @@ const CATEGORY_EMOJIS: Record<string, string> = {
   "Seasonal Products": "🎃",
 };
 
-function normalizeUnitForCategory(category: string): FarmProductUnit {
+/*
+|--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
+*/
+
+function normalizeUnitForCategory(
+  category: string
+): FarmProductUnit {
   if (category === "Eggs") return "dozen";
   if (category === "Flowers") return "bunch";
   if (category === "Hay & Feed") return "bale";
@@ -90,45 +113,192 @@ function normalizeUnitForCategory(category: string): FarmProductUnit {
   if (category === "Fish & Aquaculture") return "lb";
   if (category === "Meat") return "lb";
   if (category === "Farm Supplies") return "bag";
+
   return "each";
 }
 
-function getCleanFarmName(value: string, fallback?: string) {
+function getCleanFarmName(
+  value: string,
+  fallback?: string
+) {
   const clean = String(value || "").trim();
-  if (clean) return clean;
+
+  if (clean) {
+    return clean;
+  }
 
   const fallbackClean = String(fallback || "").trim();
-  if (fallbackClean) return fallbackClean;
+
+  if (fallbackClean) {
+    return fallbackClean;
+  }
 
   return "Farm2Home Farm";
 }
 
+/*
+|--------------------------------------------------------------------------
+| BUILD LEGACY DELIVERY OPTION
+|--------------------------------------------------------------------------
+|
+| We are keeping delivery_option for compatibility with your existing
+| marketplace code while also storing the new independent boolean fields.
+|
+*/
+
+function buildDeliveryOption(
+  pickup: boolean,
+  delivery: boolean,
+  shipping: boolean
+) {
+  const options: string[] = [];
+
+  if (pickup) {
+    options.push("Pickup");
+  }
+
+  if (delivery) {
+    options.push("Delivery");
+  }
+
+  if (shipping) {
+    options.push("Shipping");
+  }
+
+  return options.join(", ");
+}
+
+/*
+|--------------------------------------------------------------------------
+| ADD PRODUCT SCREEN
+|--------------------------------------------------------------------------
+*/
+
 export default function AddProduct() {
   const [loading, setLoading] = useState(false);
+
+  /*
+  |--------------------------------------------------------------------------
+  | FARMER
+  |--------------------------------------------------------------------------
+  */
 
   const [farmerId, setFarmerId] = useState("");
   const [farmerEmail, setFarmerEmail] = useState("");
   const [farmName, setFarmName] = useState("Farm2Home Farm");
 
+  /*
+  |--------------------------------------------------------------------------
+  | PRODUCT
+  |--------------------------------------------------------------------------
+  */
+
   const [productName, setProductName] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState<FarmProductCategory>("Vegetables");
+
+  const [category, setCategory] =
+    useState<FarmProductCategory>("Vegetables");
+
+  /*
+  |--------------------------------------------------------------------------
+  | PRICE / INVENTORY
+  |--------------------------------------------------------------------------
+  */
 
   const [price, setPrice] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [lowStockThreshold, setLowStockThreshold] = useState("5");
 
-  const [unit, setUnit] = useState<FarmProductUnit>("each");
-  const [deliveryOption, setDeliveryOption] = useState("Pickup and Delivery");
-  const [processingOption, setProcessingOption] = useState("Not Applicable");
+  const [lowStockThreshold, setLowStockThreshold] =
+    useState("5");
 
-  const [harvestDate, setHarvestDate] = useState("");
-  const [image, setImage] = useState("");
+  const [unit, setUnit] =
+    useState<FarmProductUnit>("each");
 
-  const [organic, setOrganic] = useState(false);
-  const [local, setLocal] = useState(true);
-  const [seasonal, setSeasonal] = useState(false);
-  const [featured, setFeatured] = useState(true);
+  /*
+  |--------------------------------------------------------------------------
+  | FULFILLMENT
+  |--------------------------------------------------------------------------
+  |
+  | These are independent because farmers can select:
+  |
+  | Pickup only
+  | Delivery only
+  | Shipping only
+  | Pickup + Delivery
+  | Pickup + Shipping
+  | Delivery + Shipping
+  | Pickup + Delivery + Shipping
+  |
+  */
+
+  const [pickupAvailable, setPickupAvailable] =
+    useState(true);
+
+  const [deliveryAvailable, setDeliveryAvailable] =
+    useState(true);
+
+  const [shippingAvailable, setShippingAvailable] =
+    useState(false);
+
+  /*
+  |--------------------------------------------------------------------------
+  | SHIPPING
+  |--------------------------------------------------------------------------
+  */
+
+  const [shippingFee, setShippingFee] =
+    useState("");
+
+  const [freeShipping, setFreeShipping] =
+    useState(false);
+
+  const [shippingNotes, setShippingNotes] =
+    useState("");
+
+  const [shipsFromZip, setShipsFromZip] =
+    useState("");
+
+  const [processingDays, setProcessingDays] =
+    useState("1");
+
+  /*
+  |--------------------------------------------------------------------------
+  | PROCESSING
+  |--------------------------------------------------------------------------
+  */
+
+  const [processingOption, setProcessingOption] =
+    useState("Not Applicable");
+
+  /*
+  |--------------------------------------------------------------------------
+  | OTHER PRODUCT INFORMATION
+  |--------------------------------------------------------------------------
+  */
+
+  const [harvestDate, setHarvestDate] =
+    useState("");
+
+  const [image, setImage] =
+    useState("");
+
+  const [organic, setOrganic] =
+    useState(false);
+
+  const [local, setLocal] =
+    useState(true);
+
+  const [seasonal, setSeasonal] =
+    useState(false);
+
+  const [featured, setFeatured] =
+    useState(true);
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOAD FARMER WHEN SCREEN OPENS
+  |--------------------------------------------------------------------------
+  */
 
   useFocusEffect(
     useCallback(() => {
@@ -136,26 +306,80 @@ export default function AddProduct() {
     }, [])
   );
 
+  /*
+  |--------------------------------------------------------------------------
+  | CATEGORY EMOJI
+  |--------------------------------------------------------------------------
+  */
+
   const categoryEmoji = useMemo(() => {
     return CATEGORY_EMOJIS[category] || "🧺";
   }, [category]);
 
+  /*
+  |--------------------------------------------------------------------------
+  | LEGACY DELIVERY OPTION
+  |--------------------------------------------------------------------------
+  */
+
+  const deliveryOption = useMemo(() => {
+    return buildDeliveryOption(
+      pickupAvailable,
+      deliveryAvailable,
+      shippingAvailable
+    );
+  }, [
+    pickupAvailable,
+    deliveryAvailable,
+    shippingAvailable,
+  ]);
+
+  /*
+  |--------------------------------------------------------------------------
+  | MARKET PREVIEW
+  |--------------------------------------------------------------------------
+  */
+
   const marketPreview = useMemo(() => {
     return {
-      name: productName.trim() || "Product Name",
-      price: Number(price || 0),
-      quantity: Number(quantity || 0),
+      name:
+        productName.trim() ||
+        "Product Name",
+
+      price:
+        Number(price || 0),
+
+      quantity:
+        Number(quantity || 0),
+
       unit,
+
       category,
     };
-  }, [productName, price, quantity, unit, category]);
+  }, [
+    productName,
+    price,
+    quantity,
+    unit,
+    category,
+  ]);
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOAD CURRENT FARMER
+  |--------------------------------------------------------------------------
+  */
 
   async function loadCurrentFarmer() {
     try {
       const saved =
         (await AsyncStorage.getItem("currentFarmer")) ||
-        (await AsyncStorage.getItem("farm2homeCurrentFarmer")) ||
-        (await AsyncStorage.getItem("farm2homeFarmerSession")) ||
+        (await AsyncStorage.getItem(
+          "farm2homeCurrentFarmer"
+        )) ||
+        (await AsyncStorage.getItem(
+          "farm2homeFarmerSession"
+        )) ||
         (await AsyncStorage.getItem("currentUser"));
 
       if (!saved) {
@@ -163,15 +387,17 @@ export default function AddProduct() {
         return;
       }
 
-      const currentFarmer = JSON.parse(saved);
+      const currentFarmer =
+        JSON.parse(saved);
 
-      const loadedFarmName = getCleanFarmName(
-        currentFarmer.farmName ||
-          currentFarmer.businessName ||
-          currentFarmer.business_name ||
-          currentFarmer.farm_name ||
-          currentFarmer.name
-      );
+      const loadedFarmName =
+        getCleanFarmName(
+          currentFarmer.farmName ||
+            currentFarmer.businessName ||
+            currentFarmer.business_name ||
+            currentFarmer.farm_name ||
+            currentFarmer.name
+        );
 
       setFarmerId(
         currentFarmer.id ||
@@ -180,339 +406,1182 @@ export default function AddProduct() {
           currentFarmer.profile_id ||
           ""
       );
-      setFarmerEmail(currentFarmer.email || "");
-      setFarmName(loadedFarmName);
+
+      setFarmerEmail(
+        currentFarmer.email || ""
+      );
+
+      setFarmName(
+        loadedFarmName
+      );
     } catch (error) {
-      console.log("Load current farmer error:", error);
-      router.replace("/farmer/login" as any);
+      console.log(
+        "Load current farmer error:",
+        error
+      );
+
+      router.replace(
+        "/farmer/login" as any
+      );
     }
   }
 
-  function selectCategory(item: FarmProductCategory) {
-    setCategory(item);
-    setUnit(normalizeUnitForCategory(item));
+  /*
+  |--------------------------------------------------------------------------
+  | SELECT CATEGORY
+  |--------------------------------------------------------------------------
+  */
 
-    if (PROCESSING_REQUIRED_CATEGORIES.includes(item)) {
-      setProcessingOption("Traditional");
+  function selectCategory(
+    item: FarmProductCategory
+  ) {
+    setCategory(item);
+
+    setUnit(
+      normalizeUnitForCategory(item)
+    );
+
+    if (
+      PROCESSING_REQUIRED_CATEGORIES.includes(
+        item
+      )
+    ) {
+      setProcessingOption(
+        "Traditional"
+      );
     } else {
-      setProcessingOption("Not Applicable");
+      setProcessingOption(
+        "Not Applicable"
+      );
     }
 
-    if (item === "Seasonal Products") {
+    if (
+      item ===
+      "Seasonal Products"
+    ) {
       setSeasonal(true);
     }
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | PICK PRODUCT IMAGE
+  |--------------------------------------------------------------------------
+  */
+
   async function pickImage() {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
-        allowsEditing: true,
-        aspect: [4, 3],
-      });
+      const result =
+        await ImagePicker.launchImageLibraryAsync({
+          mediaTypes:
+            ImagePicker.MediaTypeOptions.Images,
 
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        setImage(result.assets[0].uri);
+          quality: 0.85,
+
+          allowsEditing: true,
+
+          aspect: [4, 3],
+        });
+
+      if (
+        !result.canceled &&
+        result.assets?.[0]?.uri
+      ) {
+        setImage(
+          result.assets[0].uri
+        );
       }
     } catch (error) {
-      console.log("Product image picker error:", error);
-      Alert.alert("Image Error", "Unable to select a product image.");
+      console.log(
+        "Product image picker error:",
+        error
+      );
+
+      Alert.alert(
+        "Image Error",
+        "Unable to select a product image."
+      );
     }
   }
 
-  async function saveLocalProduct(product: Product) {
+  /*
+  |--------------------------------------------------------------------------
+  | SAVE LOCAL PRODUCT
+  |--------------------------------------------------------------------------
+  */
+
+  async function saveLocalProduct(
+    product: Product
+  ) {
     const saved =
       (await AsyncStorage.getItem("currentFarmer")) ||
       (await AsyncStorage.getItem("currentUser"));
 
-    const currentFarmer = saved ? JSON.parse(saved) : {};
-    const existingProducts = Array.isArray(currentFarmer.products)
-      ? currentFarmer.products
-      : [];
+    const currentFarmer =
+      saved
+        ? JSON.parse(saved)
+        : {};
 
-    const cleanFarmName = getCleanFarmName(farmName, (product as any).farmName);
+    const existingProducts =
+      Array.isArray(
+        currentFarmer.products
+      )
+        ? currentFarmer.products
+        : [];
+
+    const cleanFarmName =
+      getCleanFarmName(
+        farmName,
+        (product as any).farmName
+      );
 
     const updatedFarmer = {
       ...currentFarmer,
-      farmName: cleanFarmName,
-      businessName: currentFarmer.businessName || cleanFarmName,
-      products: [...existingProducts, product],
-      updatedAt: new Date().toISOString(),
+
+      farmName:
+        cleanFarmName,
+
+      businessName:
+        currentFarmer.businessName ||
+        cleanFarmName,
+
+      products: [
+        ...existingProducts,
+        product,
+      ],
+
+      updatedAt:
+        new Date().toISOString(),
     };
 
-    await AsyncStorage.setItem("currentFarmer", JSON.stringify(updatedFarmer));
-    await AsyncStorage.setItem("farm2homeCurrentFarmer", JSON.stringify(updatedFarmer));
-    await AsyncStorage.setItem("farm2homeFarmerSession", JSON.stringify(updatedFarmer));
-    await AsyncStorage.setItem("currentUser", JSON.stringify(updatedFarmer));
-    await AsyncStorage.setItem("userRole", "farmer");
-    await AsyncStorage.setItem("currentUserRole", "farmer");
+    await AsyncStorage.setItem(
+      "currentFarmer",
+      JSON.stringify(updatedFarmer)
+    );
+
+    await AsyncStorage.setItem(
+      "farm2homeCurrentFarmer",
+      JSON.stringify(updatedFarmer)
+    );
+
+    await AsyncStorage.setItem(
+      "farm2homeFarmerSession",
+      JSON.stringify(updatedFarmer)
+    );
+
+    await AsyncStorage.setItem(
+      "currentUser",
+      JSON.stringify(updatedFarmer)
+    );
+
+    await AsyncStorage.setItem(
+      "userRole",
+      "farmer"
+    );
+
+    await AsyncStorage.setItem(
+      "currentUserRole",
+      "farmer"
+    );
   }
 
-  async function checkDuplicateProduct(name: string) {
-    const { data, error } = await supabase
+  /*
+  |--------------------------------------------------------------------------
+  | DUPLICATE PRODUCT CHECK
+  |--------------------------------------------------------------------------
+  */
+
+  async function checkDuplicateProduct(
+    name: string
+  ) {
+    const {
+      data,
+      error,
+    } = await supabase
       .from("products")
-      .select("id,name,farmer_id")
-      .eq("farmer_id", farmerId)
-      .ilike("name", name.trim());
+      .select(
+        "id,name,farmer_id"
+      )
+      .eq(
+        "farmer_id",
+        farmerId
+      )
+      .ilike(
+        "name",
+        name.trim()
+      );
 
     if (error) {
-      console.log("Duplicate check skipped:", error.message);
+      console.log(
+        "Duplicate check skipped:",
+        error.message
+      );
+
       return false;
     }
 
-    return Array.isArray(data) && data.length > 0;
+    return (
+      Array.isArray(data) &&
+      data.length > 0
+    );
   }
 
-  async function saveProductToMarketplace(product: Product) {
-    const stock = Number(product.stock || product.quantity || 0);
-    const productAny = product as any;
-    const cleanFarmName = getCleanFarmName(farmName, productAny.farmName);
+  /*
+  |--------------------------------------------------------------------------
+  | SAVE PRODUCT TO MARKETPLACE
+  |--------------------------------------------------------------------------
+  */
+
+  async function saveProductToMarketplace(
+    product: Product
+  ) {
+    const stock =
+      Number(
+        product.stock ||
+          product.quantity ||
+          0
+      );
+
+    const productAny =
+      product as any;
+
+    const cleanFarmName =
+      getCleanFarmName(
+        farmName,
+        productAny.farmName
+      );
+
+    /*
+    |--------------------------------------------------------------------------
+    | FULL PRODUCT PAYLOAD
+    |--------------------------------------------------------------------------
+    */
 
     const fullPayload = {
-      id: product.id,
-      farmer_id: farmerId,
-      farmer_email: farmerEmail,
-      farm_name: cleanFarmName,
+      id:
+        product.id,
 
-      name: product.name,
-      description: product.description,
-      category: product.category,
+      farmer_id:
+        farmerId,
 
-      price: product.price,
-      unit: product.unit,
+      farmer_email:
+        farmerEmail,
 
-      inventory: stock,
-      quantity: stock,
+      farm_name:
+        cleanFarmName,
+
+      name:
+        product.name,
+
+      description:
+        product.description,
+
+      category:
+        product.category,
+
+      price:
+        product.price,
+
+      unit:
+        product.unit,
+
+      inventory:
+        stock,
+
+      quantity:
+        stock,
+
       stock,
 
-      low_stock_threshold: product.lowStockThreshold,
-      is_sold_out: product.isSoldOut,
+      low_stock_threshold:
+        product.lowStockThreshold,
 
-      image_url: product.image || product.imageUrl || null,
+      is_sold_out:
+        product.isSoldOut,
 
-      delivery_option: product.deliveryOption,
-      processing_option: product.processingOption,
+      image_url:
+        product.image ||
+        product.imageUrl ||
+        null,
 
-      harvest_date: productAny.harvestDate || null,
+      /*
+      |--------------------------------------------------------------------------
+      | LEGACY FULFILLMENT FIELD
+      |--------------------------------------------------------------------------
+      */
 
-      organic: Boolean(productAny.organic),
-      local: Boolean(productAny.local),
-      seasonal: Boolean(productAny.seasonal),
-      featured: Boolean(productAny.featured),
+      delivery_option:
+        productAny.deliveryOption,
 
-      tags: productAny.tags || [],
+      /*
+      |--------------------------------------------------------------------------
+      | NEW PRODUCT-LEVEL FULFILLMENT
+      |--------------------------------------------------------------------------
+      */
 
-      available: stock > 0,
-      active: true,
-      marketplace_visible: true,
-      source: "farmer_market_upload",
+      pickup_available:
+        Boolean(
+          productAny.pickupAvailable
+        ),
 
-      sold: product.sold || 0,
-      gross_sales: product.grossSales || 0,
+      delivery_available:
+        Boolean(
+          productAny.deliveryAvailable
+        ),
 
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      shipping_available:
+        Boolean(
+          productAny.shippingAvailable
+        ),
+
+      /*
+      |--------------------------------------------------------------------------
+      | SHIPPING
+      |--------------------------------------------------------------------------
+      */
+
+      shipping_fee:
+        Number(
+          productAny.shippingFee ||
+            0
+        ),
+
+      free_shipping:
+        Boolean(
+          productAny.freeShipping
+        ),
+
+      shipping_notes:
+        productAny.shippingNotes ||
+        null,
+
+      ships_from_zip:
+        productAny.shipsFromZip ||
+        null,
+
+      processing_days:
+        Number(
+          productAny.processingDays ||
+            1
+        ),
+
+      /*
+      |--------------------------------------------------------------------------
+      | PROCESSING
+      |--------------------------------------------------------------------------
+      */
+
+      processing_option:
+        product.processingOption,
+
+      harvest_date:
+        productAny.harvestDate ||
+        null,
+
+      /*
+      |--------------------------------------------------------------------------
+      | TAGS
+      |--------------------------------------------------------------------------
+      */
+
+      organic:
+        Boolean(
+          productAny.organic
+        ),
+
+      local:
+        Boolean(
+          productAny.local
+        ),
+
+      seasonal:
+        Boolean(
+          productAny.seasonal
+        ),
+
+      featured:
+        Boolean(
+          productAny.featured
+        ),
+
+      tags:
+        productAny.tags ||
+        [],
+
+      /*
+      |--------------------------------------------------------------------------
+      | MARKETPLACE STATUS
+      |--------------------------------------------------------------------------
+      */
+
+      available:
+        stock > 0,
+
+      active:
+        true,
+
+      marketplace_visible:
+        true,
+
+      source:
+        "farmer_market_upload",
+
+      sold:
+        product.sold ||
+        0,
+
+      gross_sales:
+        product.grossSales ||
+        0,
+
+      created_at:
+        new Date().toISOString(),
+
+      updated_at:
+        new Date().toISOString(),
     };
 
-    const { error } = await supabase.from("products").upsert(fullPayload, {
-      onConflict: "id",
-    });
+    /*
+    |--------------------------------------------------------------------------
+    | UPSERT FULL PRODUCT
+    |--------------------------------------------------------------------------
+    */
 
-    if (!error) return;
+    const {
+      error,
+    } = await supabase
+      .from("products")
+      .upsert(
+        fullPayload,
+        {
+          onConflict:
+            "id",
+        }
+      );
 
-    console.log("Full marketplace save failed, retrying minimal:", error.message);
+    if (!error) {
+      return;
+    }
+
+    console.log(
+      "Full marketplace save failed, retrying minimal:",
+      error.message
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | FALLBACK
+    |--------------------------------------------------------------------------
+    |
+    | This keeps your current product creation compatible while the new
+    | Supabase fulfillment columns are being added.
+    |
+    */
 
     const minimalPayload = {
-      farmer_id: farmerId,
-      farmer_email: farmerEmail,
-      farm_name: cleanFarmName,
-      name: product.name,
-      description: product.description,
-      category: product.category,
-      price: product.price,
-      unit: product.unit,
-      quantity: stock,
+      farmer_id:
+        farmerId,
+
+      farmer_email:
+        farmerEmail,
+
+      farm_name:
+        cleanFarmName,
+
+      name:
+        product.name,
+
+      description:
+        product.description,
+
+      category:
+        product.category,
+
+      price:
+        product.price,
+
+      unit:
+        product.unit,
+
+      quantity:
+        stock,
+
       stock,
-      image_url: product.image || product.imageUrl || null,
-      delivery_option: product.deliveryOption,
-      available: stock > 0,
-      marketplace_visible: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+
+      image_url:
+        product.image ||
+        product.imageUrl ||
+        null,
+
+      delivery_option:
+        productAny.deliveryOption,
+
+      available:
+        stock > 0,
+
+      marketplace_visible:
+        true,
+
+      created_at:
+        new Date().toISOString(),
+
+      updated_at:
+        new Date().toISOString(),
     };
 
-    const { error: minimalError } = await supabase
+    const {
+      error: minimalError,
+    } = await supabase
       .from("products")
-      .insert(minimalPayload);
+      .insert(
+        minimalPayload
+      );
 
-    if (minimalError) throw minimalError;
+    if (minimalError) {
+      throw minimalError;
+    }
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | VALIDATE PRODUCT
+  |--------------------------------------------------------------------------
+  */
+
   function validateProduct() {
-    if (!farmerId || !farmerEmail) {
-      Alert.alert("Session Error", "Please login again.");
-      router.replace("/farmer/login" as any);
+    if (
+      !farmerId ||
+      !farmerEmail
+    ) {
+      Alert.alert(
+        "Session Error",
+        "Please login again."
+      );
+
+      router.replace(
+        "/farmer/login" as any
+      );
+
       return false;
     }
 
-    if (!farmName.trim()) {
-      Alert.alert("Farm Name Needed", "Enter your farm name.");
+    if (
+      !farmName.trim()
+    ) {
+      Alert.alert(
+        "Farm Name Needed",
+        "Enter your farm name."
+      );
+
       return false;
     }
 
-    if (!productName.trim()) {
-      Alert.alert("Product Name Needed", "Enter the product name.");
+    if (
+      !productName.trim()
+    ) {
+      Alert.alert(
+        "Product Name Needed",
+        "Enter the product name."
+      );
+
       return false;
     }
 
-    if (!price.trim()) {
-      Alert.alert("Price Needed", "Enter the market price.");
+    if (
+      !price.trim()
+    ) {
+      Alert.alert(
+        "Price Needed",
+        "Enter the market price."
+      );
+
       return false;
     }
 
-    if (!quantity.trim()) {
-      Alert.alert("Inventory Needed", "Enter the quantity available.");
+    if (
+      !quantity.trim()
+    ) {
+      Alert.alert(
+        "Inventory Needed",
+        "Enter the quantity available."
+      );
+
       return false;
     }
 
-    const numericPrice = Number(price);
-    const numericQuantity = Number(quantity);
+    const numericPrice =
+      Number(price);
 
-    if (Number.isNaN(numericPrice) || numericPrice <= 0) {
-      Alert.alert("Invalid Price", "Enter a valid price greater than 0.");
+    const numericQuantity =
+      Number(quantity);
+
+    if (
+      Number.isNaN(
+        numericPrice
+      ) ||
+      numericPrice <= 0
+    ) {
+      Alert.alert(
+        "Invalid Price",
+        "Enter a valid price greater than 0."
+      );
+
       return false;
     }
 
-    if (Number.isNaN(numericQuantity) || numericQuantity < 0) {
-      Alert.alert("Invalid Quantity", "Enter a valid stock quantity.");
+    if (
+      Number.isNaN(
+        numericQuantity
+      ) ||
+      numericQuantity < 0
+    ) {
+      Alert.alert(
+        "Invalid Quantity",
+        "Enter a valid stock quantity."
+      );
+
       return false;
     }
 
-    if (PROCESSING_REQUIRED_CATEGORIES.includes(category) && processingOption === "Not Applicable") {
+    /*
+    |--------------------------------------------------------------------------
+    | FULFILLMENT VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      !pickupAvailable &&
+      !deliveryAvailable &&
+      !shippingAvailable
+    ) {
+      Alert.alert(
+        "Fulfillment Required",
+        "Select at least one fulfillment option: Pickup, Local Delivery, or Shipping."
+      );
+
+      return false;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SHIPPING VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      shippingAvailable
+    ) {
+      const numericShippingFee =
+        Number(
+          shippingFee ||
+            0
+        );
+
+      const numericProcessingDays =
+        Number(
+          processingDays ||
+            1
+        );
+
+      if (
+        !freeShipping &&
+        (
+          Number.isNaN(
+            numericShippingFee
+          ) ||
+          numericShippingFee < 0
+        )
+      ) {
+        Alert.alert(
+          "Invalid Shipping Fee",
+          "Enter a valid shipping fee."
+        );
+
+        return false;
+      }
+
+      if (
+        Number.isNaN(
+          numericProcessingDays
+        ) ||
+        numericProcessingDays < 0
+      ) {
+        Alert.alert(
+          "Invalid Processing Time",
+          "Enter a valid number of processing days."
+        );
+
+        return false;
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PROCESSING VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      PROCESSING_REQUIRED_CATEGORIES.includes(
+        category
+      ) &&
+      processingOption ===
+        "Not Applicable"
+    ) {
       Alert.alert(
         "Processing Required",
         "Meat and seafood products need a processing option."
       );
+
       return false;
     }
 
     return true;
   }
+    /*
+  |--------------------------------------------------------------------------
+  | SUBMIT PRODUCT
+  |--------------------------------------------------------------------------
+  */
 
   async function submitProduct() {
     if (loading) return;
-    if (!validateProduct()) return;
+
+    if (!validateProduct()) {
+      return;
+    }
 
     try {
       setLoading(true);
 
-      const duplicateExists = await checkDuplicateProduct(productName);
+      const duplicateExists =
+        await checkDuplicateProduct(
+          productName
+        );
 
       if (duplicateExists) {
         Alert.alert(
           "Duplicate Product",
           "This product already exists in your market. Update the existing listing instead of creating a duplicate."
         );
+
         return;
       }
 
-      const numericPrice = Number(price);
-      const numericQuantity = Number(quantity);
-      const numericThreshold = Number(lowStockThreshold || 5);
-      const now = new Date().toISOString();
+      const numericPrice =
+        Number(price);
 
-      const cleanFarmName = getCleanFarmName(farmName);
+      const numericQuantity =
+        Number(quantity);
+
+      const numericThreshold =
+        Number(
+          lowStockThreshold || 5
+        );
+
+      /*
+      |--------------------------------------------------------------------------
+      | SHIPPING VALUES
+      |--------------------------------------------------------------------------
+      */
+
+      const numericShippingFee =
+        shippingAvailable &&
+        !freeShipping
+          ? Number(
+              shippingFee || 0
+            )
+          : 0;
+
+      const numericProcessingDays =
+        shippingAvailable
+          ? Number(
+              processingDays || 1
+            )
+          : 0;
+
+      const now =
+        new Date().toISOString();
+
+      const cleanFarmName =
+        getCleanFarmName(
+          farmName
+        );
+
+      /*
+      |--------------------------------------------------------------------------
+      | PRODUCT TAGS
+      |--------------------------------------------------------------------------
+      */
 
       const tags = [
-        organic ? "organic" : "",
-        local ? "local" : "",
-        seasonal ? "seasonal" : "",
-        featured ? "featured" : "",
+        organic
+          ? "organic"
+          : "",
+
+        local
+          ? "local"
+          : "",
+
+        seasonal
+          ? "seasonal"
+          : "",
+
+        featured
+          ? "featured"
+          : "",
+
+        pickupAvailable
+          ? "pickup"
+          : "",
+
+        deliveryAvailable
+          ? "delivery"
+          : "",
+
+        shippingAvailable
+          ? "shipping"
+          : "",
+
         category.toLowerCase(),
       ].filter(Boolean);
 
-      const newProduct: Product = {
-        id: `custom_${Date.now()}`,
-        farmerId,
-        name: productName.trim(),
-        description: description.trim(),
-        category,
-        price: numericPrice,
-        quantity: numericQuantity,
-        stock: numericQuantity,
-        lowStockThreshold: numericThreshold,
-        isSoldOut: numericQuantity <= 0,
-        unit,
-        image: image.trim(),
-        imageUrl: image.trim(),
-        deliveryOption,
-        processingOption,
-        sold: 0,
-        grossSales: 0,
-        lastUpdatedBy: farmerEmail,
-        updatedAt: now,
-        farmName: cleanFarmName,
-        farmerName: farmerEmail,
+      /*
+      |--------------------------------------------------------------------------
+      | BUILD PRODUCT
+      |--------------------------------------------------------------------------
+      */
 
-        harvestDate: harvestDate.trim(),
+      const newProduct: Product = {
+        id:
+          `custom_${Date.now()}`,
+
+        farmerId,
+
+        name:
+          productName.trim(),
+
+        description:
+          description.trim(),
+
+        category,
+
+        price:
+          numericPrice,
+
+        quantity:
+          numericQuantity,
+
+        stock:
+          numericQuantity,
+
+        lowStockThreshold:
+          numericThreshold,
+
+        isSoldOut:
+          numericQuantity <= 0,
+
+        unit,
+
+        image:
+          image.trim(),
+
+        imageUrl:
+          image.trim(),
+
+        /*
+        |--------------------------------------------------------------------------
+        | LEGACY FULFILLMENT
+        |--------------------------------------------------------------------------
+        |
+        | Keep this for screens that still read deliveryOption.
+        |
+        */
+
+        deliveryOption,
+
+        /*
+        |--------------------------------------------------------------------------
+        | NEW FULFILLMENT
+        |--------------------------------------------------------------------------
+        */
+
+        pickupAvailable,
+
+        deliveryAvailable,
+
+        shippingAvailable,
+
+        /*
+        |--------------------------------------------------------------------------
+        | SHIPPING
+        |--------------------------------------------------------------------------
+        */
+
+        shippingFee:
+          numericShippingFee,
+
+        freeShipping:
+          shippingAvailable
+            ? freeShipping
+            : false,
+
+        shippingNotes:
+          shippingAvailable
+            ? shippingNotes.trim()
+            : "",
+
+        shipsFromZip:
+          shippingAvailable
+            ? shipsFromZip.trim()
+            : "",
+
+        processingDays:
+          numericProcessingDays,
+
+        /*
+        |--------------------------------------------------------------------------
+        | PROCESSING
+        |--------------------------------------------------------------------------
+        */
+
+        processingOption,
+
+        /*
+        |--------------------------------------------------------------------------
+        | SALES
+        |--------------------------------------------------------------------------
+        */
+
+        sold: 0,
+
+        grossSales: 0,
+
+        /*
+        |--------------------------------------------------------------------------
+        | FARM INFORMATION
+        |--------------------------------------------------------------------------
+        */
+
+        lastUpdatedBy:
+          farmerEmail,
+
+        updatedAt:
+          now,
+
+        farmName:
+          cleanFarmName,
+
+        farmerName:
+          farmerEmail,
+
+        /*
+        |--------------------------------------------------------------------------
+        | MARKETPLACE INFORMATION
+        |--------------------------------------------------------------------------
+        */
+
+        harvestDate:
+          harvestDate.trim(),
+
         organic,
+
         local,
+
         seasonal,
+
         featured,
+
         tags,
-        source: "farmer_market_upload",
-        active: true,
-        available: numericQuantity > 0,
-        marketplaceVisible: true,
+
+        source:
+          "farmer_market_upload",
+
+        active:
+          true,
+
+        available:
+          numericQuantity > 0,
+
+        marketplaceVisible:
+          true,
       } as any;
 
-      await addProductToFarmer(farmerId, newProduct);
-      await saveLocalProduct(newProduct);
-      await saveProductToMarketplace(newProduct);
+      /*
+      |--------------------------------------------------------------------------
+      | SAVE PRODUCT
+      |--------------------------------------------------------------------------
+      */
+
+      await addProductToFarmer(
+        farmerId,
+        newProduct
+      );
+
+      await saveLocalProduct(
+        newProduct
+      );
+
+      await saveProductToMarketplace(
+        newProduct
+      );
+
+      /*
+      |--------------------------------------------------------------------------
+      | SUCCESS
+      |--------------------------------------------------------------------------
+      */
 
       Alert.alert(
         "Added to Farmer Market",
+
         `${productName.trim()} is now live in your farmer market.`,
+
         [
           {
-            text: "Add Another",
-            onPress: resetForm,
+            text:
+              "Add Another",
+
+            onPress:
+              resetForm,
           },
+
           {
-            text: "Dashboard",
-            onPress: () => router.replace("/farmer/dashboard" as any),
+            text:
+              "Dashboard",
+
+            onPress: () =>
+              router.replace(
+                "/farmer/dashboard" as any
+              ),
           },
         ]
       );
     } catch (error: any) {
-      console.log("Add product error:", error);
+      console.log(
+        "Add product error:",
+        error
+      );
+
       Alert.alert(
         "Save Error",
-        error?.message || "Unable to save product to farmer market."
+
+        error?.message ||
+          "Unable to save product to farmer market."
       );
     } finally {
       setLoading(false);
     }
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | RESET FORM
+  |--------------------------------------------------------------------------
+  */
+
   function resetForm() {
     setProductName("");
+
     setDescription("");
-    setCategory("Vegetables");
+
+    setCategory(
+      "Vegetables"
+    );
+
     setPrice("");
+
     setQuantity("");
-    setLowStockThreshold("5");
-    setUnit("each");
-    setDeliveryOption("Pickup and Delivery");
-    setProcessingOption("Not Applicable");
+
+    setLowStockThreshold(
+      "5"
+    );
+
+    setUnit(
+      "each"
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESET FULFILLMENT
+    |--------------------------------------------------------------------------
+    |
+    | Default:
+    |
+    | Pickup = Yes
+    | Delivery = Yes
+    | Shipping = No
+    |
+    */
+
+    setPickupAvailable(
+      true
+    );
+
+    setDeliveryAvailable(
+      true
+    );
+
+    setShippingAvailable(
+      false
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESET SHIPPING
+    |--------------------------------------------------------------------------
+    */
+
+    setShippingFee("");
+
+    setFreeShipping(
+      false
+    );
+
+    setShippingNotes("");
+
+    setShipsFromZip("");
+
+    setProcessingDays(
+      "1"
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESET PROCESSING
+    |--------------------------------------------------------------------------
+    */
+
+    setProcessingOption(
+      "Not Applicable"
+    );
+
     setHarvestDate("");
+
     setImage("");
-    setOrganic(false);
-    setLocal(true);
-    setSeasonal(false);
-    setFeatured(true);
+
+    setOrganic(
+      false
+    );
+
+    setLocal(
+      true
+    );
+
+    setSeasonal(
+      false
+    );
+
+    setFeatured(
+      true
+    );
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | TOGGLE CHIP
+  |--------------------------------------------------------------------------
+  */
 
   function ToggleChip({
     label,
@@ -525,302 +1594,1079 @@ export default function AddProduct() {
   }) {
     return (
       <TouchableOpacity
-        style={[styles.chip, active && styles.chipActive]}
-        onPress={onPress}
-        activeOpacity={0.88}
+        style={[
+          styles.chip,
+
+          active &&
+            styles.chipActive,
+        ]}
+        onPress={
+          onPress
+        }
+        activeOpacity={
+          0.88
+        }
       >
-        <Text style={[styles.chipText, active && styles.chipTextActive]}>
+        <Text
+          style={[
+            styles.chipText,
+
+            active &&
+              styles.chipTextActive,
+          ]}
+        >
           {label}
         </Text>
       </TouchableOpacity>
     );
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | SCREEN
+  |--------------------------------------------------------------------------
+  */
+
   return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <View style={styles.topRow}>
+    <ScrollView
+      style={
+        styles.page
+      }
+      contentContainerStyle={
+        styles.content
+      }
+    >
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
+      <View
+        style={
+          styles.topRow
+        }
+      >
         <TouchableOpacity
-          style={styles.backIconButton}
-          onPress={() => router.push("/farmer/dashboard" as any)}
+          style={
+            styles.backIconButton
+          }
+          onPress={() =>
+            router.push(
+              "/farmer/dashboard" as any
+            )
+          }
         >
-          <Ionicons name="arrow-back-outline" size={22} color="#172017" />
+          <Ionicons
+            name="arrow-back-outline"
+            size={22}
+            color="#172017"
+          />
         </TouchableOpacity>
 
-        <View style={{ flex: 1 }}>
-          <Text style={styles.eyebrow}>Farm2Home Farmer Market</Text>
-          <Text style={styles.title}>Add Product to Market</Text>
-          <Text style={styles.subtitle}>
-            Create a customer-ready listing with category, photo, pricing,
-            inventory, fulfillment, and market tags.
+        <View
+          style={{
+            flex: 1,
+          }}
+        >
+          <Text
+            style={
+              styles.eyebrow
+            }
+          >
+            Farm2Home Farmer Market
+          </Text>
+
+          <Text
+            style={
+              styles.title
+            }
+          >
+            Add Product to Market
+          </Text>
+
+          <Text
+            style={
+              styles.subtitle
+            }
+          >
+            Create a customer-ready
+            listing with category,
+            photo, pricing, inventory,
+            fulfillment, and market
+            tags.
           </Text>
         </View>
       </View>
 
-      <View style={styles.hero}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.heroBadge}>{farmName}</Text>
-          <Text style={styles.heroTitle}>Publish fresh farm goods.</Text>
-          <Text style={styles.heroText}>
-            Products added here become visible in the customer marketplace and
-            can be used later in farm bundles.
+      {/* =====================================================
+          HERO
+      ===================================================== */}
+
+      <View
+        style={
+          styles.hero
+        }
+      >
+        <View
+          style={{
+            flex: 1,
+          }}
+        >
+          <Text
+            style={
+              styles.heroBadge
+            }
+          >
+            {farmName}
+          </Text>
+
+          <Text
+            style={
+              styles.heroTitle
+            }
+          >
+            Publish fresh farm goods.
+          </Text>
+
+          <Text
+            style={
+              styles.heroText
+            }
+          >
+            Products added here become
+            visible in the customer
+            marketplace and can be used
+            later in farm bundles.
           </Text>
         </View>
-        <Text style={styles.heroEmoji}>{categoryEmoji}</Text>
-      </View>
 
-      <View style={styles.flowCard}>
-        <Text style={styles.flowTitle}>Product Market Flow</Text>
-        <FlowStep number="1" text="Choose the product category" />
-        <FlowStep number="2" text="Add photo, name, description, and farm details" />
-        <FlowStep number="3" text="Set price, unit, quantity, and stock alert" />
-        <FlowStep number="4" text="Choose pickup or delivery and publish to market" />
-      </View>
-
-      <View style={styles.previewCard}>
-        <View style={styles.previewImageBox}>
-          {image ? (
-            <Image source={{ uri: image }} style={styles.previewThumb} />
-          ) : (
-            <Text style={styles.previewEmoji}>{categoryEmoji}</Text>
-          )}
-        </View>
-
-        <View style={{ flex: 1 }}>
-          <Text style={styles.previewFarm}>{farmName}</Text>
-          <Text style={styles.previewName}>{marketPreview.name}</Text>
-          <Text style={styles.previewMeta}>
-            {marketPreview.category} • {marketPreview.quantity} {marketPreview.unit}
-          </Text>
-        </View>
-
-        <Text style={styles.previewPrice}>
-          ${marketPreview.price.toFixed(2)}
+        <Text
+          style={
+            styles.heroEmoji
+          }
+        >
+          {categoryEmoji}
         </Text>
       </View>
 
-      <View style={styles.card}>
+      {/* =====================================================
+          PRODUCT MARKET FLOW
+      ===================================================== */}
+
+      <View
+        style={
+          styles.flowCard
+        }
+      >
+        <Text
+          style={
+            styles.flowTitle
+          }
+        >
+          Product Market Flow
+        </Text>
+
+        <FlowStep
+          number="1"
+          text="Choose the product category"
+        />
+
+        <FlowStep
+          number="2"
+          text="Add photo, name, description, and farm details"
+        />
+
+        <FlowStep
+          number="3"
+          text="Set price, unit, quantity, and stock alert"
+        />
+
+        <FlowStep
+          number="4"
+          text="Choose pickup, local delivery, shipping, or any combination and publish to market"
+        />
+      </View>
+
+      {/* =====================================================
+          MARKETPLACE PREVIEW
+      ===================================================== */}
+
+      <View
+        style={
+          styles.previewCard
+        }
+      >
+        <View
+          style={
+            styles.previewImageBox
+          }
+        >
+          {image ? (
+            <Image
+              source={{
+                uri: image,
+              }}
+              style={
+                styles.previewThumb
+              }
+            />
+          ) : (
+            <Text
+              style={
+                styles.previewEmoji
+              }
+            >
+              {categoryEmoji}
+            </Text>
+          )}
+        </View>
+
+        <View
+          style={{
+            flex: 1,
+          }}
+        >
+          <Text
+            style={
+              styles.previewFarm
+            }
+          >
+            {farmName}
+          </Text>
+
+          <Text
+            style={
+              styles.previewName
+            }
+          >
+            {marketPreview.name}
+          </Text>
+
+          <Text
+            style={
+              styles.previewMeta
+            }
+          >
+            {marketPreview.category}
+            {" • "}
+            {marketPreview.quantity}{" "}
+            {marketPreview.unit}
+          </Text>
+
+          <Text
+            style={
+              styles.previewMeta
+            }
+          >
+            {deliveryOption ||
+              "Select fulfillment"}
+          </Text>
+        </View>
+
+        <Text
+          style={
+            styles.previewPrice
+          }
+        >
+          $
+          {marketPreview.price.toFixed(
+            2
+          )}
+        </Text>
+      </View>
+
+      {/* =====================================================
+          STEP 1 — CATEGORY
+      ===================================================== */}
+
+      <View
+        style={
+          styles.card
+        }
+      >
         <SectionHeader
           step="Step 1"
           title="Choose Market Category"
           subtitle="Select where customers will find this product."
         />
 
-        <View style={styles.chipWrap}>
-          {FARM_PRODUCT_CATEGORIES.map((item) => (
-            <ToggleChip
-              key={item}
-              label={`${CATEGORY_EMOJIS[item] || "🧺"} ${item}`}
-              active={category === item}
-              onPress={() => selectCategory(item)}
-            />
-          ))}
+        <View
+          style={
+            styles.chipWrap
+          }
+        >
+          {FARM_PRODUCT_CATEGORIES.map(
+            (item) => (
+              <ToggleChip
+                key={
+                  item
+                }
+                label={`${
+                  CATEGORY_EMOJIS[
+                    item
+                  ] ||
+                  "🧺"
+                } ${item}`}
+                active={
+                  category ===
+                  item
+                }
+                onPress={() =>
+                  selectCategory(
+                    item
+                  )
+                }
+              />
+            )
+          )}
         </View>
       </View>
 
-      <View style={styles.card}>
+      {/* =====================================================
+          STEP 2 — PRODUCT DETAILS
+      ===================================================== */}
+
+      <View
+        style={
+          styles.card
+        }
+      >
         <SectionHeader
           step="Step 2"
           title="Product Listing Details"
           subtitle="Add the information customers will see in the marketplace."
         />
 
-        <Text style={styles.label}>Product Photo</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Product Photo
+        </Text>
 
         {image ? (
-          <Image source={{ uri: image }} style={styles.previewImage} />
+          <Image
+            source={{
+              uri: image,
+            }}
+            style={
+              styles.previewImage
+            }
+          />
         ) : (
-          <TouchableOpacity style={styles.imagePlaceholder} onPress={pickImage}>
-            <Ionicons name="image-outline" size={38} color="#2E7D32" />
-            <Text style={styles.imagePlaceholderTitle}>Upload Product Photo</Text>
-            <Text style={styles.imagePlaceholderText}>
-              Add a clear picture so customers can see what they are buying.
+          <TouchableOpacity
+            style={
+              styles.imagePlaceholder
+            }
+            onPress={
+              pickImage
+            }
+          >
+            <Ionicons
+              name="image-outline"
+              size={38}
+              color="#2E7D32"
+            />
+
+            <Text
+              style={
+                styles.imagePlaceholderTitle
+              }
+            >
+              Upload Product Photo
+            </Text>
+
+            <Text
+              style={
+                styles.imagePlaceholderText
+              }
+            >
+              Add a clear picture so
+              customers can see what
+              they are buying.
             </Text>
           </TouchableOpacity>
         )}
 
-        <TouchableOpacity style={styles.secondaryBtn} onPress={pickImage}>
-          <Text style={styles.secondaryText}>
-            {image ? "Change Photo" : "Choose Photo"}
+        <TouchableOpacity
+          style={
+            styles.secondaryBtn
+          }
+          onPress={
+            pickImage
+          }
+        >
+          <Text
+            style={
+              styles.secondaryText
+            }
+          >
+            {image
+              ? "Change Photo"
+              : "Choose Photo"}
           </Text>
         </TouchableOpacity>
 
-        <Text style={styles.label}>Farm Name</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Farm Name
+        </Text>
+
         <TextInput
-          style={styles.input}
+          style={
+            styles.input
+          }
           placeholder="Farm Name"
           placeholderTextColor="#8A8F98"
-          value={farmName}
-          onChangeText={setFarmName}
+          value={
+            farmName
+          }
+          onChangeText={
+            setFarmName
+          }
         />
 
-        <Text style={styles.label}>Product Name</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Product Name
+        </Text>
+
         <TextInput
-          style={styles.input}
+          style={
+            styles.input
+          }
           placeholder="Example: Roma Tomatoes"
           placeholderTextColor="#8A8F98"
-          value={productName}
-          onChangeText={setProductName}
+          value={
+            productName
+          }
+          onChangeText={
+            setProductName
+          }
         />
 
-        <Text style={styles.label}>Description</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Description
+        </Text>
+
         <TextInput
-          style={[styles.input, styles.textArea]}
+          style={[
+            styles.input,
+            styles.textArea,
+          ]}
           placeholder="Describe freshness, harvest details, taste, use, or farm story."
           placeholderTextColor="#8A8F98"
-          value={description}
-          onChangeText={setDescription}
+          value={
+            description
+          }
+          onChangeText={
+            setDescription
+          }
           multiline
         />
       </View>
 
-      <View style={styles.card}>
+      {/* =====================================================
+          STEP 3 — PRICING AND INVENTORY
+      ===================================================== */}
+
+      <View
+        style={
+          styles.card
+        }
+      >
         <SectionHeader
           step="Step 3"
           title="Pricing & Inventory"
           subtitle="Set how customers buy and how much stock is available."
         />
 
-        <Text style={styles.label}>Market Price</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Market Price
+        </Text>
+
         <TextInput
-          style={styles.input}
+          style={
+            styles.input
+          }
           placeholder="4.99"
           placeholderTextColor="#8A8F98"
-          value={price}
-          onChangeText={setPrice}
-          keyboardType="numeric"
+          value={
+            price
+          }
+          onChangeText={
+            setPrice
+          }
+          keyboardType="decimal-pad"
         />
 
-        <Text style={styles.label}>Quantity Available</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Quantity Available
+        </Text>
+
         <TextInput
-          style={styles.input}
+          style={
+            styles.input
+          }
           placeholder="25"
           placeholderTextColor="#8A8F98"
-          value={quantity}
-          onChangeText={setQuantity}
+          value={
+            quantity
+          }
+          onChangeText={
+            setQuantity
+          }
           keyboardType="numeric"
         />
 
-        <Text style={styles.label}>Low Stock Alert</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Low Stock Alert
+        </Text>
+
         <TextInput
-          style={styles.input}
+          style={
+            styles.input
+          }
           placeholder="5"
           placeholderTextColor="#8A8F98"
-          value={lowStockThreshold}
-          onChangeText={setLowStockThreshold}
+          value={
+            lowStockThreshold
+          }
+          onChangeText={
+            setLowStockThreshold
+          }
           keyboardType="numeric"
         />
 
-        <Text style={styles.label}>Harvest / Available Date</Text>
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Harvest / Available Date
+        </Text>
+
         <TextInput
-          style={styles.input}
+          style={
+            styles.input
+          }
           placeholder="Example: Available this Friday"
           placeholderTextColor="#8A8F98"
-          value={harvestDate}
-          onChangeText={setHarvestDate}
+          value={
+            harvestDate
+          }
+          onChangeText={
+            setHarvestDate
+          }
         />
 
-        <Text style={styles.label}>Selling Unit</Text>
-        <View style={styles.chipWrap}>
-          {PRODUCT_UNITS.map((item) => (
-            <ToggleChip
-              key={item}
-              label={item}
-              active={unit === item}
-              onPress={() => setUnit(item)}
-            />
-          ))}
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Selling Unit
+        </Text>
+
+        <View
+          style={
+            styles.chipWrap
+          }
+        >
+          {PRODUCT_UNITS.map(
+            (item) => (
+              <ToggleChip
+                key={
+                  item
+                }
+                label={
+                  item
+                }
+                active={
+                  unit ===
+                  item
+                }
+                onPress={() =>
+                  setUnit(
+                    item
+                  )
+                }
+              />
+            )
+          )}
         </View>
       </View>
 
-      {PROCESSING_REQUIRED_CATEGORIES.includes(category) ? (
-        <View style={styles.card}>
+      {/* =====================================================
+          PROCESSING
+      ===================================================== */}
+
+      {PROCESSING_REQUIRED_CATEGORIES.includes(
+        category
+      ) ? (
+        <View
+          style={
+            styles.card
+          }
+        >
           <SectionHeader
             step="Step 4"
             title="Processing Option"
             subtitle="Meat and seafood products need clear processing details."
           />
 
-          <View style={styles.chipWrap}>
-            {PROCESSING_OPTIONS.map((item) => (
-              <ToggleChip
-                key={item}
-                label={item}
-                active={processingOption === item}
-                onPress={() => setProcessingOption(item)}
-              />
-            ))}
+          <View
+            style={
+              styles.chipWrap
+            }
+          >
+            {PROCESSING_OPTIONS.map(
+              (item) => (
+                <ToggleChip
+                  key={
+                    item
+                  }
+                  label={
+                    item
+                  }
+                  active={
+                    processingOption ===
+                    item
+                  }
+                  onPress={() =>
+                    setProcessingOption(
+                      item
+                    )
+                  }
+                />
+              )
+            )}
           </View>
         </View>
       ) : null}
 
-      <View style={styles.card}>
+      {/* =====================================================
+          FULFILLMENT
+      ===================================================== */}
+
+      <View
+        style={
+          styles.card
+        }
+      >
         <SectionHeader
-          step={PROCESSING_REQUIRED_CATEGORIES.includes(category) ? "Step 5" : "Step 4"}
-          title="Fulfillment & Market Tags"
-          subtitle="Choose how customers receive the product and how it is promoted."
+          step={
+            PROCESSING_REQUIRED_CATEGORIES.includes(
+              category
+            )
+              ? "Step 5"
+              : "Step 4"
+          }
+          title="Product Fulfillment"
+          subtitle="Select every way this individual product can reach your customer."
         />
 
-        <Text style={styles.label}>Pickup / Delivery</Text>
-        <View style={styles.chipWrap}>
-          {FULFILLMENT_OPTIONS.map((item) => (
-            <ToggleChip
-              key={item}
-              label={item}
-              active={deliveryOption === item}
-              onPress={() => setDeliveryOption(item)}
-            />
-          ))}
+        <Text
+          style={
+            styles.label
+          }
+        >
+          Available Fulfillment
+        </Text>
+
+        <View
+          style={
+            styles.chipWrap
+          }
+        >
+          <ToggleChip
+            label="🏡 Pickup"
+            active={
+              pickupAvailable
+            }
+            onPress={() =>
+              setPickupAvailable(
+                (
+                  previous
+                ) =>
+                  !previous
+              )
+            }
+          />
+
+          <ToggleChip
+            label="🚚 Local Delivery"
+            active={
+              deliveryAvailable
+            }
+            onPress={() =>
+              setDeliveryAvailable(
+                (
+                  previous
+                ) =>
+                  !previous
+              )
+            }
+          />
+
+          <ToggleChip
+            label="📦 Shipping"
+            active={
+              shippingAvailable
+            }
+            onPress={() =>
+              setShippingAvailable(
+                (
+                  previous
+                ) =>
+                  !previous
+              )
+            }
+          />
         </View>
 
-        <Text style={styles.label}>Marketplace Tags</Text>
-        <View style={styles.chipWrap}>
+        <Text
+          style={[
+            styles.sectionSub,
+            {
+              marginTop:
+                12,
+            },
+          ]}
+        >
+          Select one, two, or all three.
+          Customers will only be offered
+          fulfillment methods available
+          for this product.
+        </Text>
+
+        {/* ===================================================
+            SHIPPING OPTIONS
+        =================================================== */}
+
+        {shippingAvailable ? (
+          <>
+            <Text
+              style={[
+                styles.label,
+                {
+                  marginTop:
+                    20,
+                },
+              ]}
+            >
+              Shipping Options
+            </Text>
+
+            <View
+              style={
+                styles.chipWrap
+              }
+            >
+              <ToggleChip
+                label="Free Shipping"
+                active={
+                  freeShipping
+                }
+                onPress={() =>
+                  setFreeShipping(
+                    true
+                  )
+                }
+              />
+
+              <ToggleChip
+                label="Customer Pays Shipping"
+                active={
+                  !freeShipping
+                }
+                onPress={() =>
+                  setFreeShipping(
+                    false
+                  )
+                }
+              />
+            </View>
+
+            {!freeShipping ? (
+              <>
+                <Text
+                  style={
+                    styles.label
+                  }
+                >
+                  Shipping Fee
+                </Text>
+
+                <TextInput
+                  style={
+                    styles.input
+                  }
+                  placeholder="Example: 8.95"
+                  placeholderTextColor="#8A8F98"
+                  value={
+                    shippingFee
+                  }
+                  onChangeText={
+                    setShippingFee
+                  }
+                  keyboardType="decimal-pad"
+                />
+              </>
+            ) : null}
+
+            <Text
+              style={
+                styles.label
+              }
+            >
+              Ships From ZIP Code
+            </Text>
+
+            <TextInput
+              style={
+                styles.input
+              }
+              placeholder="Example: 78254"
+              placeholderTextColor="#8A8F98"
+              value={
+                shipsFromZip
+              }
+              onChangeText={
+                setShipsFromZip
+              }
+              keyboardType="number-pad"
+              maxLength={
+                10
+              }
+            />
+
+            <Text
+              style={
+                styles.label
+              }
+            >
+              Processing Time
+            </Text>
+
+            <TextInput
+              style={
+                styles.input
+              }
+              placeholder="Number of days"
+              placeholderTextColor="#8A8F98"
+              value={
+                processingDays
+              }
+              onChangeText={
+                setProcessingDays
+              }
+              keyboardType="number-pad"
+            />
+
+            <Text
+              style={
+                styles.label
+              }
+            >
+              Shipping Notes
+            </Text>
+
+            <TextInput
+              style={[
+                styles.input,
+                styles.textArea,
+              ]}
+              placeholder="Example: Ships Monday through Wednesday. Refrigerated packaging used when required."
+              placeholderTextColor="#8A8F98"
+              value={
+                shippingNotes
+              }
+              onChangeText={
+                setShippingNotes
+              }
+              multiline
+            />
+          </>
+        ) : null}
+
+        {/* ===================================================
+            MARKETPLACE TAGS
+        =================================================== */}
+
+        <Text
+          style={[
+            styles.label,
+            {
+              marginTop:
+                18,
+            },
+          ]}
+        >
+          Marketplace Tags
+        </Text>
+
+        <View
+          style={
+            styles.chipWrap
+          }
+        >
           <ToggleChip
             label="Organic"
-            active={organic}
-            onPress={() => setOrganic((prev) => !prev)}
+            active={
+              organic
+            }
+            onPress={() =>
+              setOrganic(
+                (
+                  previous
+                ) =>
+                  !previous
+              )
+            }
           />
+
           <ToggleChip
             label="Local"
-            active={local}
-            onPress={() => setLocal((prev) => !prev)}
+            active={
+              local
+            }
+            onPress={() =>
+              setLocal(
+                (
+                  previous
+                ) =>
+                  !previous
+              )
+            }
           />
+
           <ToggleChip
             label="Seasonal"
-            active={seasonal}
-            onPress={() => setSeasonal((prev) => !prev)}
+            active={
+              seasonal
+            }
+            onPress={() =>
+              setSeasonal(
+                (
+                  previous
+                ) =>
+                  !previous
+              )
+            }
           />
+
           <ToggleChip
             label="Featured"
-            active={featured}
-            onPress={() => setFeatured((prev) => !prev)}
+            active={
+              featured
+            }
+            onPress={() =>
+              setFeatured(
+                (
+                  previous
+                ) =>
+                  !previous
+              )
+            }
           />
         </View>
       </View>
 
+      {/* =====================================================
+          PUBLISH
+      ===================================================== */}
+
       <TouchableOpacity
-        style={[styles.submitBtn, loading && styles.disabledButton]}
-        onPress={submitProduct}
-        disabled={loading}
+        style={[
+          styles.submitBtn,
+
+          loading &&
+            styles.disabledButton,
+        ]}
+        onPress={
+          submitProduct
+        }
+        disabled={
+          loading
+        }
       >
         {loading ? (
-          <ActivityIndicator color="#FFFFFF" />
+          <ActivityIndicator
+            color="#FFFFFF"
+          />
         ) : (
           <>
-            <Ionicons name="storefront-outline" size={20} color="#FFFFFF" />
-            <Text style={styles.submitText}>Publish Product to Farmer Market</Text>
+            <Ionicons
+              name="storefront-outline"
+              size={20}
+              color="#FFFFFF"
+            />
+
+            <Text
+              style={
+                styles.submitText
+              }
+            >
+              Publish Product to Farmer Market
+            </Text>
           </>
         )}
       </TouchableOpacity>
 
+      {/* =====================================================
+          BACK
+      ===================================================== */}
+
       <TouchableOpacity
-        style={styles.backBtn}
-        onPress={() => router.push("/farmer/dashboard" as any)}
+        style={
+          styles.backBtn
+        }
+        onPress={() =>
+          router.push(
+            "/farmer/dashboard" as any
+          )
+        }
       >
-        <Text style={styles.backText}>Back to Farmer Dashboard</Text>
+        <Text
+          style={
+            styles.backText
+          }
+        >
+          Back to Farmer Dashboard
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
+
+/*
+|--------------------------------------------------------------------------
+| SECTION HEADER
+|--------------------------------------------------------------------------
+*/
 
 function SectionHeader({
   step,
@@ -832,32 +2678,97 @@ function SectionHeader({
   subtitle: string;
 }) {
   return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.stepText}>{step}</Text>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <Text style={styles.sectionSub}>{subtitle}</Text>
+    <View
+      style={
+        styles.sectionHeader
+      }
+    >
+      <Text
+        style={
+          styles.stepText
+        }
+      >
+        {step}
+      </Text>
+
+      <Text
+        style={
+          styles.sectionTitle
+        }
+      >
+        {title}
+      </Text>
+
+      <Text
+        style={
+          styles.sectionSub
+        }
+      >
+        {subtitle}
+      </Text>
     </View>
   );
 }
 
-function FlowStep({ number, text }: { number: string; text: string }) {
+/*
+|--------------------------------------------------------------------------
+| FLOW STEP
+|--------------------------------------------------------------------------
+*/
+
+function FlowStep({
+  number,
+  text,
+}: {
+  number: string;
+  text: string;
+}) {
   return (
-    <View style={styles.flowStep}>
-      <Text style={styles.flowNumber}>{number}</Text>
-      <Text style={styles.flowText}>{text}</Text>
+    <View
+      style={
+        styles.flowStep
+      }
+    >
+      <Text
+        style={
+          styles.flowNumber
+        }
+      >
+        {number}
+      </Text>
+
+      <Text
+        style={
+          styles.flowText
+        }
+      >
+        {text}
+      </Text>
     </View>
   );
 }
+/*
+|--------------------------------------------------------------------------
+| STYLES
+|--------------------------------------------------------------------------
+*/
 
 const styles = StyleSheet.create({
   page: {
     flex: 1,
     backgroundColor: "#F8FAF5",
   },
+
   content: {
     padding: 18,
     paddingBottom: 70,
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | HEADER
+  |--------------------------------------------------------------------------
+  */
 
   topRow: {
     flexDirection: "row",
@@ -865,6 +2776,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginBottom: 16,
   },
+
   backIconButton: {
     width: 44,
     height: 44,
@@ -875,6 +2787,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   eyebrow: {
     color: "#2E7D32",
     fontWeight: "900",
@@ -882,18 +2795,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     fontSize: 12,
   },
+
   title: {
     color: "#172017",
     fontSize: 30,
     fontWeight: "900",
     marginTop: 2,
   },
+
   subtitle: {
     color: "#64748B",
     marginTop: 6,
     lineHeight: 21,
     fontWeight: "700",
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | HERO
+  |--------------------------------------------------------------------------
+  */
 
   hero: {
     backgroundColor: "#14532D",
@@ -904,27 +2825,37 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
+
   heroBadge: {
     color: "#BBF7D0",
     fontWeight: "900",
     textTransform: "uppercase",
     fontSize: 11,
   },
+
   heroTitle: {
     color: "#FFFFFF",
     fontSize: 25,
     fontWeight: "900",
     marginTop: 7,
   },
+
   heroText: {
     color: "#DCFCE7",
     marginTop: 8,
     lineHeight: 21,
     fontWeight: "700",
   },
+
   heroEmoji: {
     fontSize: 48,
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | PRODUCT FLOW
+  |--------------------------------------------------------------------------
+  */
 
   flowCard: {
     backgroundColor: "#FFFFFF",
@@ -934,18 +2865,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8DA",
   },
+
   flowTitle: {
     color: "#172017",
     fontWeight: "900",
     fontSize: 20,
     marginBottom: 10,
   },
+
   flowStep: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     marginTop: 8,
   },
+
   flowNumber: {
     width: 30,
     height: 30,
@@ -957,12 +2891,19 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     overflow: "hidden",
   },
+
   flowText: {
     flex: 1,
     color: "#172017",
     fontWeight: "800",
     lineHeight: 19,
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | MARKETPLACE PREVIEW
+  |--------------------------------------------------------------------------
+  */
 
   previewCard: {
     backgroundColor: "#FFFFFF",
@@ -975,6 +2916,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
+
   previewImageBox: {
     width: 62,
     height: 62,
@@ -984,34 +2926,46 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
+
   previewThumb: {
     width: "100%",
     height: "100%",
   },
+
   previewEmoji: {
     fontSize: 34,
   },
+
   previewFarm: {
     color: "#2E7D32",
     fontWeight: "900",
     fontSize: 12,
   },
+
   previewName: {
     color: "#172017",
     fontWeight: "900",
     fontSize: 17,
     marginTop: 2,
   },
+
   previewMeta: {
     color: "#64748B",
     fontWeight: "700",
     marginTop: 3,
   },
+
   previewPrice: {
     color: "#14532D",
     fontWeight: "900",
     fontSize: 18,
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | FORM CARDS
+  |--------------------------------------------------------------------------
+  */
 
   card: {
     backgroundColor: "#FFFFFF",
@@ -1021,9 +2975,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8DA",
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | SECTION HEADER
+  |--------------------------------------------------------------------------
+  */
+
   sectionHeader: {
     marginBottom: 12,
   },
+
   stepText: {
     color: "#2E7D32",
     fontWeight: "900",
@@ -1031,17 +2993,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
     marginBottom: 4,
   },
+
   sectionTitle: {
     color: "#172017",
     fontSize: 21,
     fontWeight: "900",
   },
+
   sectionSub: {
     color: "#64748B",
     fontWeight: "700",
     lineHeight: 20,
     marginTop: 4,
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | LABELS
+  |--------------------------------------------------------------------------
+  */
+
   label: {
     color: "#172017",
     fontSize: 15,
@@ -1049,6 +3020,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 8,
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | INPUTS
+  |--------------------------------------------------------------------------
+  */
+
   input: {
     backgroundColor: "#F8FAFC",
     borderWidth: 1,
@@ -1059,10 +3037,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: "#0F172A",
   },
+
   textArea: {
     height: 96,
     textAlignVertical: "top",
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | PRODUCT IMAGE
+  |--------------------------------------------------------------------------
+  */
 
   previewImage: {
     width: "100%",
@@ -1071,6 +3056,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: "#ECFDF5",
   },
+
   imagePlaceholder: {
     height: 210,
     borderRadius: 22,
@@ -1082,12 +3068,14 @@ const styles = StyleSheet.create({
     padding: 18,
     marginBottom: 12,
   },
+
   imagePlaceholderTitle: {
     color: "#14532D",
     fontWeight: "900",
     fontSize: 17,
     marginTop: 10,
   },
+
   imagePlaceholderText: {
     color: "#475569",
     fontWeight: "700",
@@ -1096,11 +3084,18 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
+  /*
+  |--------------------------------------------------------------------------
+  | CHIPS
+  |--------------------------------------------------------------------------
+  */
+
   chipWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
   },
+
   chip: {
     backgroundColor: "#F8FAFC",
     borderWidth: 1,
@@ -1109,16 +3104,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     borderRadius: 999,
   },
+
   chipActive: {
     backgroundColor: "#2E7D32",
   },
+
   chipText: {
     color: "#2E7D32",
     fontWeight: "900",
   },
+
   chipTextActive: {
     color: "#FFFFFF",
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | SECONDARY BUTTON
+  |--------------------------------------------------------------------------
+  */
 
   secondaryBtn: {
     backgroundColor: "#ECFDF5",
@@ -1129,10 +3133,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
+
   secondaryText: {
     color: "#14532D",
     fontWeight: "900",
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | PUBLISH BUTTON
+  |--------------------------------------------------------------------------
+  */
 
   submitBtn: {
     backgroundColor: "#14532D",
@@ -1144,18 +3155,28 @@ const styles = StyleSheet.create({
     gap: 9,
     marginTop: 8,
   },
+
   submitText: {
     color: "#FFFFFF",
     fontWeight: "900",
     fontSize: 16,
   },
+
   disabledButton: {
     opacity: 0.6,
   },
+
+  /*
+  |--------------------------------------------------------------------------
+  | BACK BUTTON
+  |--------------------------------------------------------------------------
+  */
+
   backBtn: {
     paddingVertical: 18,
     alignItems: "center",
   },
+
   backText: {
     color: "#14532D",
     fontWeight: "900",
