@@ -26,7 +26,8 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
 const RESEND_FROM_EMAIL =
   process.env.RESEND_FROM_EMAIL ||
-  "Farm2Home Direct <orders@farm2homedirect.com>";
+  process.env.EMAIL_FROM ||
+  "support@asodevelopments.com";
 
 const FARM2HOME_WEB_URL = (
   process.env.FARM2HOME_WEB_URL ||
