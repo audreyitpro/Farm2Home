@@ -1979,23 +1979,6 @@ async function updateFromCheckoutSession(
         .current_period_end,
   });
 }
-  await upsertSubscriptionRow({
-    role,
-    roleId,
-    roleEmail: emailValue,
-    name:
-      metadata.name ||
-      metadata.business_name ||
-      metadata.company_name ||
-      customer?.name ||
-      "",
-    username: metadata.username || "",
-    stripeCustomerId: customerId,
-    stripeSubscriptionId: subscription.id,
-    roleAccount,
-    subscriptionStatus: subscription.status,
-    currentPeriodEnd: subscription.current_period_end,
-  });
 
 
 async function updateConnectAccount(account) {
