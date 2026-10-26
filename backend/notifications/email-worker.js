@@ -9,7 +9,11 @@
  * node notifications/email-worker.js --test-farmer=FARMER_UUID
  */
 
-require("dotenv").config();
+const path = require("path");
+
+require("dotenv").config({
+  path: path.resolve(__dirname, "../../.env"),
+});
 
 const { createClient } = require("@supabase/supabase-js");
 const { Resend } = require("resend");
@@ -108,45 +112,59 @@ function validEmail(value) {
 // FARMER PROFILE LOOKUP
 // =====================================================
 
+
 async function getFarmerProfile(farmerId) {
   const { data, error } = await supabase
     .from("farmers")
-    .select(
-      "id, farm_name, business_name, owner_name, " +
-      "email, farmer_email"
-    )
+    .select(`
+      id,
+      farmer_id,
+      auth_user_id,
+      farm_name,
+      owner_name,
+      business_name,
+      farmer_email,
+      email,
+      phone,
+      pickup_delivery_option
+    `)
     .eq("id", farmerId)
     .maybeSingle();
 
   if (error) {
     throw new Error(
-      "Supabase farmer lookup failed: " +
-      error.message
+      "Failed to retrieve farmer: " + error.message
     );
   }
 
   if (!data) {
     throw new Error(
-      "Farmer profile not found: " + farmerId
+      "Farmer not found: " + farmerId
     );
   }
 
+  // Use farmer_email first, then email as backup.
   const notificationEmail =
-    validEmail(data.email)
-      ? data.email.trim()
-      : validEmail(data.farmer_email)
+    validEmail(data.farmer_email)
       ? data.farmer_email.trim()
+      : validEmail(data.email)
+      ? data.email.trim()
       : null;
 
   if (!notificationEmail) {
     throw new Error(
-      "Farmer does not have a valid profile email."
+      "No valid farmer email address found."
     );
   }
 
   return {
     ...data,
+
     notificationEmail,
+
+    notificationPhone:
+      data.phone?.trim() || null,
+
     displayName:
       data.farm_name ||
       data.business_name ||
@@ -154,6 +172,7 @@ async function getFarmerProfile(farmerId) {
       "Farmer",
   };
 }
+
 
 // =====================================================
 // ORDER EMAIL TEMPLATE
