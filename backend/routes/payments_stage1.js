@@ -3916,21 +3916,25 @@ if (
     );
   }
 
-  // Save verified payment information to the real orders table.
-  const { data: updatedOrder, error: updateError } =
-    await supabase
-      .from("orders")
-      .update({
-        payment_status: "PAID",
-        stripe_session_id: session.id,
-        stripe_payment_intent_id: paymentIntentId,
-      })
-      .eq("id", orderId)
-      .or(
-        `stripe_session_id.is.null,stripe_session_id.eq.${session.id}`
-      )
-      .select("id")
-      .single();
+  // Confirm payment only for the order associated with this
+// exact Stripe Checkout session.
+//
+// Prevent overwriting a different Stripe PaymentIntent.
+const { data: updatedOrder, error: updateError } =
+  await supabase
+    .from("orders")
+    .update({
+      payment_status: "PAID",
+      stripe_payment_intent_id: paymentIntentId,
+    })
+    .eq("id", orderId)
+    .eq("stripe_session_id", session.id)
+    .or(
+      `stripe_payment_intent_id.is.null,stripe_payment_intent_id.eq.${paymentIntentId}`
+    )
+    .in("payment_status", ["PENDING_PAYMENT", "PAID"])
+    .select("id")
+    .single();
 
   if (updateError || !updatedOrder) {
     throw new Error(
