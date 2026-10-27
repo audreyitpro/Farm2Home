@@ -3818,15 +3818,15 @@ async function updateMarketplaceOrderPaid(session) {
     );
   }
 
-  // The checkout must already be associated with this order.
-  if (
-    savedOrder.stripe_session_id &&
-    savedOrder.stripe_session_id !== session.id
-  ) {
-    throw new Error(
-      `Stripe session mismatch for order ${orderId}.`
-    );
-  }
+  // Require an exact match with the saved Checkout session.
+if (
+  !savedOrder.stripe_session_id ||
+  savedOrder.stripe_session_id !== session.id
+) {
+  throw new Error(
+    `Missing or mismatched Stripe Checkout session for order ${orderId}.`
+  );
+}
 
   if (
     savedOrder.stripe_payment_intent_id &&
