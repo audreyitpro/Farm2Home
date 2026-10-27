@@ -4022,10 +4022,11 @@ for (const transfer of transfers) {
           transfer.error ||
           transfer.reason ||
           "Transfer not confirmed",
-      }
-    );
+      });
   }
 }
+
+} // Closes updateMarketplaceOrderPaid()
 
 /*
 |--------------------------------------------------------------------------
