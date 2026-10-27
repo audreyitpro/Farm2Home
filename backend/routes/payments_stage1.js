@@ -3982,50 +3982,48 @@ const { data: updatedOrder, error: updateError } =
   await markFarmersFirstPaidSale(order);
 
   /*
-  |--------------------------------------------------------------------------
-  | UPDATE TRANSFER RECORDS
-  |--------------------------------------------------------------------------
-  */
+|--------------------------------------------------------------------------
+| FARMER TRANSFER RESULTS
+|--------------------------------------------------------------------------
+|
+| The authoritative payout ledger is:
+| public.marketplace_farmer_transfers
+|
+| Transfer claims and results are recorded through:
+| - claim_marketplace_farmer_transfer
+| - record_marketplace_farmer_transfer
+|
+| Do not overwrite legacy payout tables.
+| Reconciliation-required transfers must never be
+| reported as confirmed failures or successes.
+|
+*/
 
-  for (const table of [
-    "marketplace_transfers",
-    "farmer_payouts",
-    "payout_splits",
-  ]) {
-    for (const transfer of transfers) {
-      try {
-        await supabase
-          .from(table)
-          .update({
-            transfer_status: transfer.success
-              ? "transferred"
-              : "failed",
+for (const transfer of transfers) {
+  console.log("Farm2Home farmer transfer result:", {
+    orderId,
+    farmerId: transfer.farmerId,
+    status: transfer.status || "unknown",
+    success: transfer.success === true,
+    skipped: transfer.skipped === true,
+    transferId: transfer.transferId || null,
+  });
 
-            stripe_transfer_id:
-              transfer.transferId || null,
-
-            stripe_payment_intent_id:
-              paymentIntentId,
-
-            error_message:
-              transfer.error ||
-              transfer.reason ||
-              null,
-
-            updated_at: nowIso(),
-          })
-          .eq("order_id", orderId)
-          .eq(
-            "farmer_id",
-            transfer.farmerId
-          );
-      } catch (error) {
-        console.log(
-          `${table} transfer-result update skipped:`,
-          error.message
-        );
+  if (
+    transfer.status !== "succeeded"
+  ) {
+    console.error(
+      "Farmer transfer requires review:",
+      {
+        orderId,
+        farmerId: transfer.farmerId,
+        status: transfer.status || "unknown",
+        reason:
+          transfer.error ||
+          transfer.reason ||
+          "Transfer not confirmed",
       }
-    }
+    );
   }
 }
 
