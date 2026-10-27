@@ -1,0 +1,275 @@
+=== FARMER TRANSFER FUNCTION ===
+|
+| CRITICAL:
+|
+| The farmer transfer is calculated from split.subtotal ONLY.
+|
+| Example:
+|
+| Farmer product subtotal = $100.00
+| Farmer platform fee 4% = $4.00
+| Farmer transfer = $96.00
+|
+| The customer's separate $4.99 Farm2Home service fee is never included
+| in split.subtotal and therefore is not transferred to the farmer.
+|
+*/
+
+async function createStripeTransfersForMarketplaceOrder(
+  order,
+  paymentIntentId
+) {
+  if (!paymentIntentId) {
+    return [];
+  }
+
+  const transfers = [];
+
+  for (
+    const split of
+    order.payoutSplits ||
+    []
+  ) {
+    const destination = clean(
+      split.stripeAccountId ||
+        split.stripe_account_id
+    );
+
+    if (!isAcct(destination)) {
+      transfers.push({
+        success: false,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        reason:
+          "missing_connect_account",
+      });
+
+      continue;
+    }
+
+    const grossCents =
+      cents(
+        split.subtotal
+      );
+
+    const platformFeeCents =
+      Math.round(
+        grossCents *
+          FARMER_PLATFORM_FEE_RATE
+      );
+
+    const transferAmountCents =
+      Math.max(
+        grossCents -
+          platformFeeCents,
+        0
+      );
+
+    if (
+      transferAmountCents <=
+      0
+    ) {
+      continue;
+    }
+
+    try {
+      /*
+       * Stripe may retry webhook events.
+       *
+       * The same order + farmer must therefore produce the same
+       * idempotency key so Stripe cannot create a duplicate transfer.
+       */
+
+      const transferIdentity =
+        clean(
+          split.farmerId ||
+            split.farmer_id ||
+            destination
+        );
+
+      const idempotencyKey =
+        `marketplace_transfer_${clean(
+          order.orderId
+        )}_${transferIdentity}`
+          .replace(
+            /[^a-zA-Z0-9_-]/g,
+            "_"
+          )
+          .slice(
+            0,
+            240
+          );
+
+      const transfer =
+        await stripe.transfers.create(
+          {
+            amount:
+              transferAmountCents,
+
+            currency:
+              "usd",
+
+            destination,
+
+            /*
+             * Associates the transfer with this Farm2Home order.
+             */
+            transfer_group:
+              clean(
+                order.orderId
+              ),
+
+            metadata: {
+              orderId:
+                order.orderId,
+
+              order_id:
+                order.orderId,
+
+              farmerId:
+                split.farmerId,
+
+              farmer_id:
+                split.farmerId,
+
+              farmName:
+                split.farmName,
+
+              farm_name:
+                split.farmName,
+
+              subtotal:
+                String(
+                  split.subtotal
+                ),
+
+              platformFee:
+                dollarsFromCents(
+
+=== WEBHOOK HANDLER ===
+    }
+
+    if (!signature) {
+      return res
+        .status(400)
+        .send(
+          "Webhook Error: Missing Stripe signature."
+        );
+    }
+
+    let event;
+
+    try {
+      event =
+        stripe.webhooks
+          .constructEvent(
+            req.body,
+            signature,
+            webhookSecret
+          );
+    } catch (error) {
+      console.error(
+        "Webhook signature verification failed:",
+        error.message
+      );
+
+      return res
+        .status(400)
+        .send(
+          `Webhook Error: ${error.message}`
+        );
+    }
+
+    try {
+      switch (
+        event.type
+      ) {
+        /*
+         * Standard card checkout normally arrives here.
+         *
+         * Async payment methods may also complete checkout
+         * before final payment confirmation, so the payment
+         * function still checks payment_status.
+         */
+
+        case "checkout.session.completed":
+        case "checkout.session.async_payment_succeeded": {
+          const session =
+            event.data.object;
+
+          if (
+            session.metadata
+              ?.paymentType ===
+            "marketplace_order"
+          ) {
+            const expandedSession =
+              await parseStripeSession(
+                session.id
+              );
+
+            await updateMarketplaceOrderPaid(
+              expandedSession
+            );
+          } else {
+            await updateFromCheckoutSession(
+              session
+            );
+          }
+
+          break;
+        }
+
+        /*
+         * Async marketplace payment failed.
+         */
+
+        case "checkout.session.async_payment_failed": {
+          const session =
+            event.data.object;
+
+          if (
+            session.metadata
+              ?.paymentType ===
+            "marketplace_order"
+          ) {
+            const orderId =
+              clean(
+                session.metadata
+                  ?.orderId ||
+                  session.metadata
+                    ?.order_id
+              );
+
+            if (
+              orderId &&
+              supabase
+            ) {
+              const failedPayload = {
+                status:
+                  "PAYMENT_FAILED",
+
+                payment_status:
+                  "failed",
+
+                stripe_checkout_session_id:
+                  session.id,
+
+                updated_at:
+                  nowIso(),
+              };
+
+              for (
+                const table of [
+                  "orders",
+                  "customer_orders",
+                  "farm_orders",
+                ]
+              ) {
+                try {
+                  await safeUpdate(
+                    table,

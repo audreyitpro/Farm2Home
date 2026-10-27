@@ -1,0 +1,86 @@
+async function loadMarketplacePayoutSplits(orderId) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { data: rows, error } = await supabase
+    .from("order_items")
+    .select(
+      "farmer_id,farmer_name,farmer_stripe_account_id,quantity,unit_price,total_price"
+    )
+    .eq("order_id", String(orderId));
+
+  if (error) {
+    throw new Error(
+      `Unable to load marketplace items: ${error.message}`
+    );
+  }
+
+  if (!rows || rows.length === 0) {
+    throw new Error(
+      `No saved items found for order ${orderId}.`
+    );
+  }
+
+  const groups = new Map();
+
+  for (const row of rows) {
+    const farmerId = String(row.farmer_id || "");
+
+    if (!isValidUuid(farmerId)) {
+      throw new Error("Order item has an invalid farmer ID.");
+    }
+
+    const quantity = Number(row.quantity);
+    const unitPrice = Number(row.unit_price);
+
+    if (
+      !Number.isSafeInteger(quantity) ||
+      quantity < 1 ||
+      !Number.isFinite(unitPrice) ||
+      unitPrice <= 0
+    ) {
+      throw new Error("Invalid saved order item.");
+    }
+
+    if (!groups.has(farmerId)) {
+      groups.set(farmerId, {
+        farmerId,
+        farmer_id: farmerId,
+        farmName: row.farmer_name || "Farm",
+        farm_name: row.farmer_name || "Farm",
+        stripeAccountId:
+          row.farmer_stripe_account_id || "",
+        stripe_account_id:
+          row.farmer_stripe_account_id || "",
+        subtotalCents: 0,
+        itemCount: 0
+      });
+    }
+
+    const group = groups.get(farmerId);
+
+    group.subtotalCents +=
+      Math.round(unitPrice * 100) * quantity;
+
+    group.itemCount += quantity;
+  }
+
+  return Array.from(groups.values()).map((group) => {
+    const subtotal = group.subtotalCents / 100;
+
+    return {
+      farmerId: group.farmerId,
+      farmer_id: group.farmer_id,
+      farmName: group.farmName,
+      farm_name: group.farm_name,
+      stripeAccountId: group.stripeAccountId,
+      stripe_account_id: group.stripe_account_id,
+      subtotal,
+      amount: subtotal,
+      itemCount: group.itemCount,
+      item_count: group.itemCount
+    };
+  });
+}
+async function updateMarketplaceOrderPaid(session) {

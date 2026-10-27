@@ -1,0 +1,208 @@
+=== ORDER ITEM SAVING ===
+  }
+
+  const rows = order.items.map((item) => {
+    const quantity = Number(item.quantity);
+
+    const unitPrice = Number(
+      item.price ?? item.unit_price ?? 0
+    );
+
+    const farmerId =
+      item.farmerId || item.farmer_id || null;
+
+    const productId =
+      item.productId || item.product_id || item.id;
+
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
+      throw new Error("Invalid order item quantity.");
+    }
+
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      throw new Error("Invalid order item price.");
+    }
+
+    if (!isValidUuid(farmerId)) {
+      throw new Error("Invalid farmer ID.");
+    }
+
+    if (!isValidUuid(productId)) {
+      throw new Error("Invalid product ID.");
+    }
+
+    return {
+      order_id: String(order.orderId),
+
+      farmer_id: farmerId,
+
+      farmer_name:
+        item.farmerName ||
+        item.farmer_name ||
+        item.farmName ||
+        "Farm",
+
+      farmer_email:
+        item.farmerEmail ||
+        item.farmer_email ||
+        null,
+
+      farmer_stripe_account_id:
+        item.farmerStripeAccountId ||
+        item.farmer_stripe_account_id ||
+        null,
+
+      product_id: String(productId),
+
+      product_name:
+        item.name ||
+        item.productName ||
+        item.product_name ||
+        "Product",
+
+      quantity,
+
+      unit_price: unitPrice,
+
+      total_price: Number(
+        (quantity * unitPrice).toFixed(2)
+      )
+    };
+  });
+
+  // Replace rows only while the order is still pending.
+  const { data: existingOrder, error: orderError } =
+    await supabase
+      .from("orders")
+      .select("payment_status")
+      .eq("id", String(order.orderId))
+      .single();
+
+  if (orderError) {
+    throw new Error(
+      `Unable to verify order status: ${orderError.message}`
+    );
+  }
+
+  if (
+    String(existingOrder.payment_status || "")
+      .toUpperCase() !== "PENDING_PAYMENT"
+  ) {
+    throw new Error(
+      "Cannot modify items after payment processing."
+    );
+  }
+
+  const { error: deleteError } = await supabase
+    .from("order_items")
+    .delete()
+    .eq("order_id", String(order.orderId));
+
+  if (deleteError) {
+    throw new Error(
+      `Unable to prepare order items: ${deleteError.message}`
+    );
+  }
+
+  const { error: insertError } = await supabase
+    .from("order_items")
+    .insert(rows);
+
+  if (insertError) {
+    throw new Error(
+      `Unable to save order items: ${insertError.message}`
+    );
+  }
+
+  return "order_items";
+}
+/*
+|--------------------------------------------------------------------------
+| FARMER STRIPE TRANSFERS
+|--------------------------------------------------------------------------
+
+=== FARMER PAYOUT RECONSTRUCTION ===
+async function loadMarketplacePayoutSplits(orderId) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { data: rows, error } = await supabase
+    .from("order_items")
+    .select(
+      "farmer_id,farmer_name,farmer_stripe_account_id,quantity,unit_price,total_price"
+    )
+    .eq("order_id", String(orderId));
+
+  if (error) {
+    throw new Error(
+      `Unable to load marketplace items: ${error.message}`
+    );
+  }
+
+  if (!rows || rows.length === 0) {
+    throw new Error(
+      `No saved items found for order ${orderId}.`
+    );
+  }
+
+  const groups = new Map();
+
+  for (const row of rows) {
+    const farmerId = String(row.farmer_id || "");
+
+    if (!isValidUuid(farmerId)) {
+      throw new Error("Order item has an invalid farmer ID.");
+    }
+
+    const quantity = Number(row.quantity);
+    const unitPrice = Number(row.unit_price);
+
+    if (
+      !Number.isSafeInteger(quantity) ||
+      quantity < 1 ||
+      !Number.isFinite(unitPrice) ||
+      unitPrice <= 0
+    ) {
+      throw new Error("Invalid saved order item.");
+    }
+
+    if (!groups.has(farmerId)) {
+      groups.set(farmerId, {
+        farmerId,
+        farmer_id: farmerId,
+        farmName: row.farmer_name || "Farm",
+        farm_name: row.farmer_name || "Farm",
+        stripeAccountId:
+          row.farmer_stripe_account_id || "",
+        stripe_account_id:
+          row.farmer_stripe_account_id || "",
+        subtotalCents: 0,
+        itemCount: 0
+      });
+    }
+
+    const group = groups.get(farmerId);
+
+    group.subtotalCents +=
+      Math.round(unitPrice * 100) * quantity;
+
+    group.itemCount += quantity;
+  }
+
+  return Array.from(groups.values()).map((group) => {
+    const subtotal = group.subtotalCents / 100;
+
+    return {
+      farmerId: group.farmerId,
+      farmer_id: group.farmer_id,
+      farmName: group.farmName,
+      farm_name: group.farm_name,
+      stripeAccountId: group.stripeAccountId,
+      stripe_account_id: group.stripe_account_id,
+      subtotal,
+      amount: subtotal,
+      itemCount: group.itemCount,
+      item_count: group.itemCount
+    };
+  });
+}

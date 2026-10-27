@@ -1,0 +1,482 @@
+=== FARMER TRANSFER FUNCTION ===
+async function createStripeTransfersForMarketplaceOrder(
+  order,
+  paymentIntentId
+) {
+  if (!paymentIntentId) {
+    return [];
+  }
+
+  const transfers = [];
+
+  for (
+    const split of
+    order.payoutSplits ||
+    []
+  ) {
+    const destination = clean(
+      split.stripeAccountId ||
+        split.stripe_account_id
+    );
+
+    if (!isAcct(destination)) {
+      transfers.push({
+        success: false,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        reason:
+          "missing_connect_account",
+      });
+
+      continue;
+    }
+
+    const grossCents =
+      cents(
+        split.subtotal
+      );
+
+    const platformFeeCents =
+      Math.round(
+        grossCents *
+          FARMER_PLATFORM_FEE_RATE
+      );
+
+    const transferAmountCents =
+      Math.max(
+        grossCents -
+          platformFeeCents,
+        0
+      );
+
+    if (
+      transferAmountCents <=
+      0
+    ) {
+      continue;
+    }
+
+    try {
+      /*
+       * Stripe may retry webhook events.
+       *
+       * The same order + farmer must therefore produce the same
+       * idempotency key so Stripe cannot create a duplicate transfer.
+       */
+
+      const transferIdentity =
+        clean(
+          split.farmerId ||
+            split.farmer_id ||
+            destination
+        );
+
+      const idempotencyKey =
+        `marketplace_transfer_${clean(
+          order.orderId
+        )}_${transferIdentity}`
+          .replace(
+            /[^a-zA-Z0-9_-]/g,
+            "_"
+          )
+          .slice(
+            0,
+            240
+          );
+
+      const transfer =
+        await stripe.transfers.create(
+          {
+            amount:
+              transferAmountCents,
+
+            currency:
+              "usd",
+
+            destination,
+
+            /*
+             * Associates the transfer with this Farm2Home order.
+             */
+            transfer_group:
+              clean(
+                order.orderId
+              ),
+
+            metadata: {
+              orderId:
+                order.orderId,
+
+              order_id:
+                order.orderId,
+
+              farmerId:
+                split.farmerId,
+
+              farmer_id:
+                split.farmerId,
+
+              farmName:
+                split.farmName,
+
+              farm_name:
+                split.farmName,
+
+              subtotal:
+                String(
+                  split.subtotal
+                ),
+
+              platformFee:
+                dollarsFromCents(
+                  platformFeeCents
+                ).toFixed(2),
+
+              paymentIntentId,
+
+              payment_intent_id:
+                paymentIntentId,
+
+              type:
+                "farm2home_marketplace_farmer_transfer",
+            },
+          },
+
+          {
+            idempotencyKey,
+          }
+        );
+
+      transfers.push({
+        success:
+          true,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        stripeAccountId:
+          destination,
+
+        amount:
+          dollarsFromCents(
+            transferAmountCents
+          ),
+
+        transferId:
+          transfer.id,
+      });
+    } catch (error) {
+      console.error(
+        "Stripe transfer failed:",
+        error.message
+      );
+
+      transfers.push({
+        success:
+          false,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        stripeAccountId:
+          destination,
+
+        amount:
+          dollarsFromCents(
+            transferAmountCents
+          ),
+
+        error:
+          error.message,
+      });
+    }
+  }
+
+  return transfers;
+}
+
+/*
+|--------------------------------------------------------------------------
+| FARMER FIRST PAID SALE
+|--------------------------------------------------------------------------
+*/
+
+async function markFarmersFirstPaidSale(order) {
+  if (!supabase || !order) {
+    return [];
+
+=== MARKETPLACE PAYMENT FUNCTION ===
+async function updateMarketplaceOrderPaid(session) {
+  if (
+    !supabase ||
+    !stripe ||
+    !session
+  ) {
+    return;
+  }
+
+  const metadata =
+    session.metadata ||
+    {};
+
+  const orderId =
+    clean(
+      metadata.orderId ||
+        metadata.order_id
+    );
+
+  if (!orderId) {
+    return;
+  }
+
+  if (
+    lower(
+      session.payment_status
+    ) !== "paid"
+  ) {
+    console.log(
+      `Marketplace order ${orderId} is not paid yet.`
+    );
+
+    return;
+  }
+
+  const paymentIntentId =
+    typeof session.payment_intent ===
+    "string"
+      ? session.payment_intent
+      : session.payment_intent
+          ?.id ||
+        "";
+
+  if (
+    !paymentIntentId
+  ) {
+    throw new Error(
+      `Paid marketplace order ${orderId} has no PaymentIntent.`
+    );
+  }
+
+  const paymentIntent =
+    typeof session.payment_intent ===
+      "object" &&
+    session.payment_intent
+      ?.status
+      ? session.payment_intent
+      : await stripe
+          .paymentIntents
+          .retrieve(
+            paymentIntentId
+          );
+
+  if (
+    paymentIntent.status !==
+    "succeeded"
+  ) {
+    console.log(
+      `PaymentIntent ${paymentIntentId} is ${paymentIntent.status}; transfer skipped.`
+    );
+
+    return;
+  }
+
+  let order = null;
+
+  for (
+    const table of [
+      "orders",
+      "customer_orders",
+      "farm_orders",
+    ]
+  ) {
+    const { data } =
+      await supabase
+        .from(table)
+        .select("*")
+        .eq(
+          "id",
+          orderId
+        )
+        .maybeSingle();
+
+    if (data) {
+      order = {
+        orderId,
+
+        customerId:
+          data.customer_id,
+
+        customerEmail:
+          data.customer_email,
+
+        customerName:
+          data.customer_name,
+
+        subtotal:
+          Number(
+            data.subtotal ||
+              0
+          ),
+
+        serviceFee:
+          Number(
+            data.service_fee ||
+              0
+          ),
+
+        platformFee:
+          Number(
+            data.platform_fee ||
+              data.service_fee ||
+              0
+          ),
+
+        deliveryFee:
+          Number(
+            data.delivery_fee ||
+              0
+          ),
+
+        freightHandlingFee:
+          Number(
+            data.freight_handling_fee ||
+              0
+          ),
+
+        tip:
+          Number(
+            data.tip ||
+              0
+          ),
+
+        total:
+          Number(
+            data.total ||
+              0
+          ),
+
+        items:
+          Array.isArray(
+            data.items
+          )
+            ? data.items
+            : [],
+
+        payoutSplits:
+          Array.isArray(
+            data.payout_splits
+          )
+            ? data.payout_splits
+            : [],
+
+        createdAt:
+          data.created_at,
+      };
+
+      break;
+    }
+  }
+
+  if (!order) {
+    try {
+      order =
+        JSON.parse(
+          metadata.orderPayload ||
+            "{}"
+        );
+    } catch {
+      order = null;
+    }
+  }
+
+  if (
+    !order?.orderId
+  ) {
+    throw new Error(
+      `Marketplace order ${orderId} could not be loaded.`
+    );
+  }
+
+  /*
+   * This function intentionally passes only the order payout splits.
+   *
+   * createStripeTransfersForMarketplaceOrder() calculates the farmer's
+   * transfer from split.subtotal.
+   *
+   * CUSTOMER_CHECKOUT_SERVICE_FEE ($4.99) is not part of the farmer split.
+   */
+
+  const transfers =
+    await createStripeTransfersForMarketplaceOrder(
+      order,
+      paymentIntentId
+    );
+
+  const paidPayload = {
+    status:
+      "PAID",
+
+    payment_status:
+      "paid",
+
+    stripe_checkout_session_id:
+      session.id,
+
+    stripe_payment_intent_id:
+      paymentIntentId,
+
+    transfer_results:
+      transfers,
+
+    updated_at:
+      nowIso(),
+  };
+
+  for (
+    const table of [
+      "orders",
+      "customer_orders",
+      "farm_orders",
+    ]
+  ) {
+    try {
+      await safeUpdate(
+        table,
+        paidPayload,
+        (query) =>
+          query.eq(
+            "id",
+            orderId
+          ),
+        table
+      );
+    } catch (error) {
+      console.log(
+        `${table} paid-order update skipped:`,
+        error.message
+      );
+    }
+  }
+    /*
+  |--------------------------------------------------------------------------
+  | MARK FARMER FIRST PAID SALE
+  |--------------------------------------------------------------------------
+  */
+
+  await markFarmersFirstPaidSale(order);
+
+  /*
+  |--------------------------------------------------------------------------
+  | UPDATE TRANSFER RECORDS
+  |--------------------------------------------------------------------------

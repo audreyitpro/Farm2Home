@@ -2637,15 +2637,46 @@ async function verifyMarketplaceProducts(cartItems) {
 
     const { data: farmer, error: farmerError } = await supabase
       .from("farmers")
-      .select("id,farm_name,business_name,farmer_email,email")
+      .select(
+  "id,farm_name,business_name,farmer_email,email," +
+  "stripe_account_id,farmer_stripe_account_id"
+)
       .eq("id", product.farmer_id)
       .single();
 
     if (farmerError || !farmer) {
       throw new Error("Registered farmer account not found.");
     }
+const primaryAccount = clean(farmer.stripe_account_id || "");
+const secondaryAccount = clean(farmer.farmer_stripe_account_id || "");
+
+if (
+  primaryAccount &&
+  secondaryAccount &&
+  primaryAccount !== secondaryAccount
+) {
+  throw new Error(
+    "Farmer Stripe Connect account IDs do not match."
+  );
+}
+
+const trustedStripeAccountId =
+  primaryAccount || secondaryAccount;
+
+if (
+  trustedStripeAccountId &&
+  !/^acct_[A-Za-z0-9]+$/.test(trustedStripeAccountId)
+) {
+  throw new Error(
+    "Farmer Stripe Connect account ID is invalid."
+  );
+}
 
     verifiedItems.push({
+      farmerStripeAccountId: trustedStripeAccountId,
+      farmer_stripe_account_id: trustedStripeAccountId,
+      stripeAccountId: trustedStripeAccountId,
+      stripe_account_id: trustedStripeAccountId,
       id: product.id,
       productId: product.id,
       product_id: product.id,
@@ -3062,355 +3093,243 @@ async function saveMarketplaceOrderItems(order) {
     throw new Error("Supabase is not configured.");
   }
 
-  if (!order?.orderId || !Array.isArray(order.items)) {
+  if (
+    !order?.orderId ||
+    !Array.isArray(order.items) ||
+    order.items.length === 0
+  ) {
     throw new Error("Invalid marketplace order items.");
   }
 
-  if (order.items.length === 0) {
-    throw new Error("Cannot save an order with no items.");
-  }
-
-  const rows = order.items.map((item) => {
-    const quantity = Number(item.quantity);
-
-    const unitPrice = Number(
-      item.price ?? item.unit_price ?? 0
-    );
-
-    const farmerId =
-      item.farmerId || item.farmer_id || null;
-
-    const productId =
-      item.productId || item.product_id || item.id;
-
-    if (!Number.isSafeInteger(quantity) || quantity < 1) {
-      throw new Error("Invalid order item quantity.");
+  const { data, error } = await supabase.rpc(
+    "save_marketplace_order_items_atomic",
+    {
+      p_order_id: String(order.orderId),
+      p_items: order.items.map((item) => ({
+        productId:
+          item.productId ||
+          item.product_id ||
+          item.id,
+        quantity: item.quantity
+      }))
     }
+  );
 
-    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
-      throw new Error("Invalid order item price.");
-    }
-
-    if (!isValidUuid(farmerId)) {
-      throw new Error("Invalid farmer ID.");
-    }
-
-    if (!isValidUuid(productId)) {
-      throw new Error("Invalid product ID.");
-    }
-
-    return {
-      order_id: String(order.orderId),
-
-      farmer_id: farmerId,
-
-      farmer_name:
-        item.farmerName ||
-        item.farmer_name ||
-        item.farmName ||
-        "Farm",
-
-      farmer_email:
-        item.farmerEmail ||
-        item.farmer_email ||
-        null,
-
-      farmer_stripe_account_id:
-        item.farmerStripeAccountId ||
-        item.farmer_stripe_account_id ||
-        null,
-
-      product_id: String(productId),
-
-      product_name:
-        item.name ||
-        item.productName ||
-        item.product_name ||
-        "Product",
-
-      quantity,
-
-      unit_price: unitPrice,
-
-      total_price: Number(
-        (quantity * unitPrice).toFixed(2)
-      )
-    };
-  });
-
-  // Replace rows only while the order is still pending.
-  const { data: existingOrder, error: orderError } =
-    await supabase
-      .from("orders")
-      .select("payment_status")
-      .eq("id", String(order.orderId))
-      .single();
-
-  if (orderError) {
+  if (error) {
     throw new Error(
-      `Unable to verify order status: ${orderError.message}`
+      "Atomic order-item save failed: " + error.message
     );
   }
 
-  if (
-    String(existingOrder.payment_status || "")
-      .toUpperCase() !== "PENDING_PAYMENT"
-  ) {
+  if (data !== order.items.length) {
     throw new Error(
-      "Cannot modify items after payment processing."
-    );
-  }
-
-  const { error: deleteError } = await supabase
-    .from("order_items")
-    .delete()
-    .eq("order_id", String(order.orderId));
-
-  if (deleteError) {
-    throw new Error(
-      `Unable to prepare order items: ${deleteError.message}`
-    );
-  }
-
-  const { error: insertError } = await supabase
-    .from("order_items")
-    .insert(rows);
-
-  if (insertError) {
-    throw new Error(
-      `Unable to save order items: ${insertError.message}`
+      "Saved order-item count did not match the request."
     );
   }
 
   return "order_items";
 }
-/*
-|--------------------------------------------------------------------------
-| FARMER STRIPE TRANSFERS
-|--------------------------------------------------------------------------
-|
-| CRITICAL:
-|
-| The farmer transfer is calculated from split.subtotal ONLY.
-|
-| Example:
-|
-| Farmer product subtotal = $100.00
-| Farmer platform fee 4% = $4.00
-| Farmer transfer = $96.00
-|
-| The customer's separate $4.99 Farm2Home service fee is never included
-| in split.subtotal and therefore is not transferred to the farmer.
-|
-*/
+
 
 async function createStripeTransfersForMarketplaceOrder(
   order,
   paymentIntentId
 ) {
-  if (!paymentIntentId) {
-    return [];
+  if (!supabase || !stripe) {
+    throw new Error("Supabase or Stripe is not configured.");
   }
 
-  const transfers = [];
+  if (!paymentIntentId || !order?.orderId) {
+    throw new Error("Missing verified marketplace payment identifiers.");
+  }
 
-  for (
-    const split of
-    order.payoutSplits ||
-    []
-  ) {
-    const destination = clean(
-      split.stripeAccountId ||
-        split.stripe_account_id
-    );
+  const results = [];
 
-    if (!isAcct(destination)) {
-      transfers.push({
-        success: false,
+  for (const split of order.payoutSplits || []) {
+    const farmerId = clean(split.farmerId || split.farmer_id);
+    const farmName = clean(split.farmName || split.farm_name);
 
-        farmerId:
-          split.farmerId,
+    if (!isValidUuid(farmerId)) {
+      throw new Error("Invalid farmer ID for marketplace payout.");
+    }
 
-        farmName:
-          split.farmName,
+    // Atomically reserve the payout using trusted database amounts.
+    const { data: claims, error: claimError } =
+      await supabase.rpc(
+        "claim_marketplace_farmer_transfer",
+        {
+          p_order_id: String(order.orderId),
+          p_farmer_id: farmerId,
+          p_payment_intent_id: paymentIntentId
+        }
+      );
 
-        reason:
-          "missing_connect_account",
+    if (claimError) {
+      throw new Error(
+        `Payout claim failed for farmer ${farmerId}: ${claimError.message}`
+      );
+    }
+
+    const claim = Array.isArray(claims) ? claims[0] : claims;
+
+    if (!claim) {
+      throw new Error(`Missing payout claim for farmer ${farmerId}.`);
+    }
+
+    if (!claim.should_process) {
+      results.push({
+        success: claim.claim_status === "succeeded",
+        skipped: true,
+        farmerId,
+        farmName,
+        status: claim.claim_status,
+        reason: "existing_payout_claim"
       });
-
       continue;
     }
 
-    const grossCents =
-      cents(
-        split.subtotal
-      );
-
-    const platformFeeCents =
-      Math.round(
-        grossCents *
-          FARMER_PLATFORM_FEE_RATE
-      );
-
-    const transferAmountCents =
-      Math.max(
-        grossCents -
-          platformFeeCents,
-        0
-      );
+    const destination = claim.claim_stripe_account_id;
+    const amountCents = Number(claim.claim_transfer_cents);
+    const idempotencyKey = claim.claim_idempotency_key;
 
     if (
-      transferAmountCents <=
-      0
+      !isAcct(destination) ||
+      !Number.isSafeInteger(amountCents) ||
+      amountCents <= 0 ||
+      !idempotencyKey
     ) {
-      continue;
+      throw new Error(`Invalid claimed payout for farmer ${farmerId}.`);
     }
 
+    let stripeTransfer = null;
+
     try {
-      /*
-       * Stripe may retry webhook events.
-       *
-       * The same order + farmer must therefore produce the same
-       * idempotency key so Stripe cannot create a duplicate transfer.
-       */
+      const paymentIntent =
+        await stripe.paymentIntents.retrieve(paymentIntentId);
 
-      const transferIdentity =
-        clean(
-          split.farmerId ||
-            split.farmer_id ||
-            destination
-        );
+      if (
+        paymentIntent.status !== "succeeded" ||
+        paymentIntent.currency !== "usd"
+      ) {
+        throw new Error("PaymentIntent is not a successful USD payment.");
+      }
 
-      const idempotencyKey =
-        `marketplace_transfer_${clean(
-          order.orderId
-        )}_${transferIdentity}`
-          .replace(
-            /[^a-zA-Z0-9_-]/g,
-            "_"
-          )
-          .slice(
-            0,
-            240
-          );
+      const chargeId =
+        typeof paymentIntent.latest_charge === "string"
+          ? paymentIntent.latest_charge
+          : paymentIntent.latest_charge?.id;
 
-      const transfer =
-        await stripe.transfers.create(
-          {
-            amount:
-              transferAmountCents,
+      if (!chargeId) {
+        throw new Error("Verified payment has no latest charge.");
+      }
 
-            currency:
-              "usd",
+      const charge = await stripe.charges.retrieve(chargeId);
 
-            destination,
+      if (
+        charge.payment_intent !== paymentIntentId ||
+        charge.status !== "succeeded" ||
+        charge.paid !== true ||
+        charge.currency !== "usd"
+      ) {
+        throw new Error("Stripe charge verification failed.");
+      }
 
-            /*
-             * Associates the transfer with this Farm2Home order.
-             */
-            transfer_group:
-              clean(
-                order.orderId
-              ),
-
-            metadata: {
-              orderId:
-                order.orderId,
-
-              order_id:
-                order.orderId,
-
-              farmerId:
-                split.farmerId,
-
-              farmer_id:
-                split.farmerId,
-
-              farmName:
-                split.farmName,
-
-              farm_name:
-                split.farmName,
-
-              subtotal:
-                String(
-                  split.subtotal
-                ),
-
-              platformFee:
-                dollarsFromCents(
-                  platformFeeCents
-                ).toFixed(2),
-
-              paymentIntentId,
-
-              payment_intent_id:
-                paymentIntentId,
-
-              type:
-                "farm2home_marketplace_farmer_transfer",
-            },
-          },
-
-          {
-            idempotencyKey,
-          }
-        );
-
-      transfers.push({
-        success:
-          true,
-
-        farmerId:
-          split.farmerId,
-
-        farmName:
-          split.farmName,
-
-        stripeAccountId:
+      // Source transaction ties this transfer to the verified charge.
+      stripeTransfer = await stripe.transfers.create(
+        {
+          amount: amountCents,
+          currency: "usd",
           destination,
+          source_transaction: charge.id,
+          transfer_group: String(order.orderId),
+          metadata: {
+            order_id: String(order.orderId),
+            farmer_id: farmerId,
+            payment_intent_id: paymentIntentId,
+            payout_claim_id: claim.claim_id,
+            type: "farm2home_marketplace_farmer_transfer"
+          }
+        },
+        {
+          idempotencyKey
+        }
+      );
 
-        amount:
-          dollarsFromCents(
-            transferAmountCents
-          ),
+      if (
+        stripeTransfer.amount !== amountCents ||
+        stripeTransfer.currency !== "usd" ||
+        stripeTransfer.destination !== destination ||
+        stripeTransfer.source_transaction !== charge.id
+      ) {
+        throw new Error("Stripe transfer response does not match claim.");
+      }
 
-        transferId:
-          transfer.id,
+      const { error: recordError } = await supabase.rpc(
+        "record_marketplace_farmer_transfer",
+        {
+          p_claim_id: claim.claim_id,
+          p_idempotency_key: idempotencyKey,
+          p_status: "succeeded",
+          p_stripe_transfer_id: stripeTransfer.id,
+          p_error_message: null
+        }
+      );
+
+      if (recordError) {
+        throw new Error(
+          `Stripe transfer created but ledger update failed: ${recordError.message}`
+        );
+      }
+
+      results.push({
+        success: true,
+        farmerId,
+        farmName,
+        stripeAccountId: destination,
+        amount: dollarsFromCents(amountCents),
+        transferId: stripeTransfer.id,
+        status: "succeeded"
       });
+
     } catch (error) {
       console.error(
-        "Stripe transfer failed:",
+        `Marketplace transfer requires reconciliation for farmer ${farmerId}:`,
         error.message
       );
 
-      transfers.push({
-        success:
-          false,
+      const { error: reconciliationError } = await supabase.rpc(
+        "record_marketplace_farmer_transfer",
+        {
+          p_claim_id: claim.claim_id,
+          p_idempotency_key: idempotencyKey,
+          p_status: "needs_reconciliation",
+          p_stripe_transfer_id: null,
+          p_error_message: error.message
+        }
+      );
 
-        farmerId:
-          split.farmerId,
+      if (reconciliationError) {
+        console.error(
+          "CRITICAL: Could not record payout reconciliation state:",
+          reconciliationError.message
+        );
+      }
 
-        farmName:
-          split.farmName,
-
-        stripeAccountId:
-          destination,
-
-        amount:
-          dollarsFromCents(
-            transferAmountCents
-          ),
-
-        error:
-          error.message,
+      results.push({
+        success: false,
+        farmerId,
+        farmName,
+        stripeAccountId: destination,
+        amount: dollarsFromCents(amountCents),
+        transferId: stripeTransfer?.id || null,
+        status: "needs_reconciliation",
+        error: error.message
       });
     }
   }
 
-  return transfers;
+  return results;
 }
-
 /*
 |--------------------------------------------------------------------------
 | FARMER FIRST PAID SALE
@@ -3665,6 +3584,7 @@ async function markFarmersFirstPaidSale(order) {
 // FARM2HOME DIRECT - LOAD VERIFIED FARMER PAYOUT SPLITS
 // ============================================================
 
+
 async function loadMarketplacePayoutSplits(orderId) {
   if (!supabase) {
     throw new Error("Supabase is not configured.");
@@ -3690,24 +3610,48 @@ async function loadMarketplacePayoutSplits(orderId) {
   }
 
   const groups = new Map();
+  let orderSubtotalCents = 0;
 
   for (const row of rows) {
-    const farmerId = String(row.farmer_id || "");
+    const farmerId = clean(row.farmer_id);
+    const destination = clean(row.farmer_stripe_account_id);
+    const quantity = Number(row.quantity);
+    const unitPrice = Number(row.unit_price);
+    const totalPrice = Number(row.total_price);
 
     if (!isValidUuid(farmerId)) {
       throw new Error("Order item has an invalid farmer ID.");
     }
 
-    const quantity = Number(row.quantity);
-    const unitPrice = Number(row.unit_price);
+    if (!isAcct(destination)) {
+      throw new Error(
+        `Farmer ${farmerId} has no valid Stripe account.`
+      );
+    }
 
     if (
       !Number.isSafeInteger(quantity) ||
       quantity < 1 ||
       !Number.isFinite(unitPrice) ||
-      unitPrice <= 0
+      unitPrice <= 0 ||
+      !Number.isFinite(totalPrice) ||
+      totalPrice <= 0
     ) {
       throw new Error("Invalid saved order item.");
+    }
+
+    const unitCents = cents(unitPrice);
+    const totalCents = cents(totalPrice);
+
+    if (
+      !Number.isSafeInteger(unitCents) ||
+      !Number.isSafeInteger(totalCents) ||
+      unitCents <= 0 ||
+      totalCents !== unitCents * quantity
+    ) {
+      throw new Error(
+        `Order item amount mismatch for farmer ${farmerId}.`
+      );
     }
 
     if (!groups.has(farmerId)) {
@@ -3716,10 +3660,8 @@ async function loadMarketplacePayoutSplits(orderId) {
         farmer_id: farmerId,
         farmName: row.farmer_name || "Farm",
         farm_name: row.farmer_name || "Farm",
-        stripeAccountId:
-          row.farmer_stripe_account_id || "",
-        stripe_account_id:
-          row.farmer_stripe_account_id || "",
+        stripeAccountId: destination,
+        stripe_account_id: destination,
         subtotalCents: 0,
         itemCount: 0
       });
@@ -3727,10 +3669,41 @@ async function loadMarketplacePayoutSplits(orderId) {
 
     const group = groups.get(farmerId);
 
-    group.subtotalCents +=
-      Math.round(unitPrice * 100) * quantity;
+    if (group.stripeAccountId !== destination) {
+      throw new Error(
+        `Conflicting Stripe accounts for farmer ${farmerId}.`
+      );
+    }
 
+    group.subtotalCents += totalCents;
     group.itemCount += quantity;
+    orderSubtotalCents += totalCents;
+
+    if (
+      !Number.isSafeInteger(group.subtotalCents) ||
+      !Number.isSafeInteger(orderSubtotalCents)
+    ) {
+      throw new Error("Marketplace subtotal exceeds safe limits.");
+    }
+  }
+
+  const { data: savedOrder, error: orderError } =
+    await supabase
+      .from("orders")
+      .select("subtotal")
+      .eq("id", String(orderId))
+      .single();
+
+  if (orderError || !savedOrder) {
+    throw new Error(
+      `Unable to verify order subtotal for ${orderId}.`
+    );
+  }
+
+  if (cents(savedOrder.subtotal) !== orderSubtotalCents) {
+    throw new Error(
+      `Farmer payout subtotal mismatch for order ${orderId}.`
+    );
   }
 
   return Array.from(groups.values()).map((group) => {
@@ -3750,6 +3723,7 @@ async function loadMarketplacePayoutSplits(orderId) {
     };
   });
 }
+
 async function updateMarketplaceOrderPaid(session) {
   if (
     !supabase ||

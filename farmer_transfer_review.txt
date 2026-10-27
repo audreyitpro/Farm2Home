@@ -1,0 +1,185 @@
+async function createStripeTransfersForMarketplaceOrder(
+  order,
+  paymentIntentId
+) {
+  if (!paymentIntentId) {
+    return [];
+  }
+
+  const transfers = [];
+
+  for (
+    const split of
+    order.payoutSplits ||
+    []
+  ) {
+    const destination = clean(
+      split.stripeAccountId ||
+        split.stripe_account_id
+    );
+
+    if (!isAcct(destination)) {
+      transfers.push({
+        success: false,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        reason:
+          "missing_connect_account",
+      });
+
+      continue;
+    }
+
+    const grossCents =
+      cents(
+        split.subtotal
+      );
+
+    const platformFeeCents =
+      Math.round(
+        grossCents *
+          FARMER_PLATFORM_FEE_RATE
+      );
+
+    const transferAmountCents =
+      Math.max(
+        grossCents -
+          platformFeeCents,
+        0
+      );
+
+    if (
+      transferAmountCents <=
+      0
+    ) {
+      continue;
+    }
+
+    try {
+      /*
+       * Stripe may retry webhook events.
+       *
+       * The same order + farmer must therefore produce the same
+       * idempotency key so Stripe cannot create a duplicate transfer.
+       */
+
+      const transferIdentity =
+        clean(
+          split.farmerId ||
+            split.farmer_id ||
+            destination
+        );
+
+      const idempotencyKey =
+        `marketplace_transfer_${clean(
+          order.orderId
+        )}_${transferIdentity}`
+          .replace(
+            /[^a-zA-Z0-9_-]/g,
+            "_"
+          )
+          .slice(
+            0,
+            240
+          );
+
+      const transfer =
+        await stripe.transfers.create(
+          {
+            amount:
+              transferAmountCents,
+
+            currency:
+              "usd",
+
+            destination,
+
+            /*
+             * Associates the transfer with this Farm2Home order.
+             */
+            transfer_group:
+              clean(
+                order.orderId
+              ),
+
+            metadata: {
+              orderId:
+                order.orderId,
+
+              order_id:
+                order.orderId,
+
+              farmerId:
+                split.farmerId,
+
+              farmer_id:
+                split.farmerId,
+
+              farmName:
+                split.farmName,
+
+              farm_name:
+                split.farmName,
+
+              subtotal:
+                String(
+                  split.subtotal
+                ),
+
+              platformFee:
+                dollarsFromCents(
+                  platformFeeCents
+                ).toFixed(2),
+
+              paymentIntentId,
+
+              payment_intent_id:
+                paymentIntentId,
+
+              type:
+                "farm2home_marketplace_farmer_transfer",
+            },
+          },
+
+          {
+            idempotencyKey,
+          }
+        );
+
+      transfers.push({
+        success:
+          true,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        stripeAccountId:
+          destination,
+
+        amount:
+          dollarsFromCents(
+            transferAmountCents
+          ),
+
+        transferId:
+          transfer.id,
+      });
+    } catch (error) {
+      console.error(
+        "Stripe transfer failed:",
+        error.message
+      );
+
+      transfers.push({
+        success:
+          false,
+
+        farmerId:

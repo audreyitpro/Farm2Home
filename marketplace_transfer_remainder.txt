@@ -1,0 +1,106 @@
+          {
+            idempotencyKey,
+          }
+        );
+
+      transfers.push({
+        success:
+          true,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        stripeAccountId:
+          destination,
+
+        amount:
+          dollarsFromCents(
+            transferAmountCents
+          ),
+
+        transferId:
+          transfer.id,
+      });
+    } catch (error) {
+      console.error(
+        "Stripe transfer failed:",
+        error.message
+      );
+
+      transfers.push({
+        success:
+          false,
+
+        farmerId:
+          split.farmerId,
+
+        farmName:
+          split.farmName,
+
+        stripeAccountId:
+          destination,
+
+        amount:
+          dollarsFromCents(
+            transferAmountCents
+          ),
+
+        error:
+          error.message,
+      });
+    }
+  }
+
+  return transfers;
+}
+
+/*
+|--------------------------------------------------------------------------
+| FARMER FIRST PAID SALE
+|--------------------------------------------------------------------------
+*/
+
+async function markFarmersFirstPaidSale(order) {
+  if (!supabase || !order) {
+    return [];
+  }
+
+  const farmerIds =
+    new Set();
+
+  for (
+    const split of
+    order.payoutSplits ||
+    []
+  ) {
+    const farmerId =
+      clean(
+        split.farmerId ||
+          split.farmer_id
+      );
+
+    if (farmerId) {
+      farmerIds.add(
+        farmerId
+      );
+    }
+  }
+
+  for (
+    const item of
+    order.items ||
+    []
+  ) {
+    const farmerId =
+      clean(
+        item.farmerId ||
+          item.farmer_id
+      );
+
+    if (farmerId) {
+      farmerIds.add(
+        farmerId
+      );

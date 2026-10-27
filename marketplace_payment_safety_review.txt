@@ -1,0 +1,369 @@
+=== PAYOUT SPLIT NORMALIZATION ===
+function normalizePayoutSplits(body, items) {
+  const provided = Array.isArray(body.payoutSplits)
+    ? body.payoutSplits
+    : Array.isArray(body.payout_splits)
+      ? body.payout_splits
+      : [];
+
+  if (provided.length > 0) {
+    return provided.map((split) => {
+      const stripeAccountId = clean(
+        split.stripeAccountId ||
+          split.stripe_account_id ||
+          split.farmerStripeAccountId ||
+          split.farmer_stripe_account_id
+      );
+
+      return {
+        farmerId: clean(
+          split.farmerId ||
+            split.farmer_id
+        ),
+
+        farmer_id: clean(
+          split.farmerId ||
+            split.farmer_id
+        ),
+
+        farmName: clean(
+          split.farmName ||
+            split.farm_name ||
+            "Farm2Home Farm"
+        ),
+
+        farm_name: clean(
+          split.farmName ||
+            split.farm_name ||
+            "Farm2Home Farm"
+        ),
+
+        stripeAccountId,
+        stripe_account_id:
+          stripeAccountId,
+
+        farmerStripeAccountId:
+          stripeAccountId,
+
+        farmer_stripe_account_id:
+          stripeAccountId,
+
+        subtotal: Number(
+          split.subtotal ||
+            split.amount ||
+            0
+        ),
+
+        amount: Number(
+          split.amount ||
+            split.subtotal ||
+            0
+        ),
+
+        itemCount: Number(
+          split.itemCount ||
+            split.item_count ||
+            0
+        ),
+
+        item_count: Number(
+          split.itemCount ||
+            split.item_count ||
+            0
+        ),
+
+        freightRequired: Boolean(
+          split.freightRequired ||
+            split.freight_required
+        ),
+
+        freight_required: Boolean(
+
+=== ORDER ITEM SAVING ===
+async function saveMarketplaceOrderItems(order) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  if (!order?.orderId || !Array.isArray(order.items)) {
+    throw new Error("Invalid marketplace order items.");
+  }
+
+  if (order.items.length === 0) {
+    throw new Error("Cannot save an order with no items.");
+  }
+
+  const rows = order.items.map((item) => {
+    const quantity = Number(item.quantity);
+
+    const unitPrice = Number(
+      item.price ?? item.unit_price ?? 0
+    );
+
+    const farmerId =
+      item.farmerId || item.farmer_id || null;
+
+    const productId =
+      item.productId || item.product_id || item.id;
+
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
+      throw new Error("Invalid order item quantity.");
+    }
+
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      throw new Error("Invalid order item price.");
+    }
+
+    if (!isValidUuid(farmerId)) {
+      throw new Error("Invalid farmer ID.");
+    }
+
+    if (!isValidUuid(productId)) {
+      throw new Error("Invalid product ID.");
+    }
+
+    return {
+      order_id: String(order.orderId),
+
+      farmer_id: farmerId,
+
+      farmer_name:
+        item.farmerName ||
+        item.farmer_name ||
+        item.farmName ||
+        "Farm",
+
+      farmer_email:
+        item.farmerEmail ||
+        item.farmer_email ||
+        null,
+
+      farmer_stripe_account_id:
+        item.farmerStripeAccountId ||
+        item.farmer_stripe_account_id ||
+        null,
+
+      product_id: String(productId),
+
+      product_name:
+        item.name ||
+        item.productName ||
+        item.product_name ||
+        "Product",
+
+      quantity,
+
+      unit_price: unitPrice,
+
+      total_price: Number(
+        (quantity * unitPrice).toFixed(2)
+      )
+    };
+  });
+
+  // Replace rows only while the order is still pending.
+  const { data: existingOrder, error: orderError } =
+    await supabase
+      .from("orders")
+      .select("payment_status")
+      .eq("id", String(order.orderId))
+      .single();
+
+  if (orderError) {
+    throw new Error(
+      `Unable to verify order status: ${orderError.message}`
+    );
+  }
+
+  if (
+    String(existingOrder.payment_status || "")
+      .toUpperCase() !== "PENDING_PAYMENT"
+  ) {
+    throw new Error(
+      "Cannot modify items after payment processing."
+    );
+  }
+
+  const { error: deleteError } = await supabase
+    .from("order_items")
+    .delete()
+    .eq("order_id", String(order.orderId));
+
+  if (deleteError) {
+    throw new Error(
+      `Unable to prepare order items: ${deleteError.message}`
+    );
+  }
+
+  const { error: insertError } = await supabase
+    .from("order_items")
+    .insert(rows);
+
+  if (insertError) {
+    throw new Error(
+      `Unable to save order items: ${insertError.message}`
+    );
+  }
+
+  return "order_items";
+
+=== MARKETPLACE CHECKOUT PAYOUTS ===
+        !Number.isFinite(
+          subtotal
+        ) ||
+        subtotal <= 0
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error:
+              "Marketplace subtotal must be greater than $0.",
+          });
+      }
+
+      /*
+       * Build farmer payout splits from the cart items.
+       *
+       * We intentionally DO NOT use client-provided payoutSplits
+       * as the source for farmer dollar amounts.
+       */
+
+      const payoutSplits =
+        normalizePayoutSplits(
+          {},
+          items
+        );
+
+      const invalidSplit =
+        payoutSplits.find(
+          (split) =>
+            !clean(
+              split.farmerId
+            )
+        );
+
+      if (invalidSplit) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error:
+              "Every payout split must include farmerId.",
+          });
+      }
+
+      /*
+       * Customer fee is ALWAYS server controlled.
+       */
+
+      const serviceFee =
+        CUSTOMER_CHECKOUT_SERVICE_FEE;
+
+      /*
+       * Additional checkout amounts.
+       *
+       * Keep these separate from farmer product subtotal.
+
+=== MARKETPLACE ORDER SAVE SEQUENCE ===
+         */
+        platformFee:
+          serviceFee,
+
+        deliveryFee,
+        freightHandlingFee,
+        tip,
+        total,
+
+        deliveryOption,
+
+        deliveryAddress:
+          clean(
+            body.deliveryAddress ||
+              body.delivery_address ||
+              deliveryInfo.deliveryAddress
+          ),
+
+        city:
+          clean(
+            body.city ||
+              deliveryInfo.city
+          ),
+
+        state:
+          clean(
+            body.state ||
+              deliveryInfo.state
+          ),
+
+        zipCode:
+          clean(
+            body.zipCode ||
+              body.zip_code ||
+              deliveryInfo.zipCode
+          ),
+
+        phone:
+          clean(
+            body.phone ||
+              deliveryInfo.phone
+          ),
+
+        deliveryInstructions:
+          clean(
+            body.deliveryInstructions ||
+              body.delivery_instructions ||
+              deliveryInfo.deliveryInstructions
+          ),
+
+        items,
+        payoutSplits,
+
+        status:
+          "PENDING_PAYMENT",
+
+        createdAt:
+          nowIso(),
+
+        updatedAt:
+          nowIso(),
+      };
+
+      await saveMarketplaceOrder(
+        order
+      );
+
+      await saveMarketplaceOrderItems(
+        order
+      );
+
+      await saveMarketplaceTransfers(
+        order
+      );
+
+      /*
+       * Product line items
+       */
+
+      const lineItems =
+        items.map(
+          (item) => ({
+            price_data: {
+              currency:
+                "usd",
+
+              product_data: {
+                name:
+                  item.name,
+
+                metadata: {
+                  productId:
+                    item.productId,
+
+                  farmerId:
+                    item.farmerId,
+
+                  farmName:
+                    item.farmName,
+                },
+              },

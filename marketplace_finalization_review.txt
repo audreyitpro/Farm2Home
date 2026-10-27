@@ -1,0 +1,281 @@
+=== PAYMENT VERIFICATION ===
+async function updateMarketplaceOrderPaid(session) {
+  if (
+    !supabase ||
+    !stripe ||
+    !session
+  ) {
+    return;
+  }
+
+  const metadata =
+    session.metadata ||
+    {};
+
+  const orderId =
+    clean(
+      metadata.orderId ||
+        metadata.order_id
+    );
+
+  if (!orderId) {
+    return;
+  }
+
+  if (
+    lower(
+      session.payment_status
+    ) !== "paid"
+  ) {
+    console.log(
+      `Marketplace order ${orderId} is not paid yet.`
+    );
+
+    return;
+  }
+
+  const paymentIntentId =
+    typeof session.payment_intent ===
+    "string"
+      ? session.payment_intent
+      : session.payment_intent
+          ?.id ||
+        "";
+
+  if (
+    !paymentIntentId
+  ) {
+    throw new Error(
+      `Paid marketplace order ${orderId} has no PaymentIntent.`
+    );
+  }
+
+  const paymentIntent =
+    typeof session.payment_intent ===
+      "object" &&
+    session.payment_intent
+      ?.status
+      ? session.payment_intent
+      : await stripe
+          .paymentIntents
+          .retrieve(
+            paymentIntentId
+          );
+
+  if (
+    paymentIntent.status !==
+    "succeeded"
+  ) {
+    console.log(
+      `PaymentIntent ${paymentIntentId} is ${paymentIntent.status}; transfer skipped.`
+    );
+
+    return;
+  }
+
+  
+  // ============================================================
+  // LOAD CUSTOMER ORDER FROM TRUSTED SUPABASE RECORD
+  // ============================================================
+
+  const { data: savedOrder, error: orderLoadError } =
+    await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", orderId)
+      .single();
+
+  if (orderLoadError || !savedOrder) {
+    throw new Error(
+      `Marketplace order ${orderId} could not be loaded: ${
+        orderLoadError?.message || "Order not found"
+      }`
+    );
+  }
+
+  // The checkout must already be associated with this order.
+  if (
+    savedOrder.stripe_session_id &&
+    savedOrder.stripe_session_id !== session.id
+  ) {
+    throw new Error(
+      `Stripe session mismatch for order ${orderId}.`
+    );
+  }
+
+  if (
+    savedOrder.stripe_payment_intent_id &&
+    savedOrder.stripe_payment_intent_id !== paymentIntentId
+  ) {
+    throw new Error(
+      `Stripe PaymentIntent mismatch for order ${orderId}.`
+    );
+  }
+
+  const order = {
+    orderId: savedOrder.id,
+    customerId: savedOrder.customer_id,
+    customerEmail: savedOrder.customer_email,
+    customerName: savedOrder.customer_name,
+
+    subtotal: Number(savedOrder.subtotal),
+    serviceFee: Number(savedOrder.service_fee),
+    platformFee: Number(savedOrder.service_fee),
+    deliveryFee: Number(savedOrder.delivery_fee || 0),
+    tip: Number(savedOrder.tip || 0),
+    total: Number(savedOrder.total),
+
+    stripeSessionId: savedOrder.stripe_session_id,
+    stripePaymentIntentId:
+      savedOrder.stripe_payment_intent_id,
+
+    items: [],
+    payoutSplits: [],
+    createdAt: savedOrder.created_at,
+  };
+
+  if (
+    !Number.isFinite(order.total) ||
+    order.total <= 0 ||
+    !Number.isFinite(order.subtotal) ||
+    order.subtotal <= 0
+  ) {
+    throw new Error(
+      `Invalid saved marketplace order totals for ${orderId}.`
+    );
+  }
+
+    /*
+   * Rebuild farmer payouts from saved order_items.
+   * Do not trust payout totals supplied by the customer.
+   *
+   * The $4.99 checkout service fee is excluded.
+   * Farmer commission remains 4%.
+   */
+
+  
+  // ============================================================
+  // FARM2HOME - VERIFY AND FINALIZE PAID MARKETPLACE ORDER
+  // ============================================================
+
+  // Load farmer product totals from saved order items.
+  order.payoutSplits =
+    await loadMarketplacePayoutSplits(orderId);
+
+  // Check the Stripe payment against the stored order.
+  const expectedAmountCents = cents(order.total);
+
+  if (
+    !Number.isSafeInteger(expectedAmountCents) ||
+
+=== FINALIZATION AND TRANSFER ===
+    expectedAmountCents <= 0 ||
+    session.amount_total !== expectedAmountCents ||
+    paymentIntent.amount !== expectedAmountCents ||
+    String(session.currency || "").toLowerCase() !== "usd" ||
+    String(paymentIntent.currency || "").toLowerCase() !== "usd" ||
+    session.payment_intent?.id !== undefined &&
+      typeof session.payment_intent === "object" &&
+      session.payment_intent.id !== paymentIntentId
+  ) {
+    throw new Error(
+      `Stripe payment amount or currency mismatch for order ${orderId}.`
+    );
+  }
+
+  // Reject a Stripe session belonging to a different order.
+  if (
+    order.stripeSessionId &&
+    order.stripeSessionId !== session.id
+  ) {
+    throw new Error(
+      `Stripe session mismatch for order ${orderId}.`
+    );
+  }
+
+  // Save verified payment information to the real orders table.
+  const { data: updatedOrder, error: updateError } =
+    await supabase
+      .from("orders")
+      .update({
+        payment_status: "PAID",
+        stripe_session_id: session.id,
+        stripe_payment_intent_id: paymentIntentId,
+      })
+      .eq("id", orderId)
+      .or(
+        `stripe_session_id.is.null,stripe_session_id.eq.${session.id}`
+      )
+      .select("id")
+      .single();
+
+  if (updateError || !updatedOrder) {
+    throw new Error(
+      `Failed to confirm paid order ${orderId}: ${
+        updateError?.message || "No matching order"
+      }`
+    );
+  }
+
+  // Create farmer orders, link items, and queue emails
+  // in a single PostgreSQL transaction.
+  const { data: farmerOrderCount, error: finalizeError } =
+    await supabase.rpc(
+      "finalize_marketplace_farm_orders",
+      {
+        p_order_id: orderId,
+        p_stripe_session_id: session.id,
+        p_payment_intent_id: paymentIntentId,
+      }
+    );
+
+  if (finalizeError) {
+    throw new Error(
+      `Farmer-order finalization failed: ${finalizeError.message}`
+    );
+  }
+
+  console.log(
+    `Finalized ${farmerOrderCount} farmer orders for ${orderId}.`
+  );
+
+  // Transfers run only after farmer orders are finalized.
+  const transfers =
+    await createStripeTransfersForMarketplaceOrder(
+      order,
+      paymentIntentId
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | MARK FARMER FIRST PAID SALE
+  |--------------------------------------------------------------------------
+  */
+
+  await markFarmersFirstPaidSale(order);
+
+  /*
+  |--------------------------------------------------------------------------
+  | UPDATE TRANSFER RECORDS
+  |--------------------------------------------------------------------------
+  */
+
+  for (const table of [
+    "marketplace_transfers",
+    "farmer_payouts",
+    "payout_splits",
+  ]) {
+    for (const transfer of transfers) {
+      try {
+        await supabase
+          .from(table)
+          .update({
+            transfer_status: transfer.success
+              ? "transferred"
+              : "failed",
+
+            stripe_transfer_id:
+              transfer.transferId || null,
+
+            stripe_payment_intent_id:
+              paymentIntentId,

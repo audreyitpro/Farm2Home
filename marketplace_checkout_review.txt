@@ -1,0 +1,211 @@
+=== PRODUCT VERIFICATION ===
+async function verifyMarketplaceProducts(cartItems) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  if (!Array.isArray(cartItems) || cartItems.length === 0) {
+    throw new Error("Your shopping cart is empty.");
+  }
+
+  const verifiedItems = [];
+  const requestedQuantities = new Map();
+
+  for (const item of cartItems) {
+    const productId = String(
+      item.productId || item.product_id || item.id || ""
+    ).trim();
+
+    const quantity = Number(item.quantity);
+
+    if (!isValidUuid(productId)) {
+      throw new Error("Invalid marketplace product ID.");
+    }
+
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
+      throw new Error("Invalid product quantity.");
+    }
+
+    requestedQuantities.set(
+      productId,
+      (requestedQuantities.get(productId) || 0) + quantity
+    );
+  }
+
+  for (const [productId, quantity] of requestedQuantities) {
+    const { data: product, error: productError } = await supabase
+      .from(FARM_PRODUCTS_TABLE)
+      .select(
+        "id,farmer_id,farmer_name,farm_name,name,product_name,price,unit_price,stock,quantity,inventory_quantity,active,status"
+      )
+      .eq("id", productId)
+      .single();
+
+    if (productError || !product) {
+      throw new Error(`Product not found: ${productId}`);
+    }
+
+    if (
+      product.active !== true ||
+      String(product.status || "").toLowerCase() !== "active"
+    ) {
+      throw new Error(
+        `${product.name || product.product_name} is unavailable.`
+      );
+    }
+
+    const unitPrice = Number(product.price);
+
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      throw new Error("Invalid product price in database.");
+    }
+
+    const stock = Number(product.stock);
+
+    if (!Number.isFinite(stock) || stock < quantity) {
+      throw new Error(
+        `Insufficient stock for ${product.name || product.product_name}.`
+      );
+    }
+
+    if (!isValidUuid(product.farmer_id)) {
+      throw new Error("Product does not have a valid farmer ID.");
+    }
+
+    const { data: farmer, error: farmerError } = await supabase
+      .from("farmers")
+      .select("id,farm_name,business_name,farmer_email,email")
+      .eq("id", product.farmer_id)
+      .single();
+
+    if (farmerError || !farmer) {
+      throw new Error("Registered farmer account not found.");
+    }
+
+    verifiedItems.push({
+      id: product.id,
+      productId: product.id,
+      product_id: product.id,
+
+      name: product.name || product.product_name,
+      productName: product.name || product.product_name,
+      product_name: product.name || product.product_name,
+
+      price: unitPrice,
+      unit_price: unitPrice,
+      quantity,
+
+      farmerId: farmer.id,
+      farmer_id: farmer.id,
+
+      farmerName:
+        farmer.farm_name ||
+        farmer.business_name ||
+        product.farm_name ||
+        "Farm",
+
+      farmer_name:
+        farmer.farm_name ||
+        farmer.business_name ||
+        product.farm_name ||
+        "Farm",
+
+      farmerEmail: farmer.farmer_email || farmer.email || "",
+      farmer_email: farmer.farmer_email || farmer.email || "",
+
+      total_price: Number((unitPrice * quantity).toFixed(2))
+    });
+  }
+
+  return verifiedItems;
+}
+
+function normalizeMarketplaceItems(body) {
+  const items = Array.isArray(body.items)
+    ? body.items
+    : Array.isArray(body.cart)
+      ? body.cart
+      : [];
+
+=== CHECKOUT PROCESSING ===
+            body.customer_name ||
+            body.name ||
+            "Farm2Home Customer"
+        );
+
+      const stripeCustomerId =
+        clean(
+          body.stripeCustomerId ||
+            body.stripe_customer_id
+        );
+
+      // Verify products and prices against Supabase before Stripe checkout.
+let verifiedItems;
+
+try {
+  const cartItems = Array.isArray(body.items)
+    ? body.items
+    : Array.isArray(body.cart)
+      ? body.cart
+      : [];
+
+  verifiedItems = await verifyMarketplaceProducts(cartItems);
+} catch (verificationError) {
+  console.error(
+    "Marketplace product verification failed:",
+    verificationError.message
+  );
+
+  return res.status(400).json({
+    success: false,
+    error: verificationError.message
+  });
+}
+
+const items = normalizeMarketplaceItems({
+  items: verifiedItems
+});
+
+      if (!customerId) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error:
+              "customerId is required.",
+          });
+      }
+
+      if (!customerEmail) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error:
+              "customerEmail is required.",
+          });
+      }
+
+      if (!items.length) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error:
+              "Cart items are required.",
+          });
+      }
+
+      /*
+       * Validate item amounts before sending them to Stripe.
+       */
+
+      const invalidItem =
+        items.find(
+          (item) =>
+            !item.productId ||
+            !item.farmerId ||
+            !Number.isFinite(
+              Number(item.price)
+            ) ||
+            Number(item.price) < 0 ||
