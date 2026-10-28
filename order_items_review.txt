@@ -1,0 +1,147 @@
+      "PENDING_PAYMENT"
+  };
+
+  
+  const { error } = await supabase.rpc(
+    "save_pending_marketplace_order",
+    {
+      p_order: payload,
+    }
+  );
+
+  if (error) {
+    console.error(
+      "Protected marketplace order save failed:",
+      error
+    );
+
+    throw new Error(
+      `Unable to save marketplace order: ${error.message}`
+    );
+  }
+
+
+  return "orders";
+}
+
+
+// ============================================================
+// FARM2HOME DIRECT - SAVE ALL CUSTOMER ORDER ITEMS
+// ============================================================
+
+async function saveMarketplaceOrderItems(order) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  if (
+    !order?.orderId ||
+    !Array.isArray(order.items) ||
+    order.items.length === 0
+  ) {
+    throw new Error("Invalid marketplace order items.");
+  }
+
+  const { data, error } = await supabase.rpc(
+    "save_marketplace_order_items_atomic",
+    {
+      p_order_id: String(order.orderId),
+      p_items: order.items.map((item) => ({
+        productId:
+          item.productId ||
+          item.product_id ||
+          item.id,
+        quantity: item.quantity
+      }))
+    }
+  );
+
+  if (error) {
+    throw new Error(
+      "Atomic order-item save failed: " + error.message
+    );
+  }
+
+  if (data !== order.items.length) {
+    throw new Error(
+      "Saved order-item count did not match the request."
+    );
+  }
+
+  return "order_items";
+}
+
+
+async function createStripeTransfersForMarketplaceOrder(
+  order,
+  paymentIntentId
+) {
+  if (!supabase || !stripe) {
+    throw new Error("Supabase or Stripe is not configured.");
+  }
+
+  if (!paymentIntentId || !order?.orderId) {
+    throw new Error("Missing verified marketplace payment identifiers.");
+  }
+
+  const results = [];
+
+  for (const split of order.payoutSplits || []) {
+    const farmerId = clean(split.farmerId || split.farmer_id);
+    const farmName = clean(split.farmName || split.farm_name);
+
+    if (!isValidUuid(farmerId)) {
+      throw new Error("Invalid farmer ID for marketplace payout.");
+    }
+
+    // Atomically reserve the payout using trusted database amounts.
+    const { data: claims, error: claimError } =
+      await supabase.rpc(
+        "claim_marketplace_farmer_transfer",
+        {
+          p_order_id: String(order.orderId),
+          p_farmer_id: farmerId,
+          p_payment_intent_id: paymentIntentId
+        }
+      );
+
+    if (claimError) {
+      throw new Error(
+        `Payout claim failed for farmer ${farmerId}: ${claimError.message}`
+      );
+    }
+
+    const claim = Array.isArray(claims) ? claims[0] : claims;
+
+    if (!claim) {
+      throw new Error(`Missing payout claim for farmer ${farmerId}.`);
+    }
+
+    if (!claim.should_process) {
+      results.push({
+        success: claim.claim_status === "succeeded",
+        skipped: true,
+        farmerId,
+        farmName,
+        status: claim.claim_status,
+        reason: "existing_payout_claim"
+      });
+      continue;
+    }
+
+    const destination = claim.claim_stripe_account_id;
+    const amountCents = Number(claim.claim_transfer_cents);
+    const idempotencyKey = claim.claim_idempotency_key;
+
+    if (
+      !isAcct(destination) ||
+      !Number.isSafeInteger(amountCents) ||
+      amountCents <= 0 ||
+      !idempotencyKey
+    ) {
+      throw new Error(`Invalid claimed payout for farmer ${farmerId}.`);
+    }
+
+    let stripeTransfer = null;
+
+    try {

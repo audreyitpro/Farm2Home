@@ -1,0 +1,191 @@
+    const destination = claim.claim_stripe_account_id;
+    const amountCents = Number(claim.claim_transfer_cents);
+    const idempotencyKey = claim.claim_idempotency_key;
+
+    if (
+      !isAcct(destination) ||
+      !Number.isSafeInteger(amountCents) ||
+      amountCents <= 0 ||
+      !idempotencyKey
+    ) {
+      throw new Error(`Invalid claimed payout for farmer ${farmerId}.`);
+    }
+
+    let stripeTransfer = null;
+
+    try {
+      const paymentIntent =
+        await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      if (
+        paymentIntent.status !== "succeeded" ||
+        paymentIntent.currency !== "usd"
+      ) {
+        throw new Error("PaymentIntent is not a successful USD payment.");
+      }
+
+      const chargeId =
+        typeof paymentIntent.latest_charge === "string"
+          ? paymentIntent.latest_charge
+          : paymentIntent.latest_charge?.id;
+
+      if (!chargeId) {
+        throw new Error("Verified payment has no latest charge.");
+      }
+
+      const charge = await stripe.charges.retrieve(chargeId);
+
+      if (
+        charge.payment_intent !== paymentIntentId ||
+        charge.status !== "succeeded" ||
+        charge.paid !== true ||
+        charge.currency !== "usd"
+      ) {
+        throw new Error("Stripe charge verification failed.");
+      }
+
+      // Source transaction ties this transfer to the verified charge.
+      stripeTransfer = await stripe.transfers.create(
+        {
+          amount: amountCents,
+          currency: "usd",
+          destination,
+          source_transaction: charge.id,
+          transfer_group: String(order.orderId),
+          metadata: {
+            order_id: String(order.orderId),
+            farmer_id: farmerId,
+            payment_intent_id: paymentIntentId,
+            payout_claim_id: claim.claim_id,
+            type: "farm2home_marketplace_farmer_transfer"
+          }
+        },
+        {
+          idempotencyKey
+        }
+      );
+
+      if (
+        stripeTransfer.amount !== amountCents ||
+        stripeTransfer.currency !== "usd" ||
+        stripeTransfer.destination !== destination ||
+        stripeTransfer.source_transaction !== charge.id
+      ) {
+        throw new Error("Stripe transfer response does not match claim.");
+      }
+
+      const { error: recordError } = await supabase.rpc(
+        "record_marketplace_farmer_transfer",
+        {
+          p_claim_id: claim.claim_id,
+          p_idempotency_key: idempotencyKey,
+          p_status: "succeeded",
+          p_stripe_transfer_id: stripeTransfer.id,
+          p_error_message: null
+        }
+      );
+
+      if (recordError) {
+        throw new Error(
+          `Stripe transfer created but ledger update failed: ${recordError.message}`
+        );
+      }
+
+      results.push({
+        success: true,
+        farmerId,
+        farmName,
+        stripeAccountId: destination,
+        amount: dollarsFromCents(amountCents),
+        transferId: stripeTransfer.id,
+        status: "succeeded"
+      });
+
+    } catch (error) {
+      console.error(
+        `Marketplace transfer requires reconciliation for farmer ${farmerId}:`,
+        error.message
+      );
+
+      const { error: reconciliationError } = await supabase.rpc(
+        "record_marketplace_farmer_transfer",
+        {
+          p_claim_id: claim.claim_id,
+          p_idempotency_key: idempotencyKey,
+          p_status: "needs_reconciliation",
+          p_stripe_transfer_id: null,
+          p_error_message: error.message
+        }
+      );
+
+      if (reconciliationError) {
+        console.error(
+          "CRITICAL: Could not record payout reconciliation state:",
+          reconciliationError.message
+        );
+      }
+
+      results.push({
+        success: false,
+        farmerId,
+        farmName,
+        stripeAccountId: destination,
+        amount: dollarsFromCents(amountCents),
+        transferId: stripeTransfer?.id || null,
+        status: "needs_reconciliation",
+        error: error.message
+      });
+    }
+  }
+
+  return results;
+}
+/*
+|--------------------------------------------------------------------------
+| FARMER FIRST PAID SALE
+|--------------------------------------------------------------------------
+*/
+
+async function markFarmersFirstPaidSale(order) {
+  if (!supabase || !order) {
+    return [];
+  }
+
+  const farmerIds =
+    new Set();
+
+  for (
+    const split of
+    order.payoutSplits ||
+    []
+  ) {
+    const farmerId =
+      clean(
+        split.farmerId ||
+          split.farmer_id
+      );
+
+    if (farmerId) {
+      farmerIds.add(
+        farmerId
+      );
+    }
+  }
+
+  for (
+    const item of
+    order.items ||
+    []
+  ) {
+    const farmerId =
+      clean(
+        item.farmerId ||
+          item.farmer_id
+      );
+
+    if (farmerId) {
+      farmerIds.add(
+        farmerId
+      );
+    }
+  }

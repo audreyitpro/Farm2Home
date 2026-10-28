@@ -3303,7 +3303,7 @@ async function createStripeTransfersForMarketplaceOrder(
           p_claim_id: claim.claim_id,
           p_idempotency_key: idempotencyKey,
           p_status: "needs_reconciliation",
-          p_stripe_transfer_id: null,
+          p_stripe_transfer_id: stripeTransfer?.id || null,
           p_error_message: error.message
         }
       );
