@@ -142,6 +142,22 @@ export default function FarmerProfileScreen() {
   const [driverEmail, setDriverEmail] = useState("");
   const [driverPhone, setDriverPhone] = useState("");
   const [drivers, setDrivers] = useState<any[]>([]);
+  // Farmers Market Manager: independent from Farm2Home farmer subscription billing.
+  const [marketPanelOpen, setMarketPanelOpen] = useState(false);
+  const [marketName, setMarketName] = useState("");
+  const [marketDescription, setMarketDescription] = useState("");
+  const [marketAddress, setMarketAddress] = useState("");
+  const [marketCity, setMarketCity] = useState("");
+  const [marketState, setMarketState] = useState("");
+  const [marketZip, setMarketZip] = useState("");
+  const [marketFee, setMarketFee] = useState("0");
+  const [marketCapacity, setMarketCapacity] = useState("250");
+  const [marketSaving, setMarketSaving] = useState(false);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [myMarkets, setMyMarkets] = useState<any[]>([]);
+  const [marketInvitations, setMarketInvitations] = useState<any[]>([]);
+  const [marketMessage, setMarketMessage] = useState("");
+
   useEffect(() => {
     loadProfile();
   }, []);
@@ -302,6 +318,112 @@ export default function FarmerProfileScreen() {
       setLoading(false);
     }
   }
+  async function marketRequest(path: string, method = "GET", payload?: Record<string, unknown>) {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session?.access_token) {
+      throw new Error("Please sign in to your farmer account with Supabase Auth to use market management.");
+    }
+    const response = await fetch(`${API_BASE_URL}/vendor-manager${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        ...(payload ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
+    });
+    const data = await parseApiResponse(response);
+    if (!response.ok || data?.success === false) {
+      throw new Error(data?.error || data?.message || `Market request failed (${response.status}).`);
+    }
+    return data;
+  }
+
+  function rowsFromMarketResponse(data: any, keys: string[]) {
+    if (Array.isArray(data)) return data;
+    for (const key of keys) {
+      if (Array.isArray(data?.[key])) return data[key];
+      if (Array.isArray(data?.data?.[key])) return data.data[key];
+    }
+    return Array.isArray(data?.data) ? data.data : [];
+  }
+
+  async function refreshMarketManager() {
+    try {
+      setMarketLoading(true);
+      setMarketMessage("");
+      const [marketsResult, invitationsResult] = await Promise.allSettled([
+        marketRequest("/markets"),
+        marketRequest("/farmer/invitations"),
+      ]);
+      if (marketsResult.status === "fulfilled") {
+        setMyMarkets(rowsFromMarketResponse(marketsResult.value, ["markets", "farmers_markets"]));
+      }
+      if (invitationsResult.status === "fulfilled") {
+        setMarketInvitations(rowsFromMarketResponse(invitationsResult.value, ["invitations", "memberships"]));
+      }
+      const failures = [marketsResult, invitationsResult]
+        .filter((item): item is PromiseRejectedResult => item.status === "rejected")
+        .map((item) => item.reason?.message || "Request failed");
+      if (failures.length) setMarketMessage(failures.join(" | "));
+    } finally {
+      setMarketLoading(false);
+    }
+  }
+
+  async function registerMarket() {
+    if (marketSaving) return;
+    if (!marketName.trim() || !marketAddress.trim() || !marketCity.trim() || !marketState.trim() || !marketZip.trim()) {
+      Alert.alert("Missing Information", "Enter the market name and complete location.");
+      return;
+    }
+    const fee = Number(marketFee);
+    const capacity = Number(marketCapacity);
+    if (!Number.isFinite(fee) || fee < 0 || !Number.isInteger(capacity) || capacity < 1 || capacity > 250) {
+      Alert.alert("Invalid Settings", "Enter a nonnegative monthly fee and capacity between 1 and 250.");
+      return;
+    }
+    try {
+      setMarketSaving(true);
+      await marketRequest("/markets", "POST", {
+        name: marketName.trim(),
+        description: marketDescription.trim(),
+        address: marketAddress.trim(),
+        city: marketCity.trim(),
+        state: marketState.trim(),
+        zip_code: marketZip.trim(),
+        standard_monthly_fee: fee,
+        vendor_capacity: capacity,
+      });
+      Alert.alert("Registration Submitted", "Your farmers market registration was submitted for Farm2Home administrator review. No market fees have been charged.");
+      setMarketName("");
+      setMarketDescription("");
+      setMarketAddress("");
+      setMarketCity("");
+      setMarketState("");
+      setMarketZip("");
+      await refreshMarketManager();
+    } catch (error: any) {
+      Alert.alert("Market Registration", error?.message || "Unable to register market.");
+    } finally {
+      setMarketSaving(false);
+    }
+  }
+
+  async function respondToMarketInvitation(membershipId: string, accept: boolean) {
+    if (!membershipId) return;
+    try {
+      await marketRequest(`/farmer/invitations/${encodeURIComponent(membershipId)}/respond`, "POST", {
+        action: accept ? "accept" : "decline",
+      });
+      Alert.alert("Invitation Updated", accept
+        ? "Your invitation response was submitted. This does not authorize a recurring charge."
+        : "You declined this market invitation.");
+      await refreshMarketManager();
+    } catch (error: any) {
+      Alert.alert("Invitation Error", error?.message || "Unable to update invitation.");
+    }
+  }
+
   async function saveProfile() {
     try {
       setSaving(true);
@@ -952,6 +1074,72 @@ export default function FarmerProfileScreen() {
               <Text style={styles.freeUntilSaleNoticeText}>
                 Start selling for free. You can build your store, list products, and receive orders with no upfront monthly membership charge. Your paid farmer membership begins only after your first successfully completed sale.
               </Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.card}>
+          <SectionHeader
+            step="Farmers Markets"
+            title="Farmers Market & Vendor Manager"
+            subtitle="Register a market you manage, review your market invitations, and track memberships. Market fees are separate from your Farm2Home subscription."
+            icon="storefront-outline"
+          />
+          <Pressable style={styles.routeButton} onPress={() => {
+            setMarketPanelOpen((open) => !open);
+            if (!marketPanelOpen) void refreshMarketManager();
+          }}>
+            <View style={styles.routeIcon}><Ionicons name="storefront-outline" size={19} color={COLORS.primaryDark} /></View>
+            <Text style={styles.routeButtonText}>{marketPanelOpen ? "Hide Market Manager Setup" : "Open Market Manager Setup"}</Text>
+            <Ionicons name={marketPanelOpen ? "chevron-up-outline" : "chevron-down-outline"} size={18} color={COLORS.muted} />
+          </Pressable>
+          {marketPanelOpen && (
+            <View>
+              <Pressable style={styles.secondaryAction} onPress={refreshMarketManager} disabled={marketLoading}>
+                {marketLoading ? <ActivityIndicator color={COLORS.white} /> : <Ionicons name="refresh-outline" size={18} color={COLORS.white} />}
+                <Text style={styles.secondaryActionText}>Refresh My Markets & Invitations</Text>
+              </Pressable>
+              {!!marketMessage && <Text style={styles.marketError}>{marketMessage}</Text>}
+              <Text style={styles.marketHeading}>My Managed Markets</Text>
+              {myMarkets.length === 0 ? <Text style={styles.marketHint}>No managed markets returned yet. New registrations require administrator approval.</Text> : myMarkets.map((market, index) => (
+                <View key={String(market.id || index)} style={styles.marketItem}>
+                  <Text style={styles.marketItemTitle}>{market.name || "Farmers Market"}</Text>
+                  <Text style={styles.marketHint}>Status: {market.status || "pending"} · Standard fee: ${Number(market.standard_monthly_fee || 0).toFixed(2)}/month</Text>
+                </View>
+              ))}
+              <Text style={styles.marketHeading}>Market Invitations</Text>
+              {marketInvitations.length === 0 ? <Text style={styles.marketHint}>No market invitations returned.</Text> : marketInvitations.map((invitation, index) => {
+                const status = String(invitation.status || "invited").toLowerCase();
+                const id = String(invitation.id || invitation.membership_id || "");
+                const market = invitation.market || invitation.farmers_markets || {};
+                const fee = invitation.custom_monthly_fee ?? market.standard_monthly_fee;
+                return (
+                  <View key={id || String(index)} style={styles.marketItem}>
+                    <Text style={styles.marketItemTitle}>{market.name || invitation.market_name || "Farmers Market"}</Text>
+                    <Text style={styles.marketHint}>Status: {status}{fee != null ? ` · Proposed fee: $${Number(fee).toFixed(2)}/month` : ""}</Text>
+                    {status === "invited" && !!id && (
+                      <View style={styles.marketActionRow}>
+                        <Pressable style={styles.marketAccept} onPress={() => respondToMarketInvitation(id, true)}><Text style={styles.marketActionText}>Accept Invitation</Text></Pressable>
+                        <Pressable style={styles.marketDecline} onPress={() => respondToMarketInvitation(id, false)}><Text style={styles.marketActionText}>Decline</Text></Pressable>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+              <Text style={styles.marketHeading}>Register a Farmers Market</Text>
+              <Text style={styles.marketHint}>For farmers who also operate a farmers market. Registration is submitted as pending and requires administrator approval.</Text>
+              <Field label="Market Name" value={marketName} onChangeText={setMarketName} icon="storefront-outline" />
+              <Field label="Market Description" value={marketDescription} onChangeText={setMarketDescription} icon="document-text-outline" />
+              <Field label="Street Address" value={marketAddress} onChangeText={setMarketAddress} icon="location-outline" />
+              <Field label="City" value={marketCity} onChangeText={setMarketCity} icon="business-outline" />
+              <Field label="State" value={marketState} onChangeText={setMarketState} icon="map-outline" />
+              <Field label="ZIP Code" value={marketZip} onChangeText={setMarketZip} icon="pin-outline" />
+              <Field label="Standard Monthly Vendor Fee ($)" value={marketFee} onChangeText={setMarketFee} icon="cash-outline" keyboardType="decimal-pad" />
+              <Field label="Vendor Capacity (1–250)" value={marketCapacity} onChangeText={setMarketCapacity} icon="people-outline" keyboardType="number-pad" />
+              <Pressable style={[styles.secondaryAction, marketSaving && styles.disabled]} onPress={registerMarket} disabled={marketSaving}>
+                {marketSaving ? <ActivityIndicator color={COLORS.white} /> : <Ionicons name="add-circle-outline" size={18} color={COLORS.white} />}
+                <Text style={styles.secondaryActionText}>Submit Market for Approval</Text>
+              </Pressable>
+              <Text style={styles.marketHint}>Accepting an invitation does not start Stripe billing. Recurring market membership charges require separate explicit consent.</Text>
             </View>
           )}
         </View>
@@ -1827,6 +2015,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   saveButtonText: { color: COLORS.white, fontWeight: "900", fontSize: 15 },
+  marketHeading: { color: COLORS.primaryDark, fontWeight: "900", fontSize: 17, marginTop: 20, marginBottom: 9 },
+  marketHint: { color: COLORS.muted, fontSize: 12, lineHeight: 19, marginBottom: 9, fontWeight: "600" },
+  marketError: { color: COLORS.danger, fontSize: 12, lineHeight: 18, marginTop: 10 },
+  marketItem: { backgroundColor: COLORS.soft, borderWidth: 1, borderColor: COLORS.border, padding: 12, borderRadius: 14, marginBottom: 10 },
+  marketItemTitle: { color: COLORS.text, fontSize: 15, fontWeight: "900", marginBottom: 4 },
+  marketActionRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  marketAccept: { backgroundColor: COLORS.primary, padding: 11, borderRadius: 10, flex: 1, alignItems: "center" },
+  marketDecline: { backgroundColor: COLORS.danger, padding: 11, borderRadius: 10, flex: 1, alignItems: "center" },
+  marketActionText: { color: COLORS.white, fontWeight: "800", fontSize: 12 },
   disabled: { opacity: 0.6 },
   pressed: { opacity: 0.75 },
 });
