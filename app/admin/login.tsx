@@ -38,7 +38,6 @@ type AdminRow = {
   id: string;
   email: string | null;
   username: string | null;
-  password: string | null;
   full_name: string | null;
   role: string | null;
   is_active: boolean | null;
@@ -87,44 +86,11 @@ export default function AdminLoginScreen() {
   const [securePassword, setSecurePassword] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  async function queryAdmins(filter: string) {
-    const { data, error } = await supabase
-      .from("admins")
-      .select(
-        "id,email,username,password,full_name,role,is_active,super_admin,created_at,updated_at"
-      )
-      .or(filter)
-      .limit(1);
-
-    if (error) {
-      console.log("Admin lookup error:", error.message);
-      throw error;
-    }
-
-    return Array.isArray(data) && data.length > 0 ? (data[0] as AdminRow) : null;
-  }
-
-  async function findAdminAccount(loginValue: string): Promise<AdminRow | null> {
-    const value = normalize(loginValue);
-
-    console.log("Searching admin login:", value);
-
-    let admin = await queryAdmins(`email.eq.${value},username.eq.${value}`);
-    if (admin) return admin;
-
-    admin = await queryAdmins(`email.ilike.${value},username.ilike.${value}`);
-    if (admin) return admin;
-
-    admin = await queryAdmins(`email.ilike.%${value}%,username.ilike.%${value}%`);
-    if (admin) return admin;
-
-    return null;
-  }
-
   async function saveAdminSession(admin: AdminRow) {
     const mapped = buildAdminSession(admin);
 
     await AsyncStorage.multiRemove([
+      "currentAdmin",
       "currentCustomer",
       "pendingCustomer",
       "farm2homeCurrentCustomer",
@@ -153,42 +119,71 @@ export default function AdminLoginScreen() {
   }
 
   async function loginAdmin() {
-    const loginValue = normalize(login);
-    const passwordValue = clean(password);
+    const email = normalize(login);
+    // Passwords are case-sensitive. Never trim, normalize, or log them.
+    const enteredPassword = password;
 
-    if (!loginValue || !passwordValue) {
-      Alert.alert("Missing Login", "Enter admin email/username and password.");
+    if (!email || !enteredPassword) {
+      Alert.alert("Missing Login", "Enter your admin email and password.");
+      return;
+    }
+
+    if (!email.includes("@")) {
+      Alert.alert("Email Required", "Sign in with your full administrator email address.");
       return;
     }
 
     try {
       setLoading(true);
 
-      const admin = await findAdminAccount(loginValue);
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password: enteredPassword,
+        });
 
-      if (!admin) {
+      if (authError || !authData.session || !authData.user) {
         Alert.alert(
-          "Admin Not Found",
-          `No admins table row matched: ${loginValue}\n\nCheck the username/email in Supabase exactly.`
+          "Login Failed",
+          "Invalid email or password. Use your Supabase Auth password, not the old admins-table password."
         );
         return;
       }
 
-      if (admin.is_active === false) {
-        Alert.alert("Account Disabled", "This admin account is not active.");
+      // This restricted RPC reads the identity from auth.uid() on the server.
+      // It never accepts an admin ID or email from the client.
+      const { data: profileRows, error: profileError } = await supabase.rpc(
+        "get_my_admin_profile"
+      );
+
+      if (profileError) {
+        await supabase.auth.signOut();
+        Alert.alert(
+          "Admin Verification Unavailable",
+          "Administrator permissions could not be verified. Confirm the get_my_admin_profile database function is installed."
+        );
         return;
       }
 
-      if (normalize(admin.password) !== normalize(passwordValue)) {
-        Alert.alert("Invalid Password", "Password does not match.");
+      const admin = Array.isArray(profileRows)
+        ? (profileRows[0] as AdminRow | undefined)
+        : undefined;
+
+      if (!admin || admin.is_active !== true) {
+        await supabase.auth.signOut();
+        Alert.alert(
+          "Access Denied",
+          "This Supabase account is not an active Farm2Home administrator."
+        );
         return;
       }
 
       await saveAdminSession(admin);
+      setPassword("");
       router.replace("/admin/dashboard" as any);
     } catch (error: any) {
-      console.log("Admin login error:", error);
-      Alert.alert("Login Error", error?.message || "Unable to login admin.");
+      await supabase.auth.signOut().catch(() => undefined);
+      Alert.alert("Login Error", "Unable to complete administrator sign-in. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -221,22 +216,24 @@ export default function AdminLoginScreen() {
             <Text style={styles.kicker}>Farm2Home Control Center</Text>
             <Text style={styles.title}>Admin Login</Text>
             <Text style={styles.subtitle}>
-              Direct admins table login. No Supabase Auth is used.
+              Secure administrator access using Supabase Authentication.
             </Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Secure Admin Portal</Text>
             <Text style={styles.sectionSubtitle}>
-              Enter the email or username exactly as saved in the admins table.
+              Sign in using your verified administrator email and Supabase Auth password.
             </Text>
 
-            <Text style={styles.label}>Admin Email or Username</Text>
+            <Text style={styles.label}>Admin Email</Text>
             <View style={styles.inputShell}>
               <Ionicons name="person-outline" size={19} color={COLORS.muted} />
               <TextInput
                 style={styles.input}
-                placeholder="admin@email.com or username"
+                placeholder="admin@email.com"
+                keyboardType="email-address"
+                autoComplete="email"
                 placeholderTextColor="#94A3B8"
                 value={login}
                 onChangeText={setLogin}
@@ -287,9 +284,9 @@ export default function AdminLoginScreen() {
           <View style={styles.infoCard}>
             <Ionicons name="server-outline" size={22} color={COLORS.primary} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.infoTitle}>Admins Table Lookup</Text>
+              <Text style={styles.infoTitle}>Verified Admin Access</Text>
               <Text style={styles.infoText}>
-                Looks up admins by email or username, then checks password and is_active.
+                Your identity and administrator permissions are verified before dashboard access.
               </Text>
             </View>
           </View>

@@ -3044,6 +3044,7 @@ async function saveMarketplaceOrder(order) {
     subtotal: Number(order.subtotal || 0),
     service_fee: Number(order.serviceFee || 0),
     delivery_fee: Number(order.deliveryFee || 0),
+    freight_handling_fee: Number(order.freightHandlingFee || 0),
     tip: Number(order.tip || 0),
     total: Number(order.total || 0),
     stripe_session_id:
